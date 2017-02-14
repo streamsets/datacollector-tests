@@ -19,8 +19,8 @@ import os
 import pytest
 from uuid import uuid4
 
-import args
-from markers import *
+import testframework.args as args
+from testframework.markers import *
 from testframework import environment, sdc, sdc_api
 
 logging.basicConfig(level=logging.INFO)
