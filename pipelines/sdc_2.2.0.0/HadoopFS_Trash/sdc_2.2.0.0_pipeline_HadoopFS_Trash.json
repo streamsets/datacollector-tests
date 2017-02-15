@@ -1,0 +1,523 @@
+{
+  "pipelineConfig" : {
+    "schemaVersion" : 2,
+    "version" : 5,
+    "uuid" : "1453617d-3f8a-41b6-a4db-4cb7aa297fa8",
+    "description" : "",
+    "configuration" : [ {
+      "name" : "executionMode",
+      "value" : "CLUSTER_BATCH"
+    }, {
+      "name" : "deliveryGuarantee",
+      "value" : "AT_LEAST_ONCE"
+    }, {
+      "name" : "shouldRetry",
+      "value" : true
+    }, {
+      "name" : "retryAttempts",
+      "value" : -1
+    }, {
+      "name" : "memoryLimit",
+      "value" : "${jvm:maxMemoryMB() * 0.65}"
+    }, {
+      "name" : "memoryLimitExceeded",
+      "value" : "STOP_PIPELINE"
+    }, {
+      "name" : "notifyOnStates",
+      "value" : [ "RUN_ERROR", "STOPPED", "FINISHED" ]
+    }, {
+      "name" : "emailIDs",
+      "value" : [ ]
+    }, {
+      "name" : "constants",
+      "value" : [ ]
+    }, {
+      "name" : "badRecordsHandling",
+      "value" : "streamsets-datacollector-elasticsearch_2_0-lib::com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget::3"
+    }, {
+      "name" : "clusterSlaveMemory",
+      "value" : 1024
+    }, {
+      "name" : "clusterSlaveJavaOpts",
+      "value" : "-XX:PermSize=128M -XX:MaxPermSize=256M -Dhttps.protocols=TLSv1.2,TLSv1.1 -Dlog4j.debug"
+    }, {
+      "name" : "clusterLauncherEnv",
+      "value" : [ ]
+    }, {
+      "name" : "mesosDispatcherURL",
+      "value" : null
+    }, {
+      "name" : "hdfsS3ConfDir",
+      "value" : null
+    }, {
+      "name" : "rateLimit",
+      "value" : 0
+    }, {
+      "name" : "statsAggregatorStage",
+      "value" : ""
+    } ],
+    "uiInfo" : {
+      "previewConfig" : {
+        "showHeader" : false,
+        "batchSize" : 10,
+        "timeout" : 10000,
+        "rememberMe" : false,
+        "previewSource" : "CONFIGURED_SOURCE",
+        "writeToDestinations" : false,
+        "showFieldType" : true
+      }
+    },
+    "stages" : [ {
+      "instanceName" : "HadoopFS_01",
+      "library" : "streamsets-datacollector-cdh_5_2-lib",
+      "stageName" : "com_streamsets_pipeline_stage_origin_hdfs_cluster_ClusterHdfsDSource",
+      "stageVersion" : "5",
+      "configuration" : [ {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.filePatternInArchive",
+        "value" : "*"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.charset",
+        "value" : "UTF-8"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.removeCtrlChars",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.textMaxLineLen",
+        "value" : 1024
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.useCustomDelimiter",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.customDelimiter",
+        "value" : "\\r\\n"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.jsonContent",
+        "value" : "MULTIPLE_OBJECTS"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.jsonMaxObjectLen",
+        "value" : 4096
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.csvFileFormat",
+        "value" : "CSV"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.csvHeader",
+        "value" : "NO_HEADER"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.csvMaxObjectLen",
+        "value" : 1024
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.csvCustomDelimiter",
+        "value" : "|"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.csvCustomEscape",
+        "value" : "\\"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.csvCustomQuote",
+        "value" : "\""
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.csvRecordType",
+        "value" : "LIST_MAP"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.csvSkipStartLines",
+        "value" : 0
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.parseNull",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.nullConstant",
+        "value" : "\\\\N"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.xmlRecordElement",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.xPathNamespaceContext",
+        "value" : [ ]
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.xmlMaxObjectLen",
+        "value" : 4096
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.logMode",
+        "value" : "COMMON_LOG_FORMAT"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.logMaxObjectLen",
+        "value" : 1024
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.retainOriginalLine",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.customLogFormat",
+        "value" : "%h %l %u %t \"%r\" %>s %b"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.regex",
+        "value" : "^(\\S+) (\\S+) (\\S+) \\[([\\w:/]+\\s[+\\-]\\d{4})\\] \"(\\S+) (\\S+) (\\S+)\" (\\d{3}) (\\d+)"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.fieldPathsToGroupName",
+        "value" : [ {
+          "fieldPath" : "/",
+          "group" : 1
+        } ]
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.grokPatternDefinition",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.grokPattern",
+        "value" : "%{COMMONAPACHELOG}"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.onParseError",
+        "value" : "ERROR"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.maxStackTraceLines",
+        "value" : 50
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.enableLog4jCustomLogFormat",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.log4jCustomLogFormat",
+        "value" : "%r [%t] %-5p %c %x - %m%n"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.avroSchemaSource",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.avroSchema",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.schemaRegistryUrls",
+        "value" : [ ]
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.schemaLookupMode",
+        "value" : "SUBJECT"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.subject",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.schemaId",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.protoDescriptorFile",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.messageType",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.isDelimited",
+        "value" : true
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.binaryMaxObjectLen",
+        "value" : 1024
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.datagramMode",
+        "value" : "SYSLOG"
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.typesDbPath",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.convertTime",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.excludeInterval",
+        "value" : true
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.authFilePath",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.wholeFileMaxObjectLen",
+        "value" : 8192
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormatConfig.verifyChecksum",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.dataFormat",
+        "value" : "DELIMITED"
+      }, {
+        "name" : "clusterHDFSConfigBean.hdfsUri",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.hdfsDirLocations",
+        "value" : [ "" ]
+      }, {
+        "name" : "clusterHDFSConfigBean.recursive",
+        "value" : true
+      }, {
+        "name" : "clusterHDFSConfigBean.produceSingleRecordPerMessage",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.hdfsKerberos",
+        "value" : false
+      }, {
+        "name" : "clusterHDFSConfigBean.hdfsConfDir",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.hdfsUser",
+        "value" : null
+      }, {
+        "name" : "clusterHDFSConfigBean.hdfsConfigs",
+        "value" : [ ]
+      }, {
+        "name" : "clusterHDFSConfigBean.maxBatchSize",
+        "value" : 1000
+      }, {
+        "name" : "stageOnRecordError",
+        "value" : "TO_ERROR"
+      } ],
+      "uiInfo" : {
+        "description" : "",
+        "xPos" : 60,
+        "yPos" : 50,
+        "label" : "Hadoop FS 1",
+        "stageType" : "SOURCE"
+      },
+      "inputLanes" : [ ],
+      "outputLanes" : [ "HadoopFS_01OutputLane14807045148180" ],
+      "eventLanes" : [ ]
+    }, {
+      "instanceName" : "Trash_01",
+      "library" : "streamsets-datacollector-basic-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_devnull_NullDTarget",
+      "stageVersion" : "1",
+      "configuration" : [ ],
+      "uiInfo" : {
+        "description" : "",
+        "xPos" : 280,
+        "yPos" : 50,
+        "label" : "Trash 1",
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ "HadoopFS_01OutputLane14807045148180" ],
+      "outputLanes" : [ ],
+      "eventLanes" : [ ]
+    } ],
+    "errorStage" : {
+      "instanceName" : "WritetoElasticsearch_ErrorStage",
+      "library" : "streamsets-datacollector-elasticsearch_2_0-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget",
+      "stageVersion" : "3",
+      "configuration" : [ {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.shieldUser",
+        "value" : "username:password"
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.shieldTransportSsl",
+        "value" : true
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.sslKeystorePath",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.sslKeystorePassword",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.sslTruststorePath",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.sslTruststorePassword",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.clusterName",
+        "value" : "elasticsearch"
+      }, {
+        "name" : "elasticSearchConfigBean.uris",
+        "value" : [ "hostname:port" ]
+      }, {
+        "name" : "elasticSearchConfigBean.httpUri",
+        "value" : "hostname:port"
+      }, {
+        "name" : "elasticSearchConfigBean.useShield",
+        "value" : false
+      }, {
+        "name" : "elasticSearchConfigBean.useElasticCloud",
+        "value" : false
+      }, {
+        "name" : "elasticSearchConfigBean.clientSniff",
+        "value" : false
+      }, {
+        "name" : "elasticSearchConfigBean.configs",
+        "value" : [ ]
+      }, {
+        "name" : "elasticSearchConfigBean.timeDriver",
+        "value" : "${time:now()}"
+      }, {
+        "name" : "elasticSearchConfigBean.timeZoneID",
+        "value" : "UTC"
+      }, {
+        "name" : "elasticSearchConfigBean.indexTemplate",
+        "value" : "abc"
+      }, {
+        "name" : "elasticSearchConfigBean.typeTemplate",
+        "value" : "xyz"
+      }, {
+        "name" : "elasticSearchConfigBean.docIdTemplate",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.charset",
+        "value" : "UTF-8"
+      }, {
+        "name" : "elasticSearchConfigBean.upsert",
+        "value" : false
+      } ],
+      "uiInfo" : {
+        "description" : "",
+        "xPos" : 500,
+        "yPos" : 50,
+        "label" : "Error Records - Write to Elasticsearch",
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ ],
+      "outputLanes" : [ ],
+      "eventLanes" : [ ]
+    },
+    "info" : {
+      "name" : "HadoopFS_Trash_2_2",
+      "description" : "",
+      "created" : 1486631215738,
+      "lastModified" : 1486631215782,
+      "creator" : "admin",
+      "lastModifier" : "admin",
+      "lastRev" : "0",
+      "uuid" : "1453617d-3f8a-41b6-a4db-4cb7aa297fa8",
+      "valid" : false,
+      "metadata" : {
+        "labels" : [ ]
+      }
+    },
+    "metadata" : {
+      "labels" : [ ]
+    },
+    "statsAggregatorStage" : null,
+    "valid" : false,
+    "issues" : {
+      "stageIssues" : {
+        "WritetoElasticsearch_ErrorStage" : [ {
+          "level" : "STAGE",
+          "instanceName" : "WritetoElasticsearch_ErrorStage",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "CONTAINER_0901 - Could not find stage definition for 'streamsets-datacollector-elasticsearch_2_0-lib:com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "WritetoElasticsearch_ErrorStage",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "CREATION_006 - Stage definition not found Library 'streamsets-datacollector-elasticsearch_2_0-lib' Stage 'com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget' Version '3'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "WritetoElasticsearch_ErrorStage",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : "WritetoElasticsearch_ErrorStage",
+          "message" : "VALIDATION_0006 - Stage definition does not exist, library 'streamsets-datacollector-elasticsearch_2_0-lib', name 'com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget', version '3'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "WritetoElasticsearch_ErrorStage",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "VALIDATION_0006 - Stage definition does not exist, library 'streamsets-datacollector-elasticsearch_2_0-lib', name 'com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget', version '3'"
+        } ],
+        "HadoopFS_01" : [ {
+          "level" : "STAGE",
+          "instanceName" : "HadoopFS_01",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "CONTAINER_0901 - Could not find stage definition for 'streamsets-datacollector-cdh_5_2-lib:com_streamsets_pipeline_stage_origin_hdfs_cluster_ClusterHdfsDSource'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "HadoopFS_01",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "CREATION_006 - Stage definition not found Library 'streamsets-datacollector-cdh_5_2-lib' Stage 'com_streamsets_pipeline_stage_origin_hdfs_cluster_ClusterHdfsDSource' Version '5'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "HadoopFS_01",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : "HadoopFS_01",
+          "message" : "VALIDATION_0006 - Stage definition does not exist, library 'streamsets-datacollector-cdh_5_2-lib', name 'com_streamsets_pipeline_stage_origin_hdfs_cluster_ClusterHdfsDSource', version '5'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "HadoopFS_01",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "VALIDATION_0006 - Stage definition does not exist, library 'streamsets-datacollector-cdh_5_2-lib', name 'com_streamsets_pipeline_stage_origin_hdfs_cluster_ClusterHdfsDSource', version '5'"
+        } ],
+        "com_streamsets_pipeline_stage_origin_hdfs_cluster_ClusterHdfsDSource" : [ {
+          "level" : "STAGE",
+          "instanceName" : "com_streamsets_pipeline_stage_origin_hdfs_cluster_ClusterHdfsDSource",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "VALIDATION_0006 - Stage definition does not exist, library 'streamsets-datacollector-cdh_5_2-lib', name 'com_streamsets_pipeline_stage_origin_hdfs_cluster_ClusterHdfsDSource', version '5'"
+        } ]
+      },
+      "issueCount" : 9,
+      "pipelineIssues" : [ ]
+    },
+    "previewable" : false
+  },
+  "pipelineRules" : {
+    "metricsRuleDefinitions" : [ {
+      "id" : "badRecordsAlertID",
+      "alertText" : "High incidence of Error Records",
+      "metricId" : "pipeline.batchErrorRecords.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > 100}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215755,
+      "valid" : true
+    }, {
+      "id" : "stageErrorAlertID",
+      "alertText" : "High incidence of Stage Errors",
+      "metricId" : "pipeline.batchErrorMessages.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > 100}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215755,
+      "valid" : true
+    }, {
+      "id" : "idleGaugeID",
+      "alertText" : "Pipeline is Idle",
+      "metricId" : "RuntimeStatsGauge.gauge",
+      "metricType" : "GAUGE",
+      "metricElement" : "TIME_OF_LAST_RECEIVED_RECORD",
+      "condition" : "${time:now() - value() > 120000}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215755,
+      "valid" : true
+    }, {
+      "id" : "batchTimeAlertID",
+      "alertText" : "Batch taking more time to process",
+      "metricId" : "RuntimeStatsGauge.gauge",
+      "metricType" : "GAUGE",
+      "metricElement" : "CURRENT_BATCH_AGE",
+      "condition" : "${value() > 200}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215755,
+      "valid" : true
+    }, {
+      "id" : "memoryLimitAlertID",
+      "alertText" : "Memory limit for pipeline exceeded",
+      "metricId" : "pipeline.memoryConsumed.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > (jvm:maxMemoryMB() * 0.65)}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215755,
+      "valid" : true
+    } ],
+    "dataRuleDefinitions" : [ ],
+    "driftRuleDefinitions" : [ ],
+    "emailIds" : [ ],
+    "uuid" : "7636b1a3-488c-4017-92fa-f206e4004d9c",
+    "ruleIssues" : null
+  },
+  "libraryDefinitions" : null
+}

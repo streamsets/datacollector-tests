@@ -1,0 +1,274 @@
+{
+  "pipelineConfig" : {
+    "schemaVersion" : 1,
+    "version" : 3,
+    "uuid" : "091820e1-39ea-4fd2-aaaf-74ef60530f2c",
+    "description" : "",
+    "configuration" : [ {
+      "name" : "executionMode",
+      "value" : "STANDALONE"
+    }, {
+      "name" : "deliveryGuarantee",
+      "value" : "AT_LEAST_ONCE"
+    }, {
+      "name" : "shouldRetry",
+      "value" : true
+    }, {
+      "name" : "retryAttempts",
+      "value" : -1
+    }, {
+      "name" : "memoryLimit",
+      "value" : "${jvm:maxMemoryMB() * 0.65}"
+    }, {
+      "name" : "memoryLimitExceeded",
+      "value" : "STOP_PIPELINE"
+    }, {
+      "name" : "notifyOnStates",
+      "value" : [ "RUN_ERROR", "STOPPED", "FINISHED" ]
+    }, {
+      "name" : "emailIDs",
+      "value" : [ ]
+    }, {
+      "name" : "constants",
+      "value" : [ ]
+    }, {
+      "name" : "badRecordsHandling",
+      "value" : "streamsets-datacollector-hdp_2_3-lib::com_streamsets_pipeline_stage_destination_kafka_ToErrorKafkaDTarget::1"
+    }, {
+      "name" : "clusterSlaveMemory",
+      "value" : 1024
+    }, {
+      "name" : "clusterSlaveJavaOpts",
+      "value" : "-XX:PermSize=128M -XX:MaxPermSize=256M -Dlog4j.debug"
+    }, {
+      "name" : "clusterLauncherEnv",
+      "value" : [ ]
+    } ],
+    "uiInfo" : {
+      "previewConfig" : {
+        "previewSource" : "CONFIGURED_SOURCE",
+        "batchSize" : 10,
+        "timeout" : 10000,
+        "writeToDestinations" : false,
+        "showHeader" : false,
+        "showFieldType" : true,
+        "rememberMe" : false
+      }
+    },
+    "stages" : [ {
+      "instanceName" : "com_streamsets_pipeline_stage_origin_omniture_OmnitureDSource1486595413845",
+      "library" : "streamsets-datacollector-basic-lib",
+      "stageName" : "com_streamsets_pipeline_stage_origin_omniture_OmnitureDSource",
+      "stageVersion" : "1",
+      "configuration" : [ {
+        "name" : "resourceUrl",
+        "value" : "https://api2.omniture.com/admin/1.4/rest/"
+      }, {
+        "name" : "reportDescription",
+        "value" : "aa"
+      }, {
+        "name" : "requestTimeoutMillis",
+        "value" : 3000
+      }, {
+        "name" : "httpMode",
+        "value" : "POLLING"
+      }, {
+        "name" : "pollingInterval",
+        "value" : 5000
+      }, {
+        "name" : "batchSize",
+        "value" : 1
+      }, {
+        "name" : "maxBatchWaitTime",
+        "value" : 5000
+      }, {
+        "name" : "username",
+        "value" : "abc"
+      }, {
+        "name" : "sharedSecret",
+        "value" : "xyz"
+      }, {
+        "name" : "stageOnRecordError",
+        "value" : "TO_ERROR"
+      } ],
+      "uiInfo" : {
+        "description" : "",
+        "label" : "Omniture 1",
+        "xPos" : 60,
+        "yPos" : 50,
+        "stageType" : "SOURCE"
+      },
+      "inputLanes" : [ ],
+      "outputLanes" : [ "com_streamsets_pipeline_stage_origin_omniture_OmnitureDSource1486595413845OutputLane14865954138450" ]
+    }, {
+      "instanceName" : "com_streamsets_pipeline_stage_destination_devnull_NullDTarget1486595420393",
+      "library" : "streamsets-datacollector-basic-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_devnull_NullDTarget",
+      "stageVersion" : "1",
+      "configuration" : [ ],
+      "uiInfo" : {
+        "description" : "",
+        "label" : "Trash 1",
+        "xPos" : 280,
+        "yPos" : 50,
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ "com_streamsets_pipeline_stage_origin_omniture_OmnitureDSource1486595413845OutputLane14865954138450" ],
+      "outputLanes" : [ ]
+    } ],
+    "errorStage" : {
+      "instanceName" : "com_streamsets_pipeline_stage_destination_kafka_ToErrorKafkaDTarget1486595440645",
+      "library" : "streamsets-datacollector-hdp_2_3-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_kafka_ToErrorKafkaDTarget",
+      "stageVersion" : "1",
+      "configuration" : [ {
+        "name" : "metadataBrokerList",
+        "value" : "localhost:9092"
+      }, {
+        "name" : "runtimeTopicResolution",
+        "value" : false
+      }, {
+        "name" : "topicExpression",
+        "value" : "${record:value('/topic')}"
+      }, {
+        "name" : "topicWhiteList",
+        "value" : "*"
+      }, {
+        "name" : "topic",
+        "value" : "topicName"
+      }, {
+        "name" : "partitionStrategy",
+        "value" : "ROUND_ROBIN"
+      }, {
+        "name" : "partition",
+        "value" : "${0}"
+      }, {
+        "name" : "singleMessagePerBatch",
+        "value" : false
+      }, {
+        "name" : "csvFileFormat",
+        "value" : "CSV"
+      }, {
+        "name" : "kafkaProducerConfigs",
+        "value" : [ {
+          "key" : "queue.buffering.max.ms",
+          "value" : "5000"
+        }, {
+          "key" : "message.send.max.retries",
+          "value" : "10"
+        }, {
+          "key" : "retry.backoff.ms",
+          "value" : "1000"
+        } ]
+      }, {
+        "name" : "csvHeader",
+        "value" : "NO_HEADER"
+      }, {
+        "name" : "csvReplaceNewLines",
+        "value" : true
+      }, {
+        "name" : "jsonMode",
+        "value" : "MULTIPLE_OBJECTS"
+      }, {
+        "name" : "textFieldPath",
+        "value" : "/"
+      }, {
+        "name" : "textEmptyLineIfNull",
+        "value" : false
+      }, {
+        "name" : "avroSchema",
+        "value" : null
+      }, {
+        "name" : "includeSchema",
+        "value" : true
+      }, {
+        "name" : "binaryFieldPath",
+        "value" : "/"
+      } ],
+      "uiInfo" : {
+        "description" : "",
+        "label" : "Bad Records - Write to Kafka",
+        "xPos" : 500,
+        "yPos" : 50,
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ ],
+      "outputLanes" : [ ]
+    },
+    "info" : {
+      "name" : "Omniture_Trash_1_1",
+      "description" : "",
+      "created" : 1486595408866,
+      "lastModified" : 1486595441677,
+      "creator" : "anonymous",
+      "lastModifier" : "anonymous",
+      "lastRev" : "0",
+      "uuid" : "091820e1-39ea-4fd2-aaaf-74ef60530f2c",
+      "valid" : true
+    },
+    "previewable" : true,
+    "valid" : true,
+    "issues" : {
+      "issueCount" : 0,
+      "stageIssues" : { },
+      "pipelineIssues" : [ ]
+    }
+  },
+  "pipelineRules" : {
+    "metricsRuleDefinitions" : [ {
+      "id" : "badRecordsAlertID",
+      "alertText" : "High incidence of Bad Records",
+      "metricId" : "pipeline.batchErrorRecords.meter",
+      "metricType" : "METER",
+      "metricElement" : "METER_COUNT",
+      "condition" : "${value() > 100}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "valid" : true
+    }, {
+      "id" : "stageErrorAlertID",
+      "alertText" : "High incidence of Error Messages",
+      "metricId" : "pipeline.batchErrorMessages.meter",
+      "metricType" : "METER",
+      "metricElement" : "METER_COUNT",
+      "condition" : "${value() > 100}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "valid" : true
+    }, {
+      "id" : "idleGaugeID",
+      "alertText" : "Pipeline is Idle",
+      "metricId" : "RuntimeStatsGauge.gauge",
+      "metricType" : "GAUGE",
+      "metricElement" : "TIME_OF_LAST_RECEIVED_RECORD",
+      "condition" : "${time:now() - value() > 120000}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "valid" : true
+    }, {
+      "id" : "batchTimeAlertID",
+      "alertText" : "Batch taking more time to process",
+      "metricId" : "RuntimeStatsGauge.gauge",
+      "metricType" : "GAUGE",
+      "metricElement" : "CURRENT_BATCH_AGE",
+      "condition" : "${value() > 200}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "valid" : true
+    }, {
+      "id" : "memoryLimitAlertID",
+      "alertText" : "Memory limit for pipeline exceeded",
+      "metricId" : "pipeline.memoryConsumed.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > (jvm:maxMemoryMB() * 0.65)}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "valid" : true
+    } ],
+    "dataRuleDefinitions" : [ ],
+    "emailIds" : [ ],
+    "uuid" : "d990b3ee-4a9d-439d-ac93-896d1894de98",
+    "ruleIssues" : [ ]
+  }
+}

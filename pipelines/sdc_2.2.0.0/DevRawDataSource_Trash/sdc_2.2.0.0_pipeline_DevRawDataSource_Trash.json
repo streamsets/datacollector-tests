@@ -1,0 +1,468 @@
+{
+  "pipelineConfig" : {
+    "schemaVersion" : 2,
+    "version" : 5,
+    "uuid" : "678204c3-9ddd-464d-bd4e-602969c6938c",
+    "description" : "",
+    "configuration" : [ {
+      "name" : "executionMode",
+      "value" : "STANDALONE"
+    }, {
+      "name" : "deliveryGuarantee",
+      "value" : "AT_LEAST_ONCE"
+    }, {
+      "name" : "shouldRetry",
+      "value" : true
+    }, {
+      "name" : "retryAttempts",
+      "value" : -1
+    }, {
+      "name" : "memoryLimit",
+      "value" : "${jvm:maxMemoryMB() * 0.65}"
+    }, {
+      "name" : "memoryLimitExceeded",
+      "value" : "STOP_PIPELINE"
+    }, {
+      "name" : "notifyOnStates",
+      "value" : [ "RUN_ERROR", "STOPPED", "FINISHED" ]
+    }, {
+      "name" : "emailIDs",
+      "value" : [ ]
+    }, {
+      "name" : "constants",
+      "value" : [ ]
+    }, {
+      "name" : "badRecordsHandling",
+      "value" : "streamsets-datacollector-elasticsearch_1_4-lib::com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget::3"
+    }, {
+      "name" : "clusterSlaveMemory",
+      "value" : 1024
+    }, {
+      "name" : "clusterSlaveJavaOpts",
+      "value" : "-XX:PermSize=128M -XX:MaxPermSize=256M -Dhttps.protocols=TLSv1.2,TLSv1.1 -Dlog4j.debug"
+    }, {
+      "name" : "clusterLauncherEnv",
+      "value" : [ ]
+    }, {
+      "name" : "mesosDispatcherURL",
+      "value" : null
+    }, {
+      "name" : "hdfsS3ConfDir",
+      "value" : null
+    }, {
+      "name" : "rateLimit",
+      "value" : 0
+    }, {
+      "name" : "statsAggregatorStage",
+      "value" : ""
+    } ],
+    "uiInfo" : {
+      "previewConfig" : {
+        "showHeader" : false,
+        "batchSize" : 10,
+        "timeout" : 10000,
+        "rememberMe" : false,
+        "previewSource" : "CONFIGURED_SOURCE",
+        "writeToDestinations" : false,
+        "showFieldType" : true
+      }
+    },
+    "stages" : [ {
+      "instanceName" : "DevRawDataSource_01",
+      "library" : "streamsets-datacollector-dev-lib",
+      "stageName" : "com_streamsets_pipeline_stage_devtest_rawdata_RawDataDSource",
+      "stageVersion" : "2",
+      "configuration" : [ {
+        "name" : "dataFormat",
+        "value" : "JSON"
+      }, {
+        "name" : "dataFormatConfig.compression",
+        "value" : "NONE"
+      }, {
+        "name" : "dataFormatConfig.filePatternInArchive",
+        "value" : "*"
+      }, {
+        "name" : "dataFormatConfig.charset",
+        "value" : "UTF-8"
+      }, {
+        "name" : "dataFormatConfig.removeCtrlChars",
+        "value" : false
+      }, {
+        "name" : "dataFormatConfig.textMaxLineLen",
+        "value" : 1024
+      }, {
+        "name" : "dataFormatConfig.useCustomDelimiter",
+        "value" : false
+      }, {
+        "name" : "dataFormatConfig.customDelimiter",
+        "value" : "\\r\\n"
+      }, {
+        "name" : "dataFormatConfig.includeCustomDelimiterInTheText",
+        "value" : false
+      }, {
+        "name" : "dataFormatConfig.jsonContent",
+        "value" : "MULTIPLE_OBJECTS"
+      }, {
+        "name" : "dataFormatConfig.jsonMaxObjectLen",
+        "value" : 4096
+      }, {
+        "name" : "dataFormatConfig.csvFileFormat",
+        "value" : "CSV"
+      }, {
+        "name" : "dataFormatConfig.csvHeader",
+        "value" : "NO_HEADER"
+      }, {
+        "name" : "dataFormatConfig.csvMaxObjectLen",
+        "value" : 1024
+      }, {
+        "name" : "dataFormatConfig.csvCustomDelimiter",
+        "value" : "|"
+      }, {
+        "name" : "dataFormatConfig.csvCustomEscape",
+        "value" : "\\"
+      }, {
+        "name" : "dataFormatConfig.csvCustomQuote",
+        "value" : "\""
+      }, {
+        "name" : "dataFormatConfig.csvRecordType",
+        "value" : "LIST_MAP"
+      }, {
+        "name" : "dataFormatConfig.csvSkipStartLines",
+        "value" : 0
+      }, {
+        "name" : "dataFormatConfig.parseNull",
+        "value" : false
+      }, {
+        "name" : "dataFormatConfig.nullConstant",
+        "value" : "\\\\N"
+      }, {
+        "name" : "dataFormatConfig.xmlRecordElement",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.xPathNamespaceContext",
+        "value" : [ ]
+      }, {
+        "name" : "dataFormatConfig.xmlMaxObjectLen",
+        "value" : 4096
+      }, {
+        "name" : "dataFormatConfig.logMode",
+        "value" : "COMMON_LOG_FORMAT"
+      }, {
+        "name" : "dataFormatConfig.logMaxObjectLen",
+        "value" : 1024
+      }, {
+        "name" : "dataFormatConfig.retainOriginalLine",
+        "value" : false
+      }, {
+        "name" : "dataFormatConfig.customLogFormat",
+        "value" : "%h %l %u %t \"%r\" %>s %b"
+      }, {
+        "name" : "dataFormatConfig.regex",
+        "value" : "^(\\S+) (\\S+) (\\S+) \\[([\\w:/]+\\s[+\\-]\\d{4})\\] \"(\\S+) (\\S+) (\\S+)\" (\\d{3}) (\\d+)"
+      }, {
+        "name" : "dataFormatConfig.fieldPathsToGroupName",
+        "value" : [ {
+          "fieldPath" : "/",
+          "group" : 1
+        } ]
+      }, {
+        "name" : "dataFormatConfig.grokPatternDefinition",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.grokPattern",
+        "value" : "%{COMMONAPACHELOG}"
+      }, {
+        "name" : "dataFormatConfig.onParseError",
+        "value" : "ERROR"
+      }, {
+        "name" : "dataFormatConfig.maxStackTraceLines",
+        "value" : 50
+      }, {
+        "name" : "dataFormatConfig.enableLog4jCustomLogFormat",
+        "value" : false
+      }, {
+        "name" : "dataFormatConfig.log4jCustomLogFormat",
+        "value" : "%r [%t] %-5p %c %x - %m%n"
+      }, {
+        "name" : "dataFormatConfig.avroSchemaSource",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.avroSchema",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.schemaRegistryUrls",
+        "value" : [ ]
+      }, {
+        "name" : "dataFormatConfig.schemaLookupMode",
+        "value" : "SUBJECT"
+      }, {
+        "name" : "dataFormatConfig.subject",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.schemaId",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.protoDescriptorFile",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.messageType",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.isDelimited",
+        "value" : true
+      }, {
+        "name" : "dataFormatConfig.binaryMaxObjectLen",
+        "value" : 1024
+      }, {
+        "name" : "dataFormatConfig.datagramMode",
+        "value" : "SYSLOG"
+      }, {
+        "name" : "dataFormatConfig.typesDbPath",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.convertTime",
+        "value" : false
+      }, {
+        "name" : "dataFormatConfig.excludeInterval",
+        "value" : true
+      }, {
+        "name" : "dataFormatConfig.authFilePath",
+        "value" : null
+      }, {
+        "name" : "dataFormatConfig.wholeFileMaxObjectLen",
+        "value" : 8192
+      }, {
+        "name" : "dataFormatConfig.verifyChecksum",
+        "value" : false
+      }, {
+        "name" : "rawData",
+        "value" : "abc"
+      }, {
+        "name" : "stageOnRecordError",
+        "value" : "TO_ERROR"
+      } ],
+      "uiInfo" : {
+        "description" : "",
+        "xPos" : 60,
+        "yPos" : 50,
+        "label" : "Dev Raw Data Source 1",
+        "stageType" : "SOURCE"
+      },
+      "inputLanes" : [ ],
+      "outputLanes" : [ "DevRawDataSource_01OutputLane14807043343990" ],
+      "eventLanes" : [ ]
+    }, {
+      "instanceName" : "Trash_01",
+      "library" : "streamsets-datacollector-basic-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_devnull_NullDTarget",
+      "stageVersion" : "1",
+      "configuration" : [ ],
+      "uiInfo" : {
+        "description" : "",
+        "xPos" : 280,
+        "yPos" : 50,
+        "label" : "Trash 1",
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ "DevRawDataSource_01OutputLane14807043343990" ],
+      "outputLanes" : [ ],
+      "eventLanes" : [ ]
+    } ],
+    "errorStage" : {
+      "instanceName" : "WritetoElasticsearch_ErrorStage",
+      "library" : "streamsets-datacollector-elasticsearch_1_4-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget",
+      "stageVersion" : "3",
+      "configuration" : [ {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.shieldUser",
+        "value" : "username:password"
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.shieldTransportSsl",
+        "value" : true
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.sslKeystorePath",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.sslKeystorePassword",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.sslTruststorePath",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.shieldConfigBean.sslTruststorePassword",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.clusterName",
+        "value" : "elasticsearch"
+      }, {
+        "name" : "elasticSearchConfigBean.uris",
+        "value" : [ "hostname:port" ]
+      }, {
+        "name" : "elasticSearchConfigBean.httpUri",
+        "value" : "hostname:port"
+      }, {
+        "name" : "elasticSearchConfigBean.useShield",
+        "value" : false
+      }, {
+        "name" : "elasticSearchConfigBean.useElasticCloud",
+        "value" : false
+      }, {
+        "name" : "elasticSearchConfigBean.clientSniff",
+        "value" : false
+      }, {
+        "name" : "elasticSearchConfigBean.configs",
+        "value" : [ ]
+      }, {
+        "name" : "elasticSearchConfigBean.timeDriver",
+        "value" : "${time:now()}"
+      }, {
+        "name" : "elasticSearchConfigBean.timeZoneID",
+        "value" : "UTC"
+      }, {
+        "name" : "elasticSearchConfigBean.indexTemplate",
+        "value" : "abc"
+      }, {
+        "name" : "elasticSearchConfigBean.typeTemplate",
+        "value" : "xyz"
+      }, {
+        "name" : "elasticSearchConfigBean.docIdTemplate",
+        "value" : null
+      }, {
+        "name" : "elasticSearchConfigBean.charset",
+        "value" : "UTF-8"
+      }, {
+        "name" : "elasticSearchConfigBean.upsert",
+        "value" : false
+      } ],
+      "uiInfo" : {
+        "description" : "",
+        "xPos" : 500,
+        "yPos" : 50,
+        "label" : "Error Records - Write to Elasticsearch",
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ ],
+      "outputLanes" : [ ],
+      "eventLanes" : [ ]
+    },
+    "info" : {
+      "name" : "DevRawDataSource_Trash_2_2",
+      "description" : "",
+      "created" : 1486631215388,
+      "lastModified" : 1486631215444,
+      "creator" : "admin",
+      "lastModifier" : "admin",
+      "lastRev" : "0",
+      "uuid" : "678204c3-9ddd-464d-bd4e-602969c6938c",
+      "valid" : false,
+      "metadata" : {
+        "labels" : [ ]
+      }
+    },
+    "metadata" : {
+      "labels" : [ ]
+    },
+    "statsAggregatorStage" : null,
+    "valid" : false,
+    "issues" : {
+      "stageIssues" : {
+        "WritetoElasticsearch_ErrorStage" : [ {
+          "level" : "STAGE",
+          "instanceName" : "WritetoElasticsearch_ErrorStage",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "CONTAINER_0901 - Could not find stage definition for 'streamsets-datacollector-elasticsearch_1_4-lib:com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "WritetoElasticsearch_ErrorStage",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "CREATION_006 - Stage definition not found Library 'streamsets-datacollector-elasticsearch_1_4-lib' Stage 'com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget' Version '3'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "WritetoElasticsearch_ErrorStage",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : "WritetoElasticsearch_ErrorStage",
+          "message" : "VALIDATION_0006 - Stage definition does not exist, library 'streamsets-datacollector-elasticsearch_1_4-lib', name 'com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget', version '3'"
+        }, {
+          "level" : "STAGE",
+          "instanceName" : "WritetoElasticsearch_ErrorStage",
+          "configName" : null,
+          "additionalInfo" : null,
+          "configGroup" : null,
+          "message" : "VALIDATION_0006 - Stage definition does not exist, library 'streamsets-datacollector-elasticsearch_1_4-lib', name 'com_streamsets_pipeline_stage_destination_elasticsearch_ToErrorElasticSearchDTarget', version '3'"
+        } ]
+      },
+      "issueCount" : 4,
+      "pipelineIssues" : [ ]
+    },
+    "previewable" : false
+  },
+  "pipelineRules" : {
+    "metricsRuleDefinitions" : [ {
+      "id" : "badRecordsAlertID",
+      "alertText" : "High incidence of Error Records",
+      "metricId" : "pipeline.batchErrorRecords.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > 100}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215406,
+      "valid" : true
+    }, {
+      "id" : "stageErrorAlertID",
+      "alertText" : "High incidence of Stage Errors",
+      "metricId" : "pipeline.batchErrorMessages.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > 100}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215406,
+      "valid" : true
+    }, {
+      "id" : "idleGaugeID",
+      "alertText" : "Pipeline is Idle",
+      "metricId" : "RuntimeStatsGauge.gauge",
+      "metricType" : "GAUGE",
+      "metricElement" : "TIME_OF_LAST_RECEIVED_RECORD",
+      "condition" : "${time:now() - value() > 120000}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215406,
+      "valid" : true
+    }, {
+      "id" : "batchTimeAlertID",
+      "alertText" : "Batch taking more time to process",
+      "metricId" : "RuntimeStatsGauge.gauge",
+      "metricType" : "GAUGE",
+      "metricElement" : "CURRENT_BATCH_AGE",
+      "condition" : "${value() > 200}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215406,
+      "valid" : true
+    }, {
+      "id" : "memoryLimitAlertID",
+      "alertText" : "Memory limit for pipeline exceeded",
+      "metricId" : "pipeline.memoryConsumed.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > (jvm:maxMemoryMB() * 0.65)}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1486631215406,
+      "valid" : true
+    } ],
+    "dataRuleDefinitions" : [ ],
+    "driftRuleDefinitions" : [ ],
+    "emailIds" : [ ],
+    "uuid" : "e9463be5-43f2-4f37-8fe9-8a28e19dd9ff",
+    "ruleIssues" : null
+  },
+  "libraryDefinitions" : null
+}
