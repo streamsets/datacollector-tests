@@ -18,7 +18,6 @@ import logging
 import string
 from time import sleep
 
-import testframework.args as args
 from testframework import environment, sdc
 from testframework.markers import *
 from testframework.utils import get_random_string
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 @database_test
 @pytest.mark.parametrize('table_name_characters', [string.ascii_letters, string.digits])
 @pytest.mark.parametrize('table_name_length', [8, 20])
-def test_jdbc_multitable_consumer_to_hive(table_name_characters, table_name_length):
+def test_jdbc_multitable_consumer_to_hive(args, table_name_characters, table_name_length):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
     db = environment.Database(database=args.database)
     pipeline = sdc.Pipeline(

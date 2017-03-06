@@ -19,13 +19,13 @@ import logging
 import os
 import pytest
 
-from testframework import args, sdc
+from testframework import sdc
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def test_pipeline_upgrade(pipeline_full_path):
+def test_pipeline_upgrade(args, pipeline_full_path):
     with sdc.DataCollector(version=args.sdc_version) as data_collector:
         pipeline = sdc.Pipeline(pipeline_full_path)
         data_collector.add_pipeline(pipeline)
