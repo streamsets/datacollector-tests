@@ -17,6 +17,7 @@
 import logging
 import string
 from time import sleep
+from os.path import dirname, join, realpath
 
 from testframework import environment, sdc
 from testframework.markers import *
@@ -36,7 +37,9 @@ def test_jdbc_multitable_consumer_to_hive(args, table_name_characters, table_nam
     cluster = environment.Cluster(cluster_server=args.cluster_server)
     db = environment.Database(database=args.database)
     pipeline = sdc.Pipeline(
-        'pipelines/multitable_jdbc_to_hive_replication.json'
+                            join(dirname(realpath(__file__)),
+                                 'pipelines',
+                                 'multitable_jdbc_to_hive_replication.json'))
     ).configure_for_environment(cluster, db)
 
     # Generate two random strings to use when naming the DB tables at the source.

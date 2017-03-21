@@ -18,6 +18,7 @@ import logging
 import os
 import pytest
 from uuid import uuid4
+from os.path import dirname, join, realpath
 
 from testframework.markers import *
 from testframework import environment, sdc, sdc_api
@@ -29,7 +30,9 @@ logger = logging.getLogger(__name__)
 @cluster_test
 def test_hdfs_origin_to_hbase_destination(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
-    pipeline = sdc.Pipeline('pipelines/pipeline_1.json').configure_for_environment(cluster)
+    pipeline = sdc.Pipeline(
+        join(dirname(realpath(__file__)), 'pipelines', 'pipeline_1.json')
+    ).configure_for_environment(cluster)
 
     # Generate a random string to use when naming the HDFS input path folder and the HBase table.
     random_name = str(uuid4())
@@ -65,10 +68,13 @@ def test_hdfs_origin_to_hbase_destination(args):
         cluster.hdfs.client.delete(hdfs_input_path, recursive=True)
         cluster.hbase.client.delete_table(name=random_name, disable=True)
 
+
 @cluster_test
 def test_hdfs_origin_to_hbase_destination_missing_configs(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
-    pipeline = sdc.Pipeline('pipelines/pipeline_1.json').configure_for_environment(cluster)
+    pipeline = sdc.Pipeline(
+        join(dirname(realpath(__file__)), 'pipelines', 'pipeline_1.json')
+    ).configure_for_environment(cluster)
 
     # Update our pipeline stages to use the input path and table name we used above.
     pipeline.stages['HadoopFS_01'].input_paths = []

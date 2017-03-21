@@ -16,8 +16,8 @@
 
 import glob
 import logging
-import os
 import pytest
+from os.path import dirname, join, realpath
 
 from testframework import sdc
 
@@ -41,5 +41,6 @@ def test_pipeline_upgrade(args, pipeline_full_path):
 # pytest_generate_tests helps to parametrize pipelines which we will read from disk.
 # More about pytest parametrization at http://doc.pytest.org/en/latest/parametrize.html
 def pytest_generate_tests(metafunc):
-    pipelines = glob.iglob(os.path.join(os.getcwd(), 'pipelines', '**', '*.json'), recursive=True)
+    pipelines = glob.iglob(join(dirname(realpath(__file__)), 'pipelines', '**', '*.json'),
+                           recursive=True)
     metafunc.parametrize('pipeline_full_path', pipelines)
