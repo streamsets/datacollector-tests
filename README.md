@@ -21,6 +21,23 @@ Documentation
 -----------
 For full documentation, including installation, quickstart examples of tests and API documentation, please see [Docs](https://jenkins.streamsets.net/job/testframework-Docs-Build/Test_Framework_Docs/).
 
+Execution of sample test
+----------------------
+The following test does not need any environment and runs locally.
+
+```
+$ cd datacollector-tests
+datacollector-tests$ testframework_run local-test --sdc-version='2.5.0.0-SNAPSHOT' stage/test_dev_raw_data_source_stage.py
+============================================= test session starts =============================================
+platform linux -- Python 3.5.2, pytest-3.0.4, py-1.4.33, pluggy-0.4.0
+rootdir: /root/tests, inifile:
+collected 4 items
+
+stage/test_dev_raw_data_source_stage.py ....
+
+========================================== 4 passed in 75.41 seconds ==========================================
+```
+
 Folder structure for tests
 ----------------------
 
