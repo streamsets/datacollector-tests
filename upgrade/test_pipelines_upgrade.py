@@ -19,7 +19,7 @@ import logging
 import pytest
 from os.path import dirname, join, realpath
 
-from testframework import sdc
+from testframework import sdc, sdc_models
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def test_pipeline_upgrade(args, pipeline_full_path):
     with sdc.DataCollector(version=args.sdc_version) as data_collector:
-        pipeline = sdc.Pipeline(pipeline_full_path)
+        pipeline = sdc_models.Pipeline(pipeline_full_path)
         data_collector.add_pipeline(pipeline)
         data_collector.start()
         export_json = data_collector.api_client.export_pipeline(pipeline_name=pipeline.name)

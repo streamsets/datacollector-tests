@@ -21,7 +21,7 @@ from uuid import uuid4
 from os.path import dirname, join, realpath
 
 from testframework.markers import *
-from testframework import environment, sdc, sdc_api
+from testframework import environment, sdc, sdc_api, sdc_models
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 @cluster_test
 def test_hdfs_origin_to_hbase_destination(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
-    pipeline = sdc.Pipeline(
+    pipeline = sdc_models.Pipeline(
         join(dirname(realpath(__file__)), 'pipelines', 'pipeline_1.json')
     ).configure_for_environment(cluster)
 
@@ -76,7 +76,7 @@ def test_hdfs_origin_to_hbase_destination(args):
 @cluster_test
 def test_hdfs_origin_to_hbase_destination_missing_configs(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
-    pipeline = sdc.Pipeline(
+    pipeline = sdc_models.Pipeline(
         join(dirname(realpath(__file__)), 'pipelines', 'pipeline_1.json')
     ).configure_for_environment(cluster)
 
@@ -97,7 +97,7 @@ def test_hdfs_origin_to_hbase_destination_missing_configs(args):
 #
 
 def test_error_records_stop_pipeline_on_required_field(args):
-    pipeline = sdc.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'STOP_PIPELINE'
     pipeline.stages['ExpressionEvaluator_01'].stage_required_fields = ['/b']
@@ -110,8 +110,9 @@ def test_error_records_stop_pipeline_on_required_field(args):
         # Stage precondition: CONTAINER_0050 - The stage requires records to include the following.
         assert("CONTAINER_0050" in exception_info.value.message)
 
+
 def test_error_records_stop_pipeline_on_record_precondition(args):
-    pipeline = sdc.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'STOP_PIPELINE'
     pipeline.stages['ExpressionEvaluator_01'].stage_record_preconditions = ['${1 == 2}']
@@ -124,8 +125,9 @@ def test_error_records_stop_pipeline_on_record_precondition(args):
         # Stage precondition: CONTAINER_0051 - Unsatisfied precondition.
         assert("CONTAINER_0051" in exception_info.value.message)
 
+
 def test_error_records_to_error_on_required_field(args):
-    pipeline = sdc.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'TO_ERROR'
     pipeline.stages['ExpressionEvaluator_01'].stage_required_fields = ['/b']
@@ -133,7 +135,7 @@ def test_error_records_to_error_on_required_field(args):
     with sdc.DataCollector(version=args.sdc_version) as data_collector:
         data_collector.add_pipeline(pipeline)
         data_collector.start()
-        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_complete().snapshot
+        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
         data_collector.stop_pipeline(pipeline)
         # All records should go to error stream.
         input_records = snapshot[0]['DevDataGenerator_01'].output
@@ -143,7 +145,7 @@ def test_error_records_to_error_on_required_field(args):
 
 
 def test_error_records_to_error_on_record_precondition(args):
-    pipeline = sdc.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'TO_ERROR'
     pipeline.stages['ExpressionEvaluator_01'].stage_record_preconditions = ['${1 == 2}']
@@ -151,7 +153,7 @@ def test_error_records_to_error_on_record_precondition(args):
     with sdc.DataCollector(version=args.sdc_version) as data_collector:
         data_collector.add_pipeline(pipeline)
         data_collector.start()
-        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_complete().snapshot
+        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
         data_collector.stop_pipeline(pipeline)
         # All records should go to error stream.
         input_records = snapshot[0]['DevDataGenerator_01'].output
@@ -159,8 +161,9 @@ def test_error_records_to_error_on_record_precondition(args):
         assert len(stage.output) == 0
         assert len(stage.error_records) == len(input_records)
 
+
 def test_error_records_discard_on_required_field(args):
-    pipeline = sdc.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'DISCARD'
     pipeline.stages['ExpressionEvaluator_01'].stage_required_fields = ['/b']
@@ -168,15 +171,16 @@ def test_error_records_discard_on_required_field(args):
     with sdc.DataCollector(version=args.sdc_version) as data_collector:
         data_collector.add_pipeline(pipeline)
         data_collector.start()
-        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_complete().snapshot
+        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
         data_collector.stop_pipeline(pipeline)
         # Output of the stage should be empty as all records were discarded (doesn't fit the condition).
         stage = snapshot[0]['ExpressionEvaluator_01']
         assert len(stage.output) == 0
         assert len(stage.error_records) == 0
 
+
 def test_error_records_discard_on_record_precondition(args):
-    pipeline = sdc.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'DISCARD'
     pipeline.stages['ExpressionEvaluator_01'].stage_record_preconditions = ['${1 == 2}']
@@ -184,11 +188,9 @@ def test_error_records_discard_on_record_precondition(args):
     with sdc.DataCollector(version=args.sdc_version) as data_collector:
         data_collector.add_pipeline(pipeline)
         data_collector.start()
-        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_complete().snapshot
+        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
         data_collector.stop_pipeline(pipeline)
         # Output of the stage should be empty as all records were discarded (doesn't fit the condition).
         stage = snapshot[0]['ExpressionEvaluator_01']
         assert len(stage.output) == 0
         assert len(stage.error_records) == 0
-
-

@@ -19,7 +19,7 @@ import string
 from time import sleep
 from os.path import dirname, join, realpath
 
-from testframework import environment, sdc
+from testframework import environment, sdc, sdc_models
 from testframework.markers import *
 from testframework.utils import get_random_string
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 def test_jdbc_multitable_consumer_to_hive(args, table_name_characters, table_name_length):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
     db = environment.Database(database=args.database)
-    pipeline = sdc.Pipeline(
+    pipeline = sdc_models.Pipeline(
         join(dirname(realpath(__file__)),
              'pipelines',
              'multitable_jdbc_to_hive_replication.json')

@@ -22,7 +22,7 @@ from os.path import dirname, join
 
 import pytest
 
-from testframework import sdc
+from testframework import sdc, sdc_models
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,9 +40,9 @@ def dc(args, pipeline):
 
 @pytest.fixture(scope='module')
 def pipeline():
-    pipeline = sdc.Pipeline(join(dirname(__file__),
-                                 'pipelines',
-                                 'dev_raw_data_source_to_trash.json'))
+    pipeline = sdc_models.Pipeline(join(dirname(__file__),
+                                        'pipelines',
+                                        'dev_raw_data_source_to_trash.json'))
     yield pipeline
 
 
