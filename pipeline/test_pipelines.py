@@ -138,8 +138,8 @@ def test_error_records_to_error_on_required_field(args):
         snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
         data_collector.stop_pipeline(pipeline)
         # All records should go to error stream.
-        input_records = snapshot[0]['DevDataGenerator_01'].output
-        stage = snapshot[0]['ExpressionEvaluator_01']
+        input_records = snapshot['DevDataGenerator_01'].output
+        stage = snapshot['ExpressionEvaluator_01']
         assert len(stage.output) == 0
         assert len(stage.error_records) == len(input_records)
 
@@ -156,8 +156,8 @@ def test_error_records_to_error_on_record_precondition(args):
         snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
         data_collector.stop_pipeline(pipeline)
         # All records should go to error stream.
-        input_records = snapshot[0]['DevDataGenerator_01'].output
-        stage = snapshot[0]['ExpressionEvaluator_01']
+        input_records = snapshot['DevDataGenerator_01'].output
+        stage = snapshot['ExpressionEvaluator_01']
         assert len(stage.output) == 0
         assert len(stage.error_records) == len(input_records)
 
@@ -174,7 +174,7 @@ def test_error_records_discard_on_required_field(args):
         snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
         data_collector.stop_pipeline(pipeline)
         # Output of the stage should be empty as all records were discarded (doesn't fit the condition).
-        stage = snapshot[0]['ExpressionEvaluator_01']
+        stage = snapshot['ExpressionEvaluator_01']
         assert len(stage.output) == 0
         assert len(stage.error_records) == 0
 
@@ -191,6 +191,6 @@ def test_error_records_discard_on_record_precondition(args):
         snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
         data_collector.stop_pipeline(pipeline)
         # Output of the stage should be empty as all records were discarded (doesn't fit the condition).
-        stage = snapshot[0]['ExpressionEvaluator_01']
+        stage = snapshot['ExpressionEvaluator_01']
         assert len(stage.output) == 0
         assert len(stage.error_records) == 0
