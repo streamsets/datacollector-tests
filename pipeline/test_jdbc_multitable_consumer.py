@@ -27,6 +27,39 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+# Validate end-to-end case with stopping pipeline after it read all the data from database. This
+# test case uses the query JDBC origin.
+@database_test
+def test_query_jdbc_no_more_date(args):
+    db = environment.Database(database=args.database,
+                              username=args.database_username,
+                              password=args.database_password)
+    db_cursor = db.connection.cursor()
+    pipeline = sdc_models.Pipeline(
+        join(dirname(realpath(__file__)),
+             'pipelines',
+             'query_jdbc_no_more_data.json')
+    ).configure_for_environment(db)
+
+    try:
+        db_cursor.execute('create table data(col int)')
+        db_cursor.execute('insert into data values(1), (2), (3)')
+
+        with sdc.DataCollector(version=args.sdc_version) as data_collector:
+            data_collector.add_pipeline(pipeline)
+            data_collector.start()
+
+            data_collector.start_pipeline(pipeline).wait_for_finished()
+
+            metrics = data_collector.pipeline_history(pipeline).latest.metrics
+            assert metrics.counter("pipeline.batchCount.counter").count == 2
+            assert metrics.counter("pipeline.batchInputRecords.counter").count == 3
+            assert metrics.counter("pipeline.batchOutputRecords.counter").count == 5
+
+    finally:
+        db_cursor.execute('drop table data')
+
+
 # While writing a simple JDBC multitable consumer => Hive test, we discovered that the origin had
 # problems with table names that started with numbers (SDC-5381), so let's use parametrization to
 # run the test with various combinations of table name characters and table name lengths.
