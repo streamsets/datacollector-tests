@@ -194,3 +194,65 @@ def test_error_records_discard_on_record_precondition(args):
         stage = snapshot['ExpressionEvaluator_01']
         assert len(stage.output) == 0
         assert len(stage.error_records) == 0
+
+
+#
+# Pipeline level ELs
+#
+
+
+def test_pipeline_el_user(args):
+    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+
+    pipeline.stages['ExpressionEvaluator_01'].header_expressions = [
+        {"attributeToSet": "user", "headerAttributeExpression": "${pipeline:user()}"},
+    ]
+
+    with sdc.DataCollector(version=args.sdc_version) as dc:
+        dc.add_pipeline(pipeline)
+        dc.add_user("arvind", roles=["admin"])
+        dc.add_user("girish", roles=["admin"])
+        dc.start()
+
+        # Run the pipeline as one user.
+        dc.set_user("arvind")
+        snapshot = dc.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        dc.stop_pipeline(pipeline).wait_for_stopped()
+
+        record = snapshot['ExpressionEvaluator_01'].output[0]
+        assert record.header["user"] == "arvind"
+
+        # And then try different user.
+        dc.set_user("girish")
+        snapshot = dc.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        dc.stop_pipeline(pipeline).wait_for_stopped()
+
+        record = snapshot['ExpressionEvaluator_01'].output[0]
+        assert record.header["user"] == "girish"
+
+def test_pipeline_el_name_title_id_version(args):
+    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+
+    pipeline.title = "Most Pythonic Pipeline"
+    pipeline.metadata["dpm.pipeline.version"] = 42
+    pipeline.stages['ExpressionEvaluator_01'].header_expressions = [
+        {"attributeToSet": "title", "headerAttributeExpression": "${pipeline:title()}"},
+        {"attributeToSet": "name", "headerAttributeExpression": "${pipeline:name()}"},
+        {"attributeToSet": "version", "headerAttributeExpression": "${pipeline:version()}"},
+        {"attributeToSet": "id", "headerAttributeExpression": "${pipeline:id()}"},
+    ]
+
+    with sdc.DataCollector(version=args.sdc_version) as dc:
+        dc.add_pipeline(pipeline)
+        dc.start()
+
+        snapshot = dc.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        dc.stop_pipeline(pipeline).wait_for_stopped()
+
+        record = snapshot['ExpressionEvaluator_01'].output[0]
+        assert record.header["name"] == pipeline.name
+        assert record.header["id"] == pipeline.name
+        assert record.header["title"] == pipeline.title
+        assert record.header["version"] == '42'
+
+
