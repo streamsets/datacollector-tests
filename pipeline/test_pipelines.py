@@ -26,6 +26,12 @@ from testframework import environment, sdc, sdc_api, sdc_models
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+#
+# Utility functions
+#
+
+def pipeline_file_path(file, dir='pipelines'):
+    return join(dirname(realpath(__file__)), dir, file)
 
 #
 # Basic cluster mode tests.
@@ -34,9 +40,7 @@ logger = logging.getLogger(__name__)
 @cluster_test
 def test_hdfs_origin_to_hbase_destination(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
-    pipeline = sdc_models.Pipeline(
-        join(dirname(realpath(__file__)), 'pipelines', 'pipeline_1.json')
-    ).configure_for_environment(cluster)
+    pipeline = sdc_models.Pipeline(pipeline_filepath('pipeline_1.json')).configure_for_environment(cluster)
 
     # Generate a random string to use when naming the HDFS input path folder and the HBase table.
     random_name = str(uuid4())
@@ -76,9 +80,7 @@ def test_hdfs_origin_to_hbase_destination(args):
 @cluster_test
 def test_hdfs_origin_to_hbase_destination_missing_configs(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
-    pipeline = sdc_models.Pipeline(
-        join(dirname(realpath(__file__)), 'pipelines', 'pipeline_1.json')
-    ).configure_for_environment(cluster)
+    pipeline = sdc_models.Pipeline(pipeline_file_path('pipeline_1.json')).configure_for_environment(cluster)
 
     # Update our pipeline stages to use the input path and table name we used above.
     pipeline.stages['HadoopFS_01'].input_paths = []
@@ -97,7 +99,7 @@ def test_hdfs_origin_to_hbase_destination_missing_configs(args):
 #
 
 def test_error_records_stop_pipeline_on_required_field(args):
-    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline(pipeline_file_path('random_expression_trash.json'))
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'STOP_PIPELINE'
     pipeline.stages['ExpressionEvaluator_01'].stage_required_fields = ['/b']
@@ -112,7 +114,7 @@ def test_error_records_stop_pipeline_on_required_field(args):
 
 
 def test_error_records_stop_pipeline_on_record_precondition(args):
-    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline(pipeline_file_path('random_expression_trash.json'))
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'STOP_PIPELINE'
     pipeline.stages['ExpressionEvaluator_01'].stage_record_preconditions = ['${1 == 2}']
@@ -127,7 +129,7 @@ def test_error_records_stop_pipeline_on_record_precondition(args):
 
 
 def test_error_records_to_error_on_required_field(args):
-    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline(pipeline_file_path('random_expression_trash.json'))
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'TO_ERROR'
     pipeline.stages['ExpressionEvaluator_01'].stage_required_fields = ['/b']
@@ -145,7 +147,7 @@ def test_error_records_to_error_on_required_field(args):
 
 
 def test_error_records_to_error_on_record_precondition(args):
-    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline(pipeline_file_path('random_expression_trash.json'))
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'TO_ERROR'
     pipeline.stages['ExpressionEvaluator_01'].stage_record_preconditions = ['${1 == 2}']
@@ -163,7 +165,7 @@ def test_error_records_to_error_on_record_precondition(args):
 
 
 def test_error_records_discard_on_required_field(args):
-    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline(pipeline_file_path('random_expression_trash.json'))
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'DISCARD'
     pipeline.stages['ExpressionEvaluator_01'].stage_required_fields = ['/b']
@@ -180,7 +182,7 @@ def test_error_records_discard_on_required_field(args):
 
 
 def test_error_records_discard_on_record_precondition(args):
-    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline(pipeline_file_path('random_expression_trash.json'))
 
     pipeline.stages['ExpressionEvaluator_01'].stage_on_record_error = 'DISCARD'
     pipeline.stages['ExpressionEvaluator_01'].stage_record_preconditions = ['${1 == 2}']
@@ -202,7 +204,7 @@ def test_error_records_discard_on_record_precondition(args):
 
 
 def test_pipeline_el_user(args):
-    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline(pipeline_file_path('random_expression_trash.json'))
 
     pipeline.stages['ExpressionEvaluator_01'].header_expressions = [
         {"attributeToSet": "user", "headerAttributeExpression": "${pipeline:user()}"},
@@ -231,7 +233,7 @@ def test_pipeline_el_user(args):
         assert record.header["user"] == "girish"
 
 def test_pipeline_el_name_title_id_version(args):
-    pipeline = sdc_models.Pipeline('pipelines/random_expression_trash.json')
+    pipeline = sdc_models.Pipeline(pipeline_file_path('random_expression_trash.json'))
 
     pipeline.title = "Most Pythonic Pipeline"
     pipeline.metadata["dpm.pipeline.version"] = 42
@@ -255,4 +257,21 @@ def test_pipeline_el_name_title_id_version(args):
         assert record.header["title"] == pipeline.title
         assert record.header["version"] == '42'
 
+
+
+def test_str_unescape_and_replace_el(args):
+    pipeline = sdc_models.Pipeline(pipeline_file_path('string_el_pipeline.json'))
+
+    with sdc.DataCollector(version=args.sdc_version) as data_collector:
+        data_collector.add_pipeline(pipeline)
+        data_collector.start()
+        snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        input_records = snapshot['DevRawDataSource_01'].output
+        stage = snapshot['ExpressionEvaluator_01']
+        assert len(stage.output) == len(input_records)
+        el_out = stage.output[0]
+        assert input_records[0].value['value']['text']['value'] == 'here\nis\tsome\ndata'
+        assert el_out.value['value']['text']['value'] == 'here\nis\tsome\ndata'
+        assert el_out.value['value']['transformed']['value'] == 'here<NEWLINE>is\tsome<NEWLINE>data'
+        assert el_out.value['value']['transformed2']['value'] == 'here<NEWLINE>is<TAB>some<NEWLINE>data'
 
