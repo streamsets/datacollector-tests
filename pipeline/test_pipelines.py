@@ -93,6 +93,37 @@ def test_hdfs_origin_to_hbase_destination_missing_configs(args):
         with pytest.raises(sdc_api.StartError):
             data_collector.start_pipeline(pipeline).wait_for_finished()
 
+#
+# Strict impersonation (SDC-3704).
+#
+
+@cluster_test
+def test_strict_impersonation_hdfs(args):
+    cluster = environment.Cluster(cluster_server=args.cluster_server)
+    pipeline = sdc_models.Pipeline(
+        pipeline_file_path('test_strict_impersonation_hdfs.json')
+    ).configure_for_environment(cluster)
+
+    hdfs_path = os.path.join(os.sep, "tmp", str(uuid4()))
+    pipeline.stages['HadoopFS_01'].output_path = hdfs_path
+
+    dc = sdc.DataCollector(version=args.sdc_version)
+    dc.set_user('admin')
+    dc.add_pipeline(pipeline)
+    dc.sdc_properties['stage.conf_hadoop.always.impersonate.current.user'] = 'true'
+
+    # Run at least one batch of data (write something).
+    dc.start()
+    dc.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished()
+    dc.stop_pipeline(pipeline).wait_for_stopped()
+
+    # Validate that the files were created with proper user name.
+    entries = cluster.hdfs.client.list(hdfs_path)
+    assert len(entries) == 1
+
+    status = cluster.hdfs.client.status("{0}/{1}".format(hdfs_path, entries[0]))
+    assert status['owner'] == 'admin'
+
 
 #
 # Error record handing.
