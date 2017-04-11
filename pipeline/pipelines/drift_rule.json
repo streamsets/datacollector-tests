@@ -1,0 +1,299 @@
+{
+  "pipelineConfig" : {
+    "schemaVersion" : 3,
+    "version" : 6,
+    "pipelineId" : "driftrule9d9464ca-02e1-4aec-a074-aeacd4b56bf9",
+    "title" : "drift_rule",
+    "description" : "",
+    "uuid" : "f748fb9c-851b-4004-bcf6-59623ddc0035",
+    "configuration" : [ {
+      "name" : "executionMode",
+      "value" : "STANDALONE"
+    }, {
+      "name" : "deliveryGuarantee",
+      "value" : "AT_LEAST_ONCE"
+    }, {
+      "name" : "shouldRetry",
+      "value" : true
+    }, {
+      "name" : "retryAttempts",
+      "value" : -1
+    }, {
+      "name" : "memoryLimit",
+      "value" : "${jvm:maxMemoryMB() * 0.65}"
+    }, {
+      "name" : "memoryLimitExceeded",
+      "value" : "STOP_PIPELINE"
+    }, {
+      "name" : "notifyOnStates",
+      "value" : [ "RUN_ERROR", "STOPPED", "FINISHED" ]
+    }, {
+      "name" : "emailIDs",
+      "value" : [ ]
+    }, {
+      "name" : "constants",
+      "value" : [ ]
+    }, {
+      "name" : "badRecordsHandling",
+      "value" : "streamsets-datacollector-basic-lib::com_streamsets_pipeline_stage_destination_devnull_ToErrorNullDTarget::1"
+    }, {
+      "name" : "clusterSlaveMemory",
+      "value" : 1024
+    }, {
+      "name" : "clusterSlaveJavaOpts",
+      "value" : "-XX:+UseConcMarkSweepGC -XX:+UseParNewGC -Dlog4j.debug"
+    }, {
+      "name" : "clusterLauncherEnv",
+      "value" : [ ]
+    }, {
+      "name" : "mesosDispatcherURL",
+      "value" : null
+    }, {
+      "name" : "hdfsS3ConfDir",
+      "value" : null
+    }, {
+      "name" : "rateLimit",
+      "value" : 0
+    }, {
+      "name" : "maxRunners",
+      "value" : 0
+    }, {
+      "name" : "webhookConfigs",
+      "value" : [ ]
+    }, {
+      "name" : "statsAggregatorStage",
+      "value" : ""
+    } ],
+    "uiInfo" : {
+      "previewConfig" : {
+        "previewSource" : "CONFIGURED_SOURCE",
+        "batchSize" : 10,
+        "timeout" : 10000,
+        "writeToDestinations" : false,
+        "showHeader" : false,
+        "showFieldType" : true,
+        "rememberMe" : false
+      }
+    },
+    "stages" : [ {
+      "instanceName" : "DevDataGenerator_01",
+      "library" : "streamsets-datacollector-dev-lib",
+      "stageName" : "com_streamsets_pipeline_stage_devtest_RandomDataGeneratorSource",
+      "stageVersion" : "5",
+      "configuration" : [ {
+        "name" : "dataGenConfigs",
+        "value" : [ {
+          "type" : "STRING",
+          "precision" : 10,
+          "scale" : 2,
+          "field" : "nothing"
+        } ]
+      }, {
+        "name" : "rootFieldType",
+        "value" : "MAP"
+      }, {
+        "name" : "headerAttributes",
+        "value" : [ ]
+      }, {
+        "name" : "delay",
+        "value" : 1000
+      }, {
+        "name" : "batchSize",
+        "value" : 1000
+      }, {
+        "name" : "numThreads",
+        "value" : 1
+      }, {
+        "name" : "eventName",
+        "value" : "generated-event"
+      }, {
+        "name" : "stageOnRecordError",
+        "value" : "TO_ERROR"
+      } ],
+      "uiInfo" : {
+        "description" : "",
+        "label" : "Dev Data Generator 1",
+        "xPos" : 60,
+        "yPos" : 50,
+        "stageType" : "SOURCE"
+      },
+      "inputLanes" : [ ],
+      "outputLanes" : [ "DevDataGenerator_01OutputLane14919532714830" ],
+      "eventLanes" : [ "DevDataGenerator_01_EventLane" ]
+    }, {
+      "instanceName" : "Trash_01",
+      "library" : "streamsets-datacollector-basic-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_devnull_NullDTarget",
+      "stageVersion" : "1",
+      "configuration" : [ ],
+      "uiInfo" : {
+        "description" : "",
+        "label" : "Trash 1",
+        "xPos" : 280,
+        "yPos" : 200,
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ "DevDataGenerator_01_EventLane" ],
+      "outputLanes" : [ ],
+      "eventLanes" : [ ]
+    }, {
+      "instanceName" : "Trash_02",
+      "library" : "streamsets-datacollector-basic-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_devnull_NullDTarget",
+      "stageVersion" : "1",
+      "configuration" : [ ],
+      "uiInfo" : {
+        "description" : "",
+        "label" : "Trash 2",
+        "xPos" : 280,
+        "yPos" : 50,
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ "DevDataGenerator_01OutputLane14919532714830" ],
+      "outputLanes" : [ ],
+      "eventLanes" : [ ]
+    } ],
+    "errorStage" : {
+      "instanceName" : "Discard_ErrorStage",
+      "library" : "streamsets-datacollector-basic-lib",
+      "stageName" : "com_streamsets_pipeline_stage_destination_devnull_ToErrorNullDTarget",
+      "stageVersion" : "1",
+      "configuration" : [ ],
+      "uiInfo" : {
+        "description" : "",
+        "label" : "Error Records - Discard",
+        "xPos" : 500,
+        "yPos" : 50,
+        "stageType" : "TARGET"
+      },
+      "inputLanes" : [ ],
+      "outputLanes" : [ ],
+      "eventLanes" : [ ]
+    },
+    "info" : {
+      "pipelineId" : "driftrule9d9464ca-02e1-4aec-a074-aeacd4b56bf9",
+      "title" : "drift_rule",
+      "description" : "",
+      "created" : 1491953267590,
+      "lastModified" : 1491953296942,
+      "creator" : "admin",
+      "lastModifier" : "admin",
+      "lastRev" : "0",
+      "uuid" : "f748fb9c-851b-4004-bcf6-59623ddc0035",
+      "valid" : true,
+      "metadata" : {
+        "labels" : [ ]
+      },
+      "name" : "driftrule9d9464ca-02e1-4aec-a074-aeacd4b56bf9"
+    },
+    "metadata" : {
+      "labels" : [ ]
+    },
+    "statsAggregatorStage" : null,
+    "issues" : {
+      "stageIssues" : { },
+      "pipelineIssues" : [ ],
+      "issueCount" : 0
+    },
+    "previewable" : true,
+    "valid" : true
+  },
+  "pipelineRules" : {
+    "schemaVersion" : 2,
+    "version" : 1,
+    "metricsRuleDefinitions" : [ {
+      "id" : "badRecordsAlertID",
+      "alertText" : "High incidence of Error Records",
+      "metricId" : "pipeline.batchErrorRecords.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > 100}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1491953267601,
+      "valid" : true
+    }, {
+      "id" : "stageErrorAlertID",
+      "alertText" : "High incidence of Stage Errors",
+      "metricId" : "pipeline.batchErrorMessages.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > 100}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1491953267601,
+      "valid" : true
+    }, {
+      "id" : "idleGaugeID",
+      "alertText" : "Pipeline is Idle",
+      "metricId" : "RuntimeStatsGauge.gauge",
+      "metricType" : "GAUGE",
+      "metricElement" : "TIME_OF_LAST_RECEIVED_RECORD",
+      "condition" : "${time:now() - value() > 120000}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1491953267601,
+      "valid" : true
+    }, {
+      "id" : "batchTimeAlertID",
+      "alertText" : "Batch taking more time to process",
+      "metricId" : "RuntimeStatsGauge.gauge",
+      "metricType" : "GAUGE",
+      "metricElement" : "CURRENT_BATCH_AGE",
+      "condition" : "${value() > 200}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1491953267601,
+      "valid" : true
+    }, {
+      "id" : "memoryLimitAlertID",
+      "alertText" : "Memory limit for pipeline exceeded",
+      "metricId" : "pipeline.memoryConsumed.counter",
+      "metricType" : "COUNTER",
+      "metricElement" : "COUNTER_COUNT",
+      "condition" : "${value() > (jvm:maxMemoryMB() * 0.65)}",
+      "sendEmail" : false,
+      "enabled" : false,
+      "timestamp" : 1491953267601,
+      "valid" : true
+    } ],
+    "dataRuleDefinitions" : [ ],
+    "driftRuleDefinitions" : [ {
+      "id" : "dataDriftRule1491953299919",
+      "label" : "drift-rule-data-lane",
+      "lane" : "DevDataGenerator_01OutputLane14919532714830",
+      "samplingPercentage" : 5.0,
+      "samplingRecordsToRetain" : 10,
+      "condition" : "${1 != 0}",
+      "alertEnabled" : true,
+      "alertText" : "drift-rule-data-lane",
+      "meterEnabled" : true,
+      "sendEmail" : false,
+      "enabled" : true,
+      "timestamp" : 0,
+      "valid" : true
+    }, {
+      "id" : "dataDriftRule1491953336049",
+      "label" : "drift-rule-event-lane",
+      "lane" : "DevDataGenerator_01_EventLane",
+      "samplingPercentage" : 5.0,
+      "samplingRecordsToRetain" : 10,
+      "condition" : "${1 != 0}",
+      "alertEnabled" : true,
+      "alertText" : "drift-rule-event-lane",
+      "meterEnabled" : true,
+      "sendEmail" : false,
+      "enabled" : true,
+      "timestamp" : 0,
+      "valid" : true
+    } ],
+    "emailIds" : [ ],
+    "uuid" : "d44a3880-5dfc-4d7b-ab40-0fc3179ce17f",
+    "configuration" : [ {
+      "name" : "webhookConfigs",
+      "value" : [ ]
+    } ],
+    "ruleIssues" : [ ]
+  },
+  "libraryDefinitions" : null
+}

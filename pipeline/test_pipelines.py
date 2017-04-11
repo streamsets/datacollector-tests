@@ -124,6 +124,61 @@ def test_strict_impersonation_hdfs(args):
     status = cluster.hdfs.client.status("{0}/{1}".format(hdfs_path, entries[0]))
     assert status['owner'] == 'admin'
 
+#
+# Pipeline rules.
+#
+
+def test_basic_data_rules(args):
+    pipeline = sdc_models.Pipeline(pipeline_file_path('data_rules.json'))
+    dc = sdc.DataCollector(version=args.sdc_version)
+    dc.add_pipeline(pipeline)
+    dc.start()
+
+    # Run at least 100 batches.
+    dc.start_pipeline(pipeline).wait_for_pipeline_batch_count(100)
+
+    alerts = dc.get_alerts().for_pipeline(pipeline)
+    assert len(alerts) == 2
+
+    # The order of alerts is arbitrary, so clean up
+    data_alert = alerts[0] if alerts[0].label == "data-rule-data-lane" else alerts[1]
+    event_alert = alerts[1] if alerts[1].label == "data-rule-event-lane" else alerts[0]
+
+    assert data_alert.label == "data-rule-data-lane"
+    assert data_alert.alert_texts == ["data-rule-data-lane"]
+    assert event_alert.label == "data-rule-event-lane"
+    assert event_alert.alert_texts == ["data-rule-event-lane"]
+
+    # Tear down.
+    dc.stop_pipeline(pipeline).wait_for_stopped()
+    dc.tear_down()
+
+
+def test_basic_drift_rules(args):
+    pipeline = sdc_models.Pipeline(pipeline_file_path('drift_rule.json'))
+    dc = sdc.DataCollector(version=args.sdc_version)
+    dc.add_pipeline(pipeline)
+    dc.start()
+
+    # For drift rules, running a single batch is sufficient.
+    dc.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+
+    alerts = dc.get_alerts().for_pipeline(pipeline)
+    assert len(alerts) == 2
+
+    # The order of alerts is arbitrary, so clean up
+    data_alert = alerts[0] if alerts[0].label == "drift-rule-data-lane" else alerts[1]
+    event_alert = alerts[1] if alerts[1].label == "drift-rule-event-lane" else alerts[0]
+
+    assert data_alert.label == "drift-rule-data-lane"
+    assert data_alert.alert_texts == ["drift-rule-data-lane"]
+    assert event_alert.label == "drift-rule-event-lane"
+    assert event_alert.alert_texts == ["drift-rule-event-lane"]
+
+    # Tear down.
+    dc.stop_pipeline(pipeline).wait_for_stopped()
+    dc.tear_down()
+
 
 #
 # Error record handing.
