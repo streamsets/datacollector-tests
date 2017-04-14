@@ -1,3 +1,5 @@
+# Copyright 2017 StreamSets Inc.
+#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -16,20 +18,20 @@
 
 import json
 import logging
-import requests
 from time import sleep
 from os.path import dirname, join
 
 import pytest
 
-from testframework import sdc, sdc_models
+from testframework import sdc, sdc_api, sdc_models
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # pylint: disable=C0103
 
 
 @pytest.fixture(scope='module')
-def dc(args, pipeline):
+def dc(args, pipeline): # pylint: disable=C0103
+    """Create data collector for the tests and tear it down after execution of all tests. """
     dc = sdc.DataCollector(version=args.sdc_version)
     dc.add_pipeline(pipeline)
     dc.start()
@@ -39,7 +41,8 @@ def dc(args, pipeline):
 
 
 @pytest.fixture(scope='module')
-def pipeline():
+def pipeline(): # pylint: disable=C0103
+    """Create pipeline for the tests. """
     pipeline = sdc_models.Pipeline(join(dirname(__file__),
                                         'pipelines',
                                         'dev_raw_data_source_to_trash.json'))
@@ -47,6 +50,8 @@ def pipeline():
 
 
 def test_pipeline_status(dc, pipeline):
+    """For a running and a stopped pipeline,
+       confirm that status returns appropriate values in both cases."""
     dc.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
 
     # Verify running pipeline's status
@@ -60,9 +65,10 @@ def test_pipeline_status(dc, pipeline):
 
 
 def test_pipeline_definitions(dc, pipeline):
+    """For a running pipeline, confirm that definitions returns some values.
+       Stop the pipeline and confirm that definitions return same values as before."""
     dc.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
 
-    # Verify definitions
     running_pipeline_definitions = dc.api_client.get_definitions()
     assert running_pipeline_definitions is not None
 
@@ -74,9 +80,11 @@ def test_pipeline_definitions(dc, pipeline):
 
 
 def test_pipeline_metrics(dc, pipeline):
+    """For a running pipeline, confirm that metrics endpoint returns some values,
+       which change after some time when again metrics are received,
+       Stop the pipeline and confirm that metrics endpoint return empty."""
     dc.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
 
-    # Verify pipeline metrics
     first_metrics_json = dc.api_client.get_pipeline_metrics(pipeline.name)
     assert first_metrics_json is not None
     sleep(15)
@@ -84,16 +92,42 @@ def test_pipeline_metrics(dc, pipeline):
     assert second_metrics_json is not None
     assert first_metrics_json != second_metrics_json
 
-    # Stop the pipeline and verify stopped pipeline's metrics
     dc.stop_pipeline(pipeline).wait_for_stopped()
     assert dc.api_client.get_pipeline_metrics(pipeline.name) == {}
 
 
+def test_pipeline_snapshot(dc, pipeline):
+    """For a running pipeline, confirm that snapshot returns expected values."""
+    dc.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
+
+    snapshot = dc.capture_snapshot(pipeline, 'kirtiSnapshot').wait_for_finished().snapshot
+    assert snapshot is not None
+    snap_data = snapshot['DevRawDataSource_01']
+    assert len(snap_data.output) == 2
+    assert snap_data.output[0].value['value']['emp_name']['value'] == 'sdc1'
+    assert snap_data.output[0].value['value']['emp_id']['value'] == '123456'
+    assert snap_data.output[1].value['value']['emp_name']['value'] == 'sdc2'
+
+    dc.stop_pipeline(pipeline).wait_for_stopped()
+
+def test_pipeline_preview(dc, pipeline):
+    """Run preview and confirm that preview returns expected values
+       and no issues are reported."""
+    preview = dc.run_pipeline_preview(pipeline).wait_for_finished().preview
+    assert preview is not None
+    assert preview.issues.issues_count == 0
+    preview_data = preview['DevRawDataSource_01']
+    assert len(preview_data.output) == 2
+    assert preview_data.output[0].value['value']['emp_name']['value'] == 'sdc1'
+    assert preview_data.output[0].value['value']['emp_id']['value'] == '123456'
+    assert preview_data.output[1].value['value']['emp_name']['value'] == 'sdc2'
+
 def test_invalid_execution_mode(dc, pipeline):
-    # Set executionMode to invalid value and add that as a new pipeline
+    """Set executionMode to invalid value for a pipeline,
+       try starting it and confirm that it raises expected exception."""
     pipeline.configuration['executionMode'] = 'Invalid_Execution_Mode'
     pipeline.name = 'Invalid_Execution_Mode Pipeline'
     dc.add_pipeline(pipeline)
 
-    with pytest.raises(requests.exceptions.HTTPError):
-        dc.start_pipeline(pipeline)
+    with pytest.raises(sdc_api.StartError):
+        dc.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
