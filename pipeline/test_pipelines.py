@@ -338,8 +338,8 @@ def test_pipeline_el_name_title_id_version(args):
         dc.stop_pipeline(pipeline).wait_for_stopped()
 
         record = snapshot['ExpressionEvaluator_01'].output[0]
-        assert record.header["name"] == pipeline.name
-        assert record.header["id"] == pipeline.name
+        assert record.header["name"] == pipeline.id
+        assert record.header["id"] == pipeline.id
         assert record.header["title"] == pipeline.title
         assert record.header["version"] == '42'
 

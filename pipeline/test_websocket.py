@@ -58,7 +58,7 @@ def test_websocket(dc, websocket_server_pipeline, websocket_client_pipeline):
     dc.start_pipeline(websocket_server_pipeline,
                       runtime_parameters).wait_for_status(status='RUNNING', timeout_sec=300)
     pipeline_status = dc.api_client.get_pipeline_status(
-        websocket_server_pipeline.name).response.json()
+        websocket_server_pipeline.id).response.json()
     status = pipeline_status.get('status')
     assert status == 'RUNNING'
     attributes = pipeline_status.get('attributes')

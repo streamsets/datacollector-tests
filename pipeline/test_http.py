@@ -62,7 +62,7 @@ def test_http(dc, http_server_pipeline, http_client_pipeline):
     dc.start_pipeline(http_server_pipeline,
                       server_runtime_parameters).wait_for_status(status='RUNNING', timeout_sec=300)
     pipeline_status = dc.api_client.get_pipeline_status(
-        http_server_pipeline.name).response.json()
+        http_server_pipeline.id).response.json()
     status = pipeline_status.get('status')
     assert status == 'RUNNING'
     attributes = pipeline_status.get('attributes')

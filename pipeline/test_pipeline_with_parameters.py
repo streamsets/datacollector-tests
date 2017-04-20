@@ -50,7 +50,7 @@ def test_pipeline_start_with_parameters(dc, pipeline):
     dc.start_pipeline(pipeline, runtime_parameters).wait_for_status(status='RUNNING', timeout_sec=300)
 
     # Verify running pipeline's status
-    pipeline_status = dc.api_client.get_pipeline_status(pipeline.name).response.json()
+    pipeline_status = dc.api_client.get_pipeline_status(pipeline.id).response.json()
     status = pipeline_status.get('status')
     assert status == 'RUNNING'
 
@@ -62,6 +62,6 @@ def test_pipeline_start_with_parameters(dc, pipeline):
 
     # Stop the pipeline and verify pipeline's status
     dc.stop_pipeline(pipeline).wait_for_stopped()
-    current_status = dc.api_client.get_pipeline_status(pipeline.name).response.json().get('status')
+    current_status = dc.api_client.get_pipeline_status(pipeline.id).response.json().get('status')
     assert current_status == 'STOPPED'
 

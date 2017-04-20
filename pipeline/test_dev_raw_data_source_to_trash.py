@@ -55,12 +55,12 @@ def test_pipeline_status(dc, pipeline):
     dc.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
 
     # Verify running pipeline's status
-    current_status = dc.api_client.get_pipeline_status(pipeline.name).response.json().get('status')
+    current_status = dc.api_client.get_pipeline_status(pipeline.id).response.json().get('status')
     assert current_status == 'RUNNING'
 
     # Stop the pipeline and verify pipeline's status
     dc.stop_pipeline(pipeline).wait_for_stopped()
-    current_status = dc.api_client.get_pipeline_status(pipeline.name).response.json().get('status')
+    current_status = dc.api_client.get_pipeline_status(pipeline.id).response.json().get('status')
     assert current_status == 'STOPPED'
 
 
@@ -85,15 +85,15 @@ def test_pipeline_metrics(dc, pipeline):
        Stop the pipeline and confirm that metrics endpoint return empty."""
     dc.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
 
-    first_metrics_json = dc.api_client.get_pipeline_metrics(pipeline.name)
+    first_metrics_json = dc.api_client.get_pipeline_metrics(pipeline.id)
     assert first_metrics_json is not None
     sleep(15)
-    second_metrics_json = dc.api_client.get_pipeline_metrics(pipeline.name)
+    second_metrics_json = dc.api_client.get_pipeline_metrics(pipeline.id)
     assert second_metrics_json is not None
     assert first_metrics_json != second_metrics_json
 
     dc.stop_pipeline(pipeline).wait_for_stopped()
-    assert dc.api_client.get_pipeline_metrics(pipeline.name) == {}
+    assert dc.api_client.get_pipeline_metrics(pipeline.id) == {}
 
 
 def test_pipeline_snapshot(dc, pipeline):
@@ -126,7 +126,7 @@ def test_invalid_execution_mode(dc, pipeline):
     """Set executionMode to invalid value for a pipeline,
        try starting it and confirm that it raises expected exception."""
     pipeline.configuration['executionMode'] = 'Invalid_Execution_Mode'
-    pipeline.name = 'Invalid_Execution_Mode Pipeline'
+    pipeline.id = 'Invalid_Execution_Mode Pipeline'
     dc.add_pipeline(pipeline)
 
     with pytest.raises(sdc_api.StartError):

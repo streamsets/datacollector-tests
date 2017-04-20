@@ -64,12 +64,12 @@ def test_pipeline_status(data_collector, pipeline):
     data_collector.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
 
     # Verify running pipeline's status
-    current_status = data_collector.api_client.get_pipeline_status(pipeline.name).response.json().get('status')
+    current_status = data_collector.api_client.get_pipeline_status(pipeline.id).response.json().get('status')
     assert current_status == 'RUNNING'
 
     # Stop the pipeline and verify pipeline's status
     data_collector.stop_pipeline(pipeline).wait_for_stopped()
-    current_status = data_collector.api_client.get_pipeline_status(pipeline.name).response.json().get('status')
+    current_status = data_collector.api_client.get_pipeline_status(pipeline.id).response.json().get('status')
     assert current_status == 'STOPPED'
 
 
@@ -94,15 +94,15 @@ def test_pipeline_metrics(data_collector, pipeline):
        Stop the pipeline and confirm that metrics endpoint return empty."""
     data_collector.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
 
-    first_metrics_json = data_collector.api_client.get_pipeline_metrics(pipeline.name)
+    first_metrics_json = data_collector.api_client.get_pipeline_metrics(pipeline.id)
     assert first_metrics_json is not None
     sleep(15)
-    second_metrics_json = data_collector.api_client.get_pipeline_metrics(pipeline.name)
+    second_metrics_json = data_collector.api_client.get_pipeline_metrics(pipeline.id)
     assert second_metrics_json is not None
     assert first_metrics_json != second_metrics_json
 
     data_collector.stop_pipeline(pipeline).wait_for_stopped()
-    assert data_collector.api_client.get_pipeline_metrics(pipeline.name) == {}
+    assert data_collector.api_client.get_pipeline_metrics(pipeline.id) == {}
 
 
 def test_pipeline_snapshot(data_collector, pipeline):
@@ -133,7 +133,7 @@ def test_invalid_execution_mode(data_collector, pipeline):
     """Set executionMode to invalid value for a pipeline,
        try starting it and confirm that it raises expected exception."""
     pipeline.configuration['executionMode'] = 'Invalid_Execution_Mode'
-    pipeline.name = 'Invalid_Execution_Mode Pipeline'
+    pipeline.id = 'Invalid_Execution_Mode Pipeline'
     data_collector.add_pipeline(pipeline)
 
     with pytest.raises(sdc_api.StartError):
