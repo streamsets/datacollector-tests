@@ -39,7 +39,7 @@ def data_collector():
 
 
 @pytest.fixture(scope='module')
-def pipeline(data_collector): # pylint: disable=C0103
+def pipeline(data_collector):
     """Create pipeline for the tests. """
     pipeline_builder = data_collector.get_pipeline_builder()
 
@@ -109,9 +109,9 @@ def test_pipeline_snapshot(data_collector, pipeline):
     """For a running pipeline, confirm that snapshot returns expected values."""
     data_collector.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
 
-    snapshot = data_collector.capture_snapshot(pipeline, 'kirtiSnapshot').wait_for_finished().snapshot
+    snapshot = data_collector.capture_snapshot(pipeline).wait_for_finished().snapshot
     assert snapshot is not None
-    snap_data = snapshot['DevRawDataSource_01']
+    snap_data = snapshot[pipeline.origin_stage.instance_name]
     assert len(snap_data.output) == 1
     assert snap_data.output[0].value['value']['emp_id']['value'] == '123456'
 
@@ -124,7 +124,7 @@ def test_pipeline_preview(data_collector, pipeline):
     preview = data_collector.run_pipeline_preview(pipeline).wait_for_finished().preview
     assert preview is not None
     assert preview.issues.issues_count == 0
-    preview_data = preview['DevRawDataSource_01']
+    preview_data = preview[pipeline.origin_stage.instance_name]
     assert len(preview_data.output) == 1
     assert preview_data.output[0].value['value']['emp_id']['value'] == '123456'
 
