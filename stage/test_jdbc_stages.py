@@ -7,11 +7,6 @@ import sqlalchemy
 from testframework import environment, sdc
 from testframework.utils import get_random_string
 
-# Assign stage name strings to variables here to allow for easy reuse across multiple tests.
-JDBC_MULTITABLE_CONSUMER_ORIGIN_STAGE_NAME = (
-    'com_streamsets_pipeline_stage_origin_jdbc_table_TableJdbcDSource'
-)
-
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -21,18 +16,23 @@ def data_collector(args, database):
     data_collector.add_stage_lib(*database.sdc_stage_libs)
     data_collector.start()
     yield data_collector
-    data_collector.tear_down()
+    if data_collector.tear_down_on_exit:
+        data_collector.tear_down()
 
 @pytest.fixture(scope='module')
 def database(args):
     return environment.Database(database=args.database)
 
 def test_jdbc_multitable_consumer_origin_simple(data_collector, database):
-    pipeline = data_collector.get_generated_pipeline(
-        pipeline_type='origin_test',
-        stage_name=JDBC_MULTITABLE_CONSUMER_ORIGIN_STAGE_NAME,
-        stage_lib=database.sdc_stage_libs[0]
-    ).configure_for_environment(database)
+    pipeline_builder = data_collector.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    trash = pipeline_builder.add_stage('Trash')
+    discard = pipeline_builder.add_error_stage('Discard')
+
+    jdbc_multitable_consumer > trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
 
     metadata = sqlalchemy.MetaData()
     table_name = get_random_string(string.ascii_letters, 20)
