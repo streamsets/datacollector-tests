@@ -37,7 +37,7 @@ def pipeline_file_path(file, dir='pipelines'):
 # Basic cluster mode tests.
 #
 
-@cluster_test
+@cluster('cdh')
 def test_hdfs_origin_to_hbase_destination(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
     pipeline = sdc_models.Pipeline(pipeline_filepath('pipeline_1.json')).configure_for_environment(cluster)
@@ -77,7 +77,7 @@ def test_hdfs_origin_to_hbase_destination(args):
         cluster.hbase.client.delete_table(name=random_name, disable=True)
 
 
-@cluster_test
+@cluster('cdh')
 def test_hdfs_origin_to_hbase_destination_missing_configs(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
     pipeline = sdc_models.Pipeline(pipeline_file_path('pipeline_1.json')).configure_for_environment(cluster)
@@ -97,7 +97,7 @@ def test_hdfs_origin_to_hbase_destination_missing_configs(args):
 # Strict impersonation (SDC-3704).
 #
 
-@cluster_test
+@cluster('cdh')
 def test_strict_impersonation_hdfs(args):
     cluster = environment.Cluster(cluster_server=args.cluster_server)
     pipeline = sdc_models.Pipeline(

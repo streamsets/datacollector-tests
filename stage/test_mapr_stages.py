@@ -27,6 +27,7 @@ import string
 
 import pytest
 
+from testframework.markers import *
 from testframework import environment, sdc
 from testframework.utils import get_random_string
 
@@ -36,6 +37,7 @@ logger.setLevel(logging.DEBUG)
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
 
+@cluster('mapr')
 def test_mapr_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     """Write a simple file into a MapR FS folder with a randomly-generated name and confirm that the MapR FS origin
     successfully reads it. Because cluster mode pipelines don't support snapshots, we do this verification using a
