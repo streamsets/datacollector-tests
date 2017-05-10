@@ -173,7 +173,7 @@ def teardown_tables(db, table_names):
         close_cursor_quietly(db_cursor)
 
 
-@database_test
+@database
 @pytest.mark.parametrize('table_name_characters', [string.ascii_letters, string.digits])
 @pytest.mark.parametrize('table_name_length', [20])
 @pytest.mark.parametrize('no_of_tables', [25, 50])

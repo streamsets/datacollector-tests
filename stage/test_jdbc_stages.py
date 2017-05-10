@@ -3,10 +3,12 @@ import string
 
 import sqlalchemy
 
+from testframework.markers import *
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+@database
 def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, database):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
