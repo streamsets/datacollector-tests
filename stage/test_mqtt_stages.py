@@ -5,18 +5,6 @@ from testframework.markers import *
 
 logger = logging.getLogger(__name__)
 
-def do_mqtt_sanity_check(mqtt_inst, topic):
-    """
-    perform mqtt sanity check to ensure broker is functioning (publish a message and consume it)
-    """
-
-    sanity_check_msg = b'sanity check from Python'
-    mqtt_inst.publish_message(topic=topic, payload=sanity_check_msg, qos=2)
-    sanity_check_msgs = mqtt_inst.get_messages(num=1)
-    assert len(sanity_check_msgs) == 1
-    assert sanity_check_msgs[0].payload == sanity_check_msg
-    assert sanity_check_msgs[0].topic == topic
-
 @mqtt
 def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
     """Integration test for the MQTT destination stage.
@@ -30,12 +18,10 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
     """
     # pylint: disable=too-many-locals
 
-    sanity_check_topic = 'SANITY_CHECK'
     data_topic = 'testframework_mqtt_topic'
 
     try:
-        mqtt_broker.initialize(initial_topics=[data_topic, sanity_check_topic])
-        do_mqtt_sanity_check(mqtt_broker, sanity_check_topic)
+        mqtt_broker.initialize(initial_topics=[data_topic])
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -64,7 +50,7 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
         # with QOS=2 (default), exactly one message should be received per published message
         # so we should have no trouble getting as many messages as output records from the
         # snapshot
-        pipeline_msgs = mqtt_broker.get_messages(num=len(output_records))
+        pipeline_msgs = mqtt_broker.get_messages(data_topic, num=len(output_records))
         for msg in pipeline_msgs:
             assert msg.payload.decode().rstrip() == raw_str
             assert msg.topic == data_topic
@@ -84,11 +70,9 @@ def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
     """
     # pylint: disable=too-many-locals
 
-    sanity_check_topic = 'SANITY_CHECK'
     data_topic = 'mqtt_subscriber_topic'
     try:
-        mqtt_broker.initialize(initial_topics=[data_topic, sanity_check_topic])
-        do_mqtt_sanity_check(mqtt_broker, sanity_check_topic)
+        mqtt_broker.initialize(initial_topics=[data_topic])
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
