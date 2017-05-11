@@ -26,6 +26,11 @@ from testframework import environment, sdc, sdc_api, sdc_models
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Stage precondition: CONTAINER_0050 - The stage requires records to include the following required fields.
+ERROR_CODE_STAGE_REQUIRED_FIELDS = 'CONTAINER_0050'
+# Stage precondition: CONTAINER_0051 - Unsatisfied precondition.
+ERROR_CODE_UNSATISFIED_PRECONDITION = 'CONTAINER_0051'
+
 #
 # Utility functions
 #
@@ -195,8 +200,7 @@ def test_error_records_stop_pipeline_on_required_field(args):
         data_collector.start()
         with pytest.raises(sdc_api.RunError) as exception_info:
             data_collector.start_pipeline(pipeline).wait_for_finished()
-        # Stage precondition: CONTAINER_0050 - The stage requires records to include the following.
-        assert("CONTAINER_0050" in exception_info.value.message)
+        assert(ERROR_CODE_STAGE_REQUIRED_FIELDS in exception_info.value.message)
 
 
 def test_error_records_stop_pipeline_on_record_precondition(args):
@@ -210,8 +214,7 @@ def test_error_records_stop_pipeline_on_record_precondition(args):
         data_collector.start()
         with pytest.raises(sdc_api.RunError) as exception_info:
             data_collector.start_pipeline(pipeline).wait_for_finished()
-        # Stage precondition: CONTAINER_0051 - Unsatisfied precondition.
-        assert("CONTAINER_0051" in exception_info.value.message)
+        assert(ERROR_CODE_UNSATISFIED_PRECONDITION in exception_info.value.message)
 
 
 def test_error_records_to_error_on_required_field(args):
