@@ -46,10 +46,14 @@ def pipeline(sdc_executor):
 def test_generators_list(sdc_executor):
     generators = sdc_executor.get_bundle_generators()
 
-    assert len(generators) >= 3
+    # We should at least see the built-in generators
+    assert len(generators) >= 4
     assert generators['PipelineContentGenerator'] is not None
     assert generators['SdcInfoContentGenerator'] is not None
     assert generators['LogContentGenerator'] is not None
+    assert generators['SnapshotGenerator'] is not None
+
+    # Negative case
     assert generators['PythonLanguage'] is None
 
 # Validate general ability to create new bundle
@@ -61,9 +65,15 @@ def test_generate_new_bundle(sdc_executor):
         p = Properties()
         p.load(zip_file)
 
+        # Default bundle should have the "default" generators
         assert p.get('com.streamsets.datacollector.bundles.content.PipelineContentGenerator') is not None
         assert p.get('com.streamsets.datacollector.bundles.content.LogContentGenerator') is not None
         assert p.get('com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator') is not None
+
+        # And should have generators that user needs to explicitly allow
+        assert p.get('com.streamsets.datacollector.bundles.content.SnapshotGenerator') is None
+
+        # Negative case
         assert p.get('universe.milky_way.solar_system.earth.europe.czech_republic.working_government') is None
 
 # Pipeline generator
@@ -128,9 +138,6 @@ def test_validate_log_generator(sdc_executor):
 def test_validate_sdcinfo_generator(sdc_executor):
     bundle = sdc_executor.get_bundle(['SdcInfoContentGenerator'])
 
-    for name in bundle.namelist():
-        print(name)
-
     # Manifest must contain the generator
     with bundle.open('generators.properties') as zip_file:
         p = Properties()
@@ -171,6 +178,7 @@ def test_validate_sdcinfo_generator(sdc_executor):
     assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/libexec/sdc-env.sh' in bundle.namelist()
     assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/libexec/sdcd-env.sh' in bundle.namelist()
     assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/runtime/threads.txt' in bundle.namelist()
+    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/runtime/jmx.json' in bundle.namelist()
 
 # Redaction
 def test_validate_redaction(sdc_executor):
@@ -183,4 +191,29 @@ def test_validate_redaction(sdc_executor):
         assert p.get('https.keystore.password') == 'REDACTED'
 
 
+# Snapshot generator
+def test_validate_snapshot_generator(pipeline, sdc_executor):
+    generator = 'com.streamsets.datacollector.bundles.content.SnapshotGenerator'
 
+    # Generate at least one snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    assert snapshot is not None
+
+    bundle = sdc_executor.get_bundle(['SnapshotGenerator'])
+
+    # Manifest must contain the generator
+    with bundle.open('generators.properties') as zip_file:
+        p = Properties()
+        p.load(zip_file)
+        assert p.get('com.streamsets.datacollector.bundles.content.SnapshotGenerator') is not None
+
+    with bundle.open('{}/{}/{}/output.json'.format(generator, pipeline.id, snapshot.snapshot_name)) as raw:
+        bundle_json = json.loads(raw.read().decode())
+        bundle_snapshot = sdc_models.Snapshot(pipeline.id, snapshot.snapshot_name, bundle_json)
+
+        assert len(bundle_snapshot) == 1
+        assert len(bundle_snapshot[pipeline.origin_stage.instance_name].output) == 10
+
+    assert '{}/{}/{}/info.json'.format(generator, pipeline.id, snapshot.snapshot_name) in bundle.namelist()
