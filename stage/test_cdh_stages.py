@@ -171,7 +171,7 @@ def test_kafka_destination(sdc_builder, sdc_executor, cluster):
     assert msgs_received == [dev_raw_data_source.raw_data] * msgs_sent_count
 
 @cluster('cdh')
-@pytest.mark.parametrize("execution_mode", ['cluster', 'standalone'])
+@pytest.mark.parametrize('execution_mode', ('cluster', 'standalone'), ids=('cluster_mode', 'standalone_mode'))
 def test_kafka_origin(sdc_builder, sdc_executor, cluster, execution_mode):
     """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
     Because cluster mode pipelines don't support snapshots, we do this verification using a
