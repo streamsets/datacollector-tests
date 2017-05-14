@@ -48,10 +48,10 @@ def http_server_pipeline(sdc_builder, sdc_executor):
 
     http_server >> javascript_evaluator >> trash
     pipeline = pipeline_builder.build()
-    pipeline.configuration['constants'] = [{'key': 'HTTP_PORT', 'value': '8000'},
-                                           {'key': 'APPLICATION_ID', 'value': 'test'},
-                                           {'key': 'NEW_FIELD_NAME', 'value': 'javscriptField'},
-                                           {'key': 'NEW_FIELD_VALUE', 'value': '5000'}]
+    pipeline.add_parameters(HTTP_PORT='8000',
+                            APPLICATION_ID='test',
+                            NEW_FIELD_NAME='javscriptField',
+                            NEW_FIELD_VALUE='5000')
 
     sdc_executor.add_pipeline(pipeline)
 
@@ -78,9 +78,9 @@ def http_client_pipeline(sdc_builder, sdc_executor):
 
     dev_raw_data_source >> expression_evaluator >> http_client
     pipeline = pipeline_builder.build()
-    pipeline.configuration['constants'] = [{'key': 'RAW_DATA', 'value': '{"f1": "abc"}{"f1": "xyz"}'},
-                                           {'key': 'RESOURCE_URL', 'value': 'http://localhost:8000'},
-                                           {'key': 'APPLICATION_ID', 'value': 'test'}]
+    pipeline.add_parameters(RAW_DATA='{"f1": "abc"}{"f1": "xyz"}',
+                            RESOURCE_URL='http://localhost:8000',
+                            APPLICATION_ID='test')
 
     sdc_executor.add_pipeline(pipeline)
 

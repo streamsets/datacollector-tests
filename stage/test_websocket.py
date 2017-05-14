@@ -38,8 +38,7 @@ def websocket_server_pipeline(sdc_builder, sdc_executor):
 
     websocket_server >> expression_evaluator >> trash
     pipeline = pipeline_builder.build()
-    pipeline.configuration['constants'] = [{'key': 'port', 'value': '8080'},
-                                           {'key': 'appId', 'value': 'test'}]
+    pipeline.add_parameters(port='8080', appId='test')
 
     sdc_executor.add_pipeline(pipeline)
 
@@ -66,9 +65,7 @@ def websocket_client_pipeline(sdc_builder, sdc_executor):
 
     dev_raw_data_source >> javascript_evaluator >> websocket_client
     pipeline = pipeline_builder.build()
-
-    pipeline.configuration['constants'] = [{'key': 'port', 'value': '8080'},
-                                           {'key': 'appId', 'value': 'test'}]
+    pipeline.add_parameters(port='8080', appId='test')
 
     sdc_executor.add_pipeline(pipeline)
 
