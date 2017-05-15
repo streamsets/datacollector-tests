@@ -116,6 +116,48 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
 
 @cluster('cdh')
+def test_hbase_destination(sdc_builder, sdc_executor, cluster):
+    """Simple HBase destination test.
+
+    dev_raw_data_source >> hbase
+    """
+    dumb_haiku = ['I see you driving',
+                  'Round town with the girl I love',
+                  "And I'm like haiku."]
+    random_table_name = get_random_string(string.ascii_letters, 10)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'TEXT'
+    dev_raw_data_source.raw_data = '\n'.join(dumb_haiku)
+
+    hbase = pipeline_builder.add_stage('HBase', type='destination')
+    hbase.table_name = random_table_name
+    hbase.row_key = '/text'
+    hbase.fields = [dict(columnValue='/text',
+                         columnStorageType='TEXT',
+                         columnName='cf1:cq1')]
+
+    dev_raw_data_source >> hbase
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating HBase table %s ...', random_table_name)
+        cluster.hbase.client.create_table(name=random_table_name, families={'cf1': {}})
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+
+        assert [record.value['value']['text']['value']
+                for record in snapshot[dev_raw_data_source.instance_name].output] == dumb_haiku
+    finally:
+        logger.info('Deleting HBase table %s ...', random_table_name)
+        cluster.hbase.client.delete_table(name=random_table_name, disable=True)
+
+
+@cluster('cdh')
 def test_kafka_destination(sdc_builder, sdc_executor, cluster):
     """Send simple text messages into Kafka Destination from Dev Raw Data Source and
        confirm that Kafka successfully reads them using KafkaConsumer from cluster.
