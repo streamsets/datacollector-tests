@@ -114,3 +114,67 @@ def test_mapr_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         assert lines_from_snapshot == lines_in_file
     finally:
         cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
+
+@cluster('mapr')
+def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
+    """This test will start MapR Streams producer and consumer pipelines which check for integrity of data
+    from a MapR Streams producer to MapR Streams consumer. Both the pipelines run as standalone. Specifically, this
+    would look like:
+
+    MapR Streams producer pipeline:
+        dev_raw_data_source >> mapr_streams_producer
+
+    MapR Streams consumer pipeline:
+        mapr_streams_consumer >> trash
+    """
+    # MapR Stream name has to be pre-created in MapR cluster. Clusterdock MapR image has this already.
+    stream_name = '/sample-stream'
+    stream_topic_name = stream_name + ':' + get_random_string(string.ascii_letters, 10)
+
+    # Build the MapR Stream producer pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'TEXT'
+    dev_raw_data_source.raw_data = 'Hello World!'
+
+    mapr_streams_producer = builder.add_stage('MapR Streams Producer')
+    mapr_streams_producer.topic_name = stream_topic_name
+    mapr_streams_producer.data_format = 'TEXT'
+
+    dev_raw_data_source >> mapr_streams_producer
+    producer_pipeline = builder.build('MapR Streams producer pipeline').configure_for_environment(cluster)
+    producer_pipeline.rate_limit = 1
+
+    # Build the MapR Stream consumer pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    mapr_streams_consumer = builder.add_stage('MapR Streams Consumer')
+    mapr_streams_consumer.topic_name = stream_topic_name
+    mapr_streams_consumer.data_format = 'TEXT'
+
+    trash = builder.add_stage(label='Trash')
+
+    mapr_streams_consumer >> trash
+    consumer_pipeline = builder.build('MapR Streams consumer pipeline').configure_for_environment(cluster)
+    consumer_pipeline.rate_limit = 1
+
+    sdc_executor.add_pipeline(producer_pipeline, consumer_pipeline)
+
+    # Run pipelines and assert the data flow. To do that, the sequence of steps is as follows:
+    # 1. Start MapR Stream producer and make sure to wait till some batches generate
+    # 2. Start MapR Stream consumer via capture snapshot feature to make sure data flow can be captured
+    # 3. Capture snapshot on the MapR Stream consumer
+    # 4. Compare and assert snapshot result to the data injected at the producer
+    try:
+        sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_batch_count(5)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline,start_pipeline=True)
+        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        snapshot_data = snapshot[consumer_pipeline[0].instance_name].output[0].value['value']['text']['value']
+        assert dev_raw_data_source.raw_data == snapshot_data
+    finally:
+        sdc_executor.stop_pipeline(consumer_pipeline)
+        sdc_executor.stop_pipeline(producer_pipeline)
+
