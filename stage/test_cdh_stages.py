@@ -21,11 +21,13 @@
 another.
 """
 
+import json
 import logging
 import os
 import string
 
 import pytest
+import sqlalchemy
 
 from testframework.markers import *
 from testframework.utils import get_random_string
@@ -36,6 +38,8 @@ logger.setLevel(logging.DEBUG)
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
+
+DEFAULT_IMPALA_DB = 'default'
 
 @cluster('cdh')
 def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
@@ -114,6 +118,7 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         assert lines_from_snapshot == lines_in_file
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
+
 
 @cluster('cdh')
 def test_hbase_destination(sdc_builder, sdc_executor, cluster):
@@ -212,6 +217,7 @@ def test_kafka_destination(sdc_builder, sdc_executor, cluster):
     assert msgs_sent_count == len(msgs_received)
     assert msgs_received == [dev_raw_data_source.raw_data] * msgs_sent_count
 
+
 @cluster('cdh')
 @pytest.mark.parametrize('execution_mode', ('cluster', 'standalone'), ids=('cluster_mode', 'standalone_mode'))
 def test_kafka_origin(sdc_builder, sdc_executor, cluster, execution_mode):
@@ -293,3 +299,66 @@ def test_kafka_origin(sdc_builder, sdc_executor, cluster, execution_mode):
     finally:
         sdc_executor.stop_pipeline(snapshot_pipeline)
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+
+
+@cluster('cdh')
+def test_kudu_destination(sdc_builder, sdc_executor, cluster):
+    """Simple Dev Raw Data Source to Kudu pipeline.
+
+    dev_raw_data_source >> kudu
+    """
+    # Generate some data.
+    tour_de_france_contenders = [dict(favorite_rank=1, name='Chris Froome', wins=3),
+                                 dict(favorite_rank=2, name='Greg LeMond', wins=3),
+                                 dict(favorite_rank=4, name='Vincenzo Nibali', wins=1),
+                                 dict(favorite_rank=3, name='Nairo Quintana', wins=0)]
+    raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
+
+    # For a little more coverage, we'll map the "favorite_rank" record field to the "rank" column in Kudu.
+    # These rankings are Dima's opinion and not reflective of the views of StreamSets, Inc.
+    field_to_column_mapping = [dict(field='/favorite_rank', columnName='rank')]
+
+    kudu_table_name = get_random_string(string.ascii_letters, 10)
+
+    # Build the pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_data)
+    kudu = builder.add_stage('Kudu',
+                             type='destination').set_attributes(table_name='impala::{}.{}'.format(DEFAULT_IMPALA_DB,
+                                                                                                  kudu_table_name),
+                                                                default_operation='INSERT',
+                                                                field_to_column_mapping=field_to_column_mapping)
+    dev_raw_data_source >> kudu
+
+    pipeline = builder.build().configure_for_environment(cluster)
+    pipeline.delivery_guarantee = 'AT_MOST_ONCE'
+    # We want to write data once and then stop, but Dev Raw Data Source will keep looping, so we set the rate limit to
+    # a low value and will rely upon pipeline metrics to know when to stop the pipeline.
+    pipeline.rate_limit = 4
+
+    metadata = sqlalchemy.MetaData()
+    tdf_contenders_table = sqlalchemy.Table(kudu_table_name,
+                                            metadata,
+                                            sqlalchemy.Column('rank', sqlalchemy.Integer, primary_key=True),
+                                            sqlalchemy.Column('name', sqlalchemy.String),
+                                            sqlalchemy.Column('wins', sqlalchemy.Integer),
+                                            impala_partition_by='HASH PARTITIONS 16',
+                                            impala_stored_as='KUDU')
+
+    try:
+        logger.info('Creating Kudu table %s ...', kudu_table_name)
+        engine = cluster.kudu.engine
+        tdf_contenders_table.create(engine)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(len(tour_de_france_contenders))
+        sdc_executor.stop_pipeline(pipeline)
+
+        connection = engine.connect()
+        result = connection.execute(sqlalchemy.sql.select([tdf_contenders_table]).order_by('rank'))
+        assert list(result) == [tuple([item['favorite_rank'], item['name'], item['wins']])
+                                for item in sorted(tour_de_france_contenders, key=lambda key: key['favorite_rank'])]
+    finally:
+        logger.info('Dropping Kudu table %s ...', kudu_table_name)
+        tdf_contenders_table.drop(engine)
