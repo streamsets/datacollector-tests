@@ -21,6 +21,7 @@
 another.
 """
 
+import json
 import logging
 import os
 import string
@@ -38,7 +39,56 @@ logger.setLevel(logging.DEBUG)
 SDC_RPC_PORT = 20000
 
 @cluster('mapr')
-def test_mapr_fs_origin_simple(sdc_builder, sdc_executor, cluster):
+def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
+    """Write a handful of records to the MapR-DB destination and confirm their presence with an HBase client.
+
+    dev_raw_data_source >> mapr_db
+    """
+    # Generate some data.
+    bike_brands = [dict(name='Cannondale'),
+                   dict(name='Specialized'),
+                   dict(name='Bianchi'),
+                   dict(name='BMC')]
+    raw_data = ''.join(json.dumps(brand) for brand in bike_brands)
+
+    table_name = '/user/sdc/{}'.format(get_random_string(string.ascii_letters, 10))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data)
+
+    mapr_db = pipeline_builder.add_stage('MapR DB', type='destination')
+    mapr_db.set_attributes(table_name=table_name,
+                           row_key='/name',
+                           fields=[dict(columnValue='/name',
+                                        columnStorageType='TEXT',
+                                        columnName='cf1:cq1')])
+
+    dev_raw_data_source >> mapr_db
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    try:
+        logger.info('Creating MapR-DB table %s ...', table_name)
+        cluster.execute_command('table', 'create', path=table_name, defaultreadperm='p', defaultwriteperm='p')
+        cluster.execute_command('table', 'cf', 'create', path=table_name, cfname='cf1')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(len(bike_brands))
+        sdc_executor.stop_pipeline(pipeline)
+
+        rows = [(key, value) for key, value in cluster.mapr_db.client.table(name=table_name).scan()]
+        # Bike brands are stored in a list of dicts ('name' => brand). Manipulate this to match what we
+        # expect our MapR-DB rows to look like (including putting them in lexicographic order).
+        assert sorted((bike_brand['name'].encode(), {b'cf1:cq1': bike_brand['name'].encode()})
+                      for bike_brand in bike_brands) == rows
+    finally:
+        logger.info('Deleting MapR-DB table %s ...', table_name)
+        cluster.execute_command('table', 'delete', path=table_name)
+
+
+@cluster('mapr')
+def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
     """Write a simple file into a MapR FS folder with a randomly-generated name and confirm that the MapR FS origin
     successfully reads it. Because cluster mode pipelines don't support snapshots, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the MapR FS pipeline. Specifically, this would
