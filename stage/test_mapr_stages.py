@@ -25,6 +25,8 @@ import json
 import logging
 import os
 import string
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -164,6 +166,69 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
         assert lines_from_snapshot == lines_in_file
     finally:
         cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
+
+
+@cluster('mapr')
+def test_mapr_fs_destination(sdc_builder, sdc_executor, cluster):
+    """Write a few files into MapR-FS and confirm their presence with an HDFS client.
+    We use a record deduplicator processor in between our dev raw data source origin and MapR-FS
+    destination in order to add determinism to the files written to MapR-FS.
+
+    dev_raw_data_source >> record_deduplicator >> mapr_fs
+                                               >> to_error
+    """
+    # Generate some data.
+    giro_stages = [dict(start='Alghero', finish='Olbia'),
+                   dict(start='Olbia', finish='Tortoli'),
+                   dict(start='Tortoli', finish='Cagliari')]
+    raw_data = ''.join(json.dumps(stage) for stage in giro_stages)
+
+    output_folder_path = Path('/', 'tmp', str(uuid4()))
+    logger.info('Pipeline will write to folder %s ...', output_folder_path)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    to_error = pipeline_builder.add_stage('To Error')
+
+    mapr_fs = pipeline_builder.add_stage('MapR FS', type='destination')
+    mapr_fs.set_attributes(data_format='JSON',
+                           directory_template=str(output_folder_path),
+                           files_prefix='stages',
+                           files_suffix='txt')
+
+    dev_raw_data_source >> record_deduplicator >> mapr_fs
+    record_deduplicator >> to_error
+
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(giro_stages))
+        # Wait for pipeline to be stopped in order to ensure file has been written.
+        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+
+        mapr_fs_files = cluster.mapr_fs.client.list(str(output_folder_path))
+        # With only 3 unique records, there should only be one file written.
+        assert len(mapr_fs_files) == 1
+
+        # Check that file prefix and suffix are respected.
+        mapr_fs_filename = mapr_fs_files[0]
+        assert mapr_fs_filename.startswith('stages') and mapr_fs_filename.endswith('txt')
+
+        with cluster.mapr_fs.client.read(str(Path(output_folder_path, mapr_fs_filename))) as reader:
+            file_contents = reader.read()
+
+        assert {tuple(json.loads(line).items())
+                for line in file_contents.decode().split()} == {tuple(stage.items())
+                                                                for stage in giro_stages}
+    finally:
+        logger.info('Deleting MapR-FS directory %s ...', output_folder_path)
+        cluster.mapr_fs.client.delete(str(output_folder_path), recursive=True)
+
 
 @cluster('mapr')
 def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
