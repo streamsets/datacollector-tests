@@ -30,6 +30,8 @@ from testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+# Sandbox prefix for S3 bucket
+S3_SANDBOX_PREFIX = 'sandbox'
 
 @aws
 def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
@@ -137,3 +139,111 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
         assert msgs_received == [raw_str] * msgs_sent_count
     finally:
         client.delete_stream(StreamName=stream_name)
+
+
+@aws('s3')
+def test_s3_origin(sdc_builder, sdc_executor, aws):
+    """Test for S3 origin stage. We do so by putting data to a test S3 bucket using AWS S3 client and
+    having a pipeline which reads that data using S3 origin stage. Data is then asserted for what is
+    put by S3 client and what we read in the pipeline snapshot. The pipeline looks like:
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+    """
+    # setup test static
+    s3_bucket = aws.s3_bucket_name
+    s3_key = '{0}/{1}/sdc'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
+    raw_str = 'Hello World!'
+    s3_obj_count = 10
+
+    # build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+    # partition_prefix uses ant based pattern
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='TEXT', partition_prefix='{0}*'.format(s3_key))
+
+    trash = builder.add_stage('Trash')
+
+    s3_origin >> trash
+
+    s3_origin_pipeline = builder.build(title='Amazon S3 origin pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # use S3 client to put test data
+        [client.put_object(Bucket=s3_bucket, Key='{0}{1}'.format(s3_key, i), Body=raw_str) for i in range(s3_obj_count)]
+
+        # read through the pipeline and assert
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline,
+                                                 start_pipeline=True).wait_for_finished().snapshot
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        output_records = [record.value['value']['text']['value']
+                          for record in snapshot[s3_origin.instance_name].output]
+
+        logger.debug('Number of messages captured by the pipeline = %s', len(output_records))
+
+        assert output_records == [raw_str] * s3_obj_count
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+def test_s3_destination(sdc_builder, sdc_executor, aws):
+    """Test for S3 target stage. We do so by running a dev raw data source generator to S3 destination
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been injected by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    and S3 destination in order to determine exactly what has been ingested. The pipeline looks like:
+
+    S3 Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> s3_destination
+                                                   >> to_error
+    """
+    # setup test static
+    s3_bucket = aws.s3_bucket_name
+    s3_key = '{0}/{1}'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
+    raw_str = 'Hello World!'
+    record_count = 1 # raw_str record size
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  raw_data=raw_str)
+
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    to_error = builder.add_stage('To Error')
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(bucket=s3_bucket, data_format='TEXT', partition_prefix=s3_key)
+
+    dev_raw_data_source >> record_deduplicator >> s3_destination
+    record_deduplicator >> to_error
+
+    s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_dest_pipeline)
+
+    client = aws.s3
+    try:
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_pipeline_output_records_count(record_count)
+        sdc_executor.stop_pipeline(s3_dest_pipeline).wait_for_stopped()
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == record_count
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
+                       for s3_content in list_s3_objs['Contents']]
+
+        assert s3_contents == [raw_str] * record_count
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
