@@ -21,8 +21,10 @@
 another.
 """
 
+from datetime import datetime
 import logging
 import string
+import time
 
 from testframework.markers import aws
 from testframework.utils import get_random_string
@@ -89,7 +91,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 def test_kinesis_producer(sdc_builder, sdc_executor, aws):
     """Test for Kinesis producer target stage. We do so by publishing data to a test stream using Kinesis producer
     stage and then read the data from that stream using Kinesis client. We assert the data from the client to what has
-    been injected by the producer pipeline. The pipeline looks like:
+    been ingested by the producer pipeline. The pipeline looks like:
 
     Kinesis Producer pipeline:
         dev_raw_data_source >> kinesis_producer
@@ -189,7 +191,7 @@ def test_s3_origin(sdc_builder, sdc_executor, aws):
         assert output_records == [raw_str] * s3_obj_count
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
 
 
@@ -197,7 +199,7 @@ def test_s3_origin(sdc_builder, sdc_executor, aws):
 def test_s3_destination(sdc_builder, sdc_executor, aws):
     """Test for S3 target stage. We do so by running a dev raw data source generator to S3 destination
     sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
-    been injected by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    been ingested by the pipeline. We use a record deduplicator processor in between dev raw data source origin
     and S3 destination in order to determine exactly what has been ingested. The pipeline looks like:
 
     S3 Destination pipeline:
@@ -235,7 +237,7 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
         sdc_executor.stop_pipeline(s3_dest_pipeline).wait_for_stopped()
 
         # assert record count to S3 the size of the objects put
-        list_s3_objs = client.list_objects(Bucket=s3_bucket, Prefix=s3_key)
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
         assert len(list_s3_objs['Contents']) == record_count
 
         # read data from S3 to assert it is what got ingested into the pipeline
@@ -245,5 +247,72 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
         assert s3_contents == [raw_str] * record_count
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('firehose', 's3')
+def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
+    """Test for Firehose target stage. This test assumes Firehose is destined to S3 bucket. We run a dev raw data source
+    generator to Firehose destination which is pre-setup to put to S3 bucket. We then read S3 bucket using STF client
+    to assert data between the client to what has been ingested into the pipeline. The pipeline looks like:
+
+    Firehose Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> firehose_destination
+                                                   >> to_error
+    """
+    s3_client = aws.s3
+    firehose_client = aws.firehose
+
+    # setup test static
+    s3_bucket = aws.s3_bucket_name
+    stream_name = aws.firehose_stream_name
+    # json formatted string
+    random_raw_str = '{{"text":"{0}"}}'.format(get_random_string(string.ascii_letters, 10))
+    record_count = 1 # random_raw_str record size
+    s3_put_keys = []
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=random_raw_str)
+
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    to_error = builder.add_stage('To Error')
+
+    firehose_destination = builder.add_stage('Kinesis Firehose')
+    firehose_destination.set_attributes(stream_name=stream_name, data_format='JSON')
+
+    dev_raw_data_source >> record_deduplicator >> firehose_destination
+    record_deduplicator >> to_error
+
+    firehose_dest_pipeline = builder.build(title='Amazon Firehose destination pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(firehose_dest_pipeline)
+
+    try:
+        # start pipeline and assert
+        sdc_executor.start_pipeline(firehose_dest_pipeline).wait_for_pipeline_output_records_count(record_count)
+        sdc_executor.stop_pipeline(firehose_dest_pipeline).wait_for_stopped()
+
+        # wait till data is available in S3. We do so by querying for buffer wait time and sleep till then
+        resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
+        dests = resp['DeliveryStreamDescription']['Destinations'][0]
+        wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
+        time.sleep(wait_secs+15) # few seconds more to wait to make sure S3 gets the data
+
+        # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
+        # read data to assert
+        list_s3_objs = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=datetime.utcnow().strftime("%Y/%m/%d"))
+        for s3_content in list_s3_objs['Contents']:
+            akey = s3_content['Key']
+            aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
+            if aobj['Body'].read().decode().strip() == random_raw_str:
+                s3_put_keys.append(akey)
+
+        assert len(s3_put_keys) == record_count
+    finally:
+        # delete S3 objects related to this test
+        if len(s3_put_keys) > 0:
+            delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
+            s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
