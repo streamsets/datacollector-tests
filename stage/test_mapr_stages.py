@@ -28,10 +28,7 @@ import string
 from pathlib import Path
 from uuid import uuid4
 
-import pytest
-
 from testframework.markers import *
-from testframework import environment, sdc
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -259,7 +256,7 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     mapr_streams_producer.data_format = 'TEXT'
 
     dev_raw_data_source >> mapr_streams_producer
-    producer_pipeline = builder.build('MapR Streams producer pipeline').configure_for_environment(cluster)
+    producer_pipeline = builder.build('MapR Streams producer pipeline - standalone').configure_for_environment(cluster)
     producer_pipeline.rate_limit = 1
 
     # Build the MapR Stream consumer pipeline.
@@ -273,7 +270,7 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     trash = builder.add_stage(label='Trash')
 
     mapr_streams_consumer >> trash
-    consumer_pipeline = builder.build('MapR Streams consumer pipeline').configure_for_environment(cluster)
+    consumer_pipeline = builder.build('MapR Streams consumer pipeline - standalone').configure_for_environment(cluster)
     consumer_pipeline.rate_limit = 1
 
     sdc_executor.add_pipeline(producer_pipeline, consumer_pipeline)
@@ -285,7 +282,7 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     # 4. Compare and assert snapshot result to the data injected at the producer
     try:
         sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_batch_count(5)
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline,start_pipeline=True)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, start_pipeline=True)
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
         snapshot_data = snapshot[consumer_pipeline[0].instance_name].output[0].value['value']['text']['value']
         assert dev_raw_data_source.raw_data == snapshot_data
@@ -293,3 +290,93 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(consumer_pipeline)
         sdc_executor.stop_pipeline(producer_pipeline)
 
+
+@cluster('mapr')
+def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
+    """This test will start MapR Streams producer and consumer pipelines which check for integrity of data flow
+    from a MapR Streams producer to MapR Streams consumer. Producer pipeline runs as standalone while the consumer
+    one runs on cluster. Since cluster pipeline cannot be snapshot, we use RPC stage to snapshot the data.
+    The pipeline would look like:
+
+    MapR Streams producer pipeline:
+        dev_raw_data_source >> mapr_streams_producer
+
+    MapR Streams consumer pipeline:
+        mapr_streams_consumer >> sdc_rpc_destination
+
+    Snapshot pipeline:
+        sdc_rpc_origin >> trash
+    """
+    # MapR Stream name has to be pre-created in MapR cluster. Clusterdock MapR image has this already.
+    stream_name = '/sample-stream'
+    stream_topic_name = stream_name + ':' + get_random_string(string.ascii_letters, 10)
+    rpc_id = get_random_string(string.ascii_letters, 10)
+
+    # Build the MapR Stream producer pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'TEXT'
+    dev_raw_data_source.raw_data = 'Hello World!'
+
+    mapr_streams_producer = builder.add_stage('MapR Streams Producer')
+    mapr_streams_producer.topic_name = stream_topic_name
+    mapr_streams_producer.data_format = 'TEXT'
+
+    dev_raw_data_source >> mapr_streams_producer
+    producer_pipeline = builder.build('Streams Producer - cluster').configure_for_environment(cluster)
+    producer_pipeline.rate_limit = 1
+
+    # Build the MapR Stream consumer pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    mapr_streams_consumer = builder.add_stage('MapR Streams Consumer')
+    mapr_streams_consumer.topic_name = stream_topic_name
+    mapr_streams_consumer.data_format = 'TEXT'
+
+    sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
+    sdc_rpc_destination.rpc_connections.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT))
+    sdc_rpc_destination.rpc_id = rpc_id
+
+    mapr_streams_consumer >> sdc_rpc_destination
+    consumer_pipeline = builder.build('Streams Consumer - cluster').configure_for_environment(cluster)
+    consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
+    consumer_pipeline.rate_limit = 1
+
+    # Build the Snapshot pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
+    sdc_rpc_origin.rpc_port = SDC_RPC_PORT
+    sdc_rpc_origin.rpc_id = rpc_id
+    # Since YARN jobs take a while to get going, set RPC origin batch wait time to 5 min. to avoid
+    # getting an empty batch in the snapshot.
+    sdc_rpc_origin.batch_wait_time_in_secs = 300
+
+    trash = builder.add_stage(label='Trash')
+
+    sdc_rpc_origin >> trash
+    snapshot_pipeline = builder.build('Snapshot pipeline - cluster')
+
+    sdc_executor.add_pipeline(producer_pipeline, consumer_pipeline, snapshot_pipeline)
+
+    # Run pipelines and assert the data flow. To do that, the sequence of steps is as follows:
+    # 1. Start MapR Stream producer and make sure to wait till some output generates - ensures topic creation
+    # 2. Start RPC origin pipeline where snapshot can be captured
+    # 3. Start MapR Stream consumer and make sure to wait till some output generates - ensures cluster streaming
+    # 4. Initiate and capture snapshot on the RPC origin pipeline
+    # 5. Compare and assert snapshot result to the data injected at the MapR Stream producer
+    try:
+        sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_output_records_count(5)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True)
+        consumer_start_cmd = sdc_executor.start_pipeline(consumer_pipeline)
+        consumer_start_cmd.wait_for_status('RUNNING') # RUNNING ensures submission to the cluster
+        consumer_start_cmd.wait_for_pipeline_output_records_count(5)
+        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        snapshot_data = snapshot[snapshot_pipeline[0].instance_name].output[0].value['value']['text']['value']
+        assert dev_raw_data_source.raw_data == snapshot_data
+    finally:
+        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(producer_pipeline)
+        # wait for stopped to ensure cluster pipeline exit out cleanly
+        sdc_executor.stop_pipeline(consumer_pipeline).wait_for_stopped()
