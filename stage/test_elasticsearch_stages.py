@@ -97,16 +97,7 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
     errstg = builder.add_error_stage('Write to Elasticsearch')
-    # TODO: attributes not set in a standard way. Framework not able to handle error stage configs/attributes (STF-201).
-    errconf = errstg.configuration
-    es_env = elasticsearch
-    errconf['elasticSearchConfig.httpUris'] = ['{}:{}'.format(es_env.hostname, es_env.port)]
-    errconf['elasticSearchConfig.securityConfig.securityUser'] = '{}:{}'.format(es_env.username, es_env.password)
-    errconf['elasticSearchConfig.useSecurity'] = True
-    errconf['elasticSearchConfig.docIdTemplate'] = es_doc_id
-    errconf['elasticSearchConfig.indexTemplate'] = es_index
-    errconf['elasticSearchConfig.typeTemplate'] = es_mapping
-
+    errstg.set_attributes(document_id=es_doc_id, index=es_index, mapping=es_mapping)
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
                                                                                   raw_data=raw_str)
     error_target = builder.add_stage('To Error')
