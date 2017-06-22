@@ -429,3 +429,165 @@ def test_solr_destination(sdc_builder, sdc_executor, cluster):
     This version of Solr does not support API operations for schema and collections.
     """
     test_apache.basic_solr_target('cdh', sdc_builder, sdc_executor, cluster)
+
+
+@cluster('cdh')
+def test_hive_query_executor(sdc_builder, sdc_executor, cluster):
+    """Test Hive query executor stage. This is acheived by using a deduplicator which assures us that there is
+    only one successful ingest. The pipeline would look like:
+
+        dev_raw_data_source >> record_deduplicator >> hive_query
+                                                   >> trash
+    """
+    hive_table_name = get_random_string(string.ascii_letters, 10)
+    hive_queries = ["CREATE TABLE ${record:value('/text')} (id int, name string)"]
+    hive_cursor = cluster.hive.client.cursor()
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  raw_data=hive_table_name)
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    trash = builder.add_stage('Trash')
+    hive_query = builder.add_stage('Hive Query', type='executor').set_attributes(queries=hive_queries)
+
+    dev_raw_data_source >> record_deduplicator >> hive_query
+    record_deduplicator >> trash
+
+    pipeline = builder.build(title='Hive query executor pipeline').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # assert successful query execution of the pipeline
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        assert snapshot[hive_query.instance_name].event_records[0].header['sdc.event.type'] == 'successful-query'
+
+        # assert Hive table creation
+        assert hive_cursor.table_exists(hive_table_name)
+
+        # Re-running the same query to create Hive table should fail the query. So assert the failure.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        assert snapshot[hive_query.instance_name].event_records[0].header['sdc.event.type'] == 'failed-query'
+    finally:
+        # drop the Hive table
+        hive_cursor.execute(f'DROP TABLE `{hive_table_name}`')
+
+
+@cluster('cdh')
+def test_mapreduce_executor(sdc_builder, sdc_executor, cluster):
+    """Test MapReduce executor stage. This is acheived by using a deduplicator which assures us that there is
+    only one successful ingest and that we ingest to HDFS. The executor then triggers MapReduce job which should
+    convert the ingested HDFS Avro data to Parquet. The pipeline would look like:
+
+        dev_raw_data_source >> record_deduplicator >> hadoop_fs >= mapreduce
+                                                   >> trash
+    """
+    hdfs_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+    product_data = [dict(name='iphone', price=649.99),
+                    dict(name='pixel', price=649.89)]
+    raw_data = ''.join([json.dumps(product) for product in product_data])
+    avro_schema = ('{ "type" : "record", "name" : "STF", "fields" : '
+                   '[ { "name" : "name", "type" : "string" }, { "name" : "price", "type" : "double" } ] }')
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_data)
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    trash = builder.add_stage('Trash')
+    hadoop_fs = builder.add_stage('Hadoop FS', type='destination')
+    # max_records_in_file enables to close the file and generate the event
+    hadoop_fs.set_attributes(avro_schema=avro_schema, avro_schema_location='INLINE', data_format='AVRO',
+                             directory_template=hdfs_directory, files_prefix='sdc-${sdc:id()}', max_records_in_file=1)
+    mapreduce = builder.add_stage('MapReduce', type='executor')
+    mapreduce.job_type = 'AVRO_PARQUET'
+    mapreduce.output_directory = hdfs_directory
+
+    dev_raw_data_source >> record_deduplicator >> hadoop_fs >= mapreduce
+    record_deduplicator >> trash
+
+    pipeline = builder.build(title='MapReduce executor pipeline').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # assert events (MapReduce) generated
+        assert len(snapshot[mapreduce.instance_name].event_records) == len(product_data)
+
+        # make sure MapReduce job is done and is successful
+        for event in snapshot[mapreduce.instance_name].event_records:
+            job_id = event.value['value']['job-id']['value']
+            assert cluster.yarn.wait_for_job_to_end(job_id) == 'SUCCEEDED'
+
+        # assert parquet data is same as what is ingested
+        for event in snapshot[hadoop_fs.instance_name].event_records:
+            file_path = event.value['value']['filepath']['value']
+            hdfs_parquet_file_path = '{}.parquet'.format(file_path)
+            hdfs_data = cluster.hdfs.get_data_from_parquet(hdfs_parquet_file_path)
+            assert hdfs_data[0] in product_data
+    finally:
+        # remove HDFS files
+        cluster.hdfs.client.delete(hdfs_directory, recursive=True)
+
+@cluster('cdh')
+def test_spark_executor(sdc_builder, sdc_executor, cluster):
+    """Test Spark executor stage. This is acheived by using 2 pipelines. The 1st pipeline would generate the
+    application resource file (Python in this case) which will be used by the 2nd pipeline for spark-submit. Spark
+    executor will do the spark-submit and we assert that it has submitted the job to Yarn. The pipelines would
+    look like:
+
+        dev_raw_data_source >> local_fs >= pipeline_finisher_executor
+
+        dev_raw_data_source >> record_deduplicator >> spark_executor
+                               record_deduplicator >> trash
+    """
+    python_data = 'print("Hello World!")'
+    tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+    python_suffix = 'py'
+    yarn_application_name = ''.join(['stf_', get_random_string(string.ascii_letters, 10)])
+
+    # build the 1st pipeline - file generator
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  raw_data=python_data)
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT', directory_template=tmp_directory,
+                            files_prefix='sdc-${sdc:id()}', files_suffix=python_suffix, max_records_in_file=1)
+    # we use the finisher so as local_fs can generate event with file_path being generated
+    pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
+
+    dev_raw_data_source >> local_fs >= pipeline_finisher_executor
+
+    pipeline = builder.build(title='To File pipeline').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    # run the pipeline and capture the file path
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    file_path = snapshot[local_fs.instance_name].event_records[0].value['value']['filepath']['value']
+
+    # build the 2nd pipeline - spark executor
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT', raw_data='dummy')
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    trash = builder.add_stage('Trash')
+    spark_executor = builder.add_stage('Spark Executor', type='executor')
+    spark_executor.set_attributes(cluster_manager='YARN', min_executors=1, max_executors=1,
+                                  yarn_application_name=yarn_application_name, yarn_deploy_mode='CLUSTER',
+                                  yarn_driver_memory='10m', yarn_executor_memory='10m',
+                                  yarn_resource_file=file_path, yarn_resource_language='PYTHON')
+
+    dev_raw_data_source >> record_deduplicator >> spark_executor
+    record_deduplicator >> trash
+
+    pipeline = builder.build(title='Spark executor pipeline').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+    sdc_executor.stop_pipeline(pipeline)
+
+    # assert Spark executor has triggered the YARN job
+    assert cluster.yarn.wait_for_app_to_register(yarn_application_name)
