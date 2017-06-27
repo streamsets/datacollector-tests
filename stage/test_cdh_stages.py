@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import string
+from pathlib import Path
 
 import pytest
 import sqlalchemy
@@ -119,6 +120,61 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         assert lines_from_snapshot == lines_in_file
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
+
+
+@cluster('cdh')
+def test_hadoop_fs_destination(sdc_builder, sdc_executor, cluster):
+    """Test Hadoop FS destination stage. This is achieved by using a deduplicator which assures us that there is
+    only one ingest to HDFS. We then read that to assert what we ingest. The pipeline looks like:
+
+        dev_raw_data_source >> record_deduplicator >> hadoop_fs
+                                                   >> trash
+    """
+    product_data = [dict(name='iphone', price=649.99),
+                    dict(name='pixel', price=649.89)]
+    raw_data = ''.join([json.dumps(product) for product in product_data])
+    hdfs_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+    logger.info(f'Pipeline will write to HDFS directory {hdfs_directory} ...')
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_data)
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    trash = builder.add_stage('Trash')
+    hadoop_fs = builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(data_format='JSON', directory_template=hdfs_directory,
+                             files_prefix='stages', files_suffix='txt')
+
+    dev_raw_data_source >> record_deduplicator >> hadoop_fs
+    record_deduplicator >> trash
+
+    pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(product_data))
+        # Wait for pipeline to be stopped in order to ensure file has been written.
+        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+
+        hdfs_fs_files = cluster.hdfs.client.list(hdfs_directory)
+        # There should only be one file written.
+        assert len(hdfs_fs_files) == 1
+
+        # Check that file prefix and suffix are respected.
+        hdfs_fs_filename = hdfs_fs_files[0]
+        assert hdfs_fs_filename.startswith('stages') and hdfs_fs_filename.endswith('txt')
+
+        with cluster.hdfs.client.read(str(Path(hdfs_directory, hdfs_fs_filename))) as reader:
+            file_contents = reader.read()
+
+        assert {tuple(json.loads(line).items())
+                for line in file_contents.decode().split()} == {tuple(stage.items())
+                                                                for stage in product_data}
+    finally:
+        # remove HDFS files
+        logger.info(f'Deleting Hadoop FS directory {hdfs_directory} ...')
+        cluster.hdfs.client.delete(hdfs_directory, recursive=True)
 
 
 @cluster('cdh')
