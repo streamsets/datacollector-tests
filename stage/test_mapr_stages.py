@@ -362,18 +362,23 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
 
     # Run pipelines and assert the data flow. To do that, the sequence of steps is as follows:
     # 1. Start MapR Stream producer and make sure to wait till some output generates - ensures topic creation
-    # 2. Start RPC origin pipeline where snapshot can be captured
+    # 2. Start RPC origin (snapshot_pipeline) where snapshot can be captured
     # 3. Start MapR Stream consumer and make sure to wait till some output generates - ensures cluster streaming
     # 4. Initiate and capture snapshot on the RPC origin pipeline
     # 5. Compare and assert snapshot result to the data injected at the MapR Stream producer
     try:
         sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_output_records_count(5)
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True)
+        # RUNNING ensures RPC origin is started
+        sdc_executor.start_pipeline(snapshot_pipeline).wait_for_status('RUNNING')
+
         consumer_start_cmd = sdc_executor.start_pipeline(consumer_pipeline)
         consumer_start_cmd.wait_for_status('RUNNING') # RUNNING ensures submission to the cluster
         consumer_start_cmd.wait_for_pipeline_output_records_count(5)
+
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=False)
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
         snapshot_data = snapshot[snapshot_pipeline[0].instance_name].output[0].value['value']['text']['value']
+
         assert dev_raw_data_source.raw_data == snapshot_data
     finally:
         sdc_executor.stop_pipeline(snapshot_pipeline)
