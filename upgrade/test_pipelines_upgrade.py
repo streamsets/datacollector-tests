@@ -26,11 +26,12 @@ logger = logging.getLogger(__name__)
 
 
 def test_pipeline_upgrade(args, pipeline_full_path):
-    with sdc.DataCollector(version=args.sdc_version) as data_collector:
+    with sdc.DataCollector(version=args.post_upgrade_sdc_version or args.sdc_version) as data_collector:
         pipeline = sdc_models.Pipeline(pipeline_full_path)
+        data_collector.configure_for_pipeline(pipeline)
         data_collector.add_pipeline(pipeline)
         data_collector.start()
-        export_json = data_collector.api_client.export_pipeline(pipeline_name=pipeline.name)
+        export_json = data_collector.api_client.export_pipeline(pipeline.id)
 
     issues = export_json['pipelineConfig']['issues']
 
