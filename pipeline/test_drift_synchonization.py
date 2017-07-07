@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # it read all the data from databases.
 # This test case uses the query JDBC origin and the map/reduce executor
 # to solve the hive synchonization solution in parquet data format
+@cluster
 @database
 def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
     hive_cursor = cluster.hive.client.cursor()

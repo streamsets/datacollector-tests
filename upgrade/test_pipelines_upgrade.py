@@ -20,13 +20,15 @@ import pytest
 from os.path import dirname, join, realpath
 
 from testframework import sdc, sdc_models
+from testframework.markers import upgrade
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def test_pipeline_upgrade(args, pipeline_full_path):
-    with sdc.DataCollector(version=args.post_upgrade_sdc_version or args.sdc_version) as data_collector:
+@upgrade
+def test_pipeline_upgrade(sdc_executor, pipeline_full_path):
+    with sdc.DataCollector(version=sdc_executor.version) as data_collector:
         pipeline = sdc_models.Pipeline(pipeline_full_path)
         data_collector.configure_for_pipeline(pipeline)
         data_collector.add_pipeline(pipeline)

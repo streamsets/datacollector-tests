@@ -63,6 +63,7 @@ def test_query_jdbc_no_more_date(args):
 # While writing a simple JDBC multitable consumer => Hive test, we discovered that the origin had
 # problems with table names that started with numbers (SDC-5381), so let's use parametrization to
 # run the test with various combinations of table name characters and table name lengths.
+@cluster
 @database
 @pytest.mark.parametrize('table_name_characters', [string.ascii_letters, string.digits])
 @pytest.mark.parametrize('table_name_length', [8, 20])

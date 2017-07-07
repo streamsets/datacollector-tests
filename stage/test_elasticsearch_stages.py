@@ -42,16 +42,13 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
     Elasticsearch origin pipeline:
         es_origin >> trash
     """
-    # Test static
     es_index = get_random_string(string.ascii_letters, 10).lower() # Elasticsearch indexes must be lower case
     es_doc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
 
-    # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
     es_origin = builder.add_stage('Elasticsearch', type='origin')
     es_origin.set_attributes(index=es_index, query="{'query': {'match_all': {}}}")
-
     trash = builder.add_stage('Trash')
 
     es_origin >> trash
@@ -61,9 +58,11 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
     try:
         # Put data to Elasticsearch
         elasticsearch.connect()
-        doc_type = DocType(meta={'id':es_doc_id, 'index':es_index})
+        doc_type = DocType(meta={'id': es_doc_id, 'index': es_index})
         doc_type.body = raw_str
-        assert doc_type.save() # Assert to saving data in ES
+        doc_type.save() # save document to Elasticsearch
+        index = Index(es_index)
+        assert index.refresh() # assert to refresh index, making all operations available for search
 
         # Run pipeline and assert
         snapshot = sdc_executor.capture_snapshot(es_origin_pipeline, start_pipeline=True).wait_for_finished().snapshot

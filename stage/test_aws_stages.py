@@ -187,9 +187,9 @@ def test_s3_origin(sdc_builder, sdc_executor, aws):
         output_records = [record.value['value']['text']['value']
                           for record in snapshot[s3_origin.instance_name].output]
 
-        logger.debug('Number of messages captured by the pipeline = %s', len(output_records))
+        logger.debug('Number of messages captured by the snapshot = %s', len(output_records))
 
-        assert output_records == [raw_str] * s3_obj_count
+        assert output_records == [raw_str] * len(output_records)
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
