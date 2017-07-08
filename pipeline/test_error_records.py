@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 ERROR_CODE_STAGE_REQUIRED_FIELDS = 'CONTAINER_0050'
 # Stage precondition: CONTAINER_0051 - Unsatisfied precondition.
 ERROR_CODE_UNSATISFIED_PRECONDITION = 'CONTAINER_0051'
+# Port for SDC RPC stages to exchange error records
+SDC_RPC_PORT = 20000
 
 def test_error_records_stop_pipeline_on_required_field(random_expression_pipeline_builder, sdc_executor):
     random_expression_pipeline_builder.expression_evaluator.stage_on_record_error = 'STOP_PIPELINE'
@@ -112,3 +114,99 @@ def test_error_records_discard_on_record_precondition(random_expression_pipeline
     stage = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name]
     assert len(stage.output) == 0
     assert len(stage.error_records) == 0
+
+
+@pytest.fixture(scope='function')
+def policy_write_builder(sdc_builder, sdc_executor):
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = builder.add_stage('Dev Data Generator')
+
+    expression_evaluator = builder.add_stage('Expression Evaluator')
+    expression_evaluator.header_expressions = [{'attributeToSet': 'changed',
+                                                'headerAttributeExpression': 'yes'}]
+
+    to_error = builder.add_stage('To Error')
+
+    dev_data_generator >> expression_evaluator >> to_error
+
+    error = builder.add_error_stage('Write to Another Pipeline')
+    error.sdc_rpc_connection = ['{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT)]
+    error.sdc_rpc_id = 'error_policy'
+
+    yield builder
+
+
+@pytest.fixture(scope='function')
+def policy_read_builder(sdc_builder):
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('SDC RPC', type='origin')
+    origin.rpc_port = SDC_RPC_PORT
+    origin.rpc_id = 'error_policy'
+
+    trash = builder.add_stage('Trash')
+
+    origin >> trash
+
+    yield builder
+
+
+def test_error_record_policy_original_record(policy_write_builder, policy_read_builder, sdc_executor):
+    """ Validate ORIGINAL_RECORD error policy.
+
+    The error record viewed in the snapshot pipeline should be as it was seen by the origin - without
+    any changes to the record that happened inside the pipeline.
+
+    Two pipeline setup - one pipeline with origin and mutating evaluator that sends all records
+    to error stream. Second pipeline listens for incoming error records from first pipeline.
+    """
+    write_pipeline = policy_write_builder.build()
+    snapshot_pipeline = policy_read_builder.build()
+
+    write_pipeline.configuration['errorRecordPolicy'] = 'ORIGINAL_RECORD'
+    sdc_executor.add_pipeline(write_pipeline, snapshot_pipeline)
+
+    try:
+        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True)
+        sdc_executor.start_pipeline(write_pipeline)
+
+        snapshot = snapshot_command.wait_for_finished().snapshot
+        record = snapshot[snapshot_pipeline.origin_stage].output[0]
+
+        # Expecting KeyError as the header shouldn't exist
+        with pytest.raises(KeyError):
+            record.header['changed']
+
+    finally:
+        sdc_executor.stop_pipeline(write_pipeline)
+        sdc_executor.stop_pipeline(snapshot_pipeline)
+
+
+def test_error_record_policy_stage_record(policy_write_builder, policy_read_builder, sdc_executor):
+    """ Validate STAGE_RECORD error policy.
+
+    The error record viewed in the snapshot pipeline should be as it was seen by the stage that sent
+    it to error stream - including all changes done to that record inside the pipeline.
+
+    Two pipeline setup - one pipeline with origin and mutating evaluator that sends all records
+    to error stream. Second pipeline listens for incoming error records from first pipeline.
+    """
+    write_pipeline = policy_write_builder.build()
+    snapshot_pipeline = policy_read_builder.build()
+
+    write_pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
+    sdc_executor.add_pipeline(write_pipeline, snapshot_pipeline)
+
+    try:
+        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True)
+        sdc_executor.start_pipeline(write_pipeline)
+
+        snapshot = snapshot_command.wait_for_finished().snapshot
+        record = snapshot[snapshot_pipeline.origin_stage].output[0]
+
+        assert record.header['changed'] == 'yes'
+
+    finally:
+        sdc_executor.stop_pipeline(write_pipeline)
+        sdc_executor.stop_pipeline(snapshot_pipeline)
