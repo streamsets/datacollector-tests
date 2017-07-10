@@ -21,6 +21,7 @@
 another.
 """
 
+import json
 import logging
 import string
 
@@ -32,6 +33,7 @@ logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
+
 
 def test_sdcrpc_origin_target(sdc_builder, sdc_executor):
     """This test will test SDC RPC origin and target. The way we do that is to create 2 pipelines - one which creates
@@ -85,3 +87,60 @@ def test_sdcrpc_origin_target(sdc_builder, sdc_executor):
 
     sdc_executor.stop_pipeline(rpc_target_pipeline)
     sdc_executor.stop_pipeline(rpc_origin_pipeline)
+
+
+def test_write_to_another_pipeline_error_stage(sdc_builder, sdc_executor):
+    """This test will test the Write to Another Pipeline error stage, which writes to an SDC RPC destination.
+    We then take a snapshot in a separate pipeline with an SDC RPC origin:
+
+    Write to Another Pipeline error stage pipeline:
+        dev_raw_data_source >> to_error
+
+    SDC RPC origin pipeline:
+        sdc_rpc_origin >> trash
+    """
+
+    # Create some silly Tour de France-themed test data.
+    tdf_did_not_starts = [dict(name='Peter Sagan', reason='DQ'),
+                          dict(name='Mark Cavendish', reason='Abandoned')]
+    raw_data = ''.join(json.dumps(dns) for dns in tdf_did_not_starts)
+
+    sdc_rpc_id = get_random_string(string.ascii_letters, 10)
+
+    # Build the Write to Another Pipeline error stage pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    write_to_another_pipeline = builder.add_error_stage('Write to Another Pipeline')
+    write_to_another_pipeline.set_attributes(sdc_rpc_connection=[f'{sdc_executor.server_host}:{SDC_RPC_PORT}'],
+                                             sdc_rpc_id=sdc_rpc_id)
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data)
+
+    to_error = builder.add_stage('To Error')
+
+    dev_raw_data_source >> to_error
+    error_stage_pipeline = builder.build(title='Write to Another Pipeline error stage pipeline')
+
+    # Build the SDC RPC origin pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    sdc_rpc_origin = builder.add_stage('SDC RPC', type='origin')
+    sdc_rpc_origin.set_attributes(rpc_id=sdc_rpc_id,
+                                  rpc_port=SDC_RPC_PORT)
+
+    trash = builder.add_stage('Trash')
+
+    sdc_rpc_origin >> trash
+    sdc_rpc_origin_pipeline = builder.build(title='SDC RPC origin pipeline')
+
+    sdc_executor.add_pipeline(error_stage_pipeline, sdc_rpc_origin_pipeline)
+    sdc_executor.start_pipeline(sdc_rpc_origin_pipeline).wait_for_status('RUNNING')
+    sdc_executor.start_pipeline(error_stage_pipeline).wait_for_pipeline_error_records_count(2)
+    snapshot = sdc_executor.capture_snapshot(sdc_rpc_origin_pipeline).wait_for_finished().snapshot
+
+    sdc_executor.stop_pipeline(error_stage_pipeline)
+    sdc_executor.stop_pipeline(sdc_rpc_origin_pipeline)
+
+    assert [{key: value['value'] for key, value in record.value['value'].items()}
+            for record in snapshot[sdc_rpc_origin.instance_name].output] == tdf_did_not_starts
