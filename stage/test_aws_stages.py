@@ -22,6 +22,7 @@ another.
 """
 
 from datetime import datetime
+import json
 import logging
 import string
 import time
@@ -208,21 +209,22 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
     """
     # setup test static
     s3_bucket = aws.s3_bucket_name
-    s3_key = '{0}/{1}'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
-    raw_str = 'Hello World!'
-    record_count = 1 # raw_str record size
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+    # Bucket name is inside the record itself
+    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_str)
 
     record_deduplicator = builder.add_stage('Record Deduplicator')
     to_error = builder.add_stage('To Error')
 
     s3_destination = builder.add_stage('Amazon S3', type='destination')
-    s3_destination.set_attributes(bucket=s3_bucket, data_format='TEXT', partition_prefix=s3_key)
+    s3_destination.set_attributes(bucket='${record:value("/bucket")}', data_format='JSON', partition_prefix=s3_key)
 
     dev_raw_data_source >> record_deduplicator >> s3_destination
     record_deduplicator >> to_error
@@ -233,22 +235,57 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # start pipeline and capture pipeline messages to assert
-        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_pipeline_output_records_count(record_count)
+        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_pipeline_output_records_count(1)
         sdc_executor.stop_pipeline(s3_dest_pipeline).wait_for_stopped()
 
         # assert record count to S3 the size of the objects put
         list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
-        assert len(list_s3_objs['Contents']) == record_count
+        assert len(list_s3_objs['Contents']) == 1
 
         # read data from S3 to assert it is what got ingested into the pipeline
         s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
                        for s3_content in list_s3_objs['Contents']]
 
-        assert s3_contents == [raw_str] * record_count
+        # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
+        assert json.loads(s3_contents[0]) == json.loads(raw_str)
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+def test_s3_destination_non_existing_bucket(sdc_builder, sdc_executor, aws):
+    """Variant of S3 destination testing focusing on what happens when calculated bucket does not exists.
+    """
+    # setup test static
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+    # Bucket name is inside the record itself
+    raw_str = '{"bucket" : "guess-what-this-simply-does-not-exists-I-know-caused-I-said-so"}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(bucket='${record:value("/bucket")}', data_format='JSON', partition_prefix=s3_key)
+
+    dev_raw_data_source >> s3_destination
+
+    s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_dest_pipeline)
+
+    # Read snapshot of the pipeline
+    snapshot = sdc_executor.capture_snapshot(s3_dest_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(s3_dest_pipeline)
+
+    # All records should go to error stream.
+    input_records = snapshot[dev_raw_data_source.instance_name].output
+    stage = snapshot[s3_destination.instance_name]
+    assert len(stage.error_records) == len(input_records)
 
 
 @aws('firehose', 's3')
