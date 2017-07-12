@@ -29,6 +29,7 @@ import time
 
 from testframework.markers import aws
 from testframework.utils import get_random_string
+from testframework.sdc_models import Configuration
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -285,6 +286,189 @@ def test_s3_destination_non_existing_bucket(sdc_builder, sdc_executor, aws):
     # All records should go to error stream.
     input_records = snapshot[dev_raw_data_source.instance_name].output
     stage = snapshot[s3_destination.instance_name]
+    assert len(stage.error_records) == len(input_records)
+
+
+@aws('s3')
+def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
+    """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 executor
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been created by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    and S3 destination in order to limit number of objects to one. The pipeline looks like the following:
+
+    S3 Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> s3_executor
+                                                   >> to_error
+    """
+    # setup test static
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+    raw_str = f'{{"bucket": "{s3_bucket}", "company": "StreamSets Inc."}}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str)
+
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    to_error = builder.add_stage('To Error')
+
+    s3_executor = builder.add_stage('Amazon S3', type='executor')
+    s3_executor.set_attributes(bucket='${record:value("/bucket")}',
+                               task_type='CREATE_NEW_OBJECT',
+                               object_key=s3_key,
+                               content='${record:value("/company")}')
+
+    dev_raw_data_source >> record_deduplicator >> s3_executor
+    record_deduplicator >> to_error
+
+    s3_exec_pipeline = builder.build(title='Amazon S3 executor pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_exec_pipeline)
+
+    client = aws.s3
+    try:
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_pipeline_output_records_count(1)
+        sdc_executor.stop_pipeline(s3_exec_pipeline).wait_for_stopped()
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
+                       for s3_content in list_s3_objs['Contents']]
+
+        assert s3_contents[0] == 'StreamSets Inc.'
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
+    """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 destination
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been created by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    and S3 destination in order to limit number of objects to one. The pipeline looks like the following:
+
+    S3 Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> s3_executor
+                                                   >> to_error
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+    raw_str = f'{{"bucket": "{s3_bucket}", "key": "{s3_key}"}}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str)
+
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    to_error = builder.add_stage('To Error')
+
+    s3_executor = builder.add_stage('Amazon S3', type='executor')
+    s3_executor.set_attributes(bucket='${record:value("/bucket")}',
+                               task_type='CHANGE_EXISTING_OBJECT',
+                               object_key='${record:value("/key")}',
+                               tags=Configuration(property_key='key', company='${record:value("/company")}'))
+
+    dev_raw_data_source >> record_deduplicator >> s3_executor
+    record_deduplicator >> to_error
+
+    s3_exec_pipeline = builder.build(title='Amazon S3 executor pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_exec_pipeline)
+
+    client = aws.s3
+    try:
+        # Pre-create the object so that it exists
+        client.put_object(Body='Secret Data', Bucket=s3_bucket, Key=s3_key)
+
+        # And run the pipeline for at least one record (rest will be removed by the de-dup)
+        sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_pipeline_output_records_count(1)
+        sdc_executor.stop_pipeline(s3_exec_pipeline).wait_for_stopped()
+
+        tags = client.get_object_tagging(Bucket=s3_bucket, Key=s3_key)['TagSet']
+        assert len(tags) == 1
+
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+def test_s3_executor_non_existing_bucket(sdc_builder, sdc_executor, aws):
+    """Variant of S3 executor testing focusing on what happens when calculated bucket does not exists."""
+    # setup test static
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+    # Bucket name is inside the record itself
+    raw_str = '{"bucket" : "guess-what-this-simply-does-not-exists-I-know-caused-I-said-so"}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str)
+
+    s3_executor = builder.add_stage('Amazon S3', type='executor')
+    s3_executor.set_attributes(bucket='${record:value("/bucket")}',
+                               task_type='CREATE_NEW_OBJECT',
+                               object_key=s3_key,
+                               content='${record:value("/company")}')
+
+    dev_raw_data_source >> s3_executor
+
+    s3_exec_pipeline = builder.build(title='Amazon S3 executor pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_exec_pipeline)
+
+    # Read snapshot of the pipeline
+    snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(s3_exec_pipeline)
+
+    # All records should go to error stream.
+    input_records = snapshot[dev_raw_data_source.instance_name].output
+    stage = snapshot[s3_executor.instance_name]
+    assert len(stage.error_records) == len(input_records)
+
+
+@aws('s3')
+def test_s3_executor_non_existing_object(sdc_builder, sdc_executor, aws):
+    """Variant of S3 executor testing focusing on what happens when we try to apply tags on non existing object."""
+    # setup test static
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+    raw_str = f'{{"bucket": "{s3_bucket}", "key": "{s3_key}"}}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str)
+
+    s3_executor = builder.add_stage('Amazon S3', type='executor')
+    s3_executor.set_attributes(bucket='${record:value("/bucket")}',
+                               task_type='CHANGE_EXISTING_OBJECT',
+                               object_key='${record:value("/key")}',
+                               tags=Configuration(property_key='key', company='${record:value("/company")}'))
+
+    dev_raw_data_source >> s3_executor
+
+    s3_exec_pipeline = builder.build(title='Amazon S3 executor pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_exec_pipeline)
+
+    # Read snapshot of the pipeline
+    snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(s3_exec_pipeline)
+
+    # All records should go to error stream.
+    input_records = snapshot[dev_raw_data_source.instance_name].output
+    stage = snapshot[s3_executor.instance_name]
     assert len(stage.error_records) == len(input_records)
 
 
