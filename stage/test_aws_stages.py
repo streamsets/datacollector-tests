@@ -27,7 +27,7 @@ import logging
 import string
 import time
 
-from testframework.markers import aws
+from testframework.markers import *
 from testframework.utils import get_random_string
 from testframework.sdc_models import Configuration
 
@@ -290,6 +290,7 @@ def test_s3_destination_non_existing_bucket(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('2.6.0.1-0002')
 def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
     """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 executor
     sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
@@ -348,6 +349,7 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('2.6.0.1-0002')
 def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
     """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 destination
     sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
@@ -402,6 +404,7 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('2.6.0.1-0002')
 def test_s3_executor_non_existing_bucket(sdc_builder, sdc_executor, aws):
     """Variant of S3 executor testing focusing on what happens when calculated bucket does not exists."""
     # setup test static
@@ -438,6 +441,7 @@ def test_s3_executor_non_existing_bucket(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('2.6.0.1-0002')
 def test_s3_executor_non_existing_object(sdc_builder, sdc_executor, aws):
     """Variant of S3 executor testing focusing on what happens when we try to apply tags on non existing object."""
     # setup test static
