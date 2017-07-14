@@ -168,7 +168,8 @@ def test_error_record_policy_original_record(policy_write_builder, policy_read_b
     sdc_executor.add_pipeline(write_pipeline, snapshot_pipeline)
 
     try:
-        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True)
+        sdc_executor.start_pipeline(snapshot_pipeline).wait_for_status('RUNNING')
+        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline)
         sdc_executor.start_pipeline(write_pipeline)
 
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -199,7 +200,8 @@ def test_error_record_policy_stage_record(policy_write_builder, policy_read_buil
     sdc_executor.add_pipeline(write_pipeline, snapshot_pipeline)
 
     try:
-        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True)
+        sdc_executor.start_pipeline(snapshot_pipeline).wait_for_status('RUNNING')
+        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline)
         sdc_executor.start_pipeline(write_pipeline)
 
         snapshot = snapshot_command.wait_for_finished().snapshot
