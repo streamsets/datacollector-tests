@@ -14,123 +14,158 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""The tests in this module follow a pattern of creating pipelines with
+:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
+another.
+"""
+
 import logging
 import string
-from time import sleep
-from os.path import dirname, join, realpath
 
-from testframework import environment, sdc, sdc_models
-from testframework.markers import *
+import pytest
+import sqlalchemy
+
+from testframework.markers import database, cluster
 from testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# Validate end-to-end case with stopping pipeline after it read all the data from database. This
-# test case uses the query JDBC origin.
 @database
-def test_query_jdbc_no_more_date(args):
-    db = environment.Database(database=args.database,
-                              username=args.database_username,
-                              password=args.database_password)
-    db_cursor = db.connection.cursor()
-    pipeline = sdc_models.Pipeline(
-        join(dirname(realpath(__file__)),
-             'pipelines',
-             'query_jdbc_no_more_data.json')
-    ).configure_for_environment(db)
+def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
+    """Validate end-to-end case with stopping pipeline after it read all the data from database. The pipeline
+    will look like:
+        jdbc_query_consumer >> trash
+                            >= pipeline_finished_executor
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20) # lowercase for db compatibility (e.g. PostgreSQL)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_query_consumer = pipeline_builder.add_stage('JDBC Query Consumer')
+    sql_query = f'SELECT * FROM {table_name} WHERE col > ${{OFFSET}} order by col
+    jdbc_query_consumer.set_attributes(initial_offset='0', offset_column='col', sql_query=sql_query)
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finished_executor = pipeline_builder.add_stage("Pipeline Finisher Executor")
+
+    jdbc_query_consumer >> trash
+    jdbc_query_consumer >= pipeline_finished_executor
+    pipeline = pipeline_builder.build('JDBC no more data pipeline').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
 
     try:
-        db_cursor.execute('create table data(col int)')
-        db_cursor.execute('insert into data values(1), (2), (3)')
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('col', sqlalchemy.Integer))
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
 
-        with sdc.DataCollector(version=args.sdc_version) as data_collector:
-            data_collector.add_pipeline(pipeline)
-            data_collector.start()
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), [{'col':1}, {'col':2}, {'col':3}])
 
-            data_collector.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-            metrics = data_collector.pipeline_history(pipeline).latest.metrics
-            assert metrics.counter("pipeline.batchCount.counter").count == 2
-            assert metrics.counter("pipeline.batchInputRecords.counter").count == 3
-            assert metrics.counter("pipeline.batchOutputRecords.counter").count == 5
-
+        metrics = sdc_executor.pipeline_history(pipeline).latest.metrics
+        assert metrics.counter("pipeline.batchCount.counter").count == 1
+        assert metrics.counter("pipeline.batchInputRecords.counter").count == 3
+        assert metrics.counter("pipeline.batchOutputRecords.counter").count == 4
     finally:
-        db_cursor.execute('drop table data')
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
 
 
-# While writing a simple JDBC multitable consumer => Hive test, we discovered that the origin had
-# problems with table names that started with numbers (SDC-5381), so let's use parametrization to
-# run the test with various combinations of table name characters and table name lengths.
-@cluster
+@cluster('cdh')
 @database
-@pytest.mark.parametrize('table_name_characters', [string.ascii_letters, string.digits])
+# lowercase for db compatibility (e.g. PostgreSQL)
+@pytest.mark.parametrize('table_name_characters', [string.ascii_lowercase, string.digits])
 @pytest.mark.parametrize('table_name_length', [8, 20])
-def test_jdbc_multitable_consumer_to_hive(args, table_name_characters, table_name_length):
-    cluster = environment.Cluster(cluster_server=args.cluster_server)
-    db = environment.Database(database=args.database)
-    pipeline = sdc_models.Pipeline(
-        join(dirname(realpath(__file__)),
-             'pipelines',
-             'multitable_jdbc_to_hive_replication.json')
-    ).configure_for_environment(cluster, db)
+@pytest.mark.timeout(180)
+def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, cluster,
+                                          table_name_characters, table_name_length):
+    """Validate an end to end case of reading Multi-tables from JDBC source and making sure they are
+    written to Hadoop FS. We use Hive Metadata processor for drift synchronization. The pipeline looks like:
 
+        jdbc_multitable_consumer >= pipeline_finisher_executor
+        jdbc_multitable_consumer >> expression_evaluator >> field_remover >> hive_metadata
+        hive_metadata >> hadoop_fs
+        hive_metadata >> hive_metastore
+
+    Note: Numeric fixture of the test fails till SDC-6766 is addressed.
+    """
     # Generate two random strings to use when naming the DB tables at the source.
-    random_table_name_1 = get_random_string(table_name_characters, table_name_length)
-    random_table_name_2 = get_random_string(table_name_characters, table_name_length)
+    src_table_suffix = get_random_string(string.ascii_lowercase, 6) # lowercase for db compatibility (e.g. PostgreSQL)
+    random_table_name_1 = '{}_{}'.format(get_random_string(table_name_characters, table_name_length), src_table_suffix)
+    random_table_name_2 = '{}_{}'.format(get_random_string(table_name_characters, table_name_length), src_table_suffix)
 
+    # build the pipeline
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configuration=[{'tablePattern': f'%{src_table_suffix}'}])
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(
+        header_expressions=[{'attributeToSet': 'database',
+                             'headerAttributeExpression': f'{database.database}'},
+                            {'attributeToSet': 'dt',
+                             'headerAttributeExpression': "${record:value('/dt')}"},
+                            {'attributeToSet': 'table_name',
+                             'headerAttributeExpression': "${record:attribute('jdbc.tables')}"}])
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ["/dt"]
+    hive_metadata = pipeline_builder.add_stage('Hive Metadata')
+    hive_metadata.set_attributes(data_format='AVRO', database_expression="${record:attribute('database')}",
+                                 decimal_precision_expression="${record:attribute(str:concat(str:concat('jdbc.', field:field()), '.precision'))}",
+                                 decimal_scale_expression="${record:attribute(str:concat(str:concat('jdbc.', field:field()), '.scale'))}",
+                                 table_name="${record:attribute('table_name')}")
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(avro_schema_location='HEADER', data_format='AVRO', directory_in_header=True,
+                             file_type='TEXT', files_prefix='sdc-${sdc:id()}', files_suffix='avro', max_file_size=0,
+                             max_records_in_file=0, roll_attribute_name='roll', use_roll_attribute=True)
+    hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
+    hive_metastore.set_attributes(stored_as_avro=True)
+    pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+
+    jdbc_multitable_consumer >= pipeline_finisher_executor
+    jdbc_multitable_consumer >> expression_evaluator >> field_remover >> hive_metadata
+    hive_metadata >> hadoop_fs
+    hive_metadata >> hive_metastore
+    pipeline = pipeline_builder.build(title='Multi-table consumer to Hive').configure_for_environment(cluster, database)
+    sdc_executor.add_pipeline(pipeline)
+
+    tables = []
     try:
-        # Get cursors for the JDBC and Hive databases now so that, if anything goes wrong,
-        # we can be sure we can use them to clean up tables in the finally block.
-        db_cursor = db.connection.cursor()
-        hive_cursor = cluster.hive.client.cursor()
-
-        # Create table and load data in the JDBC database.
+        # create table and load data in the JDBC database
         for table_name in (random_table_name_1, random_table_name_2):
-            logger.info('Creating table %s in %s database...', table_name, db.type)
-            # TODO: Update the CREATE TABLE query to allow this test to run against any JDBC
-            # database. At the moment, we're assuming that we're running against MySQL.
-            db_cursor.execute('CREATE TABLE `{0}` ('
-                              'event_id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,'
-                              'order_id INT(11),'
-                              'event_time DATETIME,'
-                              'event_type VARCHAR(32)'
-                              ')'.format(table_name))
-
-            logger.info('Adding three rows into %s database...', db.type)
+            logger.info('Creating table %s in %s database ...', table_name, database.type)
+            table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                     sqlalchemy.Column('event_id', sqlalchemy.Integer, primary_key=True),
+                                     sqlalchemy.Column('order_id', sqlalchemy.Integer),
+                                     sqlalchemy.Column('event_type', sqlalchemy.String(32)),
+                                     sqlalchemy.Column('dt', sqlalchemy.String(20)))
+            table.create(database.engine)
+            tables.append(table)
             rows = [
-                (123, '2016-08-21 18:23:45', 'SHIPPED'),
-                (234, '2016-08-22 19:34:56', 'ARRIVED'),
-                (345, '2016-08-23 20:45:12', 'READY')
+                {'event_id': 1, 'order_id': 123, 'event_type': 'SHIPPED', 'dt':'2017-07-13'},
+                {'event_id': 2, 'order_id': 234, 'event_type': 'ARRIVED', 'dt':'2017-07-13'},
+                {'event_id': 3, 'order_id': 345, 'event_type': 'READY', 'dt':'2017-07-13'}
             ]
-            db_cursor.execute('INSERT INTO `{0}` (order_id, event_time, event_type) '
-                              'VALUES {1}'.format(table_name,
-                                                  ','.join(str(row) for row in rows)))
+            logger.info('Adding %s rows to %s of %s database ...', len(rows), table_name, database.type)
+            connection = database.engine.connect()
+            connection.execute(table.insert(), rows)
 
-        with sdc.DataCollector(version=args.sdc_version) as data_collector:
-            data_collector.add_pipeline(pipeline)
-            data_collector.start()
-            data_collector.start_pipeline(pipeline)
-
-            # TODO: Change the wait to depend on record metrics instead of a dumb sleep.
-            logger.info('Waiting 15 seconds for pipeline to work...')
-            sleep(15)
-
-            # We need to stop the pipeline to ensure that files are properly created in HDFS.
-            data_collector.stop_pipeline(pipeline).wait_for_stopped()
+        # run the pipeline
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Check that the data shows up in Hive.
-        for table_name in (random_table_name_1, random_table_name_2):
-            hive_cursor.execute('SELECT * from `{0}`'.format(table_name))
-            # Before we do the assert, we need to prepend event_ids to each row (the
-            # auto-incrementing column from our table).
-            event_ids = [1, 2, 3]
-            assert hive_cursor.fetchall() == [(id,) + row for id, row in zip(event_ids, rows)]
+        hive_cursor = cluster.hive.client.cursor()
+        for table in tables:
+            logger.info('Asserting table %s', table.name)
+            hive_cursor.execute(f'SELECT * from `{table.name}`')
+            hive_values = [list(row) for row in hive_cursor.fetchall()]
+            raw_values = [list(row.values()) for row in rows]
+            assert sorted(hive_values) == sorted(raw_values)
     finally:
-        for table_name in (random_table_name_1, random_table_name_2):
-            logger.info('Dropping table %s in %s database...', table_name, db.type)
-            db_cursor.execute('DROP TABLE `{0}`'.format(table_name))
-
-            logger.info('Dropping table %s in Hive...', table_name)
-            hive_cursor.execute('DROP TABLE `{0}`'.format(table_name))
+        for table in tables:
+            logger.info('Dropping table %s in %s database ...', table.name, database.type)
+            table.drop(database.engine)
+            logger.info('Dropping table %s in Hive ...', table.name)
+            hive_cursor.execute(f'DROP TABLE `{table.name}`')

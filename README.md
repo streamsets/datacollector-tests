@@ -47,9 +47,6 @@ datacollector-tests
 ├── LICENSE
 ├── README.md
 ├── pipeline
-│   ├── pipelines
-│   │   ├── multitable_jdbc_to_hive_replication.json
-│   │   └── pipeline_1.json
 │   ├── test_jdbc_multitable_consumer.py
 │   └── test_pipelines.py
 ├── stage
@@ -77,11 +74,7 @@ datacollector-tests
             These tests cater to end-to-end scenarios for pipelines already created in SDC.
             e.g. single or multithreaded pipelines.
 
-+ **pipeline/pipelines/** - This folder contains JSON files defining the pipelines which are required by tests in folder /pipeline.
-            To generate these JSON files, pipelines under test are created using SDC and exported as JSON files.
-
 + **stage/** - This folder contains Python modules to test a stage in SDC.
-            The tests generate the pipeline under test using pipeline templates and stage definitions from SDC.
 
 + **upgrade/** - This folder contains Python modules to test SDC pipeline upgrades.
 

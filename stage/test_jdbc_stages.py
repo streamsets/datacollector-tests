@@ -16,13 +16,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""The tests in this module follow a pattern of creating pipelines with
+:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
+another.
+"""
+
 import logging
 import random
+import string
+
 import sqlalchemy
 
-from testframework.markers import *
+from testframework.markers import database
 from testframework.utils import get_random_string
-from string import ascii_letters
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +38,22 @@ ROWS_IN_DATABASE = [
     {'name': 'Arvind'}
 ]
 
-"""
-Check if Jdbc Multi-table Origin can retrieve any records from a table.
-Destination is Trash.
-Verify input and output (via snapshot).
-"""
+
 @database
 def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, database):
+    """
+    Check if Jdbc Multi-table Origin can retrieve any records from a table.
+    Destination is Trash.
+    Verify input and output (via snapshot).
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'{src_table_prefix}%'}])
+
     trash = pipeline_builder.add_stage('Trash')
 
     jdbc_multitable_consumer >> trash
@@ -49,7 +61,6 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
     pipeline = pipeline_builder.build().configure_for_environment(database)
 
     metadata = sqlalchemy.MetaData()
-    table_name = get_random_string(ascii_letters, 20)
     table = sqlalchemy.Table(
         table_name,
         metadata,
@@ -78,14 +89,15 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
-"""
-This test case uses the JDBC Query origin.
-Test that Pipeline Finisher works.
-"""
+
 @database
 def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
+    """
+    This test case uses the JDBC Query origin.
+    Test that Pipeline Finisher works.
+    """
     metadata = sqlalchemy.MetaData()
-    table_name = get_random_string(ascii_letters, 20)
+    table_name = get_random_string(string.ascii_lowercase, 20)
     table = sqlalchemy.Table(
         table_name,
         metadata,
@@ -120,16 +132,19 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
         logger.info('Jdbc No More Data: Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
-"""
-Test reading with Multi-table JDBC, output to trash.
-Test some table names that start with numbers (SDC-5381).
-Check if Pipeline Finished Executor works correctly.
-"""
+
 @database
 def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, database):
-    pipeline_builder = sdc_builder.get_pipeline_builder()
+    """
+    Test reading with Multi-table JDBC, output to trash.
+    Test some table names that start with numbers (SDC-5381).
+    Check if Pipeline Finished Executor works correctly.
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
 
+    pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'%{src_table_prefix}%'}])
     finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     trash = pipeline_builder.add_stage('Trash')
 
@@ -137,6 +152,7 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
     jdbc_multitable_consumer >> trash
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
 
     random.seed()
 
@@ -145,16 +161,17 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
     try:
         connection = database.engine.connect()
 
-        NUMLETTERS = 10
-        NUMRECS = 10
-        NUMTABLES = 3
-        for i in range(0, NUMTABLES):
+        num_letters = 10
+        num_recs = 10
+        num_tables = 3
+        for i in range(0, num_tables):
             if i % 2 == 1:
                 # table name starts with a number, contains mixed-case letters.
-                input_name = str(i) + get_random_string(ascii_letters, NUMLETTERS)
+                input_name = '{}_{}_{}'.format(str(i), src_table_prefix,
+                                               get_random_string(string.ascii_lowercase, num_letters))
             else:
                 # table name comprised of mixed-case letters only.
-                input_name = get_random_string(ascii_letters, NUMLETTERS)
+                input_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, num_letters))
 
             tables.append(sqlalchemy.Table(
                 input_name,
@@ -164,12 +181,10 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
             ))
             tables[i].create(database.engine)
 
-            rows = [{'data': random.randint(0, 2100000000)} for _ in range(NUMRECS)]
+            rows = [{'data': random.randint(0, 2100000000)} for _ in range(num_recs)]
             connection.execute(tables[i].insert(), rows)
 
-        sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
     finally:
         for table in tables:
             table.drop(database.engine)

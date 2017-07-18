@@ -14,55 +14,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""The tests in this module follow a pattern of creating pipelines with
+:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
+another.
+"""
+
 import logging
 import re
 import string
-from os.path import dirname, join, realpath
-from time import sleep
+from time import sleep, time
 
-from testframework import environment, sdc
-from testframework.markers import *
+import pytest
+import sqlalchemy
+
+from testframework.markers import database
 from testframework.utils import get_random_string
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-EVENT_TABLE_NAME = 'SRC_NO_DATAEVENT'
-EVENT_COLUMN_NAME = 'EVENT_STATUS'
+# lower case tables have better compatibility with databases (e.g., PostgreSQL)
+EVENT_TABLE_NAME = 'no_data_event'
+EVENT_COLUMN_NAME = 'event_status'
 PRIMARY_KEY = 'pid'
 OTHER_COLUMN = 'randomstring'
-
-CREATE_DATA_TABLE_STATEMENT = ('CREATE TABLE `{table_name}` '
-                               '({primary_key} INT NOT NULL PRIMARY KEY, {other_col} VARCHAR(20))'
-                               .format(table_name='{table_name}',
-                                       primary_key=PRIMARY_KEY,
-                                       other_col=OTHER_COLUMN))
-
-INSERT_DATA_TABLE_STATEMENT = "INSERT into `{table_name}` values ({primary_key}, '{other_col}')"
-
-SELECT_DATA_TABLE_STATEMENT = ('SELECT * FROM `{table_name}` ORDER BY {primary_key}'.format(
-    table_name='{table_name}', primary_key=PRIMARY_KEY))
-
-INSERT_EVENT_TABLE_STATEMENT = ('INSERT INTO `{event_table_name}` values ({event_column_value})'
-                                .format(event_table_name=EVENT_TABLE_NAME,
-                                        event_column_value='{event_column_value}'))
-CREATE_EVENT_TABLE_STATEMENT = ('CREATE TABLE `{event_table_name}` ({event_column} int)'
-                                .format(event_table_name=EVENT_TABLE_NAME,
-                                        event_column=EVENT_COLUMN_NAME))
-SELECT_EVENT_TABLE_STATEMENT = ('SELECT `{event_column_name}` from `{event_table_name}`'
-                                .format(event_column_name=EVENT_COLUMN_NAME,
-                                        event_table_name=EVENT_TABLE_NAME))
-UPDATE_EVENT_TABLE_STATEMENT = ('UPDATE `{event_table_name}` set `{event_column_name}`= 1'
-                                .format(event_table_name=EVENT_TABLE_NAME,
-                                        event_column_name=EVENT_COLUMN_NAME))
-
-DROP_TABLE_STATEMENT = 'DROP TABLE `{table_name}`'.format(table_name='{table_name}')
-
-NO_OF_SRC_ROWS = 200
-SRC_TABLE_PREFIX = 'src'
-TGT_TABLE_PREFIX = 'target'
+NO_OF_SRC_ROWS = 60
+# lowercase for db compatibility (e.g. PostgreSQL)
+SRC_TABLE_PREFIX = get_random_string(string.ascii_lowercase, 6)
+TGT_TABLE_PREFIX = get_random_string(string.ascii_lowercase, 6)
 
 TABLE_PREFIX_NAME_FMT = '{table_prefix}_{table_name}'
 JDBC_QUERY_TBL_FORMAT = ("${{str:replace(record:attribute('jdbc.tables'),"
@@ -70,184 +50,151 @@ JDBC_QUERY_TBL_FORMAT = ("${{str:replace(record:attribute('jdbc.tables'),"
 JDBC_QUERY_OTHER_COL = "${{record:value('/{other_col}')}}"
 JDBC_QUERY_PRIMARY_COL = "${{record:value('/{primary_key}')}}"
 
-
-# Close the opened cursor and if any exceptions happen during closing simply log and move.
-def close_cursor_quietly(cursor):
-    if cursor:
-        try:
-            cursor.close()
-        except Exception as e:
-            # quietly log exception but not fail the test case
-            logger.error('Error when closing cursor:  %s', e)
+INSERT_DATA_TABLE_STATEMENT = "INSERT into {table_name} values ({primary_key}, '{other_col}')"
+UPDATE_EVENT_TABLE_STATEMENT = ('UPDATE {event_table_name} set {event_column_name} = 1'
+                                .format(event_table_name=EVENT_TABLE_NAME,
+                                        event_column_name=EVENT_COLUMN_NAME))
 
 
-# Execute SQL Statement using db_cursor.
-def execute_statement(db_cursor, statement):
-    logger.info('Executing Statement %s', statement)
-    db_cursor.execute(statement)
-
-
-# Goes through all source tables and checks the corresponding mapping to a target table.
-def assert_tables_replicated(db, src_table_names):
+def assert_tables_replicated(database=None, src_table_names=None):
+    """Goes through all source tables and checks the corresponding mapping to a target table."""
+    db_engine = database.engine
     for src_table_name in src_table_names:
         target_table_name = re.sub(SRC_TABLE_PREFIX, TGT_TABLE_PREFIX, src_table_name, 1)
-        logger.info(
-            'Comparing Source Table : %s and Target Table : %s',
-            src_table_name,
-            target_table_name
-        )
+        logger.info('Comparing Source Table : %s and Target Table : %s', src_table_name, target_table_name)
 
-        db_cursor1 = None
-        db_cursor2 = None
-        try:
-            db_cursor1 = db.connection.cursor()
-            db_cursor2 = db.connection.cursor()
+        src_table = sqlalchemy.Table(src_table_name, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
+        src_result = db_engine.execute(src_table.select().order_by(src_table.c[PRIMARY_KEY]))
+        src_result_list = src_result.fetchall()
+        src_result.close()
 
-            execute_statement(
-                db_cursor1,
-                SELECT_DATA_TABLE_STATEMENT.format(table_name=src_table_name)
-            )
-            execute_statement(
-                db_cursor2,
-                SELECT_DATA_TABLE_STATEMENT.format(table_name=target_table_name)
-            )
+        target_table = sqlalchemy.Table(target_table_name, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
+        target_result = db_engine.execute(target_table.select().order_by(target_table.c[PRIMARY_KEY]))
+        target_result_list = target_result.fetchall()
+        target_result.close()
 
-            src_table_rows = db_cursor1.fetchall()
-            target_table_rows = db_cursor2.fetchall()
-
-            assert src_table_rows == target_table_rows
-        finally:
-            close_cursor_quietly(db_cursor1)
-            close_cursor_quietly(db_cursor2)
+        assert src_result_list == target_result_list
 
 
-# Wait for no_data_event update on EVENT_TABLE (i.e, event column should be set to 1).
-def wait_for_no_data_event(db):
-    while True:
-        db_cursor = None
-        try:
-            db_cursor = db.connection.cursor()
-            execute_statement(db_cursor, SELECT_EVENT_TABLE_STATEMENT)
-            result = db_cursor.fetchall()
-            if result[0][0] == 1:
-                logger.info('Received NO_MORE_DATA_EVENT...')
-                break
-            sleep(20)
-        finally:
-            close_cursor_quietly(db_cursor)
+def wait_for_no_data_event(database=None, timeout_sec=240):
+    """Wait for no_data_event update on EVENT_TABLE (i.e, event column should be set to 1)."""
+    logger.info('Waiting for no_data_event to be updated in %s seconds ...', timeout_sec)
+    start_waiting_time = time()
+    stop_waiting_time = start_waiting_time + timeout_sec
+    db_engine = database.engine
+
+    while time() < stop_waiting_time:
+        event_table = sqlalchemy.Table(EVENT_TABLE_NAME, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
+        event_result = db_engine.execute(sqlalchemy.select([event_table.c[EVENT_COLUMN_NAME]]))
+        event_result_list = event_result.fetchall()
+        event_result.close()
+
+        if event_result_list[0][0] == 1:
+            logger.info('Received NO_MORE_DATA_EVENT')
+            return
+        sleep(5)
+
+    raise Exception('Timed out after %s seconds while waiting for no data event.')
 
 
-# Creates source and target tables, inserts rows to the source table.
-# Also creates event table and set event column to 0.
-def setup_tables(db, src_table_names, target_table_names):
-    db_cursor = None
-    try:
-        db_cursor = db.connection.cursor()
-        for table_name in src_table_names:
-            execute_statement(db_cursor, CREATE_DATA_TABLE_STATEMENT.format(table_name=table_name))
-            for src_row_id in range(NO_OF_SRC_ROWS):
-                execute_statement(
-                    db_cursor,
-                    INSERT_DATA_TABLE_STATEMENT.format(
-                        table_name=table_name,
-                        primary_key=str(src_row_id),
-                        other_col=get_random_string(string.ascii_lowercase, 20))
-                )
-        for table_name in target_table_names:
-            execute_statement(db_cursor, CREATE_DATA_TABLE_STATEMENT.format(table_name=table_name))
+def setup_tables(database, src_table_names, target_table_names):
+    """Creates source, target and event tables, inserts rows to the source table and
+    insert 0 for event table's event column.
+    """
+    db_engine = database.engine
+    for table_name in src_table_names:
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column(PRIMARY_KEY, sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
+        table.create(db_engine)
+        logger.info('Inserting data into source table %s in %s database ...', table_name, database.type)
+        for src_row_id in range(1, NO_OF_SRC_ROWS+1): # some databases (like MySQL) will start from 1
+            db_engine.execute(table.insert(), [{PRIMARY_KEY: src_row_id,
+                                                OTHER_COLUMN: get_random_string(string.ascii_lowercase, 20)}])
 
-        execute_statement(db_cursor, CREATE_EVENT_TABLE_STATEMENT)
-        execute_statement(db_cursor, INSERT_EVENT_TABLE_STATEMENT.format(event_column_value=0))
-    finally:
-        close_cursor_quietly(db_cursor)
+    for table_name in target_table_names:
+        logger.info('Creating target table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column(PRIMARY_KEY, sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
+        table.create(db_engine)
+
+    logger.info('Creating event table %s in %s database ...', EVENT_TABLE_NAME, database.type)
+    table = sqlalchemy.Table(EVENT_TABLE_NAME, sqlalchemy.MetaData(),
+                             sqlalchemy.Column(EVENT_COLUMN_NAME, sqlalchemy.Integer))
+    table.create(db_engine)
+    logger.info('Inserting data into event table %s in %s database ...', EVENT_TABLE_NAME, database.type)
+    db_engine.execute(table.insert(), [{EVENT_COLUMN_NAME: 0}])
 
 
-# Drops both source, target tables and event table.
-def teardown_tables(db, table_names):
-    db_cursor = None
-    try:
-        db_cursor = db.connection.cursor()
-        for table_name in table_names:
-            execute_statement(db_cursor, DROP_TABLE_STATEMENT.format(table_name=table_name))
-    finally:
-        close_cursor_quietly(db_cursor)
+def teardown_tables(database, table_names):
+    """Drops both source, target tables and event table."""
+    db_engine = database.engine
+    for table_name in table_names:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
+        table.drop(db_engine)
 
 
 @database
-@pytest.mark.parametrize('table_name_characters', [string.ascii_letters, string.digits])
-@pytest.mark.parametrize('table_name_length', [20])
-@pytest.mark.parametrize('no_of_tables', [25, 50])
-@pytest.mark.parametrize('no_of_threads', [1, 3, 5])
-@pytest.mark.parametrize(
-    'batch_strategy',
-    ["SWITCH_TABLES", "PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE"]
-)
+# lowercase for db compatibility (e.g. PostgreSQL)
+@pytest.mark.parametrize('table_name_characters', [string.ascii_lowercase, string.digits])
+@pytest.mark.parametrize('table_name_length', [14])
+@pytest.mark.parametrize('no_of_tables', [9])
+@pytest.mark.parametrize('no_of_threads', [1, 5])
+@pytest.mark.parametrize('batch_strategy', ["SWITCH_TABLES", "PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE"])
 @pytest.mark.timeout(300)
-# Tests Multithreaded Multitable JDBC source.
-# Replicates a set of tables with prefix 'src' to a another set of tables with 'target' prefix.
-#
-# Also leveraging the NO_MORE_DATA EVENT by the Multitable JDBC source after no data in tables.
-# On Event path a JDBC Executor updates a special event table to mark data read to stop pipeline.
-def test_jdbc_multitable_consumer_to_jdbc(args,
+def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                                           table_name_characters,
                                           table_name_length,
                                           no_of_tables,
                                           no_of_threads,
                                           batch_strategy):
-    db = environment.Database(database=args.database)
-    pipeline = sdc.Pipeline(
-        join(dirname(realpath(__file__)),
-             'pipelines',
-             'jdbc_multi_table_to_jdbc.json')
-    ).configure_for_environment(db)
+    """Tests Multithreaded Multi-table JDBC source. Replicates a set of tables with prefix 'src' to a another
+    set of tables with 'target' prefix. Also leveraging the NO_MORE_DATA EVENT by the Multi-table JDBC source after
+    no data in tables. On Event path a JDBC Executor updates a special event table to mark data read to stop pipeline.
+    The pipeline would look like:
 
-    multi_table_stage = pipeline.stages['JDBCMultitableConsumer_01']
-
-    first_table_config = multi_table_stage.table_configuration[0]
-
-    first_table_config['tablePattern'] = ('{src_table_prefix}%'
-                                          .format(src_table_prefix=SRC_TABLE_PREFIX))
-    multi_table_stage.no_of_threads = no_of_threads
-    multi_table_stage.batch_strategy = batch_strategy
-    multi_table_stage.configuration['hikariConfigBean.maximumPoolSize'] = no_of_threads
-    multi_table_stage.configuration['hikariConfigBean.minIdle'] = no_of_threads
-
+            jdbc_multitable_consumer >> jdbc_query_dest
+                                     >= jdbc_query_event
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(no_of_threads=no_of_threads, batch_strategy=batch_strategy,
+                                            max_pool_size=no_of_threads, min_idle_connections=no_of_threads,
+                                            table_configuration=[{"tablePattern": f'{SRC_TABLE_PREFIX}%'}])
     # The target used to replicate is JDBCQueryExecutor.
     # After SDC-5757 is resolved, we can use JDBCProducer.
-    pipeline.stages['JDBCQuery_02'].query = (INSERT_DATA_TABLE_STATEMENT.format(
-            table_name=JDBC_QUERY_TBL_FORMAT.format(
-                src_table_prefix=SRC_TABLE_PREFIX,
-                target_table_prefix=TGT_TABLE_PREFIX
-            ),
-            primary_key=JDBC_QUERY_PRIMARY_COL.format(primary_key=PRIMARY_KEY),
-            other_col=JDBC_QUERY_OTHER_COL.format(other_col=OTHER_COLUMN)
-        ))
+    jdbc_query_dest = pipeline_builder.add_stage('JDBC Query', type='executor')
+    dest_table = JDBC_QUERY_TBL_FORMAT.format(src_table_prefix=SRC_TABLE_PREFIX, target_table_prefix=TGT_TABLE_PREFIX)
+    dest_query = INSERT_DATA_TABLE_STATEMENT.format(table_name=dest_table,
+                                                    primary_key=JDBC_QUERY_PRIMARY_COL.format(primary_key=PRIMARY_KEY),
+                                                    other_col=JDBC_QUERY_OTHER_COL.format(other_col=OTHER_COLUMN))
+    jdbc_query_dest.set_attributes(query=dest_query)
+    jdbc_query_event = pipeline_builder.add_stage('JDBC Query', type='executor')
+    jdbc_query_event.set_attributes(query=UPDATE_EVENT_TABLE_STATEMENT)
 
-    pipeline.stages['JDBCQuery_01'].query = UPDATE_EVENT_TABLE_STATEMENT
+    jdbc_multitable_consumer >> jdbc_query_dest
+    jdbc_multitable_consumer >= jdbc_query_event
+    pipeline = pipeline_builder.build('JDBC multitable consumer pipeline').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
 
     # Generate random table names.
-    table_names = [get_random_string(table_name_characters, table_name_length) + '_' + str(tableNo)
+    table_names = [get_random_string(table_name_characters, table_name_length).lower() + '_' + str(tableNo)
                    for tableNo in range(0, no_of_tables)]
-
     src_table_names = ([TABLE_PREFIX_NAME_FMT.format(table_prefix=SRC_TABLE_PREFIX,
                                                      table_name=table_name)
                         for table_name in table_names])
     target_table_names = ([TABLE_PREFIX_NAME_FMT.format(table_prefix=TGT_TABLE_PREFIX,
                                                         table_name=table_name)
                            for table_name in table_names])
-
-    # Setup the tables for test.
-    setup_tables(db, src_table_names, target_table_names)
-
     try:
-        with sdc.DataCollector(version=args.sdc_version) as data_collector:
-            data_collector.add_pipeline(pipeline)
-            data_collector.start()
-            data_collector.start_pipeline(pipeline)
-            wait_for_no_data_event(db)
-            data_collector.stop_pipeline(pipeline).wait_for_stopped()
-            assert_tables_replicated(db, src_table_names)
+        setup_tables(database, src_table_names, target_table_names)
+        sdc_executor.start_pipeline(pipeline)
+        wait_for_no_data_event(database)
+        assert_tables_replicated(database, src_table_names)
     finally:
-        # Drop tables after test.
-        teardown_tables(db, src_table_names + target_table_names + [EVENT_TABLE_NAME])
-
+        sdc_executor.stop_pipeline(pipeline) # must to stop pipeline before tables can be dropped.
+        logger.info('Dropping test related tables in %s database...', database.type)
+        teardown_tables(database, src_table_names + target_table_names + [EVENT_TABLE_NAME])

@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 @upgrade
-def test_pipeline_upgrade(sdc_executor, pipeline_full_path):
-    with sdc.DataCollector(version=sdc_executor.version) as data_collector:
+def test_pipeline_upgrade(args, pipeline_full_path):
+    with sdc.DataCollector(version=args.post_upgrade_sdc_version or args.sdc_version) as data_collector:
         pipeline = sdc_models.Pipeline(pipeline_full_path)
         data_collector.configure_for_pipeline(pipeline)
         data_collector.add_pipeline(pipeline)
