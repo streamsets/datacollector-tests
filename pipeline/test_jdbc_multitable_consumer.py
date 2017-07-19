@@ -43,7 +43,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_query_consumer = pipeline_builder.add_stage('JDBC Query Consumer')
-    sql_query = f'SELECT * FROM {table_name} WHERE col > ${{OFFSET}} order by col
+    sql_query = f'SELECT * FROM {table_name} WHERE col > ${{OFFSET}} order by col'
     jdbc_query_consumer.set_attributes(initial_offset='0', offset_column='col', sql_query=sql_query)
     trash = pipeline_builder.add_stage('Trash')
     pipeline_finished_executor = pipeline_builder.add_stage("Pipeline Finisher Executor")
