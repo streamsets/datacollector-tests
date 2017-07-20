@@ -16,11 +16,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
+import string
+import tempfile
 
 import pytest
 
 from testframework import sdc_api
+from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,7 @@ ERROR_CODE_STAGE_REQUIRED_FIELDS = 'CONTAINER_0050'
 ERROR_CODE_UNSATISFIED_PRECONDITION = 'CONTAINER_0051'
 # Port for SDC RPC stages to exchange error records
 SDC_RPC_PORT = 20000
+
 
 def test_error_records_stop_pipeline_on_required_field(random_expression_pipeline_builder, sdc_executor):
     random_expression_pipeline_builder.expression_evaluator.stage_on_record_error = 'STOP_PIPELINE'
@@ -212,3 +217,57 @@ def test_error_record_policy_stage_record(policy_write_builder, policy_read_buil
     finally:
         sdc_executor.stop_pipeline(write_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
+
+
+def test_write_to_file_error_records(sdc_builder, sdc_executor):
+    """Test Write to File Error records. To achieve testing this, we have two pipelines. The 1st one will
+    write required errors to a file using Error stage and 2nd will read those files using Directory origin. We then
+    snapshot the 2nd pipeline to assert error data. The pipelines looks like:
+
+        dev_raw_data_source >> to_error
+    and
+        directory >> trash
+    """
+    raw_data = 'Hello!'
+    directory_to_write = tempfile.gettempdir()
+    files_prefix = 'sdc-{}'.format(get_random_string(string.ascii_letters, 6))
+    # with below setting, there should only be one file generated
+    file_wait_time_in_secs = "300"
+    max_file_size_in_mb  = 100
+
+    # build and add error stage pipeline
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    write_to_file = pipeline_builder.add_error_stage('Write to File')
+    write_to_file.set_attributes(directory=directory_to_write, file_wait_time_in_secs=file_wait_time_in_secs,
+                                 files_prefix=files_prefix, max_file_size_in_mb=max_file_size_in_mb)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    to_error = pipeline_builder.add_stage('To Error')
+
+    dev_raw_data_source >> to_error
+    err_stage_pipeline = pipeline_builder.build('Write to file error stage pipeline')
+    sdc_executor.add_pipeline(err_stage_pipeline)
+
+    # build and add directory read pipeline
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory')
+    directory.set_attributes(data_format='TEXT', directory=directory_to_write, pattern=f'{files_prefix}*')
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build('Read error files pipeline')
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    # run error stage pipeline and wait till some errors are generated
+    sdc_executor.start_pipeline(err_stage_pipeline).wait_for_status('RUNNING')
+    sdc_executor.stop_pipeline(err_stage_pipeline)
+
+    # read from directory origin for the errors which were written
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert file content's error data has our raw_data
+    record = snapshot[directory.instance_name].output[0].value['value']['text']['value']
+    # remove special ASCII characters in the output. Note: 1st record of Error file has special ASCII character.
+    record_json = json.loads(record.encode('ascii', 'ignore').decode())
+    assert raw_data == record_json['value']['value']['text']['value']
