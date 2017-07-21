@@ -127,10 +127,9 @@ def test_field_hasher(sdc_builder, sdc_executor):
     field_hasher = pipeline_builder.add_stage('Field Hasher')
     field_hasher.set_attributes(field_hasher_in_place_configs=field_hasher_in_place_configs,
                                 field_hasher_target_configs=field_hasher_target_configs,
-                                field_hasher_use_separator=False, record_hasher_hash_entire_record=True,
-                                record_hasher_hash_type='MD5', record_hasher_header_attribute='myrecord',
-                                record_hasher_include_record_header=False, record_hasher_target_field='/myrecord',
-                                record_hasher_use_separator=False)
+                                record_hasher_hash_entire_record=True, record_hasher_hash_type='MD5',
+                                record_hasher_header_attribute='myrecord', record_hasher_include_record_header=False,
+                                record_hasher_target_field='/myrecord')
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> field_hasher >> trash
@@ -715,3 +714,63 @@ def test_field_zip(sdc_builder, sdc_executor):
     output_merge = [tuple((int(a['value']) for a in output_item_1.values())),
                     tuple((int(a['value']) for a in output_item_2.values()))]
     assert raw_merge == output_merge
+
+
+def test_value_replacer(sdc_builder, sdc_executor):
+    """Test Value Replacer processor replacing values in fields. The pipeline would look like:
+
+        dev_raw_data_source >> value_replacer >> trash
+    """
+    expected_password_value = 'mysecretcode'
+    expected_state_value = 'NC'
+    raw_data = """
+        {
+          "contact": {
+             "fname": "Jane",
+             "lname": "Smith",
+             "id": 557,
+             "address": {
+               "home": {
+                 "state": "North Carolina",
+                 "zipcode": "27023"
+                }
+              },
+              "password": null,
+              "state": null
+          }
+        }
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    value_replacer = pipeline_builder.add_stage('Value Replacer', type='processor')
+    value_replacer.set_attributes(conditional_replace_values=[{
+        'fieldNames': ['/contact/address/home/state', '/contact/state'],
+        'operator': 'ALL',
+        'comparisonValue': 'North Carolina',
+        'replacementValue': expected_state_value
+    }], fields_to_null=[{
+        'fields': ['/contact/password'],
+        'newValue': expected_password_value
+    }], replace_null_values=[{
+        'fieldsToNull': ['/contact/*name'],
+        'condition': "${record:value('/contact/id') > 0}"
+    }])
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> value_replacer >> trash
+    pipeline = pipeline_builder.build('Value Replacer pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    new_value = snapshot[value_replacer.instance_name].output[0].value['value']['contact']['value']
+    # assert fields to null
+    assert None == new_value['fname']['value'] == new_value['lname']['value']
+    # assert replace null values
+    assert expected_password_value == new_value['password']['value']
+    # assert conditionally replace values
+    assert expected_state_value == new_value['state']['value']
+    assert expected_state_value == new_value['address']['value']['home']['value']['state']['value']
