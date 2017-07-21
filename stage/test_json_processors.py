@@ -46,7 +46,7 @@ def test_json_parser(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
     json_parser = pipeline_builder.add_stage('JSON Parser', type='processor')
-    json_parser.set_attributes(field_to_parse='/text', ignore_control_chars=True, target_field=f'/{result_field}')
+    json_parser.set_attributes(field_to_parse='/text', ignore_control_characters=True, target_field=f'/{result_field}')
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> json_parser >> trash
