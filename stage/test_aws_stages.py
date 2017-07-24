@@ -208,7 +208,6 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
         dev_raw_data_source >> record_deduplicator >> s3_destination
                                                    >> to_error
     """
-    # setup test static
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
 
@@ -225,7 +224,8 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
     to_error = builder.add_stage('To Error')
 
     s3_destination = builder.add_stage('Amazon S3', type='destination')
-    s3_destination.set_attributes(bucket='${record:value("/bucket")}', data_format='JSON', partition_prefix=s3_key)
+    bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
+    s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key)
 
     dev_raw_data_source >> record_deduplicator >> s3_destination
     record_deduplicator >> to_error
@@ -256,6 +256,7 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('2.6.0.1-0002')
 def test_s3_destination_non_existing_bucket(sdc_builder, sdc_executor, aws):
     """Variant of S3 destination testing focusing on what happens when calculated bucket does not exists.
     """
