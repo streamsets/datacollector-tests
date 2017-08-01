@@ -24,6 +24,8 @@ another.
 import json
 import logging
 
+from testframework.markers import sdc_min_version
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -58,3 +60,46 @@ def test_json_parser(sdc_builder, sdc_executor):
 
     new_value = snapshot[json_parser.instance_name].output[0].value['value'][result_field]['value']
     assert expected_dict[result_key] == new_value[result_key]['value']
+
+
+@sdc_min_version('2.7.0.0-SNAPSHOT')
+def test_json_generator(sdc_builder, sdc_executor):
+    """Test JSON Generator processor.  The pipeline would look like:
+
+        dev_raw_data_source >> json_generator >> trash
+    """
+    raw_data = """
+        {
+          "contact": {
+             "name": "Jane Smith",
+             "id": "557",
+             "address": {
+               "home": {
+                 "state": "NC",
+                 "zipcode": "27023"
+                  }
+              }
+          },
+           "newcontact": {
+             "address": {}
+          }
+        }
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    json_generator = pipeline_builder.add_stage('JSON Generator', type='processor')
+    json_generator.set_attributes(field_to_serialize='/contact/address', target_field='/result')
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> json_generator >> trash
+    pipeline = pipeline_builder.build('JSON Generator pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    new_value = snapshot[json_generator.instance_name].output[0].value['value']['result']['value']
+    # load expected data as JSON (checks for JSON format) and assert it is same
+    assert json.loads(raw_data)['contact']['address'] == json.loads(new_value)
