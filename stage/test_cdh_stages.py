@@ -44,7 +44,7 @@ SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
 
 DEFAULT_IMPALA_DB = 'default'
-
+DEFAULT_KUDU_PORT = 7051
 
 @cluster('cdh')
 def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
@@ -484,14 +484,14 @@ def test_kudu_destination(sdc_builder, sdc_executor, cluster):
     field_to_column_mapping = [dict(field='/favorite_rank', columnName='rank')]
 
     kudu_table_name = get_random_string(string.ascii_letters, 10)
+    kudu_master_address = '{}:{}'.format(cluster.server_host, DEFAULT_KUDU_PORT)
 
     # Build the pipeline.
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu',
-                             type='destination').set_attributes(table_name='impala::{}.{}'.format(DEFAULT_IMPALA_DB,
-                                                                                                  kudu_table_name),
+                             type='destination').set_attributes(table_name=kudu_table_name,
                                                                 default_operation='INSERT',
                                                                 field_to_column_mapping=field_to_column_mapping)
     dev_raw_data_source >> kudu
@@ -508,8 +508,11 @@ def test_kudu_destination(sdc_builder, sdc_executor, cluster):
                                             sqlalchemy.Column('rank', sqlalchemy.Integer, primary_key=True),
                                             sqlalchemy.Column('name', sqlalchemy.String),
                                             sqlalchemy.Column('wins', sqlalchemy.Integer),
-                                            impala_partition_by='HASH PARTITIONS 16',
-                                            impala_stored_as='KUDU')
+                                            impala_table_properties={
+                                                'kudu.table_name': kudu_table_name,
+                                                'kudu.master_addresses': kudu_master_address,
+                                                'kudu.num_tablet_replicas': '1'
+                                            })
 
     try:
         logger.info('Creating Kudu table %s ...', kudu_table_name)
