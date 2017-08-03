@@ -508,6 +508,8 @@ def test_kudu_destination(sdc_builder, sdc_executor, cluster):
                                             sqlalchemy.Column('rank', sqlalchemy.Integer, primary_key=True),
                                             sqlalchemy.Column('name', sqlalchemy.String),
                                             sqlalchemy.Column('wins', sqlalchemy.Integer),
+                                            impala_partition_by='HASH PARTITIONS 16',
+                                            impala_stored_as='KUDU',
                                             impala_table_properties={
                                                 'kudu.table_name': kudu_table_name,
                                                 'kudu.master_addresses': kudu_master_address,
