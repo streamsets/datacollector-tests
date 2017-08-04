@@ -62,8 +62,9 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
 
     # define a callback function when we stream publishing our raw_data to Redis channel
     def snapshot_origin(): # pylint: disable=missing-docstring
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=False).wait_for_finished().snapshot
-        return snapshot
+        command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False).wait_for_finished()
+        if command is not None:
+            return command.snapshot
 
     # case when we have valid pattern for *
     key_1 = f'extra{pattern_1}extra'
@@ -80,7 +81,7 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
     # case when we have an invalid pattern and hence no data is expected
     key_3 = f'{pattern_2}XX'
     snapshot = redis.publish_message_streaming(snapshot_origin, key_3, raw_data)
-    assert len(snapshot[redis_consumer.instance_name].output) == 0
+    assert snapshot is None
 
 
 @redis
