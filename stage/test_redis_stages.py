@@ -50,38 +50,47 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
     builder = sdc_builder.get_pipeline_builder()
     redis_consumer = builder.add_stage('Redis Consumer', type='origin')
     # have the Redis consumer read data out of channel based on glob patterns
-    redis_consumer.set_attributes(data_format='JSON', pattern=[f'*{pattern_1}*', f'{pattern_2}?'])
+    # set max_batch_size_in_records to 10 to let capture_snapshot's start_pipeline=False capture the 2nd batch
+    redis_consumer.set_attributes(data_format='JSON', max_batch_size_in_records=10,
+                                  pattern=[f'*{pattern_1}*', f'{pattern_2}?'])
     trash = builder.add_stage('Trash')
 
     redis_consumer >> trash
     pipeline = builder.build(title='Redis Consumer pipeline').configure_for_environment(redis)
     sdc_executor.add_pipeline(pipeline)
 
-    # pipeline has to be started first to have the Redis channel to be created
-    sdc_executor.start_pipeline(pipeline).wait_for_status('RUNNING')
+    try:
+        # pipeline has to be started first to have the Redis channel to be created
+        sdc_executor.start_pipeline(pipeline).wait_for_status('RUNNING')
 
-    # define a callback function when we stream publishing our raw_data to Redis channel
-    def snapshot_origin(): # pylint: disable=missing-docstring
-        command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False).wait_for_finished()
-        if command is not None:
-            return command.snapshot
+        # case when we have valid pattern for *
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False)
+        key_1 = f'extra{pattern_1}extra'
+        for _ in range(20): # 20 records will make 2 batches (each of 10)
+            assert redis.client.publish(key_1, raw_data) == 1 # 1 indicates pipeline consumer received the raw_data
+        snapshot = snapshot_command.wait_for_finished().snapshot
+        assert redis_consumer.max_batch_size_in_records == len(snapshot[redis_consumer.instance_name].output)
+        for record in snapshot[redis_consumer.instance_name].output:
+            assert record.value['value']['name']['value'] == raw_dict['name']
+            assert record.value['value']['zip_code']['value'] == str(raw_dict['zip_code'])
 
-    # case when we have valid pattern for *
-    key_1 = f'extra{pattern_1}extra'
-    snapshot = redis.publish_message_streaming(snapshot_origin, key_1, raw_data)
-    value = snapshot[redis_consumer.instance_name].output[0].value['value']
-    assert value['name']['value'] == raw_dict['name'] and value['zip_code']['value'] == str(raw_dict['zip_code'])
+        # case when we have valid pattern for ?
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False)
+        key_2 = f'{pattern_2}X'
+        for _ in range(20): # 20 records will make 2 batches (each of 10)
+            assert redis.client.publish(key_2, raw_data) == 1 # 1 indicates pipeline consumer received the raw_data
+        snapshot = snapshot_command.wait_for_finished().snapshot
+        assert redis_consumer.max_batch_size_in_records == len(snapshot[redis_consumer.instance_name].output)
+        for record in snapshot[redis_consumer.instance_name].output:
+            assert record.value['value']['name']['value'] == raw_dict['name']
+            assert record.value['value']['zip_code']['value'] == str(raw_dict['zip_code'])
 
-    # case when we have valid pattern for ?
-    key_2 = f'{pattern_2}X'
-    snapshot = redis.publish_message_streaming(snapshot_origin, key_2, raw_data)
-    value = snapshot[redis_consumer.instance_name].output[0].value['value']
-    assert value['name']['value'] == raw_dict['name'] and value['zip_code']['value'] == str(raw_dict['zip_code'])
-
-    # case when we have an invalid pattern and hence no data is expected
-    key_3 = f'{pattern_2}XX'
-    snapshot = redis.publish_message_streaming(snapshot_origin, key_3, raw_data)
-    assert snapshot is None
+        # Case when we have an invalid pattern. No data is expected and hence no snapshot can be taken to compare.
+        key_3 = f'{pattern_2}XX'
+        for _ in range(20):
+            assert redis.client.publish(key_3, raw_data) == 0 # 0 clients received the raw_data
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @redis
