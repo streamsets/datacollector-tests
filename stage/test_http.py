@@ -16,15 +16,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""The tests in this module follow a pattern of creating pipelines with
+:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
+another.
+"""
+
+import json
 import logging
 from collections import namedtuple
 
 import pytest
 
+from testframework.markers import http
+
 logger = logging.getLogger(__name__)
+
+# pylint: disable=pointless-statement, redefined-outer-name, too-many-locals
+
 
 @pytest.fixture(scope='module')
 def http_server_pipeline(sdc_builder, sdc_executor):
+    """HTTP Server pipeline fixture."""
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     http_server = pipeline_builder.add_stage('HTTP Server')
@@ -160,3 +172,74 @@ def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
 
     # Stop the pipeline.
     sdc_executor.stop_pipeline(http_client_pipeline.pipeline).wait_for_stopped()
+
+
+@http
+def test_http_processor_get(sdc_builder, sdc_executor, http_client):
+    """Test HTTP Lookup Processor for HTTP GET method. We do so by requesting to a pre-defined
+    HTTP server endpoint (testGetJsonEndpoint) and get as expected data. The pipeline looks like:
+
+        dev_raw_data_source >> http_client_processor >> trash
+    """
+    expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
+    record_output_field = 'result'
+
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
+    http_client_processor = builder.add_stage('HTTP Client', type='processor')
+    http_client_processor.set_attributes(data_format='JSON', http_method='GET',
+                                         resource_url=f'{http_client.http_server_url}/testGetJsonEndpoint',
+                                         output_field=f'/{record_output_field}')
+    trash = builder.add_stage('Trash')
+
+    dev_raw_data_source >> http_client_processor >> trash
+    pipeline = builder.build(title='HTTP Lookup GET Processor pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    # ensure HTTP GET result is only stored to one record and assert the data
+    assert len(snapshot[http_client_processor.instance_name].output) == 1
+    record = snapshot[http_client_processor.instance_name].output[0].value['value']
+    assert record[record_output_field]['value']['latitude']['value'] == expected_dict['latitude']
+    assert record[record_output_field]['value']['longitude']['value'] == expected_dict['longitude']
+
+
+@http
+def test_http_processor_post(sdc_builder, sdc_executor, http_client):
+    """Test HTTP Lookup Processor for HTTP POST method. We do so by posting to a pre-defined
+    HTTP server endpoint (testPostJsonEndpoint) and get expected data. The pipeline looks like:
+
+        dev_raw_data_source >> http_client_processor >> trash
+    """
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
+    record_output_field = 'result'
+
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    http_client_processor = builder.add_stage('HTTP Client', type='processor')
+    # for POST, we post 'raw_data' and expect 'expected_dict' as response data
+    http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                         headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                         http_method='POST', request_data="${record:value('/text')}",
+                                         resource_url=f'{http_client.http_server_url}/testPostJsonEndpoint',
+                                         output_field=f'/{record_output_field}')
+    trash = builder.add_stage('Trash')
+
+    dev_raw_data_source >> http_client_processor >> trash
+    pipeline = builder.build(title='HTTP Lookup POST Processor pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    # ensure HTTP POST result is only stored to one record and assert the data
+    assert len(snapshot[http_client_processor.instance_name].output) == 1
+    record = snapshot[http_client_processor.instance_name].output[0].value['value']
+    assert record[record_output_field]['value']['latitude']['value'] == expected_dict['latitude']
+    assert record[record_output_field]['value']['longitude']['value'] == expected_dict['longitude']
