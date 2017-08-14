@@ -21,11 +21,81 @@ import logging
 import time
 from string import ascii_letters
 
+from google.cloud.bigquery import SchemaField
+
 from testframework.markers import gcp
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+# For Google pub/sub
 MSG_DATA = 'Hello World from SDC and DPM!'
+# For Google BigQuery, data to insert- needs to be in the sorted order by name.
+ROWS_TO_INSERT = [('Cristiano Ronaldo', 32),
+                  ('David Beckham', 32),
+                  ('Gerard Pique', 30),
+                  ('Lionel Messi', 30),
+                  ('Mario Gotze', 25),
+                  ('Neymar', 25),
+                  ('Pele', 76),
+                  ('Ronaldinho', 40),
+                  ('Ronaldo', 40),
+                  ('Zinedine Zidane', 42)
+                 ]
+
+
+@gcp
+def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
+    """
+    Create data using Google BigQuery client
+    and then check if Google BigQuery origin receives them using snapshot.
+
+    The pipeline looks like:
+        google_bigquery >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dataset_name = get_random_string(ascii_letters, 5)
+    table_name = get_random_string(ascii_letters, 5)
+    google_bigquery = pipeline_builder.add_stage('Google BigQuery')
+    query_str = f'SELECT * FROM {dataset_name}.{table_name} ORDER BY full_name'
+    google_bigquery.set_attributes(query=query_str)
+
+    trash = pipeline_builder.add_stage('Trash')
+    google_bigquery >> trash
+    pipeline = pipeline_builder.build(title='Google BigQuery').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Using Google bigquery client, create dataset, table and data inside table
+        logger.info('Creating dataset %s using Google bigquery client ...', dataset_name)
+        bigquery_client = gcp.bigquery_client
+        dataset = bigquery_client.dataset(dataset_name)
+        dataset.create()
+        assert dataset.exists()
+        table = dataset.table(table_name)
+        table.create()
+        assert table.exists()
+        table.schema = [SchemaField('full_name', 'STRING', mode='required'),
+                        SchemaField('age', 'INTEGER', mode='required')]
+        table.update()
+        table.insert_data(ROWS_TO_INSERT)
+
+        # Start pipeline and verify correct rows are received using snaphot.
+        logger.info('Starting pipeline and snapshot')
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True)
+        sdc_executor.get_status_pipeline(pipeline).wait_for_status('RUNNING')
+        snapshot = snapshot_command.wait_for_finished().snapshot
+        rows_from_snapshot = [(record.value['value'][0]['value'], int(record.value['value'][1]['value']))
+                              for record in snapshot[google_bigquery].output]
+
+        assert rows_from_snapshot == ROWS_TO_INSERT
+
+    finally:
+        logger.info('Deleting dataset %s and table %s ...', dataset, table_name)
+        if table is not None:
+            table.delete()
+        if dataset is not None:
+            dataset.delete()
 
 @gcp
 def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
