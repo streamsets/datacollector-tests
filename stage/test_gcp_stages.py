@@ -18,6 +18,7 @@ another.
 """
 
 import logging
+import os
 import time
 from string import ascii_letters
 
@@ -27,6 +28,8 @@ from testframework.markers import gcp
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_COLUMN_FAMILY_NAME = 'cf' # for Google Bigtable
 # For Google pub/sub
 MSG_DATA = 'Hello World from SDC and DPM!'
 # For Google BigQuery, data to insert- needs to be in the sorted order by name.
@@ -194,16 +197,16 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
         assert subscription.exists()
 
         # Send messages using pipeline to Google pub/sub publisher Destination.
-        logger.debug('Starting Publisher pipeline and waiting for it to produce records ...')
+        logger.info('Starting Publisher pipeline and waiting for it to produce records ...')
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(10)
 
-        logger.debug('Stopping Publisher pipeline and getting the count of records produced in total ...')
+        logger.info('Stopping Publisher pipeline and getting the count of records produced in total ...')
         sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
 
         history = sdc_executor.pipeline_history(pipeline)
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        logger.info('No. of messages sent in the pipeline = %s', msgs_sent_count)
+        logger.info('No. of messages sent in the pipeline = %s ...', msgs_sent_count)
 
         # Receive messages in a loop until timeout or expected no. of messages are received
         results = []
@@ -229,3 +232,73 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
             subscription.delete()
         if topic is not None:
             topic.delete()
+
+
+@gcp
+def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
+    """
+    Send text to Google bigtable from Dev Raw Data Source and
+    confirm that Google bigtable successfully reads them using happybase connection from gcp.
+
+    The pipeline looks like:
+        dev_raw_data_source >> google_bigtable
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    # Data with 3 distinct TransactionIDs
+    data = ['TransactionID,Type,UserID', '0003420301,01,1001', '0003420302,02,1002', '0003420303,03,1003',
+            '0003420301,04,1004', '0003420302,05,1005', '0003420303,06,1006']
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(data))
+
+    table_name = get_random_string(ascii_letters, 5)
+    google_bigtable = pipeline_builder.add_stage('Google Bigtable')
+    # Field paths, name of columns, storage types
+    fields_list = [{'source': '/TransactionID', 'storageType': 'TEXT', 'column': 'TransactionID'},
+                    {'source': '/Type', 'storageType': 'TEXT', 'column': 'Type'},
+                    {'source': '/UserID', 'storageType': 'TEXT', 'column': 'UserID'}]
+    google_bigtable.set_attributes(create_table_and_column_families=True,
+                                   default_column_family_name=DEFAULT_COLUMN_FAMILY_NAME,
+                                   explicit_column_family_mapping=False,
+                                   fields=fields_list,
+                                   row_key='/TransactionID',
+                                   table_name=table_name)
+
+    dev_raw_data_source >> google_bigtable
+    pipeline = pipeline_builder.build(title='Google Bigtable').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+    pipeline.rate_limit = 1
+
+    try:
+        # Produce Google Bigtable records using pipeline.
+        logger.info('Starting Bigtable pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+
+        logger.info('Stopping Bigtable pipeline and getting the count of records produced in total ...')
+        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+
+        # Using happybase connection, read the contents in the Google Bigtable.
+        logger.info('Reading contents from table %s ...', table_name)
+        connection = gcp.bigtable_connection
+        table = connection.table(table_name)
+        scan_result = list(table.scan())
+
+        read_data = [(f'{row["cf:TransactionID".encode()].decode()},'
+                      f'{row["cf:Type".encode()].decode()},'
+                      f'{row["cf:UserID".encode()].decode()}')
+                     for key, row in scan_result]
+
+        logger.debug('read_data = {}'.format(read_data))
+
+        # Verify: Note we expect only 3 rows since there are only 3 distinct TransactionIDs in data.
+        # The result expected is the latest inserted data which are the last 3 rows.
+        # Reason is in Google Bigtable, each row is indexed by a single row key resulting in
+        # each row/column intersection can contain multiple cells at different timestamps,
+        # providing a record of how the stored data has been altered over time.
+        assert data[4:] == read_data
+    finally:
+        logger.info('Deleting table %s ...', table_name)
+        if connection is not None:
+            connection.delete_table(table_name)
