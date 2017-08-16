@@ -1,4 +1,4 @@
-<!---
+<!--
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
   You may obtain a copy of the License at
@@ -10,16 +10,16 @@
   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
   See the License for the specific language governing permissions and
   limitations under the License. See accompanying LICENSE file.
---->
+-->
 
-[StreamSets](http://streamsets.com)
+StreamSets Data Collector tests
 =================
-
-This project hosts tests for StreamSets Data Collector.
+This project hosts StreamSets Test Framework-based tests that target StreamSets Data Collector.
 
 Documentation
 -----------
-For full documentation, including installation, quickstart examples of tests and API documentation, please see [Docs](https://jenkins.streamsets.net/job/testframework-Docs-Build/Test_Framework_Docs/).
+For full documentation, including installation, quickstart examples of tests and API documentation,
+please see [Docs](https://jenkins.streamsets.net/job/testframework-Docs-Build/Test_Framework_Docs/).
 
 Execution of sample test
 ----------------------
@@ -27,7 +27,7 @@ The following test does not need any environment and runs locally.
 
 ```
 $ cd datacollector-tests
-datacollector-tests$ testframework_run local-test --sdc-version='2.5.0.0-SNAPSHOT' stage/test_dev_raw_data_source_stage.py
+datacollector-tests$ testframework_run pytest --sdc-version='2.5.0.0-SNAPSHOT' stage/test_dev_raw_data_source_stage.py
 ============================================= test session starts =============================================
 platform linux -- Python 3.5.2, pytest-3.0.4, py-1.4.33, pluggy-0.4.0
 rootdir: /root/tests, inifile:
@@ -43,12 +43,10 @@ Folder structure for tests
 
 ```
 datacollector-tests
-├── Dockerfile
 ├── LICENSE
 ├── README.md
 ├── pipeline
-│   ├── test_jdbc_multitable_consumer.py
-│   └── test_pipelines.py
+│   ├── test_drift_synchronization.py
 ├── stage
 │   ├── test_cdh_stages.py
 │   └── test_jdbc_stages.py
@@ -76,11 +74,9 @@ datacollector-tests
 
 + **stage/** - This folder contains Python modules to test a stage in SDC.
 
-+ **upgrade/** - This folder contains Python modules to test SDC pipeline upgrades.
++ **upgrade/** - This folder contains Python modules to test legacy SDC pipeline upgrades. Unless there's a really
+            good reason to do so, don't add new tests to this folder.
 
-+ **upgrade/pipelines/** - This folder contains JSON files defining the pipelines which are required by tests in folder /upgrade.
-            To generate these JSON files, pipelines under test are created using SDC and exported as JSON files.
-
-Contributing code
------------
-We welcome contributors! We are working on adding contents to this area.
++ **upgrade/pipelines/** - This folder contains JSON files defining the pipelines which are required by tests in folder
+            /upgrade. To generate these JSON files, pipelines under test are created using SDC and exported as JSON
+            files.
