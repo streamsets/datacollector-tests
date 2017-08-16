@@ -20,6 +20,7 @@ import logging
 
 import pytest
 
+from testframework.markers import sdc_min_version
 from testframework import sdc_api
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ def failing_receiver_pipeline(sdc_builder):
     yield pipeline
 
 
+@sdc_min_version('2.7.0.0')
 def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event on pipeline start."""
     start_stage = generator_trash_builder.add_start_event_stage('Write to Another Pipeline')
@@ -148,6 +150,7 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
         sdc_executor.stop_pipeline(start_event_pipeline)
 
 
+@sdc_min_version('2.7.0.0')
 def test_stop_event_user_action(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline is stopped by user."""
     stop_stage = generator_trash_builder.add_stop_event_stage('Write to Another Pipeline')
@@ -181,6 +184,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
         sdc_executor.stop_pipeline(successful_receiver_pipeline)
 
 
+@sdc_min_version('2.7.0.0')
 def test_stop_event_finished(generator_finisher_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline finishes."""
     stop_stage = generator_finisher_builder.add_stop_event_stage('Write to Another Pipeline')
@@ -213,6 +217,7 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
         sdc_executor.stop_pipeline(successful_receiver_pipeline)
 
 
+@sdc_min_version('2.7.0.0')
 def test_stop_event_failure(generator_failure_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline crashes."""
     stop_stage = generator_failure_builder.add_stop_event_stage('Write to Another Pipeline')
@@ -245,6 +250,7 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
         sdc_executor.stop_pipeline(successful_receiver_pipeline)
 
 
+@sdc_min_version('2.7.0.0')
 def test_start_event_handler_failure(generator_trash_builder, failing_receiver_pipeline, sdc_executor):
     """ Validate that failure to process start event will terminate the pipeline."""
     start_stage = generator_trash_builder.add_start_event_stage('Write to Another Pipeline')
@@ -273,6 +279,7 @@ def test_start_event_handler_failure(generator_trash_builder, failing_receiver_p
     assert entry['status'] == 'START_ERROR'
 
 
+@sdc_min_version('2.7.0.0')
 def test_stop_event_handler_failure(generator_trash_builder, failing_receiver_pipeline, sdc_executor):
     """ Validate that failure to process stop event will terminate the pipeline."""
     stop_stage = generator_trash_builder.add_stop_event_stage('Write to Another Pipeline')
