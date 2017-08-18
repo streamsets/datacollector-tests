@@ -16,6 +16,10 @@ StreamSets Data Collector tests
 =================
 This project hosts StreamSets Test Framework-based tests that target StreamSets Data Collector.
 
+Prerequisites
+-----------
+Please see [Prerequisites of STF](https://jenkins.streamsets.net/job/testframework-Docs-Build/Test_Framework_Docs/user/install.html#prerequisite-for-stf).
+
 Documentation
 -----------
 For full documentation, including installation, quickstart examples of tests and API documentation,
@@ -23,7 +27,7 @@ please see [Docs](https://jenkins.streamsets.net/job/testframework-Docs-Build/Te
 
 Execution of sample test
 ----------------------
-The following test does not need any environment and runs locally.
+1)The following test does not need any environment and runs locally.
 
 ```
 $ cd datacollector-tests
@@ -36,6 +40,16 @@ collected 4 items
 stage/test_dev_raw_data_source_stage.py ....
 
 ========================================== 4 passed in 75.41 seconds ==========================================
+```
+
+2)The following test needs CDH environment.
+```
+datacollector-tests$ testframework_run pytest -v --cluster-server=cm://node-1.cluster --sdc-version=2.6.0.0 stage/test_cdh_stages.py
+```
+
+3)To see all the parameters available for running tests, run the following command.
+```
+datacollector-tests$ testframework_run pytest -h
 ```
 
 Folder structure for tests
