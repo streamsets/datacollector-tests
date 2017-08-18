@@ -24,7 +24,7 @@ from string import ascii_letters
 
 from google.cloud.bigquery import SchemaField
 
-from testframework.markers import gcp
+from testframework.markers import gcp, sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,7 @@ ROWS_TO_INSERT = [('Cristiano Ronaldo', 32),
 
 
 @gcp
+@sdc_min_version('2.7.0.0')
 def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
     """
     Create data using Google BigQuery client
@@ -101,6 +102,7 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
             dataset.delete()
 
 @gcp
+@sdc_min_version('2.7.0.0')
 def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
     """
     Publish messages using Google pub/sub client and then check if Google pub/sub subscriber receives them using snapshot.
@@ -112,7 +114,7 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
 
     subscription_id = get_random_string(ascii_letters, 5)
     topic_name = get_random_string(ascii_letters, 5)
-    google_pubsub_subscriber = pipeline_builder.add_stage('Google PubSub Subscriber')
+    google_pubsub_subscriber = pipeline_builder.add_stage('Google Pub Sub Subscriber')
     google_pubsub_subscriber.set_attributes(subscription_id=subscription_id,
                                                    data_format='TEXT',
                                                    max_batch_size=10,
@@ -160,6 +162,7 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
 
 
 @gcp
+@sdc_min_version('2.7.0.0')
 def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
     """
     Send simple text messages to Google pub/sub from Dev Raw Data Source and
@@ -176,7 +179,7 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
 
     subscription_id = get_random_string(ascii_letters, 5)
     topic_name = get_random_string(ascii_letters, 5)
-    google_pubsub_publisher = pipeline_builder.add_stage('Google PubSub Publisher')
+    google_pubsub_publisher = pipeline_builder.add_stage('Google Pub Sub Publisher')
     google_pubsub_publisher.set_attributes(topic_id=topic_name,
                                                        data_format='TEXT')
 
@@ -235,6 +238,7 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
 
 
 @gcp
+@sdc_min_version('2.7.0.0')
 def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
     """
     Send text to Google bigtable from Dev Raw Data Source and
