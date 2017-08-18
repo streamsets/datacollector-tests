@@ -407,6 +407,7 @@ def test_kafka_origin(sdc_builder, sdc_executor, cluster, execution_mode):
                                        library=cluster.kafka.cluster_stage_lib if is_cluster_mode
                                        else cluster.kafka.standalone_stage_lib)
     kafka_consumer.data_format = 'TEXT'
+    kafka_consumer.batch_wait_time_in_miliisecs = 20000
     kafka_consumer.kafka_topic_name = get_random_string(string.ascii_letters, 10)
     if is_cluster_mode:
         kafka_consumer.max_rate_per_partition = 10
