@@ -251,7 +251,8 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     # build and add directory read pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory')
-    directory.set_attributes(data_format='TEXT', directory=directory_to_write, pattern=f'{files_prefix}*')
+    directory.set_attributes(data_format='TEXT', files_directory=directory_to_write,
+                             file_name_pattern=f'{files_prefix}*')
     trash = pipeline_builder.add_stage('Trash')
 
     directory >> trash

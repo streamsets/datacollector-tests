@@ -72,7 +72,7 @@ def pipeline_shell_read(sdc_shell):
 
     file_source = builder.add_stage('File Tail')
     file_source.data_format = 'TEXT'
-    file_source.files = [
+    file_source.file_to_tail = [
         dict(fileRollMode='REVERSE_COUNTER', patternForToken='.*', fileFullPath='${FILE}')
     ]
 
