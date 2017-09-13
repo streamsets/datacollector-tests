@@ -36,7 +36,7 @@ logger.setLevel(logging.DEBUG)
 
 @cassandra
 def test_cassandra_destination(sdc_builder, sdc_executor, cassandra):
-    """Test for Cassandra destination stage. The pipeline looks like:
+    """Test for Cassandra destination stage. Support to test Kerberos or plain text only. The pipeline looks like:
 
         dev_raw_data_source >> cassandra_destination
     """
@@ -56,6 +56,11 @@ def test_cassandra_destination(sdc_builder, sdc_executor, cassandra):
         {'field': '/contact/phone', 'columnName': 'phone'}],
                                          fully_qualified_table_name=f'{cassandra_keyspace}.{cassandra_table}',
                                          protocol_version='V4')
+    if cassandra.kerberos_enabled:
+        cassandra_destination.set_attributes(authentication_provider='KERBEROS')
+    else:
+        cassandra_destination.set_attributes(authentication_provider='PLAINTEXT', password=cassandra.password,
+                                             username=cassandra.username)
 
     dev_raw_data_source >> cassandra_destination
     pipeline = builder.build(title='Cassandra Destination pipeline').configure_for_environment(cassandra)
