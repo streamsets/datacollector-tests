@@ -146,8 +146,8 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
         assert record.value['value']['user']['value'] == 'admin'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
-        sdc_executor.stop_pipeline(start_event_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(start_event_pipeline).wait_for_stopped()
 
 
 @sdc_min_version('2.7.0.0')
@@ -169,7 +169,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
         snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True)
         sdc_executor.get_status_pipeline(successful_receiver_pipeline).wait_for_status('RUNNING')
         sdc_executor.start_pipeline(stop_event_pipeline).wait_for_status('RUNNING')
-        sdc_executor.stop_pipeline(stop_event_pipeline)
+        sdc_executor.stop_pipeline(stop_event_pipeline).wait_for_stopped()
 
         # And validate that the event arrived to the receiver pipeline
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -181,7 +181,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
         assert record.value['value']['reason']['value'] == 'USER_ACTION'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline).wait_for_stopped()
 
 
 @sdc_min_version('2.7.0.0')
@@ -214,7 +214,7 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
         assert record.value['value']['reason']['value'] == 'FINISHED'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline).wait_for_stopped()
 
 
 @sdc_min_version('2.7.0.0')
@@ -224,7 +224,8 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
     stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
     stop_stage.sdc_rpc_id = SDC_RPC_ID
 
-    stop_event_pipeline = generator_failure_builder.build('Stop Event - Finished')
+    stop_event_pipeline = generator_failure_builder.build('Stop Event - Failure')
+    stop_event_pipeline.configuration['shouldRetry'] = False
 
     sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline)
 
@@ -247,7 +248,7 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
         assert record.value['value']['reason']['value'] == 'FAILURE'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline).wait_for_stopped()
 
 
 @sdc_min_version('2.7.0.0')
@@ -257,7 +258,8 @@ def test_start_event_handler_failure(generator_trash_builder, failing_receiver_p
     start_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
     start_stage.sdc_rpc_id = SDC_RPC_ID
 
-    start_event_pipeline = generator_trash_builder.build('Start Event')
+    start_event_pipeline = generator_trash_builder.build('Start Event: Handler Failure')
+    start_event_pipeline.configuration['shouldRetry'] = False
 
     sdc_executor.add_pipeline(start_event_pipeline, failing_receiver_pipeline)
 
@@ -286,7 +288,7 @@ def test_stop_event_handler_failure(generator_trash_builder, failing_receiver_pi
     stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
     stop_stage.sdc_rpc_id = SDC_RPC_ID
 
-    stop_event_pipeline = generator_trash_builder.build('Stop Event')
+    stop_event_pipeline = generator_trash_builder.build('Stop Event: Handler Failure')
     stop_event_pipeline.configuration['shouldRetry'] = False
 
     sdc_executor.add_pipeline(stop_event_pipeline, failing_receiver_pipeline)
