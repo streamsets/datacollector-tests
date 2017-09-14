@@ -536,6 +536,7 @@ def test_kudu_destination(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
+@sdc_min_version('2.7.0.0')
 def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
     """
     Test when row is found which matches with primary key, but its column that lookup processor needs to return
@@ -614,6 +615,7 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
+@sdc_min_version('2.7.0.0')
 def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
     """
     Test the case sensitive option. This pipeline should fail with case sensitive option false
@@ -681,6 +683,7 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
+@sdc_min_version('2.7.0.0')
 def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
     """
     Tests if outgoing records have correct data types and values.
@@ -791,6 +794,7 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
+@sdc_min_version('2.7.0.0')
 def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
     """
     Test for ignore missing option. Default is true, but when set to false, it sends record to error when
@@ -865,6 +869,7 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
+@sdc_min_version('2.7.0.0')
 def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
     """
     Test if Key Column Mapping configuration has all primary keys. This test is missing one column so pipeline
