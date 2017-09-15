@@ -652,34 +652,32 @@ def test_field_zip(sdc_builder, sdc_executor):
     With given config, /basics and /additional will zip to /all path. For e.g., /all will have be a list of
     2 zipped maps of {id: 23, inventory:80}, {color: 20005, cost:5} similarly for /itemID and /cost.
     """
-    # Note: This test will fail till SDC-6657 is fixed.
-
     raw_data = """
         [
           {
             "order": 23523482,
             "itemID": [2, 113, 954, 6502],
-            "cost": [89.95, 8.95, 6.95]
+            "cost": [89.95, 8.95],
+            "basics": [{"id": 23, "color": 20005}],
+            "additional": [{"inventory": 80, "cost": 5}]
           },
           {
-            "basics": {
-                "id": 23, "color": 20005, "info": null
-            },
-            "additional": {
-                "inventory": 80, "cost": 5
-            }
+            "order": 23523481,
+            "basics": [{"id": 23, "color": 20005}],
+            "additional": [{"inventory": 80, "cost": 5}]
           }
         ]
     """
     raw_list = json.loads(raw_data)
-    dest_var = 'all'
+    result_key_1 = 'purchase'
+    result_key_2 = 'all'
     fields_to_zip_configs = [
         {
-            'zippedFieldPath': '/purchase',
+            'zippedFieldPath': f'/{result_key_1}',
             'firstField': '/itemID',
             'secondField': '/cost'
         }, {
-            'zippedFieldPath': f'/{dest_var}',
+            'zippedFieldPath': f'/{result_key_2}',
             'firstField': '/basics',
             'secondField': '/additional'
         }
@@ -700,20 +698,17 @@ def test_field_zip(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    record_output = snapshot[field_zip.instance_name].output[0].value['value']
-    raw_items = raw_list[1]
-    raw_item_1 = raw_items['basics']
-    raw_item_2 = raw_items['additional']
-    output_item_1 = record_output[dest_var]['value'][0]['value']
-    output_item_2 = record_output[dest_var]['value'][1]['value']
-
-    # assert zip merge size
-    assert len(list(zip(raw_item_1, raw_item_2))) == len(record_output[dest_var]['value'])
-    # assert zip merge data
-    raw_merge = list(zip(raw_item_1.values(), raw_item_2.values()))
-    output_merge = [tuple((int(a['value']) for a in output_item_1.values())),
-                    tuple((int(a['value']) for a in output_item_2.values()))]
-    assert raw_merge == output_merge
+    record_result = snapshot[field_zip.instance_name].output[0].value['value']
+    # assert we got expected number of merge fields
+    assert len(raw_list[0]) + len(fields_to_zip_configs) == len(record_result)
+    # assert data is merged as expected
+    raw_merge = list(zip(raw_list[0]['itemID'], raw_list[0]['cost']))
+    record_field_result = record_result[result_key_1]['value']
+    record_field_merge = [tuple(float(b['value']) for b in a['value'].values()) for a in record_field_result]
+    assert raw_merge == record_field_merge
+    # assert the missing record fields do not merge anything
+    assert result_key_1 not in snapshot[field_zip.instance_name].output[1].value['value']
+    assert result_key_2 not in snapshot[field_zip.instance_name].output[1].value['value']
 
 
 def test_value_replacer(sdc_builder, sdc_executor):
