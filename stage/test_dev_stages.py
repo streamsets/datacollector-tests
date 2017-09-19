@@ -22,6 +22,7 @@ from time import sleep
 import pytest
 
 from testframework import sdc, sdc_api
+from testframework.utils import Version
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,12 @@ def test_invalid_execution_mode(sdc_executor, pipeline):
        try starting it and confirm that it raises expected exception."""
     pipeline.configuration['executionMode'] = 'Invalid_Execution_Mode'
     pipeline.id = 'Invalid_Execution_Mode Pipeline'
-    sdc_executor.add_pipeline(pipeline)
 
-    with pytest.raises(sdc_api.StartError):
-        sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
+    # Do a version check since execution_mode handling changed starting in the 2.7.0.0 version.
+    if Version(sdc_executor.version) >= Version('2.7.0.0'):
+        with pytest.raises(sdc_api.InternalServerError):
+            sdc_executor.add_pipeline(pipeline)
+    else:
+        sdc_executor.add_pipeline(pipeline)
+        with pytest.raises(sdc_api.StartError):
+            sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
