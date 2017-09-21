@@ -37,7 +37,8 @@ logger.setLevel(logging.DEBUG)
 # Sandbox prefix for S3 bucket
 S3_SANDBOX_PREFIX = 'sandbox'
 
-@aws
+
+@aws('kinesis')
 def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
     """Test for Kinesis consumer origin stage. We do so by publishing data to a test stream using Kinesis client and
     having a pipeline which reads that data using Kinesis consumer origin stage. Data is then asserted for what is
@@ -48,7 +49,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
     """
     #build consumer pipeline
     application_name = get_random_string(string.ascii_letters, 10)
-    stream_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
 
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
@@ -68,6 +69,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
     #run pipeline and capture snapshot
     client = aws.kinesis
     try:
+        logger.info(f'Creating {stream_name} Kinesis stream on AWS.')
         client.create_stream(StreamName=stream_name, ShardCount=1)
         aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
 
@@ -86,10 +88,11 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 
         assert set(output_records) == expected_messages
     finally:
+        logger.info(f'Deleting {stream_name} Kinesis stream on AWS.')
         client.delete_stream(StreamName=stream_name) # Stream operations are done. Delete the stream.
 
 
-@aws
+@aws('kinesis')
 def test_kinesis_producer(sdc_builder, sdc_executor, aws):
     """Test for Kinesis producer target stage. We do so by publishing data to a test stream using Kinesis producer
     stage and then read the data from that stream using Kinesis client. We assert the data from the client to what has
@@ -99,12 +102,13 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
         dev_raw_data_source >> kinesis_producer
     """
     # build producer pipeline
-    stream_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
     raw_str = 'Hello World!'
 
     # Create Kinesis stream and capture the ShardId
     client = aws.kinesis
     try:
+        logger.info(f'Creating {stream_name} Kinesis stream on AWS.')
         client.create_stream(StreamName=stream_name, ShardCount=1)
         aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
         desc_response = client.describe_stream(StreamName=stream_name)
@@ -142,6 +146,7 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
 
         assert msgs_received == [raw_str] * msgs_sent_count
     finally:
+        logger.info(f'Deleting {stream_name} Kinesis stream on AWS.')
         client.delete_stream(StreamName=stream_name)
 
 
