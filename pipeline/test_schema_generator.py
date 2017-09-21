@@ -24,6 +24,7 @@ import tempfile
 import pytest
 
 from testframework import sdc
+from testframework.markers import sdc_min_version
 from testframework.utils import get_random_string
 from testframework.sdc_models import Configuration
 
