@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_COLUMN_FAMILY_NAME = 'cf' # for Google Bigtable
 # For Google pub/sub
 MSG_DATA = 'Hello World from SDC and DPM!'
+SNAPSHOT_TIMEOUT_SEC = 120
 # For Google BigQuery, data to insert- needs to be in the sorted order by name.
 ROWS_TO_INSERT = [('Cristiano Ronaldo', 32),
                   ('David Beckham', 32),
@@ -60,7 +61,7 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
 
     dataset_name = get_random_string(ascii_letters, 5)
     table_name = get_random_string(ascii_letters, 5)
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery')
+    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='origin')
     query_str = f'SELECT * FROM {dataset_name}.{table_name} ORDER BY full_name'
     google_bigquery.set_attributes(query=query_str)
 
@@ -95,11 +96,10 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
         assert rows_from_snapshot == ROWS_TO_INSERT
 
     finally:
-        logger.info('Deleting dataset %s and table %s ...', dataset, table_name)
-        if table is not None:
-            table.delete()
-        if dataset is not None:
-            dataset.delete()
+        if sdc_executor.get_status_pipeline(pipeline) == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        table.delete()
+        dataset.delete()
 
 @gcp
 @sdc_min_version('2.7.0.0')
@@ -114,11 +114,13 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
 
     subscription_id = get_random_string(ascii_letters, 5)
     topic_name = get_random_string(ascii_letters, 5)
-    google_pubsub_subscriber = pipeline_builder.add_stage('Google Pub Sub Subscriber')
-    google_pubsub_subscriber.set_attributes(subscription_id=subscription_id,
-                                                   data_format='TEXT',
-                                                   max_batch_size=10,
-                                                   batch_wait_time_in_millisecs=20000)
+    google_pubsub_subscriber = pipeline_builder.add_stage('Google Pub Sub Subscriber', type='origin')
+    google_pubsub_subscriber.set_attributes(batch_wait_time_in_ms=20000,
+                                            data_format='TEXT',
+                                            max_batch_size_in_records=10,
+                                            num_pipeline_runners=1,
+                                            subscriber_thread_pool_size=1,
+                                            subscription_id=subscription_id)
 
     trash = pipeline_builder.add_stage('Trash')
     google_pubsub_subscriber >> trash
@@ -138,27 +140,30 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
         # Start pipeline and verify messages are received using snaphot.
         logger.info('Starting pipeline and snapshot')
         sdc_executor.add_pipeline(pipeline)
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True)
         sdc_executor.get_status_pipeline(pipeline).wait_for_status('RUNNING')
 
         logger.info('Publishing messages to topic %s using Google pub/sub client ...', topic_name)
         encoded_msg_data = MSG_DATA.encode()
-        for _ in range(10):
+        num = 10
+        for _ in range(num):
             topic.publish(encoded_msg_data)
 
-        snapshot = snapshot_command.wait_for_finished().snapshot
-        sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [record.value['value']['text']['value']
-                              for record in snapshot[google_pubsub_subscriber].output]
+        logger.debug('Finish the snapshot and verify')
+        snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
+        if snapshot_command:
+            snapshot = snapshot_command.snapshot
+            rows_from_snapshot = [record.value['value']['text']['value']
+                                  for record in snapshot[google_pubsub_subscriber].output]
 
-        assert rows_from_snapshot == [MSG_DATA] * 10
+            logger.debug(rows_from_snapshot)
+            assert rows_from_snapshot == [MSG_DATA] * num
 
     finally:
-        logger.info('Deleting topic %s and subscription %s ...', topic_name, subscription_id)
-        if subscription is not None:
-            subscription.delete()
-        if topic is not None:
-            topic.delete()
+        if sdc_executor.get_status_pipeline(pipeline) == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        subscription.delete()
+        topic.delete()
 
 
 @gcp
@@ -179,9 +184,9 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
 
     subscription_id = get_random_string(ascii_letters, 5)
     topic_name = get_random_string(ascii_letters, 5)
-    google_pubsub_publisher = pipeline_builder.add_stage('Google Pub Sub Publisher')
+    google_pubsub_publisher = pipeline_builder.add_stage('Google Pub Sub Publisher', type='destination')
     google_pubsub_publisher.set_attributes(topic_id=topic_name,
-                                                       data_format='TEXT')
+                                           data_format='TEXT')
 
     dev_raw_data_source >> google_pubsub_publisher
     pipeline = pipeline_builder.build(title='Google Pub/Sub Publisher').configure_for_environment(gcp)
@@ -230,11 +235,8 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
         assert msgs_received == [dev_raw_data_source.raw_data] * msgs_sent_count
 
     finally:
-        logger.info('Deleting topic %s and subscription %s ...', topic_name, subscription_id)
-        if subscription is not None:
-            subscription.delete()
-        if topic is not None:
-            topic.delete()
+        subscription.delete()
+        topic.delete()
 
 
 @gcp
@@ -258,7 +260,7 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
                                        raw_data='\n'.join(data))
 
     table_name = get_random_string(ascii_letters, 5)
-    google_bigtable = pipeline_builder.add_stage('Google Bigtable')
+    google_bigtable = pipeline_builder.add_stage('Google Bigtable', type='destination')
     # Field paths, name of columns, storage types
     fields_list = [{'source': '/TransactionID', 'storageType': 'TEXT', 'column': 'TransactionID'},
                     {'source': '/Type', 'storageType': 'TEXT', 'column': 'Type'},
@@ -275,6 +277,7 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
     sdc_executor.add_pipeline(pipeline)
     pipeline.rate_limit = 1
 
+    connection = gcp.bigtable_connection
     try:
         # Produce Google Bigtable records using pipeline.
         logger.info('Starting Bigtable pipeline and waiting for it to produce records ...')
@@ -285,7 +288,6 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
 
         # Using happybase connection, read the contents in the Google Bigtable.
         logger.info('Reading contents from table %s ...', table_name)
-        connection = gcp.bigtable_connection
         table = connection.table(table_name)
         scan_result = list(table.scan())
 
@@ -303,6 +305,6 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
         # providing a record of how the stored data has been altered over time.
         assert data[4:] == read_data
     finally:
-        logger.info('Deleting table %s ...', table_name)
-        if connection is not None:
-            connection.delete_table(table_name)
+        if sdc_executor.get_status_pipeline(pipeline) == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        connection.delete_table(table_name)
