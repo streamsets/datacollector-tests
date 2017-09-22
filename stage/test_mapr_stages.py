@@ -74,7 +74,6 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(len(bike_brands))
-        sdc_executor.stop_pipeline(pipeline)
 
         rows = [(key, value) for key, value in cluster.mapr_db.client.table(name=table_name).scan()]
         # Bike brands are stored in a list of dicts ('name' => brand). Manipulate this to match what we
@@ -84,6 +83,7 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
     finally:
         logger.info('Deleting MapR-DB table %s ...', table_name)
         cluster.execute_command('table', 'delete', path=table_name)
+        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
 
 
 @cluster('mapr')
@@ -156,13 +156,14 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
         sdc_executor.start_pipeline(mapr_fs_pipeline).wait_for_finished()
 
         snapshot = snapshot_pipeline_command.wait_for_finished().snapshot
-        sdc_executor.stop_pipeline(snapshot_pipeline)
         lines_from_snapshot = [record.value['value']['text']['value']
                                for record in snapshot[snapshot_pipeline[0].instance_name].output]
 
         assert lines_from_snapshot == lines_in_file
     finally:
         cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
+        # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
+        sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True).wait_for_stopped()
 
 
 @cluster('mapr')
@@ -287,8 +288,8 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
         snapshot_data = snapshot[consumer_pipeline[0].instance_name].output[0].value['value']['text']['value']
         assert dev_raw_data_source.raw_data == snapshot_data
     finally:
-        sdc_executor.stop_pipeline(consumer_pipeline)
-        sdc_executor.stop_pipeline(producer_pipeline)
+        sdc_executor.stop_pipeline(consumer_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(producer_pipeline).wait_for_stopped()
 
 
 @cluster('mapr')
@@ -381,7 +382,7 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
 
         assert dev_raw_data_source.raw_data == snapshot_data
     finally:
-        sdc_executor.stop_pipeline(snapshot_pipeline)
-        sdc_executor.stop_pipeline(producer_pipeline)
-        # wait for stopped to ensure cluster pipeline exit out cleanly
+        # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
+        sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True).wait_for_stopped()
+        sdc_executor.stop_pipeline(producer_pipeline).wait_for_stopped()
         sdc_executor.stop_pipeline(consumer_pipeline).wait_for_stopped()
