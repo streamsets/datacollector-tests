@@ -13,37 +13,60 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""The tests in this module are used to test pipeline upgrades. Assumption is that there is only one SDC version
+provided for running the upgrade against.
+"""
 
-import glob
+import json
 import logging
-import pytest
-from os.path import dirname, join, realpath
+from os.path import dirname
+from pathlib import Path
+from uuid import uuid4
 
-from testframework import sdc, sdc_models
+import pytest
+
+from testframework import sdc_models
 from testframework.markers import upgrade
+from testframework.utils import pipeline_json_encoder
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+DIR_TO_READ = Path(f'{dirname(__file__)}/pipelines')
+
+
+@pytest.fixture(scope='module')
+# sdc_executor_hook cannot be used instead as the tests in this module are designed to run against one given SDC
+# version and providing 2 would skip sdc_executor_hook, hence usage of sdc_builder_hook.
+def sdc_builder_hook(args):
+    def hook(data_collector):
+        if not args.run_sdc_upgrade_tests:
+            logger.info(f'Configuring SDC for pipeline JSON files of {DIR_TO_READ} ...')
+            for pipeline_file in DIR_TO_READ.glob('**/*.json'):
+                logger.debug(f'Configuring SDC for pipeline {pipeline_file}')
+                pipeline = sdc_models.Pipeline(pipeline_file)
+                data_collector.configure_for_pipeline(pipeline)
+        else:
+            pytest.skip('Test only runs for one given SDC version.')
+    return hook
+
 
 @upgrade
-def test_pipeline_upgrade(args, pipeline_full_path):
-    with sdc.DataCollector(version=args.post_upgrade_sdc_version or args.sdc_version) as data_collector:
-        pipeline = sdc_models.Pipeline(pipeline_full_path)
-        data_collector.configure_for_pipeline(pipeline)
-        data_collector.add_pipeline(pipeline)
-        data_collector.start()
-        export_json = data_collector.api_client.export_pipeline(pipeline.id)
+def test_pipeline_upgrade(sdc_builder):
+    """Test pipeline upgrades by importing JSON files against a given SDC version and asserting that they
+    have no pipeline import issues."""
+    issue_pipelines = []
+    logger.info(f'Importing and checking pipeline JSON files from {DIR_TO_READ} ...')
+    for pipeline_file in DIR_TO_READ.glob('**/*.json'):
+        uuid = str(uuid4())
+        logger.debug(f'Using pipeline id {uuid} for file {pipeline_file}')
+        pipeline = sdc_models.Pipeline(pipeline_file)
+        pipeline.id = uuid
+        sdc_builder.add_pipeline(pipeline)
+        issues = sdc_builder.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
+        if issues['issueCount']:
+            issue_pipelines.append(pipeline_file)
+            print(f'\nFor pipeline {pipeline_file} the issue(s) are ...')
+            print(json.dumps(issues, indent=4, default=pipeline_json_encoder))
 
-    issues = export_json['pipelineConfig']['issues']
-
-    if issues['issueCount']:
-        pytest.fail(str(issues))
-
-
-# pytest_generate_tests helps to parametrize pipelines which we will read from disk.
-# More about pytest parametrization at http://doc.pytest.org/en/latest/parametrize.html
-def pytest_generate_tests(metafunc):
-    pipelines = glob.iglob(join(dirname(realpath(__file__)), 'pipelines', '**', '*.json'),
-                           recursive=True)
-    metafunc.parametrize('pipeline_full_path', pipelines)
+    assert not issue_pipelines, f'Number of pipelines having import issues: {len(issue_pipelines)}'
