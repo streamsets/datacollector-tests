@@ -27,15 +27,16 @@ import string
 
 import sqlalchemy
 
+from testframework.environments.databases import oraclize_config_if_needed, upper_if_required
 from testframework.markers import database
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
 ROWS_IN_DATABASE = [
-    {'name': 'Dima'},
-    {'name': 'Jarcec'},
-    {'name': 'Arvind'}
+    {'id': 1, 'name': 'Dima'},
+    {'id': 2, 'name': 'Jarcec'},
+    {'id': 3, 'name': 'Arvind'}
 ]
 
 
@@ -52,7 +53,8 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'{src_table_prefix}%'}])
+    table_config = oraclize_config_if_needed({"tablePattern": f'{src_table_prefix}%'}, database)
+    jdbc_multitable_consumer.set_attributes(table_configuration=[table_config])
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -84,7 +86,7 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
                                    record.value['value'][1]['value']}
                               for record in snapshot[pipeline[0].instance_name].output]
 
-        assert rows_from_snapshot == ROWS_IN_DATABASE
+        assert rows_from_snapshot == [{upper_if_required('name', database): row['name']} for row in ROWS_IN_DATABASE]
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
@@ -109,7 +111,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
 
     jdbc_query_consumer = pipeline_builder.add_stage('JDBC Query Consumer')
     jdbc_query_consumer.configuration['isIncrementalMode'] = False
-    jdbc_query_consumer.sql_query = 'SELECT * FROM {0};'.format(table_name)
+    jdbc_query_consumer.sql_query = 'SELECT * FROM {0}'.format(table_name)
 
     trash = pipeline_builder.add_stage('Trash')
     jdbc_query_consumer >> trash
@@ -144,7 +146,8 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'%{src_table_prefix}%'}])
+    table_config = oraclize_config_if_needed({"tablePattern": f'%{src_table_prefix}%'}, database)
+    jdbc_multitable_consumer.set_attributes(table_configuration=[table_config])
     finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     trash = pipeline_builder.add_stage('Trash')
 
@@ -176,12 +179,12 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
             tables.append(sqlalchemy.Table(
                 input_name,
                 metadata,
-                sqlalchemy.Column('serial', sqlalchemy.Integer, autoincrement=True, primary_key=True),
+                sqlalchemy.Column('serial', sqlalchemy.Integer, primary_key=True),
                 sqlalchemy.Column('data', sqlalchemy.Integer)
             ))
             tables[i].create(database.engine)
 
-            rows = [{'data': random.randint(0, 2100000000)} for _ in range(num_recs)]
+            rows = [{'serial': j, 'data': random.randint(0, 2100000000)} for j in range(1, num_recs + 1)]
             connection.execute(tables[i].insert(), rows)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()

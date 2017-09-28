@@ -27,6 +27,7 @@ from time import sleep, time
 import pytest
 import sqlalchemy
 
+from testframework.environments.databases import oraclize_config_if_needed, upper_if_required
 from testframework.markers import database
 from testframework.utils import get_random_string
 
@@ -35,7 +36,6 @@ logger = logging.getLogger(__name__)
 
 
 # lower case tables have better compatibility with databases (e.g., PostgreSQL)
-EVENT_TABLE_NAME = 'no_data_event'
 EVENT_COLUMN_NAME = 'event_status'
 PRIMARY_KEY = 'pid'
 OTHER_COLUMN = 'randomstring'
@@ -51,9 +51,7 @@ JDBC_QUERY_OTHER_COL = "${{record:value('/{other_col}')}}"
 JDBC_QUERY_PRIMARY_COL = "${{record:value('/{primary_key}')}}"
 
 INSERT_DATA_TABLE_STATEMENT = "INSERT into {table_name} values ({primary_key}, '{other_col}')"
-UPDATE_EVENT_TABLE_STATEMENT = ('UPDATE {event_table_name} set {event_column_name} = 1'
-                                .format(event_table_name=EVENT_TABLE_NAME,
-                                        event_column_name=EVENT_COLUMN_NAME))
+UPDATE_EVENT_TABLE_STATEMENT = 'UPDATE {event_table_name} set {event_column_name} = 1'
 
 
 def assert_tables_replicated(database=None, src_table_names=None):
@@ -76,7 +74,7 @@ def assert_tables_replicated(database=None, src_table_names=None):
         assert src_result_list == target_result_list
 
 
-def wait_for_no_data_event(database=None, timeout_sec=240):
+def wait_for_no_data_event(event_table_name, database=None, timeout_sec=240):
     """Wait for no_data_event update on EVENT_TABLE (i.e, event column should be set to 1)."""
     logger.info('Waiting for no_data_event to be updated in %s seconds ...', timeout_sec)
     start_waiting_time = time()
@@ -84,7 +82,7 @@ def wait_for_no_data_event(database=None, timeout_sec=240):
     db_engine = database.engine
 
     while time() < stop_waiting_time:
-        event_table = sqlalchemy.Table(EVENT_TABLE_NAME, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
+        event_table = sqlalchemy.Table(event_table_name, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
         event_result = db_engine.execute(sqlalchemy.select([event_table.c[EVENT_COLUMN_NAME]]))
         event_result_list = event_result.fetchall()
         event_result.close()
@@ -97,7 +95,7 @@ def wait_for_no_data_event(database=None, timeout_sec=240):
     raise Exception('Timed out after %s seconds while waiting for no data event.')
 
 
-def setup_tables(database, src_table_names, target_table_names):
+def setup_tables(database, src_table_names, target_table_names, event_table_name):
     """Creates source, target and event tables, inserts rows to the source table and
     insert 0 for event table's event column.
     """
@@ -120,11 +118,11 @@ def setup_tables(database, src_table_names, target_table_names):
                                  sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
         table.create(db_engine)
 
-    logger.info('Creating event table %s in %s database ...', EVENT_TABLE_NAME, database.type)
-    table = sqlalchemy.Table(EVENT_TABLE_NAME, sqlalchemy.MetaData(),
+    logger.info('Creating event table %s in %s database ...', event_table_name, database.type)
+    table = sqlalchemy.Table(event_table_name, sqlalchemy.MetaData(),
                              sqlalchemy.Column(EVENT_COLUMN_NAME, sqlalchemy.Integer))
     table.create(db_engine)
-    logger.info('Inserting data into event table %s in %s database ...', EVENT_TABLE_NAME, database.type)
+    logger.info('Inserting data into event table %s in %s database ...', event_table_name, database.type)
     db_engine.execute(table.insert(), [{EVENT_COLUMN_NAME: 0}])
 
 
@@ -159,21 +157,30 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
             jdbc_multitable_consumer >> jdbc_query_dest
                                      >= jdbc_query_event
     """
+    event_table_name = get_random_string(string.ascii_lowercase, 10)
+    update_event_table_statement = UPDATE_EVENT_TABLE_STATEMENT.format(event_table_name=event_table_name,
+                                                                       event_column_name=EVENT_COLUMN_NAME)
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    table_config = oraclize_config_if_needed({"tablePattern": f'{SRC_TABLE_PREFIX}%'}, database)
     jdbc_multitable_consumer.set_attributes(no_of_threads=no_of_threads, batch_strategy=batch_strategy,
                                             max_pool_size=no_of_threads, min_idle_connections=no_of_threads,
-                                            table_configuration=[{"tablePattern": f'{SRC_TABLE_PREFIX}%'}])
+                                            table_configuration=[table_config])
     # The target used to replicate is JDBCQueryExecutor.
     # After SDC-5757 is resolved, we can use JDBCProducer.
     jdbc_query_dest = pipeline_builder.add_stage('JDBC Query', type='executor')
-    dest_table = JDBC_QUERY_TBL_FORMAT.format(src_table_prefix=SRC_TABLE_PREFIX, target_table_prefix=TGT_TABLE_PREFIX)
+    dest_table = JDBC_QUERY_TBL_FORMAT.format(src_table_prefix=upper_if_required(SRC_TABLE_PREFIX, database),
+                                              target_table_prefix=TGT_TABLE_PREFIX)
+
+    primary_key = JDBC_QUERY_PRIMARY_COL.format(primary_key=upper_if_required(PRIMARY_KEY, database))
+    other_col = JDBC_QUERY_OTHER_COL.format(other_col=upper_if_required(OTHER_COLUMN, database))
     dest_query = INSERT_DATA_TABLE_STATEMENT.format(table_name=dest_table,
-                                                    primary_key=JDBC_QUERY_PRIMARY_COL.format(primary_key=PRIMARY_KEY),
-                                                    other_col=JDBC_QUERY_OTHER_COL.format(other_col=OTHER_COLUMN))
+                                                    primary_key=primary_key,
+                                                    other_col=other_col)
+
     jdbc_query_dest.set_attributes(query=dest_query)
     jdbc_query_event = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_event.set_attributes(query=UPDATE_EVENT_TABLE_STATEMENT)
+    jdbc_query_event.set_attributes(query=update_event_table_statement)
 
     jdbc_multitable_consumer >> jdbc_query_dest
     jdbc_multitable_consumer >= jdbc_query_event
@@ -190,11 +197,12 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                                                         table_name=table_name)
                            for table_name in table_names])
     try:
-        setup_tables(database, src_table_names, target_table_names)
+        setup_tables(database, src_table_names, target_table_names, event_table_name)
         sdc_executor.start_pipeline(pipeline)
-        wait_for_no_data_event(database)
+        wait_for_no_data_event(event_table_name, database)
+        sdc_executor.stop_pipeline(pipeline) # must stop pipeline before tables can be dropped.
         assert_tables_replicated(database, src_table_names)
     finally:
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped() # must to stop pipeline before tables can be dropped.
         logger.info('Dropping test related tables in %s database...', database.type)
-        teardown_tables(database, src_table_names + target_table_names + [EVENT_TABLE_NAME])
+        teardown_tables(database, src_table_names + target_table_names + [event_table_name])
+

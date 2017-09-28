@@ -25,6 +25,7 @@ import string
 import pytest
 import sqlalchemy
 
+from testframework.environments.databases import oraclize_config_if_needed, upper_if_required
 from testframework.markers import database, cluster
 from testframework.utils import get_random_string
 
@@ -100,7 +101,8 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
     # build the pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configuration=[{'tablePattern': f'%{src_table_suffix}'}])
+    table_config = oraclize_config_if_needed({'tablePattern': f'%{src_table_suffix}'}, database)
+    jdbc_multitable_consumer.set_attributes(table_configuration=[table_config])
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     expression_evaluator.set_attributes(
         header_expressions=[{'attributeToSet': 'database',
@@ -158,14 +160,16 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
         # Check that the data shows up in Hive.
         hive_cursor = cluster.hive.client.cursor()
         for table in tables:
-            logger.info('Asserting table %s', table.name)
-            hive_cursor.execute(f'SELECT * from `{table.name}`')
+            table_name = upper_if_required(table.name, database)
+            logger.info('Asserting table %s', table_name)
+            hive_cursor.execute(f'SELECT * from `{table_name}`')
             hive_values = [list(row) for row in hive_cursor.fetchall()]
             raw_values = [list(row.values()) for row in rows]
             assert sorted(hive_values) == sorted(raw_values)
     finally:
         for table in tables:
-            logger.info('Dropping table %s in %s database ...', table.name, database.type)
+            table_name = upper_if_required(table.name, database)
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
             table.drop(database.engine)
-            logger.info('Dropping table %s in Hive ...', table.name)
-            hive_cursor.execute(f'DROP TABLE `{table.name}`')
+            logger.info('Dropping table %s in Hive ...', table_name)
+            hive_cursor.execute(f'DROP TABLE `{table_name}`')
