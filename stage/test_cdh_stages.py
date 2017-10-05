@@ -337,6 +337,8 @@ def test_kafka_destination(sdc_builder, sdc_executor, cluster):
            dev_raw_data_source >> kafka_destination
 
     """
+    if not hasattr(cluster, 'kafka'):
+        pytest.skip('Kafka tests only run against clusters with the Kafka service present.')
 
     kafka_topic_name = get_random_string(string.ascii_letters, 10)
 
@@ -397,6 +399,8 @@ def test_kafka_origin(sdc_builder, sdc_executor, cluster, execution_mode):
     Snapshot pipeline:
         sdc_rpc_origin >> trash
     """
+    if not hasattr(cluster, 'kafka'):
+        pytest.skip('Kafka tests only run against clusters with the Kafka service present.')
 
     is_cluster_mode = True if execution_mode == 'cluster' else False
     # Build the Kafka consumer pipeline.
@@ -473,6 +477,9 @@ def test_kudu_destination(sdc_builder, sdc_executor, cluster):
 
     dev_raw_data_source >> kudu
     """
+    if not hasattr(cluster, 'kudu'):
+        pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
     # Generate some data.
     tour_de_france_contenders = [dict(favorite_rank=1, name='Chris Froome', wins=3),
                                  dict(favorite_rank=2, name='Greg LeMond', wins=3),
@@ -546,6 +553,9 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source >> record_deduplicator >> kudu >> trash
     record_deduplicator >> to_error
     """
+    if not hasattr(cluster, 'kudu'):
+        pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
     tour_de_france_contenders = [dict(favorite_rank=1),
                                  dict(favorite_rank=2)]
 
@@ -624,6 +634,9 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
 
     dev_raw_data_source >> kudu lookup >> trash
     """
+    if not hasattr(cluster, 'kudu'):
+        pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
     # Generate some data.
     tour_de_france_contenders = [dict(favorite_rank=1),
                                  dict(favorite_rank=2)]
@@ -692,6 +705,9 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source >> record_deduplicator >> kudu >> trash
     record_deduplicator >> to_error
     """
+    if not hasattr(cluster, 'kudu'):
+        pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
     # Generate some data.
     test_data = [dict(rank=1, name='Chris Froome', wins=100, consecutive=True,
                       prize=1232354385, total_miles=27454, average_speed=536.1),
@@ -804,6 +820,9 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source >> record_deduplicator >> kudu >> trash
     record_deduplicator >> to_error
     """
+    if not hasattr(cluster, 'kudu'):
+        pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
     tour_de_france_contenders = [dict(favorite_rank=1),
                                  dict(favorite_rank=2)]
 
@@ -877,6 +896,9 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
 
     dev_raw_data_source >> kudu lookup >> trash
     """
+    if not hasattr(cluster, 'kudu'):
+        pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
     # Generate some data.
     tour_de_france_contenders = [dict(favorite_rank=1)]
 
