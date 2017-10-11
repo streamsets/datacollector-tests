@@ -98,7 +98,7 @@ def test_jython_evaluator(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', data_format_config='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
     jython_evaluator = pipeline_builder.add_stage('Jython Evaluator', type='processor')
     # in the init script we create a 'Building' template object which can be cloned per each pipeline record processing
     init_script = """

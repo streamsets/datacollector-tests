@@ -48,7 +48,7 @@ def test_cassandra_destination(sdc_builder, sdc_executor, cassandra):
 
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', data_format_config='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
     cassandra_destination = builder.add_stage('Cassandra', type='destination')
     cassandra_destination.set_attributes(field_to_column_mapping=[
         {'field': '/contact/name', 'columnName': 'name'},

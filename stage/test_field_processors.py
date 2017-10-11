@@ -495,7 +495,7 @@ def test_field_splitter(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', data_format_config='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
     field_splitter = pipeline_builder.add_stage('Field Splitter')
     field_splitter.set_attributes(field_for_remaining_splits=f'/error/{etc_sub_field}',
                                   field_to_split=f'/error/{source_sub_field}', new_split_fields=split_fields,
@@ -607,7 +607,7 @@ def test_field_type_converter(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', data_format_config='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
     field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
                                                field_type_converter_configs=field_type_converter_configs)
@@ -685,7 +685,7 @@ def test_field_zip(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', data_format_config='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
     field_zip = pipeline_builder.add_stage('Field Zip')
     field_zip.set_attributes(field_does_not_exist='CONTINUE', fields_to_zip=fields_to_zip_configs,
                              zip_values_only=False)
