@@ -16,6 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import string
 
@@ -114,3 +115,59 @@ def test_shell_executor_impersonation(sdc_shell, pipeline_shell_generator, pipel
     assert records[0].value['value']['text']['value'] == 'sdc'
 
 
+def test_stream_selector_processor(sdc_builder, sdc_executor):
+    """Smoke test for the Stream Selector processor.
+
+    A handful of records containing Tour de France contenders and their number of wins is passed
+    to a Stream Selector with multi-winners going to one Trash stage and not multi-winners going
+    to another.
+
+                                               >> to_error
+    dev_raw_data_source >> record_deduplicator >> stream_selector >> trash (multi-winners)
+                                                                  >> trash (not multi-winners)
+    """
+    multi_winners = [dict(name='Chris Froome', wins='3'),
+                     dict(name='Greg LeMond', wins='3')]
+    not_multi_winners = [dict(name='Vincenzo Nibali', wins='1'),
+                         dict(name='Nairo Quintana', wins='0')]
+
+    tour_de_france_contenders = multi_winners + not_multi_winners
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       json_content='ARRAY_OBJECTS',
+                                       raw_data=json.dumps(tour_de_france_contenders))
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    to_error = pipeline_builder.add_stage('To Error')
+    stream_selector = pipeline_builder.add_stage('Stream Selector')
+    trash_multi_winners = pipeline_builder.add_stage('Trash')
+    trash_not_multi_winners = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> record_deduplicator >> stream_selector >> trash_multi_winners
+    record_deduplicator >> to_error
+    stream_selector >> trash_not_multi_winners
+
+    stream_selector.condition = [dict(outputLane=stream_selector.output_lanes[0],
+                                      predicate='${record:value("/wins") > 1}'),
+                                 dict(outputLane=stream_selector.output_lanes[1],
+                                      predicate='default')]
+
+    pipeline = pipeline_builder.build('test_stream_selector_processor')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline,
+                                             start_pipeline=True).wait_for_finished().snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[0]]
+    multi_winners_from_snapshot = [{field: value['value']
+                                    for field, value in record.value['value'].items()}
+                                   for record in multi_winners_records]
+    assert multi_winners == multi_winners_from_snapshot
+
+    not_multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[1]]
+    not_multi_winners_from_snapshot = [{field: value['value']
+                                        for field, value in record.value['value'].items()}
+                                       for record in not_multi_winners_records]
+    assert not_multi_winners == not_multi_winners_from_snapshot
