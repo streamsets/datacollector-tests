@@ -16,11 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
+import copy
 import logging
 import random
 import string
@@ -38,7 +34,7 @@ ROWS_IN_DATABASE = [
     {'id': 2, 'name': 'Jarcec'},
     {'id': 3, 'name': 'Arvind'}
 ]
-
+LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
 
 @database
 def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, database):
@@ -190,3 +186,66 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
     finally:
         for table in tables:
             table.drop(database.engine)
+
+
+def create_table_in_database(table_name, database):
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('name', sqlalchemy.String(32)),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)
+    )
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
+
+
+@database
+def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database):
+    """Simple JDBC Lookup processor test.
+    Pipeline will enrich records with the 'name' by adding a field as 'FirstName'.
+
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = create_table_in_database(table_name, database)
+    logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(LOOKUP_RAW_DATA))
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    query_str = f"SELECT name FROM {table_name} WHERE id = '${{record:value('/id')}}'"
+    column_mappings = [dict(dataType='USE_COLUMN_TYPE',
+                            columnName='name',
+                            field='/FirstName')]
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=column_mappings)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> jdbc_lookup >> trash
+    pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    LOOKUP_EXPECTED_DATA = copy.deepcopy(ROWS_IN_DATABASE)
+    for record in LOOKUP_EXPECTED_DATA:
+        record.pop('id')
+        record['FirstName'] = record.pop('name')
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        rows_from_snapshot = [{record.value['value'][1]['sqpath'].lstrip('/'): record.value['value'][1]['value']}
+                              for record in snapshot[jdbc_lookup].output]
+        assert rows_from_snapshot == LOOKUP_EXPECTED_DATA
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
