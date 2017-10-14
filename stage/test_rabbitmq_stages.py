@@ -42,7 +42,7 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
     RabbitMQ Consumer pipeline:
         rabbitmq_consumer >> trash
     """
-    #build consumer pipeline
+    # build consumer pipeline
     queue_name = get_random_string(string.ascii_letters, 10)
 
     builder = sdc_builder.get_pipeline_builder()
@@ -50,9 +50,10 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
 
     # we set to use default exchange and hence exchange does not need to be pre-created or given
     rabbitmq_consumer = builder.add_stage('RabbitMQ Consumer').set_attributes(queue_name=queue_name,
-                                                                              data_format='TEXT', queue_durable=True,
+                                                                              data_format='TEXT',
+                                                                              queue_durable=True,
                                                                               queue_auto_delete=False,
-                                                                              exchanges = [])
+                                                                              exchanges=[])
     trash = builder.add_stage('Trash')
 
     rabbitmq_consumer >> trash
@@ -60,7 +61,7 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
     consumer_origin_pipeline = builder.build(title='RabbitMQ Consumer pipeline').configure_for_environment(rabbitmq)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
-    #run pipeline and capture snapshot
+    # run pipeline and capture snapshot
     expected_messages = set()
     connection = rabbitmq.blocking_connection
     channel = connection.channel()
@@ -71,7 +72,7 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
         for i in range(10):
             expected_message = 'Message {0}'.format(i)
             if channel.basic_publish(exchange="",
-                                     routing_key=queue_name, #routing key has to be same as queue name
+                                     routing_key=queue_name,  # routing key has to be same as queue name
                                      body=expected_message,
                                      properties=pika.BasicProperties(content_type='text/plain',
                                                                      delivery_mode=1),
@@ -89,6 +90,7 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
                       for record in snapshot[rabbitmq_consumer.instance_name].output]
 
     assert set(output_records) == expected_messages
+
 
 @rabbitmq
 def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
@@ -113,10 +115,10 @@ def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
     rabbitmq_producer = builder.add_stage('RabbitMQ Producer')
     rabbitmq_producer.set_attributes(queue_name=queue_name, data_format='TEXT',
                                      queue_durable=False, queue_auto_delete=True,
-                                     exchanges = [dict(name=exchange_name,
-                                                  type='DIRECT',
-                                                  durable=False,
-                                                  autoDelete=True)])
+                                     exchanges=[dict(name=exchange_name,
+                                                     type='DIRECT',
+                                                     durable=False,
+                                                     autoDelete=True)])
 
     dev_raw_data_source >> rabbitmq_producer
     producer_dest_pipeline = builder.build(title='RabbitMQ Producer pipeline').configure_for_environment(rabbitmq)
@@ -137,8 +139,8 @@ def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
     try:
         # Get one message at a time from RabbitMQ.
         # Returns a sequence with the method frame, message properties, and body.
-        msgs_received = [channel.basic_get(queue_name, False)[2].decode().replace('\n','')
-                         for i in range(msgs_sent_count)]
+        msgs_received = [channel.basic_get(queue_name, False)[2].decode().replace('\n', '')
+                         for _ in range(msgs_sent_count)]
     finally:
         channel.close()
         connection.close()

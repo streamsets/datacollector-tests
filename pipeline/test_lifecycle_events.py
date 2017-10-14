@@ -21,13 +21,13 @@ import logging
 import pytest
 
 from testframework.markers import sdc_min_version
-from testframework import sdc_api
 
 logger = logging.getLogger(__name__)
 
 # Port for SDC RPC stages to exchange error records
 SDC_RPC_PORT = 20000
 SDC_RPC_ID = 'lifecycle'
+
 
 @pytest.fixture(scope='module')
 def sdc_builder_hook():
@@ -73,7 +73,7 @@ def generator_failure_builder(sdc_builder):
 
     dev_data_generator = builder.add_stage('Dev Data Generator')
     jython = builder.add_stage('Jython Evaluator')
-    jython.script = '1 / 0' # ~ throw exception and stop the pipeline
+    jython.script = '1 / 0'  # ~ throw exception and stop the pipeline
 
     trash = builder.add_stage('Trash')
 
@@ -106,7 +106,7 @@ def failing_receiver_pipeline(sdc_builder):
     origin.rpc_id = SDC_RPC_ID
 
     jython = builder.add_stage('Jython Evaluator')
-    jython.script = '1 / 0' # ~ throw exception and stop the pipeline
+    jython.script = '1 / 0'  # ~ throw exception and stop the pipeline
     trash = builder.add_stage('Trash')
 
     origin >> jython >> trash
@@ -141,7 +141,7 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
         snapshot = snapshot_command.wait_for_finished().snapshot
         record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
 
-        assert record != None
+        assert record is not None
         assert record.header['sdc.event.type'] == 'pipeline-start'
         assert record.value['value']['user']['value'] == 'admin'
 
@@ -176,7 +176,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
 
         record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
 
-        assert record != None
+        assert record is not None
         assert record.header['sdc.event.type'] == 'pipeline-stop'
         assert record.value['value']['reason']['value'] == 'USER_ACTION'
 
@@ -209,7 +209,7 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
 
         record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
 
-        assert record != None
+        assert record is not None
         assert record.header['sdc.event.type'] == 'pipeline-stop'
         assert record.value['value']['reason']['value'] == 'FINISHED'
 
@@ -243,7 +243,7 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
 
         record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
 
-        assert record != None
+        assert record is not None
         assert record.header['sdc.event.type'] == 'pipeline-stop'
         assert record.value['value']['reason']['value'] == 'FAILURE'
 

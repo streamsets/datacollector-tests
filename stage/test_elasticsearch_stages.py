@@ -42,7 +42,7 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
     Elasticsearch origin pipeline:
         es_origin >> trash
     """
-    es_index = get_random_string(string.ascii_letters, 10).lower() # Elasticsearch indexes must be lower case
+    es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
     es_doc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
 
@@ -60,9 +60,9 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
         elasticsearch.connect()
         doc_type = DocType(meta={'id': es_doc_id, 'index': es_index})
         doc_type.body = raw_str
-        doc_type.save() # save document to Elasticsearch
+        doc_type.save()  # save document to Elasticsearch
         index = Index(es_index)
-        assert index.refresh() # assert to refresh index, making all operations available for search
+        assert index.refresh()  # assert to refresh index, making all operations available for search
 
         # Run pipeline and assert
         snapshot = sdc_executor.capture_snapshot(es_origin_pipeline, start_pipeline=True).snapshot
@@ -88,7 +88,7 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
         dev_raw_data_source >> error_target
     """
     # Test static
-    es_index = get_random_string(string.ascii_letters, 10).lower() # Elasticsearch indexes must be lower case
+    es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
     es_mapping = get_random_string(string.ascii_letters, 10)
     es_doc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
@@ -135,7 +135,7 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch):
         dev_raw_data_source >> es_target
     """
     # Test static
-    es_index = get_random_string(string.ascii_letters, 10).lower() # Elasticsearch indexes must be lower case
+    es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
     es_mapping = get_random_string(string.ascii_letters, 10)
     es_doc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'

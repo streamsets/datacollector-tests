@@ -28,7 +28,7 @@ import string
 from pathlib import Path
 from uuid import uuid4
 
-from testframework.markers import *
+from testframework.markers import cluster
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,7 @@ logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
+
 
 @cluster('mapr')
 def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):

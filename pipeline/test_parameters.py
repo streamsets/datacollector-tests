@@ -20,6 +20,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def test_pipeline_start_with_parameters(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 

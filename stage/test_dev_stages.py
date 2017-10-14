@@ -21,10 +21,11 @@ from time import sleep
 
 import pytest
 
-from testframework import sdc, sdc_api
+from testframework import sdc_api
 from testframework.utils import Version
 
 logger = logging.getLogger(__name__)
+
 
 @pytest.fixture(scope='module')
 def pipeline(sdc_builder, sdc_executor):

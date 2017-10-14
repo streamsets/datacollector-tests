@@ -23,6 +23,7 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+
 @pytest.fixture(scope='function')
 def random_expression_pipeline_builder(sdc_builder):
     pipeline_builder = sdc_builder.get_pipeline_builder()

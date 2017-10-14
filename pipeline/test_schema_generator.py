@@ -21,14 +21,11 @@ import os
 import string
 import tempfile
 
-import pytest
-
-from testframework import sdc
 from testframework.markers import sdc_min_version
 from testframework.utils import get_random_string
-from testframework.sdc_models import Configuration
 
 logger = logging.getLogger(__name__)
+
 
 @sdc_min_version('2.7.1.0')
 def test_schema_generator_processor(sdc_builder, sdc_executor):
@@ -72,28 +69,21 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
     # We can't express all types in JSON directly, so we'll convert them explicitly
     field_type_converter = builder.add_stage('Field Type Converter')
     field_type_converter.conversion_method = 'BY_FIELD'
-    field_type_converter.field_type_converter_configs = [
-        {
-            "fields" : [ "/decimal" ],
-            "targetType" : "DECIMAL",
-            "dataLocale" : "en,US",
-            "scale" : 2,
-            "decimalScaleRoundingStrategy" : "ROUND_UNNECESSARY"
-      }, {
-            "fields" : [ "/date" ],
-            "targetType" : "DATE",
-            "dateFormat" : "YYYY_MM_DD"
-      }, {
-            "fields" : [ "/time" ],
-            "targetType" : "TIME",
-            "dateFormat" : "OTHER",
-            "otherDateFormat" : "HH:mm:ss"
-      }, {
-            "fields" : [ "/datetime" ],
-            "targetType" : "DATETIME",
-            "dateFormat" : "YYYY_MM_DD_HH_MM_SS"
-      }
-    ]
+    field_type_converter.field_type_converter_configs = [{'fields': ['/decimal'],
+                                                          'targetType': 'DECIMAL',
+                                                          'dataLocale': 'en,US',
+                                                          'scale': 2,
+                                                          'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'},
+                                                         {'fields': ['/date'],
+                                                          'targetType': 'DATE',
+                                                          'dateFormat': 'YYYY_MM_DD'},
+                                                         {'fields': ['/time'],
+                                                          'targetType': 'TIME',
+                                                          'dateFormat': 'OTHER',
+                                                          'otherDateFormat': 'HH:mm:ss'},
+                                                         {'fields': ['/datetime'],
+                                                          'targetType': 'DATETIME',
+                                                          'dateFormat': 'YYYY_MM_DD_HH_MM_SS'}]
 
     # Generate schema for that record
     schema_generator = builder.add_stage('Schema Generator')
@@ -152,7 +142,7 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
     # Assert proper values
     assert 'str' == record.value['value']['str']['value']
     assert '10' == record.value['value']['int']['value']
-    assert True == record.value['value']['boolean']['value']
+    assert record.value['value']['boolean']['value'] is True
     assert '10.50' == record.value['value']['decimal']['value']
     assert 1483257600000 == record.value['value']['date']['value']
     assert 65348000 == record.value['value']['time']['value']

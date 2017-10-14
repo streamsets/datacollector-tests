@@ -40,7 +40,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
         jdbc_query_consumer >> trash
                             >= pipeline_finished_executor
     """
-    table_name = get_random_string(string.ascii_lowercase, 20) # lowercase for db compatibility (e.g. PostgreSQL)
+    table_name = get_random_string(string.ascii_lowercase, 20)  # lowercase for db compatibility (e.g. PostgreSQL)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_query_consumer = pipeline_builder.add_stage('JDBC Query Consumer')
@@ -62,7 +62,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
 
         logger.info('Adding three rows into %s database ...', database.type)
         connection = database.engine.connect()
-        connection.execute(table.insert(), [{'col':1}, {'col':2}, {'col':3}])
+        connection.execute(table.insert(), [{'col': 1}, {'col': 2}, {'col': 3}])
 
         sdc_executor.start_pipeline(pipeline)
 
@@ -94,7 +94,7 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
     Note: Numeric fixture of the test fails till SDC-6766 is addressed.
     """
     # Generate two random strings to use when naming the DB tables at the source.
-    src_table_suffix = get_random_string(string.ascii_lowercase, 6) # lowercase for db compatibility (e.g. PostgreSQL)
+    src_table_suffix = get_random_string(string.ascii_lowercase, 6)  # lowercase for db compatibility (e.g. PostgreSQL)
     random_table_name_1 = '{}_{}'.format(get_random_string(table_name_characters, table_name_length), src_table_suffix)
     random_table_name_2 = '{}_{}'.format(get_random_string(table_name_characters, table_name_length), src_table_suffix)
 
@@ -115,8 +115,10 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
     field_remover.fields = ["/dt"]
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
     hive_metadata.set_attributes(data_format='AVRO', database_expression="${record:attribute('database')}",
-                                 decimal_precision_expression="${record:attribute(str:concat(str:concat('jdbc.', field:field()), '.precision'))}",
-                                 decimal_scale_expression="${record:attribute(str:concat(str:concat('jdbc.', field:field()), '.scale'))}",
+                                 decimal_precision_expression=("${record:attribute(str:concat(str:concat("
+                                                               "'jdbc.', field:field()), '.precision'))}"),
+                                 decimal_scale_expression=("${record:attribute(str:concat(str:concat("
+                                                           "'jdbc.', field:field()), '.scale'))}"),
                                  table_name="${record:attribute('table_name')}")
     hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
     hadoop_fs.set_attributes(avro_schema_location='HEADER', data_format='AVRO', directory_in_header=True,
@@ -145,11 +147,9 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
                                      sqlalchemy.Column('dt', sqlalchemy.String(20)))
             table.create(database.engine)
             tables.append(table)
-            rows = [
-                {'event_id': 1, 'order_id': 123, 'event_type': 'SHIPPED', 'dt':'2017-07-13'},
-                {'event_id': 2, 'order_id': 234, 'event_type': 'ARRIVED', 'dt':'2017-07-13'},
-                {'event_id': 3, 'order_id': 345, 'event_type': 'READY', 'dt':'2017-07-13'}
-            ]
+            rows = [{'event_id': 1, 'order_id': 123, 'event_type': 'SHIPPED', 'dt': '2017-07-13'},
+                    {'event_id': 2, 'order_id': 234, 'event_type': 'ARRIVED', 'dt': '2017-07-13'},
+                    {'event_id': 3, 'order_id': 345, 'event_type': 'READY', 'dt': '2017-07-13'}]
             logger.info('Adding %s rows to %s of %s database ...', len(rows), table_name, database.type)
             connection = database.engine.connect()
             connection.execute(table.insert(), rows)

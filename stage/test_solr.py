@@ -29,6 +29,7 @@ from testframework.markers import solr
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+
 @solr
 def test_solr_target(sdc_builder, sdc_executor, solr):
     """Test Solr target pipeline in Apache Solr (6.x) environment. The assumption is that standalone Solr

@@ -43,7 +43,7 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
         hive_metadata >> hive_metastore
         hadoop_fs >= mapreduce
     """
-    table_name = get_random_string(string.ascii_lowercase, 20) # lowercase for db compatibility (e.g. PostgreSQL)
+    table_name = get_random_string(string.ascii_lowercase, 20)  # lowercase for db compatibility (e.g. PostgreSQL)
 
     table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
                              sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),

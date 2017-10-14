@@ -15,14 +15,14 @@
 # limitations under the License.
 
 import logging
-from os.path import dirname, join
 
 import pytest
 
-from testframework import sdc, sdc_models
+from testframework import sdc
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
 
 @pytest.fixture(scope='module')
 def data_collector():

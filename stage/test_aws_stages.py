@@ -27,7 +27,7 @@ import logging
 import string
 import time
 
-from testframework.markers import *
+from testframework.markers import aws, sdc_min_version
 from testframework.utils import get_random_string
 from testframework.sdc_models import Configuration
 
@@ -47,7 +47,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
     Kinesis Consumer pipeline:
         kinesis_consumer >> trash
     """
-    #build consumer pipeline
+    # build consumer pipeline
     application_name = get_random_string(string.ascii_letters, 10)
     stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
 
@@ -66,7 +66,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
     consumer_origin_pipeline = builder.build(title='Kinesis Consumer pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
-    #run pipeline and capture snapshot
+    # run pipeline and capture snapshot
     client = aws.kinesis
     try:
         logger.info(f'Creating {stream_name} Kinesis stream on AWS.')
@@ -88,7 +88,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
         assert set(output_records) == expected_messages
     finally:
         logger.info(f'Deleting {stream_name} Kinesis stream on AWS.')
-        client.delete_stream(StreamName=stream_name) # Stream operations are done. Delete the stream.
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
 
 
 @aws('kinesis')
@@ -498,7 +498,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
     stream_name = aws.firehose_stream_name
     # json formatted string
     random_raw_str = '{{"text":"{0}"}}'.format(get_random_string(string.ascii_letters, 10))
-    record_count = 1 # random_raw_str record size
+    record_count = 1  # random_raw_str record size
     s3_put_keys = []
 
     # Build the pipeline
@@ -528,7 +528,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
         dests = resp['DeliveryStreamDescription']['Destinations'][0]
         wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
-        time.sleep(wait_secs+15) # few seconds more to wait to make sure S3 gets the data
+        time.sleep(wait_secs+15)  # few seconds more to wait to make sure S3 gets the data
 
         # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
         # read data to assert

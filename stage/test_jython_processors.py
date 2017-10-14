@@ -151,7 +151,7 @@ def test_jython_evaluator(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    output_records = snapshot[jython_evaluator.instance_name].output # is a list of output records
+    output_records = snapshot[jython_evaluator.instance_name].output  # is a list of output records
     # search for a record whose 'name' is raw_company_1['name'] and assert new attribute ('office_space') is created
     # with expected boolean value (where 'floors' > 2)
     record_1 = list(filter(lambda x: x.value['value']['name']['value'] == raw_company_1['name'], output_records))[0]

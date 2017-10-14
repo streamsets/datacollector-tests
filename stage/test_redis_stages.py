@@ -66,8 +66,8 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
         # case when we have valid pattern for *
         snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
         key_1 = f'extra{pattern_1}extra'
-        for _ in range(20): # 20 records will make 2 batches (each of 10)
-            assert redis.client.publish(key_1, raw_data) == 1 # 1 indicates pipeline consumer received the raw_data
+        for _ in range(20):  # 20 records will make 2 batches (each of 10)
+            assert redis.client.publish(key_1, raw_data) == 1  # 1 indicates pipeline consumer received the raw_data
         snapshot = snapshot_command.wait_for_finished().snapshot
         assert redis_consumer.max_batch_size_in_records == len(snapshot[redis_consumer.instance_name].output)
         for record in snapshot[redis_consumer.instance_name].output:
@@ -77,8 +77,8 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
         # case when we have valid pattern for ?
         snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
         key_2 = f'{pattern_2}X'
-        for _ in range(20): # 20 records will make 2 batches (each of 10)
-            assert redis.client.publish(key_2, raw_data) == 1 # 1 indicates pipeline consumer received the raw_data
+        for _ in range(20):  # 20 records will make 2 batches (each of 10)
+            assert redis.client.publish(key_2, raw_data) == 1  # 1 indicates pipeline consumer received the raw_data
         snapshot = snapshot_command.wait_for_finished().snapshot
         assert redis_consumer.max_batch_size_in_records == len(snapshot[redis_consumer.instance_name].output)
         for record in snapshot[redis_consumer.instance_name].output:
@@ -88,7 +88,7 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
         # Case when we have an invalid pattern. No data is expected and hence no snapshot can be taken to compare.
         key_3 = f'{pattern_2}XX'
         for _ in range(20):
-            assert redis.client.publish(key_3, raw_data) == 0 # 0 clients received the raw_data
+            assert redis.client.publish(key_3, raw_data) == 0  # 0 clients received the raw_data
     finally:
         sdc_executor.stop_pipeline(pipeline)
 

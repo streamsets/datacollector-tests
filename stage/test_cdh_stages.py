@@ -23,17 +23,13 @@ another.
 
 import json
 import logging
-import os
 import string
-from pathlib import Path
-from uuid import uuid4
 
 import pytest
 import sqlalchemy
 
 import test_apache
-from testframework import sdc
-from testframework.markers import *
+from testframework.markers import cluster, sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -179,7 +175,6 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
                                                 'kudu.num_tablet_replicas': '1'
                                             })
 
-
     try:
         logger.info('Creating Kudu table %s ...', kudu_table_name)
         engine = cluster.kudu.engine
@@ -247,7 +242,7 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
     tdf_contenders_table = sqlalchemy.Table(kudu_table_name,
                                             metadata,
                                             sqlalchemy.Column('rank', sqlalchemy.Integer, primary_key=True),
-                                            sqlalchemy.Column('name', sqlalchemy.String ),
+                                            sqlalchemy.Column('name', sqlalchemy.String),
                                             sqlalchemy.Column('wins', sqlalchemy.Integer),
                                             impala_partition_by='HASH PARTITIONS 16',
                                             impala_stored_as='KUDU',
@@ -298,7 +293,7 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
                                  dict(favorite_rank=2, name='Greg LeMond'),
                                  dict(favorite_rank=4, name='Vincenzo Nibali'),
                                  dict(favorite_rank=3, name='Nairo Quintana'),
-                                 dict(favorite_rank=5, name='StreamSets,Inc')] # This should go to error record
+                                 dict(favorite_rank=5, name='StreamSets,Inc')]  # This should go to error record
 
     raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
     key_column_mapping = [dict(field='/favorite_rank', columnName='rank'),
@@ -530,7 +525,7 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
 
         status = sdc_executor.get_pipeline_status(pipeline)
         # KUDU_34 is 'Primary key is not configured in Key Column Mapping'
-        # See the error: https://github.com/streamsets/datacollector/blob/master/kudu-protolib/src/main/java/com/streamsets/pipeline/stage/lib/kudu/Errors.java#L43
+        # See the error: https://git.io/vdX1f
         assert 'KUDU_34' in status.response.json().get('message')
 
     finally:
@@ -647,6 +642,7 @@ def test_mapreduce_executor(sdc_builder, sdc_executor, cluster):
     finally:
         # remove HDFS files
         cluster.hdfs.client.delete(hdfs_directory, recursive=True)
+
 
 @cluster('cdh')
 def test_spark_executor(sdc_builder, sdc_executor, cluster):

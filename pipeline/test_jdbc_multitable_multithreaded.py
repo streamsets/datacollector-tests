@@ -66,7 +66,8 @@ def assert_tables_replicated(database=None, src_table_names=None):
         src_result_list = src_result.fetchall()
         src_result.close()
 
-        target_table = sqlalchemy.Table(target_table_name, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
+        target_table = sqlalchemy.Table(target_table_name, sqlalchemy.MetaData(),
+                                        autoload=True, autoload_with=db_engine)
         target_result = db_engine.execute(target_table.select().order_by(target_table.c[PRIMARY_KEY]))
         target_result_list = target_result.fetchall()
         target_result.close()
@@ -107,7 +108,7 @@ def setup_tables(database, src_table_names, target_table_names, event_table_name
                                  sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
         table.create(db_engine)
         logger.info('Inserting data into source table %s in %s database ...', table_name, database.type)
-        for src_row_id in range(1, NO_OF_SRC_ROWS+1): # some databases (like MySQL) will start from 1
+        for src_row_id in range(1, NO_OF_SRC_ROWS+1):  # some databases (like MySQL) will start from 1
             db_engine.execute(table.insert(), [{PRIMARY_KEY: src_row_id,
                                                 OTHER_COLUMN: get_random_string(string.ascii_lowercase, 20)}])
 
@@ -200,9 +201,9 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
         setup_tables(database, src_table_names, target_table_names, event_table_name)
         sdc_executor.start_pipeline(pipeline)
         wait_for_no_data_event(event_table_name, database)
-        sdc_executor.stop_pipeline(pipeline) # must stop pipeline before tables can be dropped.
+        sdc_executor.stop_pipeline(pipeline)  # must stop pipeline before tables can be dropped.
         assert_tables_replicated(database, src_table_names)
     finally:
+        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()  # must to stop pipeline before tables can be dropped.
         logger.info('Dropping test related tables in %s database...', database.type)
         teardown_tables(database, src_table_names + target_table_names + [event_table_name])
-

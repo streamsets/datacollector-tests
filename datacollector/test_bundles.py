@@ -24,7 +24,7 @@ from javaproperties import Properties
 from uuid import uuid4
 
 from testframework import sdc_models
-from testframework.markers import *
+from testframework.markers import sdc_min_version
 
 # Skip all tests in this module if --sdc-version < 2.6.0.0-SNAPSHOT
 pytestmark = sdc_min_version('2.6.0.0-SNAPSHOT')
@@ -62,6 +62,7 @@ def test_generators_list(sdc_executor):
     # Negative case
     assert generators['PythonLanguage'] is None
 
+
 # Validate general ability to create new bundle
 def test_generate_new_bundle(sdc_executor):
     bundle = sdc_executor.get_bundle()
@@ -82,7 +83,7 @@ def test_generate_new_bundle(sdc_executor):
         # Negative case
         assert p.get('universe.milky_way.solar_system.earth.europe.czech_republic.working_government') is None
 
-# Pipeline generator
+
 def test_validate_pipeline_generator(pipeline, sdc_executor):
     bundle = sdc_executor.get_bundle(['PipelineContentGenerator'])
 
@@ -95,7 +96,8 @@ def test_validate_pipeline_generator(pipeline, sdc_executor):
         assert p.get('com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator') is None
 
     # We should have pipeline in the bundle that we should be able to easily import to the SDC again
-    with bundle.open('com.streamsets.datacollector.bundles.content.PipelineContentGenerator/{}/pipeline.json'.format(pipeline.id)) as raw:
+    with bundle.open(f'com.streamsets.datacollector.bundles.content.PipelineContentGenerator/'
+                     f'{pipeline.id}/pipeline.json') as raw:
         bundle_json = json.loads(raw.read().decode())
         bundle_pipeline = sdc_models.Pipeline(pipeline=bundle_json)
         # We need to "reset" the name, otherwise import will fail
@@ -103,7 +105,8 @@ def test_validate_pipeline_generator(pipeline, sdc_executor):
         sdc_executor.add_pipeline(bundle_pipeline)
 
     # History have a known structure as the pipeline have not run yet
-    with bundle.open('com.streamsets.datacollector.bundles.content.PipelineContentGenerator/{}/history.json'.format(pipeline.id)) as raw:
+    with bundle.open(f'com.streamsets.datacollector.bundles.content.PipelineContentGenerator/'
+                     f'{pipeline.id}/history.json') as raw:
         bundle_json = json.loads(raw.read().decode())
         bundle_history = sdc_models.History(bundle_json)
         assert len(bundle_history) == 1
@@ -112,11 +115,12 @@ def test_validate_pipeline_generator(pipeline, sdc_executor):
         assert entry['user'] == 'admin'
 
     # Validate existence of some other files
-    assert 'com.streamsets.datacollector.bundles.content.PipelineContentGenerator/{}/info.json'.format(pipeline.id) in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.PipelineContentGenerator/{}/offset.json'.format(pipeline.id) in bundle.namelist()
+    assert (f'com.streamsets.datacollector.bundles.content.PipelineContentGenerator/{pipeline.id}/info.json'
+            in bundle.namelist())
+    assert (f'com.streamsets.datacollector.bundles.content.PipelineContentGenerator/{pipeline.id}/offset.json'
+            in bundle.namelist())
 
 
-# Log generator
 def test_validate_log_generator(sdc_executor):
     bundle = sdc_executor.get_bundle(['LogContentGenerator'])
 
@@ -136,13 +140,13 @@ def test_validate_log_generator(sdc_executor):
         assert "Main - Runtime info" in log
         assert "Main - Starting" in log
 
-
     # We're fine with just validating that gc log is indeed there
     assert 'com.streamsets.datacollector.bundles.content.LogContentGenerator//gc.log' in bundle.namelist()
 
-# SDC Info generator
-def test_validate_sdcinfo_generator(sdc_executor):
+
+def test_validate_sdc_info_generator(sdc_executor):
     bundle = sdc_executor.get_bundle(['SdcInfoContentGenerator'])
+    bundle_file_root = 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator'
 
     # Manifest must contain the generator
     with bundle.open('generators.properties') as zip_file:
@@ -152,41 +156,40 @@ def test_validate_sdcinfo_generator(sdc_executor):
         assert p.get('com.streamsets.datacollector.bundles.content.LogContentGenerator') is None
         assert p.get('com.streamsets.datacollector.bundles.content.PipelineContentGenerator') is None
 
-    with bundle.open('com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/properties/build.properties') as raw:
+    with bundle.open(f'{bundle_file_root}/properties/build.properties') as raw:
         p = Properties()
         p.load(raw)
         assert p.get('version') is not None
 
-    with bundle.open('com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/properties/system.properties') as raw:
+    with bundle.open(f'{bundle_file_root}/properties/system.properties') as raw:
         p = Properties()
         p.load(raw)
         assert p.get('os.name') is not None
         assert p.get('java.vm.version') is not None
         assert p.get('sdc.hostname') is not None
 
-    with bundle.open('com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/conf/sdc.properties') as raw:
+    with bundle.open(f'{bundle_file_root}/conf/sdc.properties') as raw:
         p = Properties()
         p.load(raw)
         assert p.get('https.keystore.password') is not None
 
-
     # We're fine with just validating existence of some other files
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/dir_listing/conf.txt' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/dir_listing/resource.txt' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/dir_listing/data.txt' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/dir_listing/log.txt' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/dir_listing/lib_extra.txt' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/dir_listing/stagelibs.txt' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/conf/sdc-log4j.properties' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/conf/dpm.properties' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/conf/ldap-login.conf' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/conf/sdc-security.policy' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/libexec/sdc-env.sh' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/libexec/sdcd-env.sh' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/runtime/threads.txt' in bundle.namelist()
-    assert 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator/runtime/jmx.json' in bundle.namelist()
+    assert f'{bundle_file_root}/dir_listing/conf.txt' in bundle.namelist()
+    assert f'{bundle_file_root}/dir_listing/resource.txt' in bundle.namelist()
+    assert f'{bundle_file_root}/dir_listing/data.txt' in bundle.namelist()
+    assert f'{bundle_file_root}/dir_listing/log.txt' in bundle.namelist()
+    assert f'{bundle_file_root}/dir_listing/lib_extra.txt' in bundle.namelist()
+    assert f'{bundle_file_root}/dir_listing/stagelibs.txt' in bundle.namelist()
+    assert f'{bundle_file_root}/conf/sdc-log4j.properties' in bundle.namelist()
+    assert f'{bundle_file_root}/conf/dpm.properties' in bundle.namelist()
+    assert f'{bundle_file_root}/conf/ldap-login.conf' in bundle.namelist()
+    assert f'{bundle_file_root}/conf/sdc-security.policy' in bundle.namelist()
+    assert f'{bundle_file_root}/libexec/sdc-env.sh' in bundle.namelist()
+    assert f'{bundle_file_root}/libexec/sdcd-env.sh' in bundle.namelist()
+    assert f'{bundle_file_root}/runtime/threads.txt' in bundle.namelist()
+    assert f'{bundle_file_root}/runtime/jmx.json' in bundle.namelist()
 
-# Redaction
+
 def test_validate_redaction(sdc_executor):
     bundle = sdc_executor.get_bundle()
 
@@ -197,7 +200,6 @@ def test_validate_redaction(sdc_executor):
         assert p.get('https.keystore.password') == 'REDACTED'
 
 
-# Snapshot generator
 def test_validate_snapshot_generator(pipeline, sdc_executor):
     generator = 'com.streamsets.datacollector.bundles.content.SnapshotGenerator'
 

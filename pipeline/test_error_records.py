@@ -233,7 +233,7 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     files_prefix = 'sdc-{}'.format(get_random_string(string.ascii_letters, 6))
     # with below setting, there should only be one file generated
     file_wait_time_in_secs = "300"
-    max_file_size_in_mb  = 100
+    max_file_size_in_mb = 100
 
     # build and add error stage pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()

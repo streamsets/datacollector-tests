@@ -19,13 +19,14 @@ import logging
 import pytest
 
 from testframework import sdc
-from testframework.common_exceptions import *  # pylint: disable=wildcard-import
+from testframework.common_exceptions import InternalServerError
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # CONTAINER_01200 - doesn't have permissions on pipeline.
 ERROR_CODE_PIPELINE_PERMISSIONS = 'CONTAINER_01200'
+
 
 @pytest.fixture(scope='module')
 def data_collector():
@@ -36,6 +37,7 @@ def data_collector():
     yield dc
     if dc.tear_down_on_exit:
         dc.tear_down()
+
 
 @pytest.fixture(scope='module')
 def pipeline(data_collector):
@@ -54,7 +56,7 @@ def pipeline(data_collector):
     data_collector.add_pipeline(pipeline)
     yield pipeline
 
-# Validate default ACL for a pipeline.
+
 def test_validate_default_acl(data_collector, pipeline):
     acl_response = data_collector.get_pipeline_acl(pipeline)
     assert acl_response['resourceOwner'] == 'admin'
@@ -66,7 +68,7 @@ def test_validate_default_acl(data_collector, pipeline):
             assert i['subjectId'] == 'admin'
             assert i['actions'] == ['READ', 'WRITE', 'EXECUTE']
 
-# Validate default permissions for a pipeline.
+
 def test_validate_default_permissions(data_collector, pipeline):
     perm_response = data_collector.get_pipeline_permissions(pipeline)
     assert any(i['subjectType'] == 'USER' for i in perm_response.permissions)
@@ -75,7 +77,7 @@ def test_validate_default_permissions(data_collector, pipeline):
             assert i['subjectId'] == 'admin'
             assert i['actions'] == ['READ', 'WRITE', 'EXECUTE']
 
-# Validate ACL modification for a pipeline.
+
 def test_modified_acl(data_collector, pipeline):
     acl_mod = data_collector.get_pipeline_acl(pipeline)
     for permission in acl_mod.permissions:

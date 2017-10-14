@@ -30,6 +30,7 @@ from testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+
 def basic_solr_target(distribution, sdc_builder, sdc_executor, environment):
     """A reusable function to test Dev Raw Data Source to Solr target pipeline.
     Since the same doc is ingested, we can skip multiple writes by using deduplicator. The Pipeline looks like:
@@ -37,19 +38,19 @@ def basic_solr_target(distribution, sdc_builder, sdc_executor, environment):
         dev_raw_data_source >> record_deduplicator >> solr_target
                                                    >> to_error
     """
-    if distribution == 'cdh': # in this case, environment would be CDH Cluster (ClouderaManagerCluster)
+    if distribution == 'cdh':  # in this case, environment would be CDH Cluster (ClouderaManagerCluster)
         client = environment.solr.client
-        field_name_1 = 'id' # mandatory to have an id of the document for CDH Solr schemaless
+        field_name_1 = 'id'  # mandatory to have an id of the document for CDH Solr schemaless
         # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
         # clusterdock CDH image has this already built in. Some useful links around this:
         # https://www.cloudera.com/documentation/enterprise/5-10-x/topics/search_validate_deploy_solr_rest_api.html
         # https://www.cloudera.com/documentation/enterprise/5-10-x/topics/search_solrctl_managing_solr.html#concept_l3y_txb_mt
         # https://www.cloudera.com/documentation/enterprise/5-10-x/topics/search_faq.html#faq_search_general_schemalesserror
         solr_collection_name = 'sample_collection'
-    elif distribution == 'apache': # in this case, environment would be SolrInstance
+    elif distribution == 'apache':  # in this case, environment would be SolrInstance
         client = environment.client
         field_name_1 = get_random_string(string.ascii_letters, 10)
-        solr_collection_name = environment.core_name # single instance of Solr, collection will be same as core
+        solr_collection_name = environment.core_name  # single instance of Solr, collection will be same as core
 
     field_name_2 = get_random_string(string.ascii_letters, 10)
     field_val_1 = get_random_string(string.ascii_letters, 10)
@@ -57,7 +58,7 @@ def basic_solr_target(distribution, sdc_builder, sdc_executor, environment):
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
-    solr_url = client.host.rstrip('/') # In single node mode this will be in a URL format
+    solr_url = client.host.rstrip('/')  # In single node mode this will be in a URL format
     sdc_solr_uri = ''.join([solr_url, '/', solr_collection_name])
 
     # build Solr target pipeline

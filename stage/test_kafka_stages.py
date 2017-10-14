@@ -20,10 +20,7 @@
 import logging
 import string
 
-import pytest
-
-from testframework import sdc
-from testframework.markers import *
+from testframework.markers import cluster
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)

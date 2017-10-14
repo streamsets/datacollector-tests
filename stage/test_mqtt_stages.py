@@ -1,9 +1,10 @@
 import logging
 import time
 
-from testframework.markers import *
+from testframework.markers import mqtt
 
 logger = logging.getLogger(__name__)
+
 
 @mqtt
 def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
@@ -56,6 +57,7 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
             assert msg.topic == data_topic
     finally:
         mqtt_broker.destroy()
+
 
 @mqtt
 def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):

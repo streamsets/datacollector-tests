@@ -451,8 +451,8 @@ def test_field_renamer(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
     field_renamer = pipeline_builder.add_stage('Field Renamer')
-    field_renamer.set_attributes(fields_to_rename=
-                                 [{'fromFieldExpression': f'(.*){strip_word}(.*)', 'toFieldExpression': '$1$2'}])
+    field_renamer.fields_to_rename = [{'fromFieldExpression': f'(.*){strip_word}(.*)',
+                                       'toFieldExpression': '$1$2'}]
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> field_renamer >> trash
@@ -540,7 +540,7 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     """
     utc_datetime_str = '1978-01-05 19:38:01'
     utc_datetime = datetime.strptime(utc_datetime_str, '%Y-%m-%d %H:%M:%S')
-    utc_datetime_in_int = int(utc_datetime.strftime('%s')) * 1000 # multiply by 1000 to account for milliseconds
+    utc_datetime_in_int = int(utc_datetime.strftime('%s')) * 1000  # multiply by 1000 to account for milliseconds
     raw_str_value = 'hello again!'
     # note, date time here is in UTC. Each map is an SDC record to process.
     raw_col = [{'amInteger': 123}, {'amDouble': 12345.6789115}, {'amString': 'hello'}, {'amBool': True},
@@ -596,7 +596,7 @@ def test_field_type_converter(sdc_builder, sdc_executor):
             'treatInputFieldAsDate': True,
             'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
             'encoding': 'UTF-8',
-            'dataLocale' : 'en,US'
+            'dataLocale': 'en,US'
         }, {
             'sourceType': 'BYTE_ARRAY',
             'targetType': 'STRING',
@@ -763,7 +763,7 @@ def test_value_replacer(sdc_builder, sdc_executor):
 
     new_value = snapshot[value_replacer.instance_name].output[0].value['value']['contact']['value']
     # assert fields to null
-    assert None == new_value['fname']['value'] == new_value['lname']['value']
+    assert new_value['fname']['value'] is new_value['lname']['value'] is None
     # assert replace null values
     assert expected_password_value == new_value['password']['value']
     # assert conditionally replace values

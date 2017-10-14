@@ -23,6 +23,7 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+
 @pytest.fixture(scope='module')
 def websocket_server_pipeline(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -48,6 +49,7 @@ def websocket_server_pipeline(sdc_builder, sdc_executor):
                                   'expression_evaluator'])(pipeline,
                                                            websocket_server,
                                                            expression_evaluator)
+
 
 @pytest.fixture(scope='module')
 def websocket_client_pipeline(sdc_builder, sdc_executor):

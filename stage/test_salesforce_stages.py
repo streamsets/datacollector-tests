@@ -13,9 +13,6 @@
 # limitations under the License.
 import copy
 import logging
-import os
-import time
-from string import ascii_letters
 
 from testframework.markers import salesforce
 
@@ -76,6 +73,7 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
     finally:
         logger.info('Deleting records ...')
         client.bulk.Contact.delete(read_ids)
+
 
 @salesforce
 def test_salesforce_origin(sdc_builder, sdc_executor, salesforce):

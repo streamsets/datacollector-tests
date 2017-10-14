@@ -40,7 +40,7 @@ def test_json_parser(sdc_builder, sdc_executor):
     """
     result_field = 'result'
     result_key = 'content'
-    raw_data = f'{{ "{result_key}" : "A\\u0001\\r\\n\\u000C B\\r\\n C" }}' # induce some control characters
+    raw_data = f'{{ "{result_key}" : "A\\u0001\\r\\n\\u000C B\\r\\n C" }}'  # induce some control characters
     # remove ASCII control characters in the expected result
     expected_dict = json.loads(raw_data.encode('ascii', 'ignore').decode())
 

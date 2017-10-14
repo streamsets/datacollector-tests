@@ -24,6 +24,7 @@ from testframework import sdc
 
 logger = logging.getLogger(__name__)
 
+
 @pytest.fixture(scope='module')
 def data_collector():
     data_collector = sdc.DataCollector()

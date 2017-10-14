@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # TODO: convert to pipeline param. seems to not work (see below)
 TCP_PORT = 17892
 
+
 @pytest.fixture(scope='module')
 def tcp_server_pipeline(sdc_builder, sdc_executor):
     """Creates a pipeline with a TCP server origin using TEXT data with default separated records."""

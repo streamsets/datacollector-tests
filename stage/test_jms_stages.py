@@ -120,7 +120,7 @@ def get_dev_raw_data_source_stage_json_input(pipeline_builder):
        }
     """
     dev_raw_data_source.set_attributes(data_format='JSON',
-                                       raw_data= raw_data)
+                                       raw_data=raw_data)
     return dev_raw_data_source
 
 

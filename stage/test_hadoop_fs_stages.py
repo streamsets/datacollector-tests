@@ -19,7 +19,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from testframework import sdc
-from testframework.markers import *
+from testframework.markers import cluster, upgrade
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)

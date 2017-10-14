@@ -82,7 +82,7 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
         sdc_executor.stop_pipeline(pipeline)
 
         rows_from_snapshot = [{record.value['value'][1]['sqpath'].lstrip('/'):
-                                   record.value['value'][1]['value']}
+                               record.value['value'][1]['value']}
                               for record in snapshot[pipeline[0].instance_name].output]
 
         assert rows_from_snapshot == [{upper_if_required('name', database): row['name']} for row in ROWS_IN_DATABASE]

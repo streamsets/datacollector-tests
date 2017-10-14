@@ -128,7 +128,7 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         rows_from_snapshot = [{record.value['value']['name']['sqpath'].lstrip('/'):
-                                   record.value['value']['name']['value']}
+                               record.value['value']['name']['value']}
                               for record in snapshot[mongodb_origin].output]
 
         assert rows_from_snapshot == ORIG_DOCS

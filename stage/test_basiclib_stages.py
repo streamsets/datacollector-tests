@@ -32,11 +32,13 @@ logger = logging.getLogger(__name__)
 # Shell executor
 #
 
+
 @pytest.fixture(scope='module')
 def sdc_shell(args):
     sdc_shell = sdc.DataCollector(version=args.pre_upgrade_sdc_version or args.sdc_version)
-    # Blocked by TEST-128
-    #sdc_shell.sdc_properties['stage.conf_com.streamsets.pipeline.stage.executor.shell.impersonation_mode'] = 'current_user'
+    #  Blocked by TEST-128
+    #  sdc_shell.sdc_properties['stage.conf_com.streamsets.pipeline.stage.executor'
+    #                           '.shell.impersonation_mode'] = 'current_user'
 
     sdc_shell.start()
 
@@ -106,7 +108,6 @@ def test_shell_executor_impersonation(sdc_shell, pipeline_shell_generator, pipel
     snapshot = sdc_shell.capture_snapshot(pipeline=pipeline_shell_read, runtime_parameters=runtime_parameters,
                                           start_pipeline=True).snapshot
     sdc_shell.stop_pipeline(pipeline_shell_read)
-
 
     records = snapshot[pipeline_shell_read.origin_stage].output_lanes[pipeline_shell_read.origin_stage.output_lanes[0]]
     assert len(records) == 1

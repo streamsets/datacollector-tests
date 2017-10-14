@@ -18,7 +18,6 @@ another.
 """
 
 import logging
-import os
 import time
 from string import ascii_letters
 
@@ -29,7 +28,7 @@ from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_COLUMN_FAMILY_NAME = 'cf' # for Google Bigtable
+DEFAULT_COLUMN_FAMILY_NAME = 'cf'  # for Google Bigtable
 # For Google pub/sub
 MSG_DATA = 'Hello World from SDC and DPM!'
 SNAPSHOT_TIMEOUT_SEC = 120
@@ -43,8 +42,7 @@ ROWS_TO_INSERT = [('Cristiano Ronaldo', 32),
                   ('Pele', 76),
                   ('Ronaldinho', 40),
                   ('Ronaldo', 40),
-                  ('Zinedine Zidane', 42)
-                 ]
+                  ('Zinedine Zidane', 42)]
 
 
 @gcp
@@ -97,11 +95,12 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
         table.delete()
         dataset.delete()
 
+
 @gcp
 @sdc_min_version('2.7.0.0')
 def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
-    """
-    Publish messages using Google pub/sub client and then check if Google pub/sub subscriber receives them using snapshot.
+    """Publish messages using Google pub/sub client and then check if Google pub/sub
+    subscriber receives them using snapshot.
 
     The pipeline looks like:
         google_pubsub_subscriber >> trash
@@ -210,12 +209,12 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
         # Receive messages in a loop until timeout or expected no. of messages are received
         results = []
         msgs_received_count = msgs_sent_count
-        timeout = 5 # in seconds
+        timeout = 5  # in seconds
         start_time = time.time()
         while time.time() < start_time + timeout and msgs_received_count > 0:
             messages = subscription.pull(max_messages=msgs_sent_count)
             results.extend(messages)
-            msgs_received_count  = msgs_received_count - len(messages)
+            msgs_received_count = msgs_received_count - len(messages)
 
         # Acknowldege the received messages so that the pub/sub does not resend them
         if results:
@@ -254,8 +253,8 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
     google_bigtable = pipeline_builder.add_stage('Google Bigtable', type='destination')
     # Field paths, name of columns, storage types
     fields_list = [{'source': '/TransactionID', 'storageType': 'TEXT', 'column': 'TransactionID'},
-                    {'source': '/Type', 'storageType': 'TEXT', 'column': 'Type'},
-                    {'source': '/UserID', 'storageType': 'TEXT', 'column': 'UserID'}]
+                   {'source': '/Type', 'storageType': 'TEXT', 'column': 'Type'},
+                   {'source': '/UserID', 'storageType': 'TEXT', 'column': 'UserID'}]
     google_bigtable.set_attributes(create_table_and_column_families=True,
                                    default_column_family_name=DEFAULT_COLUMN_FAMILY_NAME,
                                    explicit_column_family_mapping=False,
