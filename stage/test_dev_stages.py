@@ -48,28 +48,28 @@ def pipeline(sdc_builder, sdc_executor):
 def test_pipeline_status(sdc_executor, pipeline):
     """For a running and a stopped pipeline,
        confirm that status returns appropriate values in both cases."""
-    sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
+    sdc_executor.start_pipeline(pipeline)
 
     # Verify running pipeline's status
-    current_status = sdc_executor.api_client.get_pipeline_status(pipeline.id).response.json().get('status')
+    current_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
     assert current_status == 'RUNNING'
 
     # Stop the pipeline and verify pipeline's status
-    sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
-    current_status = sdc_executor.api_client.get_pipeline_status(pipeline.id).response.json().get('status')
+    sdc_executor.stop_pipeline(pipeline)
+    current_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
     assert current_status == 'STOPPED'
 
 
 def test_pipeline_definitions(sdc_executor, pipeline):
     """For a running pipeline, confirm that definitions returns some values.
        Stop the pipeline and confirm that definitions return same values as before."""
-    sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
+    sdc_executor.start_pipeline(pipeline)
 
     running_pipeline_definitions = sdc_executor.api_client.get_definitions()
     assert running_pipeline_definitions is not None
 
     # Stop the pipeline and verify definitions do not change
-    sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(pipeline)
     stopped_pipeline_definitions = sdc_executor.api_client.get_definitions()
     assert stopped_pipeline_definitions is not None
     assert running_pipeline_definitions == stopped_pipeline_definitions
@@ -79,7 +79,7 @@ def test_pipeline_metrics(sdc_executor, pipeline):
     """For a running pipeline, confirm that metrics endpoint returns some values,
        which change after some time when again metrics are received,
        Stop the pipeline and confirm that metrics endpoint return empty."""
-    sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
+    sdc_executor.start_pipeline(pipeline)
 
     first_metrics_json = sdc_executor.api_client.get_pipeline_metrics(pipeline.id)
     assert first_metrics_json is not None
@@ -88,27 +88,27 @@ def test_pipeline_metrics(sdc_executor, pipeline):
     assert second_metrics_json is not None
     assert first_metrics_json != second_metrics_json
 
-    sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(pipeline)
     assert sdc_executor.api_client.get_pipeline_metrics(pipeline.id) == {}
 
 
 def test_pipeline_snapshot(sdc_executor, pipeline):
     """For a running pipeline, confirm that snapshot returns expected values."""
-    sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
+    sdc_executor.start_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline).snapshot
     assert snapshot is not None
     snap_data = snapshot[pipeline.origin_stage.instance_name]
     assert len(snap_data.output) == 1
     assert snap_data.output[0].value['value']['emp_id']['value'] == '123456'
 
-    sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(pipeline)
 
 
 def test_pipeline_preview(sdc_executor, pipeline):
     """Run preview and confirm that preview returns expected values
        and no issues are reported."""
-    preview = sdc_executor.run_pipeline_preview(pipeline).wait_for_finished().preview
+    preview = sdc_executor.run_pipeline_preview(pipeline).preview
     assert preview is not None
     assert preview.issues.issues_count == 0
     preview_data = preview[pipeline.origin_stage.instance_name]
@@ -122,11 +122,16 @@ def test_invalid_execution_mode(sdc_executor, pipeline):
     pipeline.configuration['executionMode'] = 'Invalid_Execution_Mode'
     pipeline.id = 'Invalid_Execution_Mode Pipeline'
 
-    # Do a version check since execution_mode handling changed starting in the 2.7.0.0 version.
-    if Version(sdc_executor.version) >= Version('2.7.0.0'):
-        with pytest.raises(sdc_api.InternalServerError):
+    try:
+        # Do a version check since execution_mode handling changed starting in the 2.7.0.0 version.
+        if Version(sdc_executor.version) >= Version('2.7.0.0'):
+            with pytest.raises(sdc_api.InternalServerError):
+                sdc_executor.dump_log_on_error = False
+                sdc_executor.add_pipeline(pipeline)
+        else:
             sdc_executor.add_pipeline(pipeline)
-    else:
-        sdc_executor.add_pipeline(pipeline)
-        with pytest.raises(sdc_api.StartError):
-            sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
+            with pytest.raises(sdc_api.StartError):
+                sdc_executor.dump_log_on_error = False
+                sdc_executor.start_pipeline(pipeline)
+    finally:
+        sdc_executor.dump_log_on_error = True

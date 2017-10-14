@@ -39,11 +39,10 @@ def test_pipeline_start_with_parameters(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(pipeline)
 
     runtime_parameters = {'fields': 'x', 'fromField': '/x', 'toField': '/changedField'}
-    sdc_executor.start_pipeline(pipeline,
-                                runtime_parameters).wait_for_status(status='RUNNING', timeout_sec=300)
+    sdc_executor.start_pipeline(pipeline, runtime_parameters)
 
     # Verify running pipeline's status.
-    pipeline_status = sdc_executor.api_client.get_pipeline_status(pipeline.id).response.json()
+    pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json()
     assert pipeline_status['attributes']['RUNTIME_PARAMETERS']['toField'] == '/changedField'
 
-    sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(pipeline)

@@ -133,9 +133,9 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
         # * We catch the first batch on receiver side otherwise we miss the event
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
         # * We block on the snapshot after generating pipeline started otherwise the snapshot won't return
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True)
-        sdc_executor.get_status_pipeline(successful_receiver_pipeline).wait_for_status('RUNNING')
-        sdc_executor.start_pipeline(start_event_pipeline).wait_for_status('RUNNING')
+        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True,
+                                                         wait=False)
+        sdc_executor.start_pipeline(start_event_pipeline)
 
         # And validate that the event arrived to the receiver pipeline
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -146,8 +146,8 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
         assert record.value['value']['user']['value'] == 'admin'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline).wait_for_stopped()
-        sdc_executor.stop_pipeline(start_event_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(start_event_pipeline)
 
 
 @sdc_min_version('2.7.0.0')
@@ -166,10 +166,10 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
         # * We catch the first batch on receiver side otherwise we miss the event
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
         # * We block on the snapshot after generating pipeline started otherwise the snapshot won't return
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True)
-        sdc_executor.get_status_pipeline(successful_receiver_pipeline).wait_for_status('RUNNING')
-        sdc_executor.start_pipeline(stop_event_pipeline).wait_for_status('RUNNING')
-        sdc_executor.stop_pipeline(stop_event_pipeline).wait_for_stopped()
+        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True,
+                                                         wait=False)
+        sdc_executor.start_pipeline(stop_event_pipeline)
+        sdc_executor.stop_pipeline(stop_event_pipeline)
 
         # And validate that the event arrived to the receiver pipeline
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -181,7 +181,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
         assert record.value['value']['reason']['value'] == 'USER_ACTION'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(successful_receiver_pipeline)
 
 
 @sdc_min_version('2.7.0.0')
@@ -200,9 +200,9 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
         # * We catch the first batch on receiver side otherwise we miss the event
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
         # * We block on the snapshot after generating pipeline started otherwise the snapshot won't return
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True)
-        sdc_executor.get_status_pipeline(successful_receiver_pipeline).wait_for_status('RUNNING')
-        sdc_executor.start_pipeline(stop_event_pipeline).wait_for_status('RUNNING')
+        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True,
+                                                         wait=False)
+        sdc_executor.start_pipeline(stop_event_pipeline)
 
         # And validate that the event arrived to the receiver pipeline
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -214,7 +214,7 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
         assert record.value['value']['reason']['value'] == 'FINISHED'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(successful_receiver_pipeline)
 
 
 @sdc_min_version('2.7.0.0')
@@ -234,9 +234,9 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
         # * We catch the first batch on receiver side otherwise we miss the event
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
         # * We block on the snapshot after generating pipeline started otherwise the snapshot won't return
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True)
-        sdc_executor.get_status_pipeline(successful_receiver_pipeline).wait_for_status('RUNNING')
-        sdc_executor.start_pipeline(stop_event_pipeline).wait_for_status('RUNNING')
+        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True,
+                                                         wait=False)
+        sdc_executor.start_pipeline(stop_event_pipeline)
 
         # And validate that the event arrived to the receiver pipeline
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -248,7 +248,7 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
         assert record.value['value']['reason']['value'] == 'FAILURE'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(successful_receiver_pipeline)
 
 
 @sdc_min_version('2.7.0.0')
@@ -264,16 +264,16 @@ def test_start_event_handler_failure(generator_trash_builder, failing_receiver_p
     sdc_executor.add_pipeline(start_event_pipeline, failing_receiver_pipeline)
 
     # Start the event handling pipeline
-    sdc_executor.start_pipeline(failing_receiver_pipeline).wait_for_status('RUNNING')
+    sdc_executor.start_pipeline(failing_receiver_pipeline, wait=False)
 
     # Start the actual event generating pipeline
-    sdc_executor.start_pipeline(start_event_pipeline)
+    sdc_executor.start_pipeline(start_event_pipeline, wait=False)
 
     # Which should kill the receiver pipeline
-    sdc_executor.get_status_pipeline(failing_receiver_pipeline).wait_for_status('RUN_ERROR', ignore_errors=True)
+    sdc_executor.get_pipeline_status(failing_receiver_pipeline).wait_for_status('RUN_ERROR', ignore_errors=True)
 
     # And that in turns will also kill the event generating pipeline
-    sdc_executor.get_status_pipeline(start_event_pipeline).wait_for_status('START_ERROR', ignore_errors=True)
+    sdc_executor.get_pipeline_status(start_event_pipeline).wait_for_status('START_ERROR', ignore_errors=True)
 
     # Validate history is as expected
     history = sdc_executor.pipeline_history(start_event_pipeline)
@@ -294,22 +294,19 @@ def test_stop_event_handler_failure(generator_trash_builder, failing_receiver_pi
     sdc_executor.add_pipeline(stop_event_pipeline, failing_receiver_pipeline)
 
     # Start the event handling pipeline
-    sdc_executor.start_pipeline(failing_receiver_pipeline).wait_for_status('RUNNING')
+    sdc_executor.start_pipeline(failing_receiver_pipeline)
 
     # Start the actual event generating pipeline
-    sdc_executor.start_pipeline(stop_event_pipeline).wait_for_status('RUNNING')
-    sdc_executor.stop_pipeline(stop_event_pipeline)
+    sdc_executor.start_pipeline(stop_event_pipeline)
+    sdc_executor.stop_pipeline(stop_event_pipeline, wait=False)
 
     # Which should kill the receiver pipeline
-    sdc_executor.get_status_pipeline(failing_receiver_pipeline).wait_for_status('RUN_ERROR', ignore_errors=True)
+    sdc_executor.get_pipeline_status(failing_receiver_pipeline).wait_for_status('RUNNING_ERROR', ignore_errors=True)
 
     # And that in turns will also kill the event generating pipeline
-    sdc_executor.get_status_pipeline(stop_event_pipeline).wait_for_status('STOP_ERROR', ignore_errors=True)
+    sdc_executor.get_pipeline_status(stop_event_pipeline).wait_for_status('STOP_ERROR', ignore_errors=True)
 
     # Validate history is as expected
     history = sdc_executor.pipeline_history(stop_event_pipeline)
     entry = history.entries[0]
     assert entry['status'] == 'STOP_ERROR'
-
-
-

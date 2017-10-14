@@ -83,7 +83,7 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
     finally:
         logger.info('Deleting MapR-DB table %s ...', table_name)
         cluster.execute_command('table', 'delete', path=table_name)
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @cluster('mapr')
@@ -149,8 +149,8 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
         # wait_for_finished function. That way, we can switch over and start the MapR FS pipeline. Once that one
         # completes, we can go back and do an assert on the snapshot pipeline's snapshot.
         logger.debug('Starting snapshot pipeline and capturing snapshot ...')
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline,
-                                                                  start_pipeline=True)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True,
+                                                                  wait=False)
 
         logger.debug('Starting MapR FS pipeline and waiting for it to finish ...')
         sdc_executor.start_pipeline(mapr_fs_pipeline).wait_for_finished()
@@ -163,7 +163,7 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
     finally:
         cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
         # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
-        sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True).wait_for_stopped()
+        sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True)
 
 
 @cluster('mapr')
@@ -207,7 +207,7 @@ def test_mapr_fs_destination(sdc_builder, sdc_executor, cluster):
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(giro_stages))
         # Wait for pipeline to be stopped in order to ensure file has been written.
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(pipeline)
 
         mapr_fs_files = cluster.mapr_fs.client.list(str(output_folder_path))
         # With only 3 unique records, there should only be one file written.
@@ -283,13 +283,14 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     # 4. Compare and assert snapshot result to the data injected at the producer
     try:
         sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_batch_count(5)
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, start_pipeline=True)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, start_pipeline=True,
+                                                                  wait=False)
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
         snapshot_data = snapshot[consumer_pipeline[0].instance_name].output[0].value['value']['text']['value']
         assert dev_raw_data_source.raw_data == snapshot_data
     finally:
-        sdc_executor.stop_pipeline(consumer_pipeline).wait_for_stopped()
-        sdc_executor.stop_pipeline(producer_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(consumer_pipeline)
+        sdc_executor.stop_pipeline(producer_pipeline)
 
 
 @cluster('mapr')
@@ -370,19 +371,19 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
     try:
         sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_output_records_count(5)
         # RUNNING ensures RPC origin is started
-        sdc_executor.start_pipeline(snapshot_pipeline).wait_for_status('RUNNING')
+        sdc_executor.start_pipeline(snapshot_pipeline)
 
         consumer_start_cmd = sdc_executor.start_pipeline(consumer_pipeline)
-        consumer_start_cmd.wait_for_status('RUNNING') # RUNNING ensures submission to the cluster
         consumer_start_cmd.wait_for_pipeline_output_records_count(5)
 
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=False)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=False,
+                                                                  wait=False)
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
         snapshot_data = snapshot[snapshot_pipeline[0].instance_name].output[0].value['value']['text']['value']
 
         assert dev_raw_data_source.raw_data == snapshot_data
     finally:
         # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
-        sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True).wait_for_stopped()
-        sdc_executor.stop_pipeline(producer_pipeline).wait_for_stopped()
-        sdc_executor.stop_pipeline(consumer_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True)
+        sdc_executor.stop_pipeline(producer_pipeline)
+        sdc_executor.stop_pipeline(consumer_pipeline)

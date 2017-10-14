@@ -112,9 +112,8 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
                                  'NEW_FIELD_NAME': 'javscriptField',
                                  'NEW_FIELD_VALUE': 5000}
 
-    sdc_executor.start_pipeline(http_server_pipeline.pipeline,
-                                server_runtime_parameters).wait_for_status(status='RUNNING', timeout_sec=300)
-    pipeline_status = sdc_executor.api_client.get_pipeline_status(http_server_pipeline.pipeline.id).response.json()
+    sdc_executor.start_pipeline(http_server_pipeline.pipeline, server_runtime_parameters)
+    pipeline_status = sdc_executor.get_pipeline_status(http_server_pipeline.pipeline).response.json()
     attributes = pipeline_status.get('attributes')
     assert attributes.get('RUNTIME_PARAMETERS').get('APPLICATION_ID') == 'HTTP_APPLICATION_ID'
 
@@ -123,9 +122,8 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
                                  'RESOURCE_URL': 'http://localhost:9999',
                                  'APPLICATION_ID': 'HTTP_APPLICATION_ID'}
 
-    snapshot = sdc_executor.capture_snapshot(http_client_pipeline.pipeline,
-                                             start_pipeline=True,
-                                             runtime_parameters=client_runtime_parameters).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(http_client_pipeline.pipeline, start_pipeline=True,
+                                             runtime_parameters=client_runtime_parameters).snapshot
     origin_data = snapshot[http_client_pipeline.dev_raw_data_source.instance_name]
     processor_data = snapshot[http_client_pipeline.expression_evaluator.instance_name]
     assert len(origin_data.output) == 2
@@ -134,7 +132,7 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
     assert origin_data.output[1].value['value']['f1']['value'] == 'xyz'
 
     # Capture snapshot for HTTP Server pipeline.
-    snapshot = sdc_executor.capture_snapshot(http_server_pipeline.pipeline).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(http_server_pipeline.pipeline).snapshot
     origin_data = snapshot[http_server_pipeline.http_server.instance_name]
     processor_data = snapshot[http_server_pipeline.javascript_evaluator.instance_name]
     assert len(origin_data.output) == 2
@@ -147,8 +145,8 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
     assert processor_data.output[1].value['value']['javscriptField']['value'] == '5000'
 
     # Stop the pipelines.
-    sdc_executor.stop_pipeline(http_client_pipeline.pipeline).wait_for_stopped()
-    sdc_executor.stop_pipeline(http_server_pipeline.pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(http_client_pipeline.pipeline)
+    sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
 
 
 def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
@@ -156,9 +154,8 @@ def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
     client_runtime_parameters = {'RAW_DATA': '{"f1": "abc"}{"f1": "xyz"}',
                                  'RESOURCE_URL': 'http://localhost:9999',
                                  'APPLICATION_ID': 'HTTP_APPLICATION_ID'}
-    snapshot = sdc_executor.capture_snapshot(http_client_pipeline.pipeline,
-                                             start_pipeline=True,
-                                             runtime_parameters=client_runtime_parameters).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(http_client_pipeline.pipeline, start_pipeline=True,
+                                             runtime_parameters=client_runtime_parameters).snapshot
     origin_data = snapshot[http_client_pipeline.dev_raw_data_source.instance_name]
     processor_data = snapshot[http_client_pipeline.expression_evaluator.instance_name]
     assert len(origin_data.output) == 2
@@ -171,7 +168,7 @@ def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
     assert len(target_data.error_records) == 2
 
     # Stop the pipeline.
-    sdc_executor.stop_pipeline(http_client_pipeline.pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(http_client_pipeline.pipeline)
 
 
 @http
@@ -197,7 +194,7 @@ def test_http_processor_get(sdc_builder, sdc_executor, http_client):
     pipeline = builder.build(title='HTTP Lookup GET Processor pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # ensure HTTP GET result is only stored to one record and assert the data
@@ -235,7 +232,7 @@ def test_http_processor_post(sdc_builder, sdc_executor, http_client):
     pipeline = builder.build(title='HTTP Lookup POST Processor pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # ensure HTTP POST result is only stored to one record and assert the data

@@ -79,8 +79,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline,
-                                                 start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         output_records = [record.value['value']['text']['value']
@@ -129,7 +128,7 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
         # add pipeline and capture pipeline messages to assert
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(10)
-        sdc_executor.stop_pipeline(producer_dest_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(producer_dest_pipeline)
 
         history = sdc_executor.pipeline_history(producer_dest_pipeline)
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
@@ -186,8 +185,7 @@ def test_s3_origin(sdc_builder, sdc_executor, aws):
         [client.put_object(Bucket=s3_bucket, Key='{0}{1}'.format(s3_key, i), Body=raw_str) for i in range(s3_obj_count)]
 
         # read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline,
-                                                 start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(s3_origin_pipeline)
 
         output_records = [record.value['value']['text']['value']
@@ -242,7 +240,7 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
     try:
         # start pipeline and capture pipeline messages to assert
         sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_pipeline_output_records_count(1)
-        sdc_executor.stop_pipeline(s3_dest_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(s3_dest_pipeline)
 
         # assert record count to S3 the size of the objects put
         list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
@@ -286,7 +284,7 @@ def test_s3_destination_non_existing_bucket(sdc_builder, sdc_executor, aws):
     sdc_executor.add_pipeline(s3_dest_pipeline)
 
     # Read snapshot of the pipeline
-    snapshot = sdc_executor.capture_snapshot(s3_dest_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(s3_dest_pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(s3_dest_pipeline)
 
     # All records should go to error stream.
@@ -337,7 +335,7 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
     try:
         # start pipeline and capture pipeline messages to assert
         sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_pipeline_output_records_count(1)
-        sdc_executor.stop_pipeline(s3_exec_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(s3_exec_pipeline)
 
         # assert record count to S3 the size of the objects put
         list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
@@ -398,7 +396,7 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
 
         # And run the pipeline for at least one record (rest will be removed by the de-dup)
         sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_pipeline_output_records_count(1)
-        sdc_executor.stop_pipeline(s3_exec_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(s3_exec_pipeline)
 
         tags = client.get_object_tagging(Bucket=s3_bucket, Key=s3_key)['TagSet']
         assert len(tags) == 1
@@ -437,7 +435,7 @@ def test_s3_executor_non_existing_bucket(sdc_builder, sdc_executor, aws):
     sdc_executor.add_pipeline(s3_exec_pipeline)
 
     # Read snapshot of the pipeline
-    snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(s3_exec_pipeline)
 
     # All records should go to error stream.
@@ -473,7 +471,7 @@ def test_s3_executor_non_existing_object(sdc_builder, sdc_executor, aws):
     sdc_executor.add_pipeline(s3_exec_pipeline)
 
     # Read snapshot of the pipeline
-    snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(s3_exec_pipeline)
 
     # All records should go to error stream.
@@ -524,7 +522,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
     try:
         # start pipeline and assert
         sdc_executor.start_pipeline(firehose_dest_pipeline).wait_for_pipeline_output_records_count(record_count)
-        sdc_executor.stop_pipeline(firehose_dest_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(firehose_dest_pipeline)
 
         # wait till data is available in S3. We do so by querying for buffer wait time and sleep till then
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)

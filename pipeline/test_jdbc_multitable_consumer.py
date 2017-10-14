@@ -64,7 +64,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
         connection = database.engine.connect()
         connection.execute(table.insert(), [{'col':1}, {'col':2}, {'col':3}])
 
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.start_pipeline(pipeline)
 
         metrics = sdc_executor.pipeline_history(pipeline).latest.metrics
         assert metrics.counter("pipeline.batchCount.counter").count == 1
@@ -155,7 +155,7 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
             connection.execute(table.insert(), rows)
 
         # run the pipeline
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.start_pipeline(pipeline)
 
         # Check that the data shows up in Hive.
         hive_cursor = cluster.hive.client.cursor()

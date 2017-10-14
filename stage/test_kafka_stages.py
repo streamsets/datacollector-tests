@@ -120,32 +120,29 @@ def verify_kafka_origin_results(kafka_topic_name, kafka_consumer_pipeline, snaps
     """
 
     cluster_mode = kafka_consumer_pipeline != snapshot_pipeline
-    try:
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline,
-                                                                  start_pipeline=True)
+    snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True,
+                                                              wait=False)
 
-        if cluster_mode:
-            sdc_executor.start_pipeline(kafka_consumer_pipeline)
+    if cluster_mode:
+        sdc_executor.start_pipeline(kafka_consumer_pipeline)
 
-        producer = cluster.kafka.producer()
-        for _ in range(10):
-            producer.send(kafka_topic_name, b'Hello World from SDC & DPM!')
-        producer.flush()
+    producer = cluster.kafka.producer()
+    for _ in range(10):
+        producer.send(kafka_topic_name, b'Hello World from SDC & DPM!')
+    producer.flush()
 
-        sdc_executor.get_status_pipeline(kafka_consumer_pipeline)
+    logger.debug('Finish the snapshot and verify')
+    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
+    snapshot = snapshot_command.snapshot
+    lines_from_snapshot = [record.value['value']['text']['value']
+                           for record in snapshot[snapshot_pipeline[0].instance_name].output]
 
-        logger.debug('Finish the snapshot and verify')
-        snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
-        snapshot = snapshot_command.snapshot
-        lines_from_snapshot = [record.value['value']['text']['value']
-                               for record in snapshot[snapshot_pipeline[0].instance_name].output]
-        assert lines_from_snapshot == ['Hello World from SDC & DPM!'] * 10
+    if sdc_executor.get_pipeline_status(kafka_consumer_pipeline) == 'RUNNING':
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    if cluster_mode and sdc_executor.get_pipeline_status(snapshot_pipeline) == 'RUNNING':
+        sdc_executor.stop_pipeline(snapshot_pipeline)
 
-    finally:
-        if sdc_executor.get_status_pipeline(kafka_consumer_pipeline) == 'RUNNING':
-            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-        if cluster_mode and sdc_executor.get_status_pipeline(snapshot_pipeline) == 'RUNNING':
-            sdc_executor.stop_pipeline(snapshot_pipeline)
+    assert lines_from_snapshot == ['Hello World from SDC & DPM!'] * 10
 
 
 @cluster('cdh')

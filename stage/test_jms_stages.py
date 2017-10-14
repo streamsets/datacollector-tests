@@ -81,8 +81,7 @@ def test_jms_consumer_origin(sdc_builder, sdc_executor, jms):
             connection.send(destination_name, message_data, persistent='false')
 
         # Verify the messages are received correctly.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         lines_from_snapshot = [record.value['value']['text']['value']
                                for record in snapshot[pipeline[0].instance_name].output]

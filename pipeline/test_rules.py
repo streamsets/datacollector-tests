@@ -79,7 +79,7 @@ def test_basic_data_rules(basic_rules_pipeline_builder, sdc_executor):
     assert event_alert.label == 'data-rule-event-lane'
     assert event_alert.alert_texts == ['data-rule-event-lane']
 
-    sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(pipeline)
 
 
 def test_basic_drift_rules(basic_rules_pipeline_builder, sdc_executor):
@@ -116,4 +116,4 @@ def test_basic_drift_rules(basic_rules_pipeline_builder, sdc_executor):
     assert event_alert.label == 'drift-rule-event-lane'
 
     assert event_alert.alert_texts == ['drift-rule-event-lane']
-    sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(pipeline)

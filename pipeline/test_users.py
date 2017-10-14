@@ -69,10 +69,10 @@ def test_current_user(data_collector):
 # Ensure that the operations are indeed executed by the current user.
 def test_pipeline_history(data_collector, pipeline):
     data_collector.set_user('jarcec')
-    data_collector.start_pipeline(pipeline).wait_for_status('RUNNING')
+    data_collector.start_pipeline(pipeline)
 
     data_collector.set_user('dima')
-    data_collector.stop_pipeline(pipeline).wait_for_stopped()
+    data_collector.stop_pipeline(pipeline)
 
     history = data_collector.pipeline_history(pipeline)
 

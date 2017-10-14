@@ -74,8 +74,7 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
         assert len(inserted_list.inserted_ids) == input_rec_count
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         assert len(snapshot[mongodb_oplog].output) == input_rec_count
@@ -126,8 +125,7 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
 
         # Start pipeline and verify the documents using snaphot.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         rows_from_snapshot = [{record.value['value']['name']['sqpath'].lstrip('/'):
                                    record.value['value']['name']['value']}

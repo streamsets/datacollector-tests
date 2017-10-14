@@ -156,7 +156,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Groovy Evaluator pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     output_records = snapshot[groovy_evaluator.instance_name].output # is a list of output records

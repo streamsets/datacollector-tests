@@ -115,7 +115,7 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
 
     directory = builder.add_stage('Directory', type='origin')
     directory.data_format = 'AVRO'
-    directory.batch_wait_time = 1
+    directory.batch_wait_time_in_secs = 1
     directory.file_name_pattern = 'sdc*'
     directory.files_directory = tmp_directory
 
@@ -129,7 +129,7 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(generator_pipeline)
 
     # Read written data with second pipeline
-    snapshot = sdc_executor.capture_snapshot(reader_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(reader_pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(reader_pipeline)
 
     # Validate the input record's structure
@@ -161,5 +161,3 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
     assert 'b' == record.value['value']['list']['value'][1]['value']
     assert 'value' == record.value['value']['map']['value']['first-key']['value']
     assert 'secret value' == record.value['value']['map']['value']['second-key']['value']
-
-

@@ -57,7 +57,7 @@ def test_hbase_destination(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf1': {}})
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         assert [record.value['value']['text']['value']
@@ -112,7 +112,7 @@ def test_hbase_lookup_processor(sdc_builder, sdc_executor, cluster):
             batch.put(bike_race['name'].encode(), {b'info:first_edition': bike_race['first_edition'].encode()})
         batch.send()
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         assert [dict(name=record.value['value']['text']['value'],

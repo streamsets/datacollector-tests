@@ -202,7 +202,7 @@ def test_validate_snapshot_generator(pipeline, sdc_executor):
     generator = 'com.streamsets.datacollector.bundles.content.SnapshotGenerator'
 
     # Generate at least one snapshot
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     assert snapshot is not None

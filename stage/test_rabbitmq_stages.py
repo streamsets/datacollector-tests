@@ -83,7 +83,7 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
         channel.close()
         connection.close()
     # messages are published, read through the pipeline and assert
-    snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(consumer_origin_pipeline)
     output_records = [record.value['value']['text']['value']
                       for record in snapshot[rabbitmq_consumer.instance_name].output]
@@ -125,7 +125,7 @@ def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
     # add pipeline and capture pipeline messages to assert
     sdc_executor.add_pipeline(producer_dest_pipeline)
     sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(10)
-    sdc_executor.stop_pipeline(producer_dest_pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(producer_dest_pipeline)
 
     history = sdc_executor.pipeline_history(producer_dest_pipeline)
     msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count

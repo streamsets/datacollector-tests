@@ -63,9 +63,7 @@ def test_tcp_server_simple(sdc_executor, tcp_server_pipeline):
 
     # Capture snapshot for HTTP Server pipeline.
     snapshot_cmd = sdc_executor.capture_snapshot(tcp_server_pipeline.pipeline, start_pipeline=True, batches=1,
-                                                 batch_size=1)
-    sdc_executor.get_status_pipeline(tcp_server_pipeline.pipeline).wait_for_status(status='RUNNING', timeout_sec=300)
-
+                                                 batch_size=1, wait=False)
     # create TCP client and send the data
     tcp_client = TCPClient(sdc_executor.server_host, TCP_PORT)
     # default separator is newline
@@ -78,4 +76,4 @@ def test_tcp_server_simple(sdc_executor, tcp_server_pipeline):
     assert record_ack1 == f'record_{expected_msg}'
 
     # Stop the pipelines.
-    sdc_executor.stop_pipeline(tcp_server_pipeline.pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(tcp_server_pipeline.pipeline)

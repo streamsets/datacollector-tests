@@ -61,10 +61,10 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
 
     try:
         # pipeline has to be started first to have the Redis channel to be created
-        sdc_executor.start_pipeline(pipeline).wait_for_status('RUNNING')
+        sdc_executor.start_pipeline(pipeline)
 
         # case when we have valid pattern for *
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False)
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
         key_1 = f'extra{pattern_1}extra'
         for _ in range(20): # 20 records will make 2 batches (each of 10)
             assert redis.client.publish(key_1, raw_data) == 1 # 1 indicates pipeline consumer received the raw_data
@@ -75,7 +75,7 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
             assert record.value['value']['zip_code']['value'] == str(raw_dict['zip_code'])
 
         # case when we have valid pattern for ?
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False)
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
         key_2 = f'{pattern_2}X'
         for _ in range(20): # 20 records will make 2 batches (each of 10)
             assert redis.client.publish(key_2, raw_data) == 1 # 1 indicates pipeline consumer received the raw_data
@@ -159,7 +159,7 @@ def test_redis_lookup_processor(sdc_builder, sdc_executor, redis):
     try:
         # input data into Redis which should be looked by our processor
         redis.client.lpush(redis_key, redis_data)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         record = snapshot[redis_lookup_processor.instance_name].output[0].value['value']

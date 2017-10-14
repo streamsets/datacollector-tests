@@ -86,5 +86,5 @@ def test_modified_acl(data_collector, pipeline):
 
     data_collector.set_user('testuser')
     with pytest.raises(InternalServerError) as exception_info:
-        data_collector.start_pipeline(pipeline).wait_for_status('RUNNING')
+        data_collector.start_pipeline(pipeline)
     assert ERROR_CODE_PIPELINE_PERMISSIONS in exception_info.value.text

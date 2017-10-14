@@ -82,7 +82,7 @@ def basic_solr_target(distribution, sdc_builder, sdc_executor, environment):
     # assert data ingested into Solr
     try:
         sdc_executor.start_pipeline(solr_dest_pipeline).wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(solr_dest_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(solr_dest_pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
         resp = client.query(solr_collection_name, {'q': query})

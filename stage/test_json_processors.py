@@ -55,7 +55,7 @@ def test_json_parser(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('JSON parser pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[json_parser.instance_name].output[0].value['value'][result_field]['value']
@@ -97,7 +97,7 @@ def test_json_generator(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('JSON Generator pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[json_generator.instance_name].output[0].value['value']['result']['value']

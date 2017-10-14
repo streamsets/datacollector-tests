@@ -55,7 +55,7 @@ def test_base64_field_decoder(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Base64 Decoder pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     result_data = snapshot[base64_field_decoder.instance_name].output[0].value['value']['result']['value']
@@ -88,7 +88,7 @@ def test_base64_field_encoder(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Base64 Encoder pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     result_data = snapshot[base64_field_encoder.instance_name].output[0].value['value']['result']['value']

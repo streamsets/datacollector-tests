@@ -144,8 +144,8 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         # wait_for_finished function. That way, we can switch over and start the Hadoop FS pipeline. Once that one
         # completes, we can go back and do an assert on the snapshot pipeline's snapshot.
         logger.debug('Starting snapshot pipeline and capturing snapshot ...')
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline,
-                                                                  start_pipeline=True)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True,
+                                                                  wait=False)
 
         logger.debug('Starting Hadoop FS pipeline and waiting for it to finish ...')
         sdc_executor.start_pipeline(hadoop_fs_pipeline)
@@ -192,8 +192,8 @@ def test_hadoop_fs_strict_impersonation(args, sdc_builder, cluster):
         data_collector.sdc_properties['stage.conf_hadoop.always.impersonate.current.user'] = 'true'
         data_collector.start()
         # Run at least one batch of data to Hadoop FS.
-        data_collector.capture_snapshot(pipeline=pipeline, start_pipeline=True).wait_for_finished()
-        data_collector.stop_pipeline(pipeline).wait_for_stopped()
+        data_collector.capture_snapshot(pipeline=pipeline, start_pipeline=True)
+        data_collector.stop_pipeline(pipeline)
 
         # Validate that the files were created with proper user name.
         hdfs_fs_files = cluster.hdfs.client.list(hdfs_path)

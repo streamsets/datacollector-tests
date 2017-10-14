@@ -78,8 +78,7 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
         connection.execute(table.insert(), ROWS_IN_DATABASE)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         rows_from_snapshot = [{record.value['value'][1]['sqpath'].lstrip('/'):

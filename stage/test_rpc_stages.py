@@ -78,9 +78,9 @@ def test_sdcrpc_origin_target(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(rpc_origin_pipeline, rpc_target_pipeline)
 
     # Run pipelines and assert data.
-    sdc_executor.start_pipeline(rpc_origin_pipeline).wait_for_status('RUNNING')
+    sdc_executor.start_pipeline(rpc_origin_pipeline)
     sdc_executor.start_pipeline(rpc_target_pipeline).wait_for_pipeline_output_records_count(1)
-    snapshot = sdc_executor.capture_snapshot(rpc_origin_pipeline, start_pipeline=False).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(rpc_origin_pipeline, start_pipeline=False).snapshot
     snapshot_data = snapshot[sdc_rpc_origin.instance_name].output[0].value['value']['text']['value']
 
     assert raw_str == snapshot_data
@@ -135,9 +135,9 @@ def test_write_to_another_pipeline_error_stage(sdc_builder, sdc_executor):
     sdc_rpc_origin_pipeline = builder.build(title='SDC RPC origin pipeline')
 
     sdc_executor.add_pipeline(error_stage_pipeline, sdc_rpc_origin_pipeline)
-    sdc_executor.start_pipeline(sdc_rpc_origin_pipeline).wait_for_status('RUNNING')
+    sdc_executor.start_pipeline(sdc_rpc_origin_pipeline)
     sdc_executor.start_pipeline(error_stage_pipeline).wait_for_pipeline_error_records_count(2)
-    snapshot = sdc_executor.capture_snapshot(sdc_rpc_origin_pipeline).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(sdc_rpc_origin_pipeline).snapshot
 
     sdc_executor.stop_pipeline(error_stage_pipeline)
     sdc_executor.stop_pipeline(sdc_rpc_origin_pipeline)

@@ -44,16 +44,16 @@ def test_pipeline_el_user(random_expression_pipeline_builder, data_collector):
 
     # Run the pipeline as one user.
     data_collector.set_user('arvind')
-    snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
-    data_collector.stop_pipeline(pipeline).wait_for_stopped()
+    snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    data_collector.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
     assert record.header['user'] == 'arvind'
 
     # And then try different user.
     data_collector.set_user('girish')
-    snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
-    data_collector.stop_pipeline(pipeline).wait_for_stopped()
+    snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    data_collector.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
     assert record.header['user'] == 'girish'
@@ -70,8 +70,8 @@ def test_pipeline_el_name_title_id_version(random_expression_pipeline_builder, s
     pipeline.metadata['dpm.pipeline.version'] = 42
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
-    sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
     assert record.header['name'] == pipeline.id
@@ -103,7 +103,7 @@ def test_str_unescape_and_replace_el(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     input_records = snapshot[dev_raw_data_source.instance_name].output
     output_records = snapshot[expression_evaluator.instance_name].output
     assert len(output_records) == len(input_records)

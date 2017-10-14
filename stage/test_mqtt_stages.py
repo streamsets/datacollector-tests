@@ -39,8 +39,8 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
         pipeline = pipeline_builder.build().configure_for_environment(mqtt_broker)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
 
         output_records = snapshot[dev_raw_data_source.instance_name].output
         for output_record in output_records:
@@ -89,7 +89,8 @@ def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
 
         # the MQTT origin produces a single batch for each message it receieves, so we need
         # to run a separate snapshot for each message to be received
-        running_snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=10)
+        running_snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True,
+                                                         batches=10, wait=False)
 
         # can't figure out a cleaner way to do this; it takes a bit of time for the pipeline
         # to ACTUALLY start listening on the MQTT port, so if we don't sleep here, the
@@ -102,7 +103,7 @@ def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
             expected_messages.add(expected_message)
 
         snapshot = running_snapshot.wait_for_finished().snapshot
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(pipeline)
 
         for batch in snapshot.snapshot_batches:
             output_records = batch[mqtt_source.instance_name].output

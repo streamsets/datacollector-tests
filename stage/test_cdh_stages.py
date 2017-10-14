@@ -189,7 +189,7 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
                 {'rank': 1, 'name': None, 'wins': None},
                 {'rank': 2, 'name': None, 'wins': None}])
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         for result in snapshot[kudu.instance_name].output:
             assert result.value['value']['name']['value'] == 'None'
@@ -262,8 +262,8 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
         engine = cluster.kudu.engine
         tdf_contenders_table.create(engine)
 
-        sdc_executor.start_pipeline(pipeline)
-        sdc_executor.get_status_pipeline(pipeline).wait_for_status('START_ERROR')
+        sdc_executor.start_pipeline(pipeline, wait=False)
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('START_ERROR')
         # Test will fail if the pipeline doesn't stop at START_ERROR
 
     finally:
@@ -362,7 +362,7 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
         conn = engine.connect()
         conn.execute(tdf_contenders_table.insert(), test_data)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         # Check the data type and value
         for actual, expected in zip(snapshot[kudu.instance_name].output, test_data):
@@ -454,7 +454,7 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
             {'rank': 1, 'name': 'Chris Froome', 'wins': None},
             {'rank': 2, 'name': 'Greg LeMond', 'wins': None}])
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         assert len(snapshot[kudu.instance_name].error_records) == 2
 
@@ -525,10 +525,10 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
         engine = cluster.kudu.engine
         tdf_contenders_table.create(engine)
 
-        sdc_executor.start_pipeline(pipeline)
-        sdc_executor.get_status_pipeline(pipeline).wait_for_status('RUN_ERROR')
+        sdc_executor.start_pipeline(pipeline, wait=False)
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('RUN_ERROR')
 
-        status = sdc_executor.get_status_pipeline(pipeline)
+        status = sdc_executor.get_pipeline_status(pipeline)
         # KUDU_34 is 'Primary key is not configured in Key Column Mapping'
         # See the error: https://github.com/streamsets/datacollector/blob/master/kudu-protolib/src/main/java/com/streamsets/pipeline/stage/lib/kudu/Errors.java#L43
         assert 'KUDU_34' in status.response.json().get('message')
@@ -574,15 +574,15 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster):
 
     try:
         # assert successful query execution of the pipeline
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
         assert snapshot[hive_query.instance_name].event_records[0].header['sdc.event.type'] == 'successful-query'
 
         # assert Hive table creation
         assert hive_cursor.table_exists(hive_table_name)
 
         # Re-running the same query to create Hive table should fail the query. So assert the failure.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         assert snapshot[hive_query.instance_name].event_records[0].header['sdc.event.type'] == 'failed-query'
     finally:
@@ -627,7 +627,7 @@ def test_mapreduce_executor(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         # assert events (MapReduce) generated
@@ -682,7 +682,7 @@ def test_spark_executor(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
 
     # run the pipeline and capture the file path
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     file_path = snapshot[local_fs.instance_name].event_records[0].value['value']['filepath']['value']
 
     # build the 2nd pipeline - spark executor

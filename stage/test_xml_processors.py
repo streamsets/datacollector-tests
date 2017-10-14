@@ -60,7 +60,7 @@ def test_xml_parser(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('XML parser pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # Gather snapshot data in a list for verification.
@@ -128,7 +128,7 @@ def test_xml_parser_namespace_xpath(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('XML parser namespace pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # Gather snapshot data as a list for verification.
@@ -181,7 +181,7 @@ def test_xml_flattener(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('XML flattener pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     items = [record.value['value'] for record in snapshot[xml_flattener].output]

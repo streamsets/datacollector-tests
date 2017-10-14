@@ -80,9 +80,8 @@ def test_websocket(sdc_executor, websocket_server_pipeline, websocket_client_pip
     runtime_parameters = {'port': 9999, 'appId': 'APPLICATION_ID'}
 
     # Start WebSocket Server pipeline.
-    sdc_executor.start_pipeline(websocket_server_pipeline.pipeline,
-                                runtime_parameters).wait_for_status(status='RUNNING', timeout_sec=300)
-    pipeline_status = sdc_executor.api_client.get_pipeline_status(websocket_server_pipeline.pipeline.id).response.json()
+    sdc_executor.start_pipeline(websocket_server_pipeline.pipeline, runtime_parameters)
+    pipeline_status = sdc_executor.get_pipeline_status(websocket_server_pipeline.pipeline).response.json()
     attributes = pipeline_status.get('attributes')
     assert attributes is not None
     assert attributes.get('RUNTIME_PARAMETERS') is not None
@@ -92,7 +91,7 @@ def test_websocket(sdc_executor, websocket_server_pipeline, websocket_client_pip
     # Start and capture snapshot for WebSocket Client pipeline.
     snapshot = sdc_executor.capture_snapshot(websocket_client_pipeline.pipeline,
                                              start_pipeline=True,
-                                             runtime_parameters=runtime_parameters).wait_for_finished().snapshot
+                                             runtime_parameters=runtime_parameters).snapshot
     origin_data = snapshot[websocket_client_pipeline.dev_raw_data_source.instance_name]
     processor_Data = snapshot[websocket_client_pipeline.javascript_evaluator.instance_name]
     assert len(origin_data.output) == 2
@@ -101,7 +100,7 @@ def test_websocket(sdc_executor, websocket_server_pipeline, websocket_client_pip
     assert origin_data.output[1].value['value']['f1']['value'] == 'xyz'
 
     # Capture snapshot for WebSocket Server pipeline.
-    snapshot = sdc_executor.capture_snapshot(websocket_server_pipeline.pipeline).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(websocket_server_pipeline.pipeline).snapshot
     origin_data = snapshot[websocket_server_pipeline.websocket_server.instance_name]
     processor_Data = snapshot[websocket_server_pipeline.expression_evaluator.instance_name]
     assert len(origin_data.output) == 1
@@ -110,5 +109,5 @@ def test_websocket(sdc_executor, websocket_server_pipeline, websocket_client_pip
             origin_data.output[0].value['value']['f1']['value'] == 'xyz')
 
     # Stop the pipeline and verify pipeline's status
-    sdc_executor.stop_pipeline(websocket_client_pipeline.pipeline).wait_for_stopped()
-    sdc_executor.stop_pipeline(websocket_server_pipeline.pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(websocket_client_pipeline.pipeline)
+    sdc_executor.stop_pipeline(websocket_server_pipeline.pipeline)

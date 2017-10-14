@@ -73,7 +73,7 @@ def test_field_flattener(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Flattener pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[field_flattener.instance_name].output[0].value['value']
@@ -136,7 +136,7 @@ def test_field_hasher(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Hasher pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_header = snapshot[field_hasher.instance_name].output[0].header
@@ -218,7 +218,7 @@ def test_field_masker(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Masker pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[field_masker.instance_name].output[0].value['value']
@@ -281,7 +281,7 @@ def test_field_merger(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Merger pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[field_merger.instance_name].output[0].value['value']
@@ -331,7 +331,7 @@ def test_field_order(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Order pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[field_order.instance_name].output[0].value['value']
@@ -369,7 +369,7 @@ def test_field_pivoter(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Pivoter pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[field_pivoter.instance_name].output[0].value['value']
@@ -420,7 +420,7 @@ def test_field_remover(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Remover pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     remover1_value = snapshot[field_remover1.instance_name].output[0].value['value']
@@ -459,7 +459,7 @@ def test_field_renamer(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Renamer pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[field_renamer.instance_name].output[0].value['value']
@@ -507,7 +507,7 @@ def test_field_splitter(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Splitter pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     record_1 = snapshot[field_splitter.instance_name].output[0].value['value']['error']['value']
@@ -620,7 +620,7 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Type Converter pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # assert field by field type conversion
@@ -695,7 +695,7 @@ def test_field_zip(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Field Zip pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     record_result = snapshot[field_zip.instance_name].output[0].value['value']
@@ -758,7 +758,7 @@ def test_value_replacer(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('Value Replacer pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     new_value = snapshot[value_replacer.instance_name].output[0].value['value']['contact']['value']

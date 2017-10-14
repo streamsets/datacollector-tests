@@ -65,7 +65,7 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
         assert index.refresh() # assert to refresh index, making all operations available for search
 
         # Run pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(es_origin_pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(es_origin_pipeline, start_pipeline=True).snapshot
         # no need to stop pipeline - as ES origin shuts off once data is read from Elasticsearch
         snapshot_data = snapshot[es_origin.instance_name].output[0].value['value']
         # assert ES meta
@@ -108,7 +108,7 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
     try:
         # Run pipeline and read from Elasticsearch to assert
         sdc_executor.start_pipeline(es_error_pipeline).wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(es_error_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(es_error_pipeline)
 
         # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
         elasticsearch.connect()
@@ -155,7 +155,7 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch):
     try:
         # Run pipeline and read from Elasticsearch to assert
         sdc_executor.start_pipeline(es_target_pipeline).wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(es_target_pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(es_target_pipeline)
 
         # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
         elasticsearch.connect()

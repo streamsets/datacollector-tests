@@ -89,7 +89,7 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
         connection = database.engine.connect()
         connection.execute(table.insert(), rows_in_database)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
 
         # assert events (MapReduce) generated
         assert len(snapshot[mapreduce.instance_name].event_records) == len(rows_in_database)

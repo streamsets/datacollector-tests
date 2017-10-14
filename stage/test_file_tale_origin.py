@@ -59,7 +59,7 @@ def test_directory_origin(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(files_pipeline)
 
     sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10) # generate some batches/files
-    sdc_executor.stop_pipeline(files_pipeline).wait_for_stopped()
+    sdc_executor.stop_pipeline(files_pipeline)
 
     # 2nd pipeline which reads the files using File Tail stage
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -77,7 +77,7 @@ def test_directory_origin(sdc_builder, sdc_executor):
     file_tail_pipeline = pipeline_builder.build('File Tail Origin pipeline')
     sdc_executor.add_pipeline(file_tail_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(file_tail_pipeline)
 
     # assert all the data captured have the same raw_data

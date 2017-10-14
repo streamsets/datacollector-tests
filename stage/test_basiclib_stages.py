@@ -103,9 +103,8 @@ def test_shell_executor_impersonation(sdc_shell, pipeline_shell_generator, pipel
     sdc_shell.stop_pipeline(pipeline_shell_generator)
 
     # And retrieve its output
-    snapshot = sdc_shell.capture_snapshot(pipeline=pipeline_shell_read,
-                                          runtime_parameters=runtime_parameters,
-                                          start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_shell.capture_snapshot(pipeline=pipeline_shell_read, runtime_parameters=runtime_parameters,
+                                          start_pipeline=True).snapshot
     sdc_shell.stop_pipeline(pipeline_shell_read)
 
 
@@ -156,8 +155,7 @@ def test_stream_selector_processor(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('test_stream_selector_processor')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline,
-                                             start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[0]]

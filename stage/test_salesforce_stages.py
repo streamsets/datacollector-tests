@@ -121,8 +121,7 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
         client.bulk.Contact.insert(DATA_TO_INSERT)
 
         logger.info('Starting pipeline and snapshot')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True)
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         rows_from_snapshot = [record.value['value']
                               for record in snapshot[stage_name].output]
 

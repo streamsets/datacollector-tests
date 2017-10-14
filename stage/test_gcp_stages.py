@@ -87,17 +87,13 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
 
         # Start pipeline and verify correct rows are received using snaphot.
         logger.info('Starting pipeline and snapshot')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True)
-        sdc_executor.get_status_pipeline(pipeline).wait_for_status('RUNNING')
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
         rows_from_snapshot = [(record.value['value'][0]['value'], int(record.value['value'][1]['value']))
                               for record in snapshot[google_bigquery].output]
 
         assert rows_from_snapshot == ROWS_TO_INSERT
-
     finally:
-        if sdc_executor.get_status_pipeline(pipeline) == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
         table.delete()
         dataset.delete()
 
@@ -140,8 +136,7 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
         # Start pipeline and verify messages are received using snaphot.
         logger.info('Starting pipeline and snapshot')
         sdc_executor.add_pipeline(pipeline)
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True)
-        sdc_executor.get_status_pipeline(pipeline).wait_for_status('RUNNING')
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
 
         logger.info('Publishing messages to topic %s using Google pub/sub client ...', topic_name)
         encoded_msg_data = MSG_DATA.encode()
@@ -150,18 +145,14 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
             topic.publish(encoded_msg_data)
 
         logger.debug('Finish the snapshot and verify')
-        snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
-        if snapshot_command:
-            snapshot = snapshot_command.snapshot
-            rows_from_snapshot = [record.value['value']['text']['value']
-                                  for record in snapshot[google_pubsub_subscriber].output]
+        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        rows_from_snapshot = [record.value['value']['text']['value']
+                              for record in snapshot[google_pubsub_subscriber].output]
 
-            logger.debug(rows_from_snapshot)
-            assert rows_from_snapshot == [MSG_DATA] * num
-
+        logger.debug(rows_from_snapshot)
+        assert rows_from_snapshot == [MSG_DATA] * num
     finally:
-        if sdc_executor.get_status_pipeline(pipeline) == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
         subscription.delete()
         topic.delete()
 
@@ -210,7 +201,7 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(10)
 
         logger.info('Stopping Publisher pipeline and getting the count of records produced in total ...')
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(pipeline)
 
         history = sdc_executor.pipeline_history(pipeline)
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
@@ -284,7 +275,7 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
 
         logger.info('Stopping Bigtable pipeline and getting the count of records produced in total ...')
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
+        sdc_executor.stop_pipeline(pipeline)
 
         # Using happybase connection, read the contents in the Google Bigtable.
         logger.info('Reading contents from table %s ...', table_name)
@@ -305,6 +296,4 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
         # providing a record of how the stored data has been altered over time.
         assert data[4:] == read_data
     finally:
-        if sdc_executor.get_status_pipeline(pipeline) == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
         connection.delete_table(table_name)

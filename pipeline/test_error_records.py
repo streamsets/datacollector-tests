@@ -65,7 +65,7 @@ def test_error_records_to_error_on_required_field(random_expression_pipeline_bui
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # All records should go to error stream.
@@ -81,7 +81,7 @@ def test_error_records_to_error_on_record_precondition(random_expression_pipelin
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # All records should go to error stream.
@@ -97,7 +97,7 @@ def test_error_records_discard_on_required_field(random_expression_pipeline_buil
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # Output of the stage should be empty as all records were discarded (doesn't fit the condition).
@@ -112,7 +112,7 @@ def test_error_records_discard_on_record_precondition(random_expression_pipeline
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
     # Output of the stage should be empty as all records were discarded (doesn't fit the condition).
@@ -173,8 +173,8 @@ def test_error_record_policy_original_record(policy_write_builder, policy_read_b
     sdc_executor.add_pipeline(write_pipeline, snapshot_pipeline)
 
     try:
-        sdc_executor.start_pipeline(snapshot_pipeline).wait_for_status('RUNNING')
-        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline)
+        sdc_executor.start_pipeline(snapshot_pipeline)
+        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline, wait=False)
         sdc_executor.start_pipeline(write_pipeline)
 
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -205,8 +205,8 @@ def test_error_record_policy_stage_record(policy_write_builder, policy_read_buil
     sdc_executor.add_pipeline(write_pipeline, snapshot_pipeline)
 
     try:
-        sdc_executor.start_pipeline(snapshot_pipeline).wait_for_status('RUNNING')
-        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline)
+        sdc_executor.start_pipeline(snapshot_pipeline)
+        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline, wait=False)
         sdc_executor.start_pipeline(write_pipeline)
 
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -250,7 +250,7 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
 
     # build and add directory read pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    directory = pipeline_builder.add_stage('Directory')
+    directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='TEXT', files_directory=directory_to_write,
                              file_name_pattern=f'{files_prefix}*')
     trash = pipeline_builder.add_stage('Trash')
@@ -260,11 +260,11 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(directory_pipeline)
 
     # run error stage pipeline and wait till some errors are generated
-    sdc_executor.start_pipeline(err_stage_pipeline).wait_for_status('RUNNING')
+    sdc_executor.start_pipeline(err_stage_pipeline)
     sdc_executor.stop_pipeline(err_stage_pipeline)
 
     # read from directory origin for the errors which were written
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True).wait_for_finished().snapshot
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(directory_pipeline)
 
     # assert file content's error data has our raw_data
