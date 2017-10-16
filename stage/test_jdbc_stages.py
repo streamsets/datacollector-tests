@@ -207,7 +207,6 @@ def create_table_in_database(table_name, database):
 def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database):
     """Simple JDBC Lookup processor test.
     Pipeline will enrich records with the 'name' by adding a field as 'FirstName'.
-
     The pipeline looks like:
         dev_raw_data_source >> jdbc_lookup >> trash
     """
@@ -257,7 +256,6 @@ def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database):
 def test_jdbc_tee_processor(sdc_builder, sdc_executor, database):
     """Simple JDBC Tee processor test.
     Pipeline will insert records into database and then pass generated database column 'id' to fields.
-
     The pipeline looks like:
         dev_raw_data_source >> jdbc_tee >> trash
     """
@@ -299,6 +297,51 @@ def test_jdbc_tee_processor(sdc_builder, sdc_executor, database):
                                item.value['value'][1]['sqpath'].strip('/'): int(item.value['value'][1]['value'])}
                               for item in snapshot[jdbc_tee].output]
         assert rows_from_snapshot == ROWS_IN_DATABASE
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
+def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
+    """Simple JDBC Query Executor test.
+    Pipeline will insert records into database and then using sqlalchemy, the verification will happen
+    that correct data is inserted into database.
+
+    This is achieved by using a deduplicator which assures us that there is only one ingest to database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_query_executor
+                               record_deduplicator >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = create_table_in_database(table_name, database)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(RAW_DATA))
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+
+    jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
+    query_str = f"INSERT INTO {table_name} (name) values('${{record:value('/name')}}')"
+    jdbc_query_executor.set_attributes(sql_query=query_str)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> record_deduplicator >> jdbc_query_executor
+    record_deduplicator >> trash
+    pipeline = pipeline_builder.build(title='JDBC Query Executor').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(RAW_DATA) - 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data_from_database = result.fetchall()
+        result.close()
+        assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
