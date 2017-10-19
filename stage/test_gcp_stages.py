@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import logging
 import time
 from string import ascii_letters
@@ -43,6 +38,69 @@ ROWS_TO_INSERT = [('Cristiano Ronaldo', 32),
                   ('Ronaldinho', 40),
                   ('Ronaldo', 40),
                   ('Zinedine Zidane', 42)]
+CSV_DATA_TO_INSERT = ['full_name,age'] + [','.join(str(element) for element in row) for row in ROWS_TO_INSERT]
+
+
+@gcp
+@sdc_min_version('2.7.2.0')
+def test_google_bigquery_destination(sdc_builder, sdc_executor, gcp):
+    """
+    Send data to Google BigQuery from Dev Raw Data Source and
+    confirm that Google BigQuery destination successfully recieves them using Google BigQuery client.
+
+    This is achieved by using a deduplicator which assures that there is only one ingest to Google BigQuery.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> google_bigquery
+                               record_deduplicator >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(CSV_DATA_TO_INSERT))
+
+    dataset_name = get_random_string(ascii_letters, 5)
+    table_name = get_random_string(ascii_letters, 5)
+    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery.set_attributes(dataset=dataset_name,
+                                   table_name=table_name)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> record_deduplicator >> google_bigquery
+    record_deduplicator >> trash
+
+    pipeline = pipeline_builder.build(title='Google BigQuery Destination').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating dataset %s using Google BigQuery client ...', dataset_name)
+        bigquery_client = gcp.bigquery_client
+        dataset = bigquery_client.dataset(dataset_name)
+        dataset.create()
+        assert dataset.exists()
+        table = dataset.table(table_name)
+        table.create()
+        assert table.exists()
+        table.schema = [SchemaField('full_name', 'STRING', mode='required'),
+                        SchemaField('age', 'INTEGER', mode='required')]
+        table.update()
+
+        logger.info('Starting BigQuery Destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+
+        logger.info('Stopping BigQuery Destination pipeline and getting the count of records produced in total ...')
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Verify by reading records using Google BigQuery client
+        data_from_bigquery = [row for row in table.fetch_data()]
+        data_from_bigquery.sort()
+        assert ROWS_TO_INSERT == data_from_bigquery
+    finally:
+        table.delete()
+        dataset.delete()
 
 
 @gcp
