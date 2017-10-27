@@ -24,7 +24,7 @@ from time import sleep
 import pytest
 import sqlalchemy
 
-from testframework.markers import oracle
+from testframework.markers import database
 from testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
@@ -81,7 +81,7 @@ def wait_until_time(time):
         sleep(1)
 
 
-@oracle
+@database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_locally):
     """Basic test that reads inserts/updates/deletes to an Oracle table,
@@ -165,7 +165,7 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
             logger.info('Table: %s dropped.', src_table_name)
 
 
-@oracle
+@database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer_locally):
     db_engine = database.engine
