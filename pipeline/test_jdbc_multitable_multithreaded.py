@@ -44,13 +44,6 @@ SRC_TABLE_PREFIX = get_random_string(string.ascii_lowercase, 6)
 TGT_TABLE_PREFIX = get_random_string(string.ascii_lowercase, 6)
 
 TABLE_PREFIX_NAME_FMT = '{table_prefix}_{table_name}'
-JDBC_QUERY_TBL_FORMAT = ("${{str:replace(record:attribute('jdbc.tables'),"
-                         "'{src_table_prefix}','{target_table_prefix}')}}")
-JDBC_QUERY_OTHER_COL = "${{record:value('/{other_col}')}}"
-JDBC_QUERY_PRIMARY_COL = "${{record:value('/{primary_key}')}}"
-
-INSERT_DATA_TABLE_STATEMENT = "INSERT into {table_name} values ({primary_key}, '{other_col}')"
-UPDATE_EVENT_TABLE_STATEMENT = 'UPDATE {event_table_name} set {event_column_name} = 1'
 
 
 def assert_tables_replicated(database=None, src_table_names=None):
@@ -158,29 +151,26 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                                      >= jdbc_query_event
     """
     event_table_name = get_random_string(string.ascii_lowercase, 10)
-    update_event_table_statement = UPDATE_EVENT_TABLE_STATEMENT.format(event_table_name=event_table_name,
-                                                                       event_column_name=EVENT_COLUMN_NAME)
+    update_event_table_statement = f'UPDATE {event_table_name} set {EVENT_COLUMN_NAME} = 1'
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    table_config = oraclize_config_if_needed({"tablePattern": f'{SRC_TABLE_PREFIX}%'}, database)
     jdbc_multitable_consumer.set_attributes(no_of_threads=no_of_threads, batch_strategy=batch_strategy,
                                             max_pool_size=no_of_threads, min_idle_connections=no_of_threads,
-                                            table_configuration=[table_config])
+                                            table_configuration=[{"tablePattern": f'{SRC_TABLE_PREFIX}%'}])
     # The target used to replicate is JDBCQueryExecutor.
     # After SDC-5757 is resolved, we can use JDBCProducer.
     jdbc_query_dest = pipeline_builder.add_stage('JDBC Query', type='executor')
-    dest_table = JDBC_QUERY_TBL_FORMAT.format(src_table_prefix=upper_if_required(SRC_TABLE_PREFIX, database),
-                                              target_table_prefix=TGT_TABLE_PREFIX)
+    table_name = (f"${{str:replace(record:attribute('jdbc.tables'),"
+                  f"'{SRC_TABLE_PREFIX if not database.type == 'Oracle' else SRC_TABLE_PREFIX.upper()}',"
+                  f"'{TGT_TABLE_PREFIX}')}}")
+    query = (f"INSERT into {table_name} values "
+             f"(${{record:value('/{PRIMARY_KEY if not database.type == 'Oracle' else PRIMARY_KEY.upper()}')}}"
+             f", '${{record:value('/{OTHER_COLUMN if not database.type == 'Oracle' else OTHER_COLUMN.upper()}')}}')")
 
-    primary_key = JDBC_QUERY_PRIMARY_COL.format(primary_key=upper_if_required(PRIMARY_KEY, database))
-    other_col = JDBC_QUERY_OTHER_COL.format(other_col=upper_if_required(OTHER_COLUMN, database))
-    dest_query = INSERT_DATA_TABLE_STATEMENT.format(table_name=dest_table,
-                                                    primary_key=primary_key,
-                                                    other_col=other_col)
-
-    jdbc_query_dest.set_attributes(query=dest_query)
+    jdbc_query_dest.set_attributes(sql_query=query)
     jdbc_query_event = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_event.set_attributes(query=update_event_table_statement)
+    jdbc_query_event.set_attributes(sql_query=update_event_table_statement)
 
     jdbc_multitable_consumer >> jdbc_query_dest
     jdbc_multitable_consumer >= jdbc_query_event

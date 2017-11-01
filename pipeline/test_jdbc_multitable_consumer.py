@@ -100,8 +100,7 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
     # build the pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    table_config = oraclize_config_if_needed({'tablePattern': f'%{src_table_suffix}'}, database)
-    jdbc_multitable_consumer.set_attributes(table_configuration=[table_config])
+    jdbc_multitable_consumer.set_attributes(table_configuration=[{'tablePattern': f'%{src_table_suffix}'}])
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     expression_evaluator.set_attributes(
         header_expressions=[{'attributeToSet': 'database',
@@ -159,7 +158,7 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
         # Check that the data shows up in Hive.
         hive_cursor = cluster.hive.client.cursor()
         for table in tables:
-            table_name = upper_if_required(table.name, database)
+            table_name = table.name if not database.type == 'Oracle' else table.name.upper()
             logger.info('Asserting table %s', table_name)
             hive_cursor.execute(f'SELECT * from `{table_name}`')
             hive_values = [list(row) for row in hive_cursor.fetchall()]
@@ -167,7 +166,7 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
             assert sorted(hive_values) == sorted(raw_values)
     finally:
         for table in tables:
-            table_name = upper_if_required(table.name, database)
+            table_name = table.name if not database.type == 'Oracle' else table.name.upper()
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
             table.drop(database.engine)
             logger.info('Dropping table %s in Hive ...', table_name)

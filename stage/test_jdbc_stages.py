@@ -50,8 +50,7 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    table_config = oraclize_config_if_needed({"tablePattern": f'{src_table_prefix}%'}, database)
-    jdbc_multitable_consumer.set_attributes(table_configuration=[table_config])
+    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'%{src_table_prefix}%'}])
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -78,11 +77,12 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        rows_from_snapshot = [{record.value['value'][1]['sqpath'].lstrip('/'):
+        # Column names are converted to lower case since Oracle database column names are in upper case.
+        rows_from_snapshot = [{record.value['value'][1]['sqpath'].lstrip('/').lower():
                                record.value['value'][1]['value']}
                               for record in snapshot[pipeline[0].instance_name].output]
 
-        assert rows_from_snapshot == [{upper_if_required('name', database): row['name']} for row in ROWS_IN_DATABASE]
+        assert rows_from_snapshot == [{'name': row['name']} for row in ROWS_IN_DATABASE]
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
@@ -142,8 +142,7 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    table_config = oraclize_config_if_needed({"tablePattern": f'%{src_table_prefix}%'}, database)
-    jdbc_multitable_consumer.set_attributes(table_configuration=[table_config])
+    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'%{src_table_prefix}%'}])
     finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     trash = pipeline_builder.add_stage('Trash')
 
@@ -315,16 +314,18 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = create_table_in_database(table_name, database)
 
+    DATA = ['id,name'] + [','.join(str(item) for item in rec.values()) for rec in ROWS_IN_DATABASE]
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='DELIMITED',
                                        header_line='WITH_HEADER',
-                                       raw_data='\n'.join(RAW_DATA))
+                                       raw_data='\n'.join(DATA))
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    query_str = f"INSERT INTO {table_name} (name) values('${{record:value('/name')}}')"
+    query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
+
     jdbc_query_executor.set_attributes(sql_query=query_str)
 
     trash = pipeline_builder.add_stage('Trash')
