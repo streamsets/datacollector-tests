@@ -25,7 +25,6 @@ import string
 import pytest
 import sqlalchemy
 
-from testframework.environments.databases import oraclize_config_if_needed, upper_if_required
 from testframework.markers import database, cluster
 from testframework.utils import get_random_string
 
