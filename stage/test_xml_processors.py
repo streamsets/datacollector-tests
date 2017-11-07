@@ -64,9 +64,8 @@ def test_xml_parser(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     # Gather snapshot data in a list for verification.
-    item_list = snapshot[xml_parser].output[0].value['value']['text']['value']['msg']['value']
-    rows_from_snapshot = [{item['value']['time']['value'][0]['value']['value']['value']:
-                           item['value']['request']['value'][0]['value']['value']['value']}
+    item_list = snapshot[xml_parser].output[0].value2['text']['msg']
+    rows_from_snapshot = [{item['time'][0]['value']: item['request'][0]['value']}
                           for item in item_list]
 
     # Parse input xml data to verify results from snapshot.
@@ -132,9 +131,8 @@ def test_xml_parser_namespace_xpath(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     # Gather snapshot data as a list for verification.
-    item_list = snapshot[xml_parser].output[0].value['value']['text']['value']
-    rows_from_snapshot = [{item['value']['time']['value'][0]['value']['value']['value']:
-                           item['value']['request']['value'][0]['value']['value']['value']}
+    item_list = snapshot[xml_parser].output[0].value2['text']
+    rows_from_snapshot = [{item['time'][0]['value']: item['request'][0]['value']}
                           for item in item_list]
 
     # Parse input xml data to verify results from snapshot using xpath for search.
@@ -184,9 +182,8 @@ def test_xml_flattener(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    items = [record.value['value'] for record in snapshot[xml_flattener].output]
     # Gather snapshot data as a list for verification.
-    rows_from_snapshot = [{key: value['value']} for item in items for key, value in item.items()]
+    items = [record.value2 for record in snapshot[xml_flattener].output]
 
     expected_data = [{'contact.name#type': 'maiden',
                       'contact.name': 'NAME1',
@@ -196,4 +193,4 @@ def test_xml_flattener(sdc_builder, sdc_executor):
                       'contact.name': 'NAME2',
                       'contact.phone(0)': '(333)333-3333',
                       'contact.phone(1)': '(444)444-4444'}]
-    assert rows_from_snapshot == expected_data
+    assert items == expected_data
