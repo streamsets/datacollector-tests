@@ -21,6 +21,7 @@ import logging
 import string
 
 from testframework.markers import cluster
+from testframework.markers import sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ def get_kafka_consumer_stage(pipeline_builder, cluster, cluster_mode):
     kafka_consumer.set_attributes(data_format='TEXT',
                                   batch_wait_time_in_millisecs=20000,
                                   kafka_topic_name=topic_name,
-                                  consumer_configs=[{"key": "auto.offset.reset", "value": "earliest"}])
+                                  consumer_configs=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
     if cluster_mode:
         kafka_consumer.set_attributes(max_batch_size=10,
@@ -165,6 +166,44 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         verify_kafka_origin_results(kafka_consumer.kafka_topic_name,
+                                    kafka_consumer_pipeline,
+                                    kafka_consumer_pipeline,
+                                    cluster,
+                                    sdc_executor)
+    finally:
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+
+
+@cluster('cdh')
+@sdc_min_version('3.0.0.0')
+def test_kafka_multi_origin_standalone(sdc_builder, sdc_executor, cluster):
+    """Write simple text messages into Kafka and confirm that MultiTopic origin can read them.
+    Specifically, this would look like:
+
+    Kafka Multi Topic Consumer Origin pipeline with standalone mode:
+        kafka_consumer >> trash
+    """
+
+    # Build the Kafka consumer pipeline with Standalone mode.
+    builder = sdc_builder.get_pipeline_builder()
+
+    kafka_consumer = builder.add_stage('Kafka Multitopic Consumer')
+    topic_name = get_random_string(string.ascii_letters, 10)
+    kafka_consumer.set_attributes(data_format='TEXT',
+                                  batch_wait_time_in_ms=20000,
+                                  topic_list=[topic_name],
+                                  kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
+
+    trash = builder.add_stage(label='Trash')
+    kafka_consumer >> trash
+    kafka_consumer_pipeline = builder.build(title='Kafka Multitopic').configure_for_environment(cluster)
+    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(kafka_consumer_pipeline)
+
+    try:
+        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        verify_kafka_origin_results(topic_name,
                                     kafka_consumer_pipeline,
                                     kafka_consumer_pipeline,
                                     cluster,
