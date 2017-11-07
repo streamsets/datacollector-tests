@@ -162,12 +162,15 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline)
 
-    # Publish messages to Kafka and verify using snapshot if the same messages are received.
-    verify_kafka_origin_results(kafka_consumer.kafka_topic_name,
-                                kafka_consumer_pipeline,
-                                kafka_consumer_pipeline,
-                                cluster,
-                                sdc_executor)
+    try:
+        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        verify_kafka_origin_results(kafka_consumer.kafka_topic_name,
+                                    kafka_consumer_pipeline,
+                                    kafka_consumer_pipeline,
+                                    cluster,
+                                    sdc_executor)
+    finally:
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
 
 @cluster('cdh')
@@ -211,9 +214,12 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
-    # Publish messages to Kafka and verify using snapshot if the same messages are received.
-    verify_kafka_origin_results(kafka_consumer.kafka_topic_name,
-                                kafka_consumer_pipeline,
-                                snapshot_pipeline,
-                                cluster,
-                                sdc_executor)
+    try:
+        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        verify_kafka_origin_results(kafka_consumer.kafka_topic_name,
+                                    kafka_consumer_pipeline,
+                                    snapshot_pipeline,
+                                    cluster,
+                                    sdc_executor)
+    finally:
+        sdc_executor.stop_pipelne(kafka_consumer_pipeline)
