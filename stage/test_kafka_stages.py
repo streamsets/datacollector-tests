@@ -261,4 +261,4 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
                                     cluster,
                                     sdc_executor)
     finally:
-        sdc_executor.stop_pipelne(kafka_consumer_pipeline)
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
