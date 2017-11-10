@@ -70,8 +70,12 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
 
     try:
         logger.info('Creating MapR-DB table %s ...', table_name)
-        cluster.execute_command('table', 'create', path=table_name, defaultreadperm='p', defaultwriteperm='p')
-        cluster.execute_command('table', 'cf', 'create', path=table_name, cfname='cf1')
+        cluster.execute_command('table', 'create', http_request_method='POST',
+                                data={'path': table_name,
+                                      'defaultreadperm': 'p',
+                                      'defaultwriteperm': 'p'})
+        cluster.execute_command('table', 'cf', 'create', http_request_method='POST',
+                                data={'path': table_name, 'cfname': 'cf1'})
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(len(bike_brands))
@@ -83,7 +87,7 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
                       for bike_brand in bike_brands) == rows
     finally:
         logger.info('Deleting MapR-DB table %s ...', table_name)
-        cluster.execute_command('table', 'delete', path=table_name)
+        cluster.execute_command('table', 'delete', http_request_method='POST', data={'path': table_name})
         sdc_executor.stop_pipeline(pipeline)
 
 
