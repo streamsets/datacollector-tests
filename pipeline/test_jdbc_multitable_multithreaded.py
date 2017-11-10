@@ -39,6 +39,7 @@ EVENT_COLUMN_NAME = 'event_status'
 PRIMARY_KEY = 'pid'
 OTHER_COLUMN = 'randomstring'
 NO_OF_SRC_ROWS = 60
+PARTITION_SIZE = '10'
 # lowercase for db compatibility (e.g. PostgreSQL)
 SRC_TABLE_PREFIX = get_random_string(string.ascii_lowercase, 6)
 TGT_TABLE_PREFIX = get_random_string(string.ascii_lowercase, 6)
@@ -135,13 +136,15 @@ def teardown_tables(database, table_names):
 @pytest.mark.parametrize('no_of_tables', [9])
 @pytest.mark.parametrize('no_of_threads', [1, 5])
 @pytest.mark.parametrize('batch_strategy', ["SWITCH_TABLES", "PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE"])
+@pytest.mark.parametrize('partitioning_mode', ["DISABLED", "BEST_EFFORT"])
 @pytest.mark.timeout(300)
 def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                                           table_name_characters,
                                           table_name_length,
                                           no_of_tables,
                                           no_of_threads,
-                                          batch_strategy):
+                                          batch_strategy,
+                                          partitioning_mode):
     """Tests Multithreaded Multi-table JDBC source. Replicates a set of tables with prefix 'src' to a another
     set of tables with 'target' prefix. Also leveraging the NO_MORE_DATA EVENT by the Multi-table JDBC source after
     no data in tables. On Event path a JDBC Executor updates a special event table to mark data read to stop pipeline.
@@ -157,7 +160,14 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
     jdbc_multitable_consumer.set_attributes(no_of_threads=no_of_threads, batch_strategy=batch_strategy,
                                             max_pool_size=no_of_threads, min_idle_connections=no_of_threads,
-                                            table_configuration=[{"tablePattern": f'{SRC_TABLE_PREFIX}%'}])
+                                            table_configuration=[{"tablePattern": f'{SRC_TABLE_PREFIX}%',
+                                                                  'partitioningMode': partitioning_mode,
+                                                                  'partitionSize': PARTITION_SIZE}])
+
+    if partitioning_mode == 'BEST_EFFORT':
+        # for partitioning, increase the max allowed queries per second (will be changed as SDC default via SDC-7867)
+        jdbc_multitable_consumer.configuration['commonSourceConfigBean.queriesPerSecond'] = '50'
+
     # The target used to replicate is JDBCQueryExecutor.
     # After SDC-5757 is resolved, we can use JDBCProducer.
     jdbc_query_dest = pipeline_builder.add_stage('JDBC Query', type='executor')
@@ -174,7 +184,8 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
 
     jdbc_multitable_consumer >> jdbc_query_dest
     jdbc_multitable_consumer >= jdbc_query_event
-    pipeline = pipeline_builder.build('JDBC multitable consumer pipeline').configure_for_environment(database)
+    pipeline_name = f'JDBC multitable consumer pipeline - {batch_strategy} batch strategy, {no_of_threads} threads, {partitioning_mode} partitioning'
+    pipeline = pipeline_builder.build(pipeline_name).configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     # Generate random table names.
