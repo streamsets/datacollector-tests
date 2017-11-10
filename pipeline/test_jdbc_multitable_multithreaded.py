@@ -190,9 +190,9 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
         setup_tables(database, src_table_names, target_table_names, event_table_name)
         sdc_executor.start_pipeline(pipeline)
         wait_for_no_data_event(event_table_name, database)
-        sdc_executor.stop_pipeline(pipeline)  # must stop pipeline before tables can be dropped.
         assert_tables_replicated(database, src_table_names)
     finally:
-        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()  # must to stop pipeline before tables can be dropped.
+        # must stop pipeline before tables can be dropped.
+        sdc_executor.stop_pipeline(pipeline)
         logger.info('Dropping test related tables in %s database...', database.type)
         teardown_tables(database, src_table_names + target_table_names + [event_table_name])
