@@ -32,7 +32,7 @@ SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
 
 
-@cluster('cdh')
+@cluster('cdh', 'kafka')
 def test_kafka_destination(sdc_builder, sdc_executor, cluster):
     """Send simple text messages into Kafka Destination from Dev Raw Data Source and
        confirm that Kafka successfully reads them using KafkaConsumer from cluster.
@@ -143,7 +143,7 @@ def verify_kafka_origin_results(kafka_topic_name, kafka_consumer_pipeline, snaps
     assert lines_from_snapshot == ['Hello World from SDC & DPM!'] * 10
 
 
-@cluster('cdh')
+@cluster('cdh', 'kafka')
 def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
     """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
     Specifically, this would look like:
@@ -174,7 +174,7 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
 
-@cluster('cdh')
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.0.0.0')
 def test_kafka_multi_origin_standalone(sdc_builder, sdc_executor, cluster):
     """Write simple text messages into Kafka and confirm that MultiTopic origin can read them.
