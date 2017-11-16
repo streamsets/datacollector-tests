@@ -187,8 +187,11 @@ def test_kafka_multi_origin_standalone(sdc_builder, sdc_executor, cluster):
     # Build the Kafka consumer pipeline with Standalone mode.
     builder = sdc_builder.get_pipeline_builder()
 
-    kafka_consumer = builder.add_stage('Kafka Multitopic Consumer')
+    # Create and wait on Kafka topic to be available
     topic_name = get_random_string(string.ascii_letters, 10)
+    cluster.kafka.client().add_topic(topic_name)
+
+    kafka_consumer = builder.add_stage('Kafka Multitopic Consumer')
     kafka_consumer.set_attributes(data_format='TEXT',
                                   batch_wait_time_in_ms=20000,
                                   topic_list=[topic_name],
