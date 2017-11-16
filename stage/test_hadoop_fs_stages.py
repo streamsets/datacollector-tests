@@ -150,7 +150,7 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         logger.debug('Starting Hadoop FS pipeline and waiting for it to finish ...')
         sdc_executor.start_pipeline(hadoop_fs_pipeline)
 
-        snapshot = snapshot_pipeline_command.wait_for_finished().snapshot
+        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
         sdc_executor.stop_pipeline(snapshot_pipeline, force=True)
         lines_from_snapshot = [record.value['value']['text']['value']
                                for record in snapshot[snapshot_pipeline[0].instance_name].output]
