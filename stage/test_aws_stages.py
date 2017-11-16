@@ -69,7 +69,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
     # run pipeline and capture snapshot
     client = aws.kinesis
     try:
-        logger.info(f'Creating {stream_name} Kinesis stream on AWS.')
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
         client.create_stream(StreamName=stream_name, ShardCount=1)
         aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
 
@@ -87,8 +87,10 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 
         assert set(output_records) == expected_messages
     finally:
-        logger.info(f'Deleting {stream_name} Kinesis stream on AWS.')
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
 
 
 @aws('kinesis')
@@ -107,7 +109,7 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
     # Create Kinesis stream and capture the ShardId
     client = aws.kinesis
     try:
-        logger.info(f'Creating {stream_name} Kinesis stream on AWS.')
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
         client.create_stream(StreamName=stream_name, ShardCount=1)
         aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
         desc_response = client.describe_stream(StreamName=stream_name)
@@ -145,7 +147,7 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
 
         assert msgs_received == [raw_str] * msgs_sent_count
     finally:
-        logger.info(f'Deleting {stream_name} Kinesis stream on AWS.')
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)
 
 
