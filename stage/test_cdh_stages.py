@@ -527,31 +527,29 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-@sdc_min_version('2.7.0.0')
+@sdc_min_version('3.1.0.0')
 def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
     """
-    Test if Key Column Mapping configuration has all primary keys. This test is missing one column so pipeline
-    should fail with error.
-
-    dev_raw_data_source >> kudu lookup >> trash
+    Test if lookup can perform without primary keys.
+    dev_raw_data_source >> record_deduplicator >> kudu lookup >> trash
+    record_deduplicator >> to_error
     """
     if not hasattr(cluster, 'kudu'):
         pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
 
-    # Generate some data.
-    tour_de_france_contenders = [dict(favorite_rank=1)]
+    # Perform lookup by a column 'name' which is not primary key and see if other columns can be retrieved.
+    tour_de_france_contenders = [dict(name='Chris Froome'),
+                                 dict(name='Greg LeMond')]
 
     raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
-    logger.info('raw_data: {}'.format(raw_data))
-
-    key_column_mapping = [dict(field='/favorite_rank', columnName='rank')]
-    output_column_mapping = [dict(columnName='name', field='/name'),
-                             dict(columnName='wins', field='/wins')]
+    key_column_mapping = [dict(field='/name', columnName='name')]
+    output_column_mapping = [dict(field='/favorite_rank', columnName='rank'),
+                             dict(field='/wins', columnName='wins')]
 
     kudu_table_name = get_random_string(string.ascii_letters, 10)
 
     # Build the pipeline.
-    kudu_master_address = '{}:{}'.format(cluster.server_host, DEFAULT_KUDU_PORT)
+    kudu_master_address = f'{cluster.server_host}:{DEFAULT_KUDU_PORT}'
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data)
@@ -561,9 +559,13 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
                                                               key_column_mapping=key_column_mapping,
                                                               output_column_mapping=output_column_mapping,
                                                               case_sensitive=True,
-                                                              ignore_missing=True)
+                                                              ignore_missing=False)
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    to_error = builder.add_stage('To Error')
     trash = builder.add_stage('Trash')
-    dev_raw_data_source >> kudu >> trash
+
+    dev_raw_data_source >> record_deduplicator >> kudu >> trash
+    record_deduplicator >> to_error
 
     pipeline = builder.build().configure_for_environment(cluster)
     pipeline.configuration["shouldRetry"] = False
@@ -573,7 +575,7 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
     tdf_contenders_table = sqlalchemy.Table(kudu_table_name,
                                             metadata,
                                             sqlalchemy.Column('rank', sqlalchemy.Integer, primary_key=True),
-                                            sqlalchemy.Column('name', sqlalchemy.String, primary_key=True),
+                                            sqlalchemy.Column('name', sqlalchemy.String),
                                             sqlalchemy.Column('wins', sqlalchemy.Integer),
                                             impala_partition_by='HASH PARTITIONS 16',
                                             impala_stored_as='KUDU',
@@ -587,15 +589,20 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
         logger.info('Creating Kudu table %s ...', kudu_table_name)
         engine = cluster.kudu.engine
         tdf_contenders_table.create(engine)
+        conn = engine.connect()
+        sample_data = [
+            {'rank': 1, 'name': 'Chris Froome', 'wins': 5},
+            {'rank': 2, 'name': 'Greg LeMond', 'wins': 10}]
+        conn.execute(tdf_contenders_table.insert(), sample_data)
 
-        sdc_executor.start_pipeline(pipeline, wait=False)
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('RUN_ERROR')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
 
-        status = sdc_executor.get_pipeline_status(pipeline)
-        # KUDU_34 is 'Primary key is not configured in Key Column Mapping'
-        # See the error: https://git.io/vdX1f
-        assert 'KUDU_34' in status.response.json().get('message')
-
+        # Check the returned values
+        for actual, expected in zip(snapshot[kudu.instance_name].output, sample_data):
+            assert actual.value['value']['favorite_rank']['value'] == str(expected['rank'])
+            assert actual.value['value']['wins']['value'] == str(expected['wins'])
+            assert actual.value['value']['name']['value'] == str(expected['name'])
     finally:
         logger.info('Dropping Kudu table %s ...', kudu_table_name)
         tdf_contenders_table.drop(engine)
