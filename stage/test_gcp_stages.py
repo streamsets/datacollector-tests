@@ -14,7 +14,8 @@
 
 import logging
 import time
-from string import ascii_letters
+import uuid
+from string import ascii_letters, ascii_lowercase
 
 from google.cloud.bigquery import Dataset, SchemaField, Table
 from time import sleep
@@ -358,3 +359,107 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
         assert data[4:] == read_data
     finally:
         table.delete()
+
+
+@gcp
+@sdc_min_version('3.0.0.0')
+def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
+    """
+    Write data to Google cloud storage using Storage Client
+    and then check if Google Storage Origin receives them using snapshot.
+
+    The pipeline looks like:
+        google_cloud_storage_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT')
+    trash = pipeline_builder.add_stage('Trash')
+
+    google_cloud_storage >> trash
+
+    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = storage_client.create_bucket(bucket_name)
+    try:
+        data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
+        blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test.txt')
+        blob.upload_from_string('\n'.join(data))
+
+        logger.info('Starting GCS Origin pipeline and waiting for it to produce a snapshot ...')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        rows_from_snapshot = [record.value2['text']
+                              for record in snapshot[google_cloud_storage].output]
+
+        logger.debug(rows_from_snapshot)
+        assert rows_from_snapshot == data
+    finally:
+        created_bucket.delete(force=True)
+
+
+@gcp
+@sdc_min_version('3.0.0.0')
+def test_google_storage_destination(sdc_builder, sdc_executor, gcp):
+    """
+    Send data to Google cloud storage from Dev Raw Data Source and
+    confirm that Storage client successfully reads them.
+
+    The pipeline looks like:
+        dev_raw_data_source >> google_cloud_storage
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
+
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       stop_after_first_batch=True,
+                                       raw_data='\n'.join(data))
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='destination')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        partition_prefix='${YYYY()}/${MM()}/${DD()}/${hh()}/${mm()}',
+                                        data_format='TEXT',
+                                        file_suffix='txt')
+
+    dev_raw_data_source >> google_cloud_storage
+
+    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = storage_client.create_bucket(bucket_name)
+    try:
+        logger.info('Starting GCS Destination pipeline and waiting for it to produce records'
+                    ' and transition to finished...')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        blob_iter = created_bucket.list_blobs(max_results=1, prefix='gcs-test')
+        blobs = [blob for blob in blob_iter]
+        assert len(blobs) == 1
+        blob = blobs[0]
+        # Decode the byte array returned by storage client
+        contents = blob.download_as_string().decode('ascii')
+        # Strip out the lines which are empty (essentially the last line)
+        lines = [line for line in contents.split('\n') if len(line) > 0]
+        assert lines == data
+    finally:
+        created_bucket.delete(force=True)
