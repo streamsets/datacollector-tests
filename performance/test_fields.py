@@ -13,22 +13,23 @@
 # limitations under the License.
 
 """
-The tests in this module are for running high-volume pipelines, for the purpose of performance regression testing.
+The tests in this module are for running high-volume pipelines, for the purpose of performance testing.
 They will generate records from a raw source, run them through one or more processors, with a trash destination.
 Output values will not be validated since the purpose of this test is to test performance and not correctness.
 """
 
 import json
 import logging
+import uuid
+
+import pytest
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-# 100k records for each pipeline
-NUM_RECORDS = 100000
 
-# TODO: add marker once STF-341 is implemented
-def test_field_path_stress_pipeline(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('number_of_records', (50_000, 100_000))
+def test_field_path_stress_pipeline(sdc_builder, sdc_executor, benchmark, number_of_records):
     """
     Runs a pipeline with many field processor stages, which runs for a large number of records.
     """
@@ -109,16 +110,20 @@ def test_field_path_stress_pipeline(sdc_builder, sdc_executor):
     trash = pipeline_builder.add_stage('Trash')
 
     source >> remover >> value_replacer >> type_converter >> hasher >> masker >> trash
-
     pipeline = pipeline_builder.build('Field Path Stress Test Pipeline - Many Stages')
-    sdc_executor.add_pipeline(pipeline)
 
-    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(NUM_RECORDS)
-    sdc_executor.stop_pipeline(pipeline)
+    def benchmark_pipeline(executor, pipeline):
+        pipeline.id = str(uuid.uuid4())
+        executor.add_pipeline(pipeline)
+        executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(number_of_records)
+        executor.stop_pipeline(pipeline)
+        executor.remove_pipeline(pipeline)
+
+    benchmark.pedantic(benchmark_pipeline, args=(sdc_executor, pipeline), rounds=2)
 
 
-# TODO: add marker once STF-341 is implemented
-def test_large_number_of_fields_stress_pipeline(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('number_of_records', (50_000, 100_000))
+def test_large_number_of_fields_stress_pipeline(sdc_builder, sdc_executor, benchmark, number_of_records):
     """
     Runs a pipeline with one processor that removes many fields from records that have a large number of fields.
     """
@@ -136,9 +141,13 @@ def test_large_number_of_fields_stress_pipeline(sdc_builder, sdc_executor):
     trash = pipeline_builder.add_stage('Trash')
 
     source >> remover >> trash
-
     pipeline = pipeline_builder.build('Field Path Stress Test Pipeline - Many Fields')
-    sdc_executor.add_pipeline(pipeline)
 
-    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(NUM_RECORDS)
-    sdc_executor.stop_pipeline(pipeline)
+    def benchmark_pipeline(executor, pipeline):
+        pipeline.id = str(uuid.uuid4())
+        executor.add_pipeline(pipeline)
+        executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(number_of_records)
+        executor.stop_pipeline(pipeline)
+        executor.remove_pipeline(pipeline)
+
+    benchmark.pedantic(benchmark_pipeline, args=(sdc_executor, pipeline), rounds=2)
