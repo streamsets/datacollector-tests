@@ -61,7 +61,7 @@ def websocket_client_pipeline(sdc_builder, sdc_executor):
 
     javascript_evaluator = pipeline_builder.add_stage('JavaScript Evaluator')
 
-    websocket_client = pipeline_builder.add_stage('WebSocket Client')
+    websocket_client = pipeline_builder.add_stage('WebSocket Client', type='destination')
     websocket_client.resource_url = 'ws://localhost:${port}'
     websocket_client.headers = [{'key': 'X-SDC-APPLICATION-ID', 'value': '${appId}'}]
 
