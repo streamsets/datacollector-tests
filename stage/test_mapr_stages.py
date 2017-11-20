@@ -24,11 +24,12 @@ another.
 import json
 import logging
 import os
+import pytest
 import string
 from pathlib import Path
 from uuid import uuid4
 
-from testframework.markers import cluster
+from testframework.markers import cluster, sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,114 @@ logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
+
+
+@cluster('mapr')
+@sdc_min_version('3.0.0.0')
+def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
+    """Insert, update, delete a handful of records in the MapR-DB json table using a pipeline.
+    After that create another pipeline with CDC Consumer and verify with snapshot that MapR DB CDC
+    consumer gets the correct data.
+
+    dev_raw_data_source >> expression evaluator >> field_remover >> mapr_db_json
+    mapr_db_cdc_consumer >> trash
+    """
+    if not cluster.version[len('mapr'):].startswith('6'):
+        pytest.skip('MapR CDC test only runs against cluster with MapR version 6.')
+    table_name = get_random_string(string.ascii_letters, 10)
+    topic_name = f'{table_name}-topic'
+    table_path = f'/user/sdc/{table_name}'
+    stream_name = f'/{get_random_string(string.ascii_letters, 10)}'
+
+    # Generate some data.
+    test_data = [dict(_id='1', name='Sachin Tendulkar', operation='insert',
+                      average=53.79, is_alive=True, runs_bf=1592129437, innings=329),
+                 dict(_id='2', name='Don Bradman', operation='insert',
+                      average=53.79, is_alive=False, runs_bf=69969798, innings=80),
+                 dict(_id='3', name='Gary Sobers', operation='insert',
+                      average=57.78, is_alive=True, runs_bf=80323867, innings=160),
+                 dict(_id='1', name='Sachin', operation='update'),
+                 dict(_id='2', name='Don', operation='update'),
+                 dict(_id='3', operation='delete')]
+    raw_data = ''.join(json.dumps(record) for record in test_data)
+
+    # Build the MapR JSON DB pipeline.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           stop_after_first_batch=True,
+                                                                                           raw_data=raw_data)
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    header_expression = ("${record:value('/operation')=='insert'?1:"
+                         "record:value('/operation')=='update'?3:"
+                         "record:value('/operation')=='delete'?2:1}")
+    expression_evaluator.set_attributes(header_expressions=[{'attributeToSet': 'sdc.operation.type',
+                                                             'headerAttributeExpression': header_expression}])
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.set_attributes(fields=['/operation'])
+    mapr_db_json = pipeline_builder.add_stage('MapR DB JSON', type='destination')
+    mapr_db_json.set_attributes(table_name=table_path, row_key='/_id')
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> mapr_db_json
+    json_db_pipeline = pipeline_builder.build('MapR Json DB').configure_for_environment(cluster)
+
+    # Build the MapR DB CDC Consumer pipeline.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    mapr_db_cdc_consumer = pipeline_builder.add_stage('MapR DB CDC Consumer', type='origin')
+    mapr_db_cdc_consumer.set_attributes(mapr_streams_configuration=[dict(key='auto.offset.reset',
+                                                                         value='earliest')],
+                                        number_of_threads=1,
+                                        topic_list=[dict(key=f'{stream_name}:{topic_name}',
+                                                         value=f'{table_path}')])
+
+    trash = pipeline_builder.add_stage('Trash')
+    mapr_db_cdc_consumer >> trash
+    cdc_pipeline = pipeline_builder.build('MapR DB CDC Consumer').configure_for_environment(cluster)
+
+    try:
+        logger.info('Creating MapR-DB table %s ...', table_path)
+        cluster.execute_command('table', 'create', http_request_method='POST',
+                                data={'path': table_path,
+                                      'defaultreadperm': 'p',
+                                      'tabletype': 'json',
+                                      'defaultwriteperm': 'p'})
+
+        logger.info('Creating MapR stream %s ...', stream_name)
+        cluster.execute_command('stream', 'create', http_request_method='POST',
+                                data={'path': stream_name,
+                                      'ischangelog': 'true',
+                                      'consumeperm': 'p',
+                                      'defaultpartitions': 1})
+
+        changelog = f'{stream_name}:{topic_name}'
+        logger.info('Creating MapR-DB table changelog %s ...', changelog)
+        cluster.execute_command('table', 'changelog', 'add', http_request_method='POST',
+                                data={'path': table_path,
+                                      'changelog': changelog})
+
+        sdc_executor.add_pipeline(json_db_pipeline, cdc_pipeline)
+        cdc_pipeline_command = sdc_executor.capture_snapshot(cdc_pipeline, start_pipeline=True, wait=False)
+        sdc_executor.start_pipeline(json_db_pipeline)
+
+        # Verify with a snapshot.
+        snapshot = cdc_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        sdc_executor.stop_pipeline(cdc_pipeline)
+
+        actual = [record.value2 for record in snapshot[mapr_db_cdc_consumer].output]
+        for record in test_data:
+            # In the pipeline, Field Remover stage removed field 'operation' and so it will not be present in actual.
+            # Remove it from test_data, for verification with assert.
+            record.pop('operation')
+        assert actual == test_data
+
+    finally:
+        logger.info('Deleting MapR-DB table changelog %s ...', f'{stream_name}:{topic_name}')
+        cluster.execute_command('table', 'changelog', 'remove', http_request_method='POST',
+                                data={'path': table_path,
+                                      'changelog': f'{stream_name}:{topic_name}'})
+        logger.info('Deleting MapR stream %s ...', stream_name)
+        cluster.execute_command('stream', 'delete', http_request_method='POST', data={'path': stream_name})
+        logger.info('Deleting MapR-DB table %s ...', table_path)
+        cluster.execute_command('table', 'delete', http_request_method='POST', data={'path': table_path})
 
 
 @cluster('mapr')
