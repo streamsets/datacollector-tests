@@ -116,6 +116,10 @@ def verify_kafka_origin_results(kafka_topic_name, kafka_consumer_pipeline, snaps
     """Send messages to Kafka and take a snapshot to verify results.
     Note that kafka_consumer_pipeline = snapshot_pipeline in case of standalone mode.
     """
+    producer = cluster.kafka.producer()
+    for _ in range(10):
+        producer.send(kafka_topic_name, b'Hello World from SDC & DPM!')
+    producer.flush()
 
     cluster_mode = kafka_consumer_pipeline != snapshot_pipeline
     snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True,
@@ -123,11 +127,6 @@ def verify_kafka_origin_results(kafka_topic_name, kafka_consumer_pipeline, snaps
 
     if cluster_mode:
         sdc_executor.start_pipeline(kafka_consumer_pipeline)
-
-    producer = cluster.kafka.producer()
-    for _ in range(10):
-        producer.send(kafka_topic_name, b'Hello World from SDC & DPM!')
-    producer.flush()
 
     logger.debug('Finish the snapshot and verify')
     snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
@@ -187,13 +186,10 @@ def test_kafka_multi_origin_standalone(sdc_builder, sdc_executor, cluster):
     # Build the Kafka consumer pipeline with Standalone mode.
     builder = sdc_builder.get_pipeline_builder()
 
-    # Create and wait on Kafka topic to be available
     topic_name = get_random_string(string.ascii_letters, 10)
-    cluster.kafka.client().add_topic(topic_name)
-
     kafka_consumer = builder.add_stage('Kafka Multitopic Consumer')
     kafka_consumer.set_attributes(data_format='TEXT',
-                                  batch_wait_time_in_ms=20000,
+                                  batch_wait_time_in_ms=2000,
                                   topic_list=[topic_name],
                                   kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
