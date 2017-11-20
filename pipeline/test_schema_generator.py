@@ -144,9 +144,9 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
     assert '10' == record.value['value']['int']['value']
     assert record.value['value']['boolean']['value'] is True
     assert '10.50' == record.value['value']['decimal']['value']
-    assert 1483257600000 == record.value['value']['date']['value']
-    assert 65348000 == record.value['value']['time']['value']
-    assert 1483294148000 == record.value['value']['datetime']['value']
+    assert 1483228800000 == record.value['value']['date']['value']
+    assert 36548000 == record.value['value']['time']['value']
+    assert 1483265348000 == record.value['value']['datetime']['value']
     assert 'a' == record.value['value']['list']['value'][0]['value']
     assert 'b' == record.value['value']['list']['value'][1]['value']
     assert 'value' == record.value['value']['map']['value']['first-key']['value']
