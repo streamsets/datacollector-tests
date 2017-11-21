@@ -30,7 +30,7 @@ import pytest
 import sqlalchemy
 
 from testframework.markers import database
-from testframework.utils import get_random_string
+from testframework.utils import get_random_string, Version
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -164,6 +164,11 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
             jdbc_multitable_consumer >> jdbc_query_dest
                                      >= jdbc_query_event
     """
+
+    if non_incremental and Version(sdc_builder.version) < Version('3.0.0.0'):
+        # non-incremental support was only added as of SDC 3.0.0.0
+        raise pytest.skip('Skipping because SDC builder version {sdc_builder.version} is less than 3.0.0.0')
+
     event_table_name = get_random_string(string.ascii_lowercase, 10)
     update_event_table_statement = f'UPDATE {event_table_name} set {EVENT_COLUMN_NAME} = 1'
 
