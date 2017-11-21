@@ -42,8 +42,10 @@ def test_error_records_stop_pipeline_on_required_field(random_expression_pipelin
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
+    sdc_executor.dump_log_on_error = False
     with pytest.raises(sdc_api.RunError) as exception_info:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    sdc_executor.dump_log_on_error = True
 
     assert(ERROR_CODE_STAGE_REQUIRED_FIELDS in exception_info.value.message)
 
@@ -54,8 +56,11 @@ def test_error_records_stop_pipeline_on_record_precondition(random_expression_pi
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
+    sdc_executor.dump_log_on_error = False
     with pytest.raises(sdc_api.RunError) as exception_info:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    sdc_executor.dump_log_on_error = True
+
     assert(ERROR_CODE_UNSATISFIED_PRECONDITION in exception_info.value.message)
 
 
