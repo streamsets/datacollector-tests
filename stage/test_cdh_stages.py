@@ -179,7 +179,7 @@ def test_kudu_destination_unixtime_micro_datatype(sdc_builder, sdc_executor, clu
         assert list(result) == [1, now]
     finally:
         logger.info('Dropping Kudu table %s ...', kudu_table_name)
-        tdf_contenders_table.drop(engine)
+        test_table.drop(engine)
 
 
 @cluster('cdh')
