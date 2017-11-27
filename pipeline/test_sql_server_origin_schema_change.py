@@ -111,18 +111,30 @@ def wait_for_data_in_ct_table(ct_table_name, no_of_records, database=None, timeo
 
 @database('sqlserver')
 @pytest.mark.parametrize('no_of_threads', [1, 5])
-def test_sql_server_cdc_no_more_data(sdc_builder, sdc_executor, database, no_of_threads):
-    """Test for SQL Server CDC origin stage. We do so by capturing Insert Operation on CDC enabled table(s)
+def test_sql_server_cdc_with_cdc_schema_name(sdc_builder, sdc_executor, database, no_of_threads):
+    """Test for SQL Server CDC origin stage when schema change is enables.
+    We do so by capturing Insert Operation on CDC enabled table(s)
     using SQL Server CDC Origin and having a pipeline which reads that data using SQL Server CDC origin stage.
     The records in the pipeline will be stored in SQL Server table using JDBC Producer.
+    While the pipeline is running the source table schema is changed by dropping or adding the columns,
+    the dest table will be dropping or adding the columns respectively.
     Data is then asserted for what is captured at SQL Server Job and what we read in the pipeline.
     The pipeline looks like:
-        sql_server_cdc_origin >= pipeline_finisher_executor
+        sql_server_cdc_origin >= stream_selector
+        stream_selector >> jdbc_query_executor
         sql_server_cdc_origin >> jdbc_producer
     """
+    schema_name = DEFAULT_SCHEMA_NAME
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
-    sql_server_cdc.set_attributes(max_pool_size=no_of_threads,
+    sql_server_cdc.set_attributes(allow_late_tables=True,
+                                  enable_schema_changes_event=True,
+                                  # when allow_late_tables = true, the pipeline runs one background thread
+                                  # to spool the list of cdc tables
+                                  max_pool_size=no_of_threads+1,
+                                  min_idle_connections=no_of_threads+1,
+                                  new_table_discovery_interval='${1 * SECONDS}',
                                   no_of_threads=no_of_threads)
 
     dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -130,15 +142,40 @@ def test_sql_server_cdc_no_more_data(sdc_builder, sdc_executor, database, no_of_
     dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
     jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
 
-    jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
-                                 table_name_template=dest_table_name,
-                                 default_operation='INSERT',
-                                 field_to_column_mapping=[])
+    jdbc_producer.set_attributes(default_operation='INSERT',
+                                 field_to_column_mapping=[],
+                                 schema_name=DEFAULT_SCHEMA_NAME,
+                                 table_name_template=dest_table_name)
 
-    pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    stream_selector = pipeline_builder.add_stage('Stream Selector')
 
-    sql_server_cdc >= pipeline_finisher_executor
+    # disable cdc table and enable it again which will start applying the changing schema
+    schema_change_event_statement = ("EXEC sys.sp_cdc_disable_table "
+                                     "@source_schema='${record:value(\"/source-table-schema-name\")}'"
+                                     ",@source_name='${record:value(\"/source-table-name\")}'"
+                                     ",@capture_instance='${record:value(\"/capture-instance-name\")}';\n"
+                                     "EXEC sys.sp_cdc_enable_table "
+                                     "@source_schema='${record:value(\"/source-table-schema-name\")}',"
+                                     "@source_name='${record:value(\"/source-table-name\")}',"
+                                     "@supports_net_changes=1,"
+                                     "@role_name=NULL,"
+                                     "@capture_instance='${record:value(\"/capture-instance-name\")}_2';")
+
+    jdbc_query = pipeline_builder.add_stage('JDBC Query', type='executor')
+    jdbc_query.set_attributes(sql_query=schema_change_event_statement)
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    sql_server_cdc >= stream_selector
+    stream_selector >> jdbc_query
+    stream_selector >> trash
     sql_server_cdc >> jdbc_producer
+
+    stream_selector.condition = [dict(outputLane=stream_selector.output_lanes[0],
+                                      predicate="${record:attribute('sdc.event.type')=='schema-change'}"),
+                                 dict(outputLane=stream_selector.output_lanes[1],
+                                      predicate='default')]
+
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
@@ -160,14 +197,49 @@ def test_sql_server_cdc_no_more_data(sdc_builder, sdc_executor, database, no_of_
         ct_table_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}_CT'
         wait_for_data_in_ct_table(ct_table_name, no_of_records, database)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.start_pipeline(pipeline)
 
         assert_table_replicated(database, rows_in_database, DEFAULT_SCHEMA_NAME, dest_table_name)
 
+        # add the new column to the last input table
+        connection = database.engine.connect()
+        logger.info('Adding the column new_column varchar(10) on %s.%s...', schema_name, table_name)
+        connection.execute(f'ALTER TABLE {table_name} ADD new_column VARCHAR(10)')
+        logger.info('Adding the column new_column varchar(10) on %s.%s...', schema_name, dest_table_name)
+        connection.execute(f'ALTER TABLE {dest_table_name} ADD new_column VARCHAR(10)')
+
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, autoincrement=False),
+                                 sqlalchemy.Column('name', sqlalchemy.String(25)),
+                                 sqlalchemy.Column('dt', sqlalchemy.String(25)),
+                                 sqlalchemy.Column('new_column', sqlalchemy.String(10)),
+                                 schema=schema_name)
+
+        new_sample_data = [{'id': counter,
+                            'name': get_random_string(string.ascii_lowercase, 20),
+                            'dt': '2017-05-05',
+                            'new_column': get_random_string(string.ascii_lowercase, 10)}
+                           # start with the last counter of rows_in_data to the number of records
+                           for counter in range(no_of_threads * no_of_records, (no_of_threads + 1) * no_of_records)]
+        logger.info('Adding %s rows into %s.%s...', len(new_sample_data), schema_name, table_name)
+        connection.execute(table.insert(), new_sample_data)
+
+        # adjust sample data by adding new_columns: None and add new sample data to the list
+        rows_in_database.extend(new_sample_data)
+        # warning the schema change is not captured by JDBC Producer
+        for data in rows_in_database:
+            data.update(new_column=None)
+
+        ct2_table_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}_2_CT'
+
+        # wait for the compleltion of the next batch
+        wait_for_data_in_ct_table(ct2_table_name, no_of_records, database)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert_table_replicated(database, rows_in_database, DEFAULT_SCHEMA_NAME, dest_table_name)
     finally:
+        logger.info('Dropping table %s in %s database...', table, database.type)
+        tables.append(dest_table)
         for table in tables:
             logger.info('Dropping table %s in %s database...', table, database.type)
             table.drop(database.engine)
-
-        logger.info('Dropping table %s in %s database...', dest_table, database.type)
-        dest_table.drop(database.engine)
