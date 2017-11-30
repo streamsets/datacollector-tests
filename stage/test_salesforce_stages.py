@@ -14,6 +14,8 @@
 import copy
 import logging
 
+import pytest
+
 from testframework.markers import salesforce
 
 logger = logging.getLogger(__name__)
@@ -21,8 +23,13 @@ logger = logging.getLogger(__name__)
 DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName': 'User1', 'Email': 'xtest1@example.com'},
                   {'FirstName': 'Test2', 'LastName': 'User2', 'Email': 'xtest2@example.com'},
                   {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtest3@example.com'}]
+# For testing of SDC-7548
+# Since email is used in WHERE clause in lookup processory query,
+# create data containing 'from' word in emails to verify the bug is fixed.
+DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': 'User1', 'Email': 'FROMxtest1@example.com'},
+                           {'FirstName': 'Test2', 'LastName': 'User2', 'Email': 'xtefromst2@example.com'},
+                           {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtes3@example.comFROM'}]
 CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
-LOOKUP_RAW_DATA = ['Email'] + [row['Email'] for row in DATA_TO_INSERT]
 
 
 @salesforce
@@ -111,12 +118,12 @@ def get_dev_raw_data_source(pipeline_builder, raw_data):
     return dev_raw_data_source
 
 
-def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesforce):
+def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesforce, data_to_insert=DATA_TO_INSERT):
     client = salesforce.client
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        client.bulk.Contact.insert(DATA_TO_INSERT)
+        client.bulk.Contact.insert(data_to_insert)
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -139,7 +146,12 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
 
 
 @salesforce
-def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce):
+@pytest.mark.parametrize(('data'), [
+    DATA_TO_INSERT,
+    # Testing of SDC-7548
+    DATA_WITH_FROM_IN_EMAIL
+])
+def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data):
     """Simple Salesforce Lookup processor test.
     Pipeline will enrich records with the 'LastName' of contacts by adding a field as 'surName'.
 
@@ -147,7 +159,8 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce):
         dev_raw_data_source >> salesforce_lookup >> trash
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, LOOKUP_RAW_DATA)
+    lookup_data = ['Email'] + [row['Email'] for row in data]
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
 
     salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
     # Changing " with ' and vice versa in following string makes the query execution fail.
@@ -164,7 +177,8 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce):
     pipeline = pipeline_builder.build(title='Salesforce Lookup').configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    LOOKUP_EXPECTED_DATA = copy.deepcopy(DATA_TO_INSERT)
+    LOOKUP_EXPECTED_DATA = copy.deepcopy(data)
     for record in LOOKUP_EXPECTED_DATA:
         record['surName'] = record.pop('LastName')
-    verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, LOOKUP_EXPECTED_DATA, salesforce)
+    verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, LOOKUP_EXPECTED_DATA,
+                       salesforce, data_to_insert=data)
