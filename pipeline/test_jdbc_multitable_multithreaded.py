@@ -188,7 +188,7 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
     if partitioning_mode == 'BEST_EFFORT' and Version(sdc_builder.version) < Version('3.0.0.0'):
         # pipeline upgraded across 3.0 boundary with partitioning; default resulting queriesPerSecond will be
         # unacceptably slow for partitioning, so set query interval to 0 instead
-        jdbc_multitable_consumer.configuration['commonSourceConfigBean.queryInterval'] = '0'
+        jdbc_multitable_consumer.configuration['commonSourceConfigBean.queryInterval'] = 0
 
     # The target used to replicate is JDBCQueryExecutor.
     # After SDC-5757 is resolved, we can use JDBCProducer.
