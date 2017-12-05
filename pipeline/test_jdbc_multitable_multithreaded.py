@@ -173,13 +173,17 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
     update_event_table_statement = f'UPDATE {event_table_name} set {EVENT_COLUMN_NAME} = 1'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
+
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+
+    table_configuration = [{'tablePattern': f'{SRC_TABLE_PREFIX}%',
+                            'partitioningMode': partitioning_mode,
+                            'partitionSize': PARTITION_SIZE}]
+    if Version(sdc_builder.version) >= Version('3.0.0.0'):
+        table_configuration[0]['enableNonIncremental'] = non_incremental
     jdbc_multitable_consumer.set_attributes(no_of_threads=no_of_threads, batch_strategy=batch_strategy,
                                             max_pool_size=no_of_threads, min_idle_connections=no_of_threads,
-                                            table_configuration=[{"tablePattern": f'{SRC_TABLE_PREFIX}%',
-                                                                  'partitioningMode': partitioning_mode,
-                                                                  'partitionSize': PARTITION_SIZE,
-                                                                  'enableNonIncremental': non_incremental}])
+                                            table_configuration=table_configuration)
 
     if partitioning_mode == 'BEST_EFFORT':
         # for partitioning, increase the max allowed queries per second (will be changed as SDC default via SDC-7867)
