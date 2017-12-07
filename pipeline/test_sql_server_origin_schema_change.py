@@ -24,7 +24,7 @@ from time import sleep, time
 import pytest
 import sqlalchemy
 
-from testframework.markers import database
+from testframework.markers import database, sdc_min_version
 from testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
@@ -111,6 +111,7 @@ def wait_for_data_in_ct_table(ct_table_name, no_of_records, database=None, timeo
 
 @database('sqlserver')
 @pytest.mark.parametrize('no_of_threads', [1, 5])
+@sdc_min_version('3.0.0.0')
 def test_sql_server_cdc_with_cdc_schema_name(sdc_builder, sdc_executor, database, no_of_threads):
     """Test for SQL Server CDC origin stage when schema change is enables.
     We do so by capturing Insert Operation on CDC enabled table(s)

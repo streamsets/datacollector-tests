@@ -24,7 +24,7 @@ from time import sleep, time
 import pytest
 import sqlalchemy
 
-from testframework.markers import database
+from testframework.markers import database, sdc_min_version
 from testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
@@ -111,6 +111,7 @@ def wait_for_data_in_ct_table(ct_table_name, no_of_records, database=None, timeo
 
 @database('sqlserver')
 @pytest.mark.parametrize('no_of_threads', [1, 5])
+@sdc_min_version('2.7.0.0')
 def test_sql_server_cdc_no_more_data(sdc_builder, sdc_executor, database, no_of_threads):
     """Test for SQL Server CDC origin stage. We do so by capturing Insert Operation on CDC enabled table(s)
     using SQL Server CDC Origin and having a pipeline which reads that data using SQL Server CDC origin stage.
@@ -171,3 +172,76 @@ def test_sql_server_cdc_no_more_data(sdc_builder, sdc_executor, database, no_of_
 
         logger.info('Dropping table %s in %s database...', dest_table, database.type)
         dest_table.drop(database.engine)
+
+
+@database('sqlserver')
+@sdc_min_version('3.0.1.0')
+def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_executor, database):
+    """Test for SQL Server CDC origin stage when capture instance is configured.
+    We do so by capturing Insert Operation on CDC enabled table
+    using SQL Server CDC Origin and having a pipeline which reads that data using SQL Server CDC origin stage.
+    We setup no_of_tables of CDC tables in SQL Server and configured one specific capture instance name
+    so that the records from one table will be stored in SQL Server table using JDBC Producer.
+    Data is then asserted for what is captured at SQL Server Job and what we read in the pipeline.
+    The pipeline looks like:
+        sql_server_cdc_origin >= pipeline_finisher_executor
+        sql_server_cdc_origin >> jdbc_producer
+    """
+
+    try:
+        schema_name = DEFAULT_SCHEMA_NAME
+        tables = []
+        no_of_records = 5
+        no_of_tables = 3
+        target_table_index = 2
+        rows_in_database = setup_sample_data(no_of_tables * no_of_records)
+
+        # setup the tables first
+        for index in range(0, no_of_tables):
+            table_name = get_random_string(string.ascii_lowercase, 20)
+            # split the rows_in_database into no_of_records for each table
+            # e.g. for no_of_records=5, the first table inserts rows_in_database[0:5]
+            # and the secord table inserts rows_in_database[5:10]
+            table = setup_table(database, schema_name, table_name,
+                                rows_in_database[(index*no_of_records): ((index+1)*no_of_records)])
+            tables.append(table)
+
+            if (index == target_table_index):
+                capture_instance_name = f'{schema_name}_{table_name}'
+
+        target_rows = rows_in_database[target_table_index * no_of_records: (target_table_index + 1) * no_of_records]
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(table_configuration=[{'capture_instance': capture_instance_name}])
+
+        dest_table_name = get_random_string(string.ascii_uppercase, 9)
+
+        dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
+        tables.append(dest_table)
+        jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+
+        jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
+                                     table_name_template=dest_table_name,
+                                     default_operation='INSERT',
+                                     field_to_column_mapping=[])
+
+        pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+
+        sql_server_cdc >= pipeline_finisher_executor
+        sql_server_cdc >> jdbc_producer
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # wait for data captured by cdc jobs in sql server before starting the pipeline
+        ct_table_name = f'{capture_instance_name}_CT'
+        wait_for_data_in_ct_table(ct_table_name, no_of_records, database)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert_table_replicated(database, target_rows, DEFAULT_SCHEMA_NAME, dest_table_name)
+
+    finally:
+        for table in tables:
+            logger.info('Dropping table %s in %s database...', table, database.type)
+            table.drop(database.engine)
