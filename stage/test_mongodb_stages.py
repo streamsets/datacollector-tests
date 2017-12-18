@@ -24,9 +24,10 @@ another.
 import copy
 import logging
 import time
+from bson import binary
 from string import ascii_letters
 
-from testframework.markers import mongodb
+from testframework.markers import mongodb, sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,61 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
                               for record in snapshot[mongodb_origin].output]
 
         assert rows_from_snapshot == ORIG_DOCS
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_origin.database)
+        mongodb.engine.drop_database(mongodb_origin.database)
+
+
+@mongodb
+@sdc_min_version('3.0.1.0')
+def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongodb):
+    """
+    Create 3 simple documents consists with BSON Binary data type in MongoDB and confirm that MongoDB origin reads them.
+
+    The pipeline looks like:
+        mongodb_origin >> trash
+    """
+
+    ORIG_BINARY_DOCS = [
+        {'data': binary.Binary(b'Binary Data Flute')},
+        {'data': binary.Binary(b'Binary Data Oboe')},
+        {'data': binary.Binary(b'Binary Data Violin')}
+    ]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_origin = pipeline_builder.add_stage('MongoDB', type='origin')
+    mongodb_origin.set_attributes(is_capped=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10))
+
+    trash = pipeline_builder.add_stage('Trash')
+    mongodb_origin >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(ORIG_BINARY_DOCS)
+
+        # Create documents in MongoDB using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_origin.collection)
+        mongodb_database = mongodb.engine[mongodb_origin.database]
+        mongodb_collection = mongodb_database[mongodb_origin.collection]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents using snaphot.
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        rows_from_snapshot = [{'name': record.value2['name']} for record in snapshot[mongodb_origin].output]
+
+        assert rows_from_snapshot == ORIG_BINARY_DOCS
 
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
