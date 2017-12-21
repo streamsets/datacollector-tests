@@ -144,7 +144,8 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
         # Start pipeline and verify correct rows are received using snaphot.
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
         rows_from_snapshot = [(record.value['value'][0]['value'], int(record.value['value'][1]['value']))
                               for record in snapshot[google_bigquery].output]
 
