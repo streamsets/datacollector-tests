@@ -30,6 +30,10 @@ from azure import servicebus
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+# To workaround the stage label tweak introduced in 3.0.1.0 (SDC-8077), we use the
+# Azure IoT/Event Hub Consumer stage's full name in tests.
+AZURE_IOT_EVENT_HUB_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_eventhubs_EventHubConsumerDSource'
+
 
 @azure('datalake')
 @sdc_min_version('2.2.0.0')
@@ -100,12 +104,11 @@ def test_datalake_destination(sdc_builder, sdc_executor, azure):
 @azure('eventhub')
 @sdc_min_version('2.7.1.0')
 def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
-    """Test for Azure Event Hub consumer origin stage. We do so by publishing data to a test event hub Azure client and
-    having a pipeline which reads that data using Azure Event Hub consumer origin stage. Data is then asserted for what
-    is published at Azure client and what we read in the pipeline snapshot. The pipeline looks like:
+    """Test for Azure IoT/Event Hub consumer origin stage. We do so by publishing data to a test event hub Azure client
+    and having a pipeline which reads that data using Azure IoT/Event Hub consumer origin stage. Data is then asserted
+    for what is published at Azure client and what we read in the pipeline snapshot. The pipeline looks like:
 
-    Azure Event Hub Consumer pipeline:
-        azure_event_hub_consumer >> trash
+    azure_iot_event_hub_consumer >> trash
     """
     # Azure container names are lowercased. Ref. http://tinyurl.com/ya9y9mm6
     container_name = get_random_string(string.ascii_lowercase, 10)
@@ -113,12 +116,12 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
 
     builder = sdc_builder.get_pipeline_builder()
 
-    azure_event_hub_consumer = builder.add_stage('Azure Event Hub Consumer')
-    azure_event_hub_consumer.set_attributes(container_name=container_name, data_format='JSON',
-                                            event_hub_name=event_hub_name)
+    azure_iot_event_hub_consumer = builder.add_stage(name=AZURE_IOT_EVENT_HUB_STAGE_NAME)
+    azure_iot_event_hub_consumer.set_attributes(container_name=container_name, data_format='JSON',
+                                                event_hub_name=event_hub_name)
     trash = builder.add_stage('Trash')
 
-    azure_event_hub_consumer >> trash
+    azure_iot_event_hub_consumer >> trash
 
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
@@ -138,7 +141,7 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
         snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
 
-        result_record = snapshot[azure_event_hub_consumer.instance_name].output[0].value['value']
+        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].value['value']
         results = [{key: value['value'] for key, value in record['value'].items()} for record in result_record]
         assert results == send_records
     finally:
@@ -160,7 +163,7 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
 
         dev_raw_data_source >> record_deduplicator >> azure_event_hub_producer
                                                    >> trash
-        azure_event_hub_consumer >> trash
+        azure_iot_event_hub_consumer >> trash
     """
     # Note: Test will fail till SDC-7627 is addressed/fixed
     # Note: Cannot use Azure SDK https://github.com/Azure/azure-event-hubs-python as it requires native build,
@@ -195,12 +198,12 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
     # build Event Hub consumer
     builder = sdc_builder.get_pipeline_builder()
 
-    azure_event_hub_consumer = builder.add_stage('Azure Event Hub Consumer')
-    azure_event_hub_consumer.set_attributes(container_name=container_name, data_format='JSON',
-                                            event_hub_name=event_hub_name)
+    azure_iot_event_hub_consumer = builder.add_stage(name=AZURE_IOT_EVENT_HUB_STAGE_NAME)
+    azure_iot_event_hub_consumer.set_attributes(container_name=container_name, data_format='JSON',
+                                                event_hub_name=event_hub_name)
     consumer_trash = builder.add_stage('Trash')
 
-    azure_event_hub_consumer >> consumer_trash
+    azure_iot_event_hub_consumer >> consumer_trash
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
@@ -220,7 +223,7 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
         sdc_executor.stop_pipeline(producer_dest_pipeline)
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
 
-        result_record = snapshot[azure_event_hub_consumer.instance_name].output[0].value['value']
+        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].value['value']
 
         results = [{key: value['value'] for key, value in record['value'].items()} for record in result_record]
         assert results == raw_data
