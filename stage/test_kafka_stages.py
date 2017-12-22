@@ -20,8 +20,9 @@
 import logging
 import string
 
-from testframework.markers import cluster
-from testframework.markers import sdc_min_version
+import avro
+
+from testframework.markers import cluster, confluent, sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -261,3 +262,99 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
                                     sdc_executor)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+
+#
+# Schema Registry related tests
+#
+
+@cluster('cdh', 'kafka')
+@confluent
+@sdc_min_version('3.1.0.0')
+def test_register_schema_from_pipeline_config(sdc_builder, sdc_executor, cluster, confluent):
+    """Ensure that schema specified inside the pipeline configuration will be properly registered."""
+    kafka_topic_name = get_random_string(string.ascii_letters, 10)
+    logger.debug('kafka_topic_name %s', kafka_topic_name)
+
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'JSON'
+    dev_raw_data_source.raw_data = '{"a": 1, "b": "Text"}'
+    dev_raw_data_source.stop_after_first_batch = True
+
+    kafka_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                          library=cluster.kafka.standalone_stage_lib)
+    kafka_destination.topic = kafka_topic_name
+    kafka_destination.data_format = 'AVRO'
+    kafka_destination.avro_schema_location = 'INLINE'
+    kafka_destination.avro_schema = '{"type":"record","name":"Brno","doc":"","fields":[{"name":"a","type":"int"},{"name":"b","type":"string"}]}'
+    kafka_destination.register_schema = True
+    kafka_destination.schema_subject = kafka_topic_name
+
+    dev_raw_data_source >> kafka_destination
+    kafka_destination_pipeline = builder.build(title='Schema Registry: Register from Pipeline Config').configure_for_environment(cluster, confluent)
+
+    # Run the single batch pipeline
+    sdc_executor.add_pipeline(kafka_destination_pipeline)
+    sdc_executor.start_pipeline(kafka_destination_pipeline).wait_for_finished()
+
+    # Validate that schema was properly registered
+    validate_schema_was_registered(kafka_topic_name, confluent)
+
+
+@cluster('cdh', 'kafka')
+@confluent
+@sdc_min_version('3.1.0.0')
+def test_register_schema_from_header(sdc_builder, sdc_executor, cluster, confluent):
+    """Ensure that schema specified inside record header will be properly registered."""
+    kafka_topic_name = get_random_string(string.ascii_letters, 10)
+    logger.debug('kafka_topic_name %s', kafka_topic_name)
+
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'JSON'
+    dev_raw_data_source.raw_data = '{"a": 1, "b": "Text"}'
+    dev_raw_data_source.stop_after_first_batch = True
+
+    # Generate schema for that record
+    schema_generator = builder.add_stage('Schema Generator')
+    schema_generator.schema_name = 'Brno'
+
+    kafka_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                          library=cluster.kafka.standalone_stage_lib)
+    kafka_destination.topic = kafka_topic_name
+    kafka_destination.data_format = 'AVRO'
+    kafka_destination.avro_schema_location = 'HEADER'
+    kafka_destination.register_schema = True
+    kafka_destination.schema_subject = kafka_topic_name
+
+    dev_raw_data_source >> schema_generator >> kafka_destination
+    kafka_destination_pipeline = builder.build(title='Schema Registry: Register from Record Header').configure_for_environment(cluster, confluent)
+
+    # Run the single batch pipeline
+    sdc_executor.add_pipeline(kafka_destination_pipeline)
+    sdc_executor.start_pipeline(kafka_destination_pipeline).wait_for_finished()
+
+    # Validate that schema was properly registered
+    validate_schema_was_registered(kafka_topic_name, confluent)
+
+
+def validate_schema_was_registered(name, confluent):
+    # Validate that schema has been registered
+    registered = confluent.schema_registry.get_latest_schema(name)
+    assert registered is not None
+    assert 1 == registered[2]
+
+    schema = registered[1]
+    assert schema is not None
+    assert schema.avro_name == avro.schema.Name('Brno')
+    assert len(schema.fields) == 2
+    assert schema.fields[0].name == 'a'
+    assert schema.fields[0].type.name == 'int'
+    assert schema.fields[1].name == 'b'
+    assert schema.fields[1].type.name == 'string'
