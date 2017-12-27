@@ -104,7 +104,7 @@ def get_kafka_consumer_stage(pipeline_builder, cluster, cluster_mode):
     kafka_consumer.set_attributes(data_format='TEXT',
                                   batch_wait_time_in_millisecs=20000,
                                   kafka_topic_name=topic_name,
-                                  consumer_configs=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
+                                  kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
     if cluster_mode:
         kafka_consumer.set_attributes(max_batch_size=10,
