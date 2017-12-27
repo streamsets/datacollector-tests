@@ -56,8 +56,7 @@ def consumer_single(sdc_builder, topic_name, cluster, confluent):
     kafka_consumer.set_attributes(kafka_topic_name = topic_name,
                                   data_format = 'AVRO',
                                   avro_schema_location = 'REGISTRY',
-                                  lookup_schema_by = 'SUBJECT',
-                                  schema_subject = topic_name,
+                                  lookup_schema_by = 'AUTO',
                                   key_deserializer = 'CONFLUENT',
                                   value_deserializer = 'CONFLUENT',
                                   kafka_configuration = [{'key': 'auto.offset.reset', 'value': 'earliest'}])
@@ -78,8 +77,7 @@ def consumer_multi(sdc_builder, topic_name, cluster, confluent):
     kafka_consumer.set_attributes(topic_list = [topic_name],
                                   data_format = 'AVRO',
                                   avro_schema_location = 'REGISTRY',
-                                  lookup_schema_by = 'SUBJECT',
-                                  schema_subject = topic_name,
+                                  lookup_schema_by = 'AUTO',
                                   key_deserializer = 'CONFLUENT',
                                   value_deserializer = 'CONFLUENT',
                                   kafka_configuration = [{'key': 'auto.offset.reset', 'value': 'earliest'}])
