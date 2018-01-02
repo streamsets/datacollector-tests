@@ -19,7 +19,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from testframework import sdc
-from testframework.markers import cluster, upgrade
+from testframework.markers import cluster, parcelpackaging, upgrade
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,8 @@ logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
+
+pytestmark = [parcelpackaging]
 
 
 @cluster('cdh', 'hdp')

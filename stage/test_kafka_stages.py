@@ -18,7 +18,7 @@ import string
 
 import avro
 
-from testframework.markers import cluster, confluent, sdc_min_version
+from testframework.markers import cluster, confluent, parcelpackaging, sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,8 @@ logger.setLevel(logging.DEBUG)
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
+
+pytestmark = [parcelpackaging]
 
 
 @cluster('cdh', 'kafka')

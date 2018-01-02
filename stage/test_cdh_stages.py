@@ -26,7 +26,7 @@ import pytest
 import sqlalchemy
 
 import test_apache
-from testframework.markers import cluster, sdc_min_version
+from testframework.markers import cluster, parcelpackaging, sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,8 @@ SNAPSHOT_TIMEOUT_SEC = 120
 
 DEFAULT_IMPALA_DB = 'default'
 DEFAULT_KUDU_PORT = 7051
+
+pytestmark = [parcelpackaging]
 
 
 @cluster('cdh')
