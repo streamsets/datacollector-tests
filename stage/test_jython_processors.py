@@ -43,9 +43,10 @@ def sdc_builder(args):
                                        tear_down_on_exit=not args.keep_sdc_instances,
                                        always_pull=args.sdc_always_pull,
                                        enable_kerberos=args.kerberos)
-    # Load Jython stage lib required for tests of this module.
-    data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
-    data_collector.start()
+    if args.sdc_server_url is None:
+        # Load Jython stage lib required for tests of this module.
+        data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
+        data_collector.start()
 
     yield data_collector
 
