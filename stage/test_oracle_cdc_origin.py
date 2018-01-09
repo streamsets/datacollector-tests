@@ -21,7 +21,7 @@ import pytest
 import sqlalchemy
 
 from testframework.markers import database
-from testframework.utils import get_random_string
+from testframework.utils import get_random_string, Version
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def setup_table(database, table_name):
     return table
 
 
-def get_oracle_cdc_client_origin(connection, pipeline_builder, buffer_locally, src_table_name):
+def get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder, buffer_locally, src_table_name):
     oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
     start = get_current_oracle_time(connection=connection)
     start_date = start.strftime('%d-%m-%Y %H:%M:%S')
@@ -57,6 +57,13 @@ def get_oracle_cdc_client_origin(connection, pipeline_builder, buffer_locally, s
     wait_until_time(time=start)
 
     logger.info('Start Date is %s', start_date)
+
+    if Version(sdc_builder.version) >= Version('3.1.0.0'):
+        tables = [{'schema': database.database, 'tables': [src_table_name], 'excludePattern': ''}]
+    else:
+        oracle_cdc_client.set_attributes(schema=database.database)
+        tables = [src_table_name]
+
     return oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
                                             db_time_zone='UTC',
                                             dictionary_source='DICT_FROM_ONLINE_CATALOG',
@@ -65,7 +72,7 @@ def get_oracle_cdc_client_origin(connection, pipeline_builder, buffer_locally, s
                                             max_batch_size_in_records=BATCH_SIZE,
                                             maximum_transaction_length='${4 * MINUTES}',
                                             start_date=start_date,
-                                            tables=[src_table_name])
+                                            tables=tables)
 
 
 def get_current_oracle_time(connection):
@@ -73,31 +80,49 @@ def get_current_oracle_time(connection):
 
 
 def wait_until_time(time):
-    while datetime.utcnow() < time:
-        sleep(1)
+    current_time = datetime.utcnow()
+    if current_time < time:
+        sleep((time - current_time).total_seconds() + 1)
 
 
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
-def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_locally):
+@pytest.mark.parametrize('use_pattern', [True, False])
+def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
     """Basic test that reads inserts/updates/deletes to an Oracle table,
     and validates that they are read in the same order.
     Runs oracle_cdc_client >> trash
     """
     db_engine = database.engine
+    pipeline = None
+    table = None
+
     try:
         src_table_name = get_random_string(string.ascii_uppercase, 9)
+
+        # If use_pattern is True, run the test if and only if sdc_builder >= 3.1.0.0
+        if use_pattern:
+            if Version(sdc_builder.version) >= Version('3.1.0.0'):
+                src_table_pattern = get_table_pattern(src_table_name)
+            else:
+                pytest.skip('Skipping test as SDC Builder version < 3.1.0.0')
+        else:
+            src_table_pattern = src_table_name
 
         connection = database.engine.connect()
         table = setup_table(database=database,
                             table_name=src_table_name)
 
+        logger.info('Using table pattern %s', src_table_pattern)
+
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         oracle_cdc_client = get_oracle_cdc_client_origin(connection=connection,
+                                                         database=database,
+                                                         sdc_builder=sdc_builder,
                                                          pipeline_builder=pipeline_builder,
                                                          buffer_locally=buffer_locally,
-                                                         src_table_name=src_table_name)
+                                                         src_table_name=src_table_pattern)
 
         inserts = insert(connection=connection,
                          table=table)
@@ -154,8 +179,9 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
         assert op_index == change_count
 
     finally:
-        sdc_executor.stop_pipeline(pipeline=pipeline,
-                                   force=True)
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
         if table is not None:
             table.drop(db_engine)
             logger.info('Table: %s dropped.', src_table_name)
@@ -163,20 +189,36 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
 
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
-def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer_locally):
+@pytest.mark.parametrize('use_pattern', [True, False])
+def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
     db_engine = database.engine
+    pipeline = None
+    src_table = None
+    dest_table = None
+
     try:
         src_table_name = get_random_string(string.ascii_uppercase, 9)
+        # If use_pattern is True, run the test if and only if sdc_builder >= 3.1.0.0
+        if use_pattern:
+            if Version(sdc_builder.version) >= Version('3.1.0.0'):
+                src_table_pattern = get_table_pattern(src_table_name)
+            else:
+                pytest.skip('Skipping test as SDC Builder version < 3.1.0.0')
+        else:
+            src_table_pattern = src_table_name
 
         connection = database.engine.connect()
         src_table = setup_table(database, src_table_name)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
+        logger.info('Using table pattern %s', src_table_pattern)
         oracle_cdc_client = get_oracle_cdc_client_origin(connection=connection,
+                                                         database=database,
+                                                         sdc_builder=sdc_builder,
                                                          pipeline_builder=pipeline_builder,
                                                          buffer_locally=buffer_locally,
-                                                         src_table_name=src_table_name)
+                                                         src_table_name=src_table_pattern)
 
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
 
@@ -221,12 +263,17 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
         assert len(select_from_table(db_engine=db_engine, dest_table=dest_table)) == 0
 
     finally:
-        sdc_executor.stop_pipeline(pipeline=pipeline,
-                                   force=True)
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
         if src_table is not None:
             src_table.drop(db_engine)
         if dest_table is not None:
             dest_table.drop(db_engine)
+
+
+def get_table_pattern(src_table_name):
+    return f'{src_table_name[:-2]}%'
 
 
 def insert(connection, table, count=3):
