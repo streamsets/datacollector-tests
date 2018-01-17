@@ -17,8 +17,10 @@ import logging
 import random
 import string
 
+import pytest
 import sqlalchemy
 
+from testframework.environments.databases import Oracle
 from testframework.markers import database
 from testframework.utils import get_random_string
 
@@ -253,6 +255,9 @@ def test_jdbc_tee_processor(sdc_builder, sdc_executor, database):
     The pipeline looks like:
         dev_raw_data_source >> jdbc_tee >> trash
     """
+    if type(database) == Oracle:
+        pytest.skip('JDBC Tee Processor does not support Oracle')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = create_table_in_database(table_name, database)
 
