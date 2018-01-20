@@ -93,6 +93,6 @@ def test_classpath(sdc_executor, stagelib):
 
 
 @cluster('mapr')
-def test_mapr_classpath(sdc_executor):
-    for stagelib in sdc_executor.sdc_stage_libs:
+def test_mapr_classpath(sdc_executor, cluster):
+    for stagelib in cluster.sdc_stage_libs:
         test_classpath(sdc_executor, stagelib)
