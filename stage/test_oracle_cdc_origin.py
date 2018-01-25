@@ -59,7 +59,7 @@ def get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bui
     logger.info('Start Date is %s', start_date)
 
     if Version(sdc_builder.version) >= Version('3.1.0.0'):
-        tables = [{'schema': database.database, 'tables': [src_table_name], 'excludePattern': ''}]
+        tables = [{'schema': database.database, 'table': src_table_name, 'excludePattern': ''}]
     else:
         oracle_cdc_client.set_attributes(schema=database.database)
         tables = [src_table_name]
