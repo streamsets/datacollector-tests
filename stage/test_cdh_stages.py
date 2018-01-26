@@ -25,7 +25,7 @@ from datetime import datetime
 import pytest
 import sqlalchemy
 
-import test_apache
+from . import test_apache
 from testframework.markers import cluster, parcelpackaging, sdc_min_version
 from testframework.utils import get_random_string
 

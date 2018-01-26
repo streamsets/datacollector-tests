@@ -19,7 +19,7 @@ another.
 
 import logging
 
-import test_apache
+from . import test_apache
 from testframework.markers import solr
 
 logger = logging.getLogger(__name__)

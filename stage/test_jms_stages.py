@@ -17,7 +17,9 @@ import logging
 from string import ascii_letters
 
 import pytest
-from stomp.listener import TestListener
+# Import TestListener with a leading underscore to prevent pytest from
+# thinking that it's a test class.
+from stomp.listener import TestListener as _TestListener
 
 from testframework.markers import jms
 from testframework.utils import get_random_string
@@ -162,7 +164,7 @@ def test_jms_producer_destination(sdc_builder, sdc_executor, jms, input_type, pr
     connection = jms.client_connection
     try:
         logger.info('Subscribing to queue ...')
-        listener = TestListener()
+        listener = _TestListener()
         connection.set_listener('', listener)
         connection.start()
         connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
