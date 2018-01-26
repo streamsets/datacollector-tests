@@ -181,9 +181,9 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'data': record.value2['data']} for record in snapshot[mongodb_origin].output]
+        rows_from_snapshot = [{'data': str(record.value2['data'])} for record in snapshot[mongodb_origin].output]
 
-        assert rows_from_snapshot == ORIG_BINARY_DOCS
+        assert rows_from_snapshot == [{'data': str(record.get('data'))} for record in ORIG_BINARY_DOCS]
 
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
