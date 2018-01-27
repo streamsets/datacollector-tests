@@ -70,7 +70,7 @@ def get_all_stage_libs():
     raw_stagelibs = urllib.request.urlopen("http://nightly.streamsets.com.s3-us-west-2.amazonaws.com/datacollector/latest/tarball/stage-lib-manifest.properties")
     p = Properties()
     p.load(raw_stagelibs)
-    return [lib.replace('stage-lib.', '') for lib in p if 'stage-lib.' in lib and lib not in EXCLUDE_LIBS]
+    return [lib for lib in [lib.replace('stage-lib.', '') for lib in p if 'stage-lib.' in lib] if lib not in EXCLUDE_LIBS]
 
 
 def test_classpath(sdc_executor, stagelib):
