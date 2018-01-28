@@ -28,18 +28,19 @@ logger = logging.getLogger(__name__)
 
 PRIMARY_KEY = 'ID'
 OTHER_COLUMN = 'NAME'
-BATCH_SIZE = 9
+BATCH_SIZE = 12
 Operations = namedtuple('Operations', ['rows', 'cdc_op_types', 'sdc_op_types', 'change_count'])
+
 
 # pylint: disable=pointless-statement, too-many-locals
 
 
-def setup_table(database, table_name):
+def setup_table(database, table_name, create_primary_key=True):
     db_engine = database.engine
     logger.info('Creating source table %s in %s database ...', table_name, database.type)
 
     table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
-                             sqlalchemy.Column(PRIMARY_KEY, sqlalchemy.Integer, primary_key=True),
+                             sqlalchemy.Column(PRIMARY_KEY, sqlalchemy.Integer, primary_key=create_primary_key),
                              sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
     table.create(db_engine)
     return table
@@ -178,6 +179,113 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
 
         assert op_index == change_count
 
+    finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
+        if table is not None:
+            table.drop(db_engine)
+            logger.info('Table: %s dropped.', src_table_name)
+
+
+@database('oracle')
+@pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('use_pattern', [True, False])
+def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
+    """Basic test that tests for SDC-8340. This test ensures that Strings with value 'NULL'/'null' is treated correctly,
+    and null is not returned.
+    Runs oracle_cdc_client >> trash
+    """
+    db_engine = database.engine
+    pipeline = None
+    table = None
+
+    try:
+        src_table_name = get_random_string(string.ascii_uppercase, 9)
+
+        # If use_pattern is True, run the test if and only if sdc_builder >= 3.1.0.0
+        if use_pattern:
+            if Version(sdc_builder.version) >= Version('3.1.0.0'):
+                src_table_pattern = get_table_pattern(src_table_name)
+            else:
+                pytest.skip('Skipping test as SDC Builder version < 3.1.0.0')
+        else:
+            src_table_pattern = src_table_name
+
+        connection = database.engine.connect()
+        table = setup_table(database=database,
+                            table_name=src_table_name,
+                            create_primary_key=False)
+
+        logger.info('Using table pattern %s', src_table_pattern)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = get_oracle_cdc_client_origin(connection=connection,
+                                                         database=database,
+                                                         sdc_builder=sdc_builder,
+                                                         pipeline_builder=pipeline_builder,
+                                                         buffer_locally=buffer_locally,
+                                                         src_table_name=src_table_pattern)
+        rows = [{'ID': 100, 'NAME': 'NULL'},
+                {'ID': None, 'NAME': 'Whose Name?'},
+                {'ID': 123, 'NAME': None},
+                {'ID': None, 'NAME': None}]
+
+        connection.execute(table.insert(), rows)
+
+        txn = connection.begin()
+        try:
+            def update_table_where_id(tbl_row):
+                connection.execute(table.update().where(table.c.ID == tbl_row['ID']).values(NAME=tbl_row['NAME']))
+
+            # using ID is None causes an invalid SQL statement to be created since "is" is evaluated right away.
+            row = {'ID': None, 'NAME': 'New Name'}
+            update_table_where_id(row)
+            # The above statement will update 2 rows, so the change generates 2 records.
+            rows += [row for _ in range(0, 2)]
+
+            row = {'ID': 100, 'NAME': None}
+            update_table_where_id(row)
+            rows.append(row)
+
+            row = {'ID': 123, 'NAME': 'NULL'}
+            update_table_where_id(row)
+            rows.append(row)
+
+            row = {'ID': None, 'NAME': 'New Name'}
+            connection.execute(table.update().where(table.c.NAME == row['NAME']).values(ID=row['ID']))
+            rows += [row for _ in range(0, 2)]
+
+            txn.commit()
+        except:
+            txn.rollback()
+            raise
+
+        trash = pipeline_builder.add_stage('Trash')
+
+        # Why do we need to wait?
+        # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
+        # If the DB is ahead, the batch end time the origin may not be after all the changes were written to the DB.
+        # So we wait until the time here is past the time at which all data was written out to the DB (current time)
+        wait_until_time(get_current_oracle_time(connection=connection))
+
+        oracle_cdc_client >> trash
+        pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+
+        # assert all the data captured have the same raw_data
+        output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        for i, record in enumerate(output):
+            # In update records, values with NULLs in the row are not returned
+            if 'ID' in record.value2:
+                id_val = record.value2['ID']
+                assert rows[i]['ID'] == None if id_val is None else int(id_val)
+            assert rows[i]['NAME'] == record.value2['NAME']
+
+        assert len(output) == len(rows)
     finally:
         if pipeline is not None:
             sdc_executor.stop_pipeline(pipeline=pipeline,
