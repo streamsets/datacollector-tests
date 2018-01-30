@@ -87,9 +87,9 @@ def test_classpath(sdc_executor, stagelib):
     assert result_stage
 
     result_stage = result_stage[0]
-    assert result_stage['valid'] == True
     assert not result_stage['unparseablePaths']
     assert not result_stage['versionCollisions']
+    assert result_stage['valid'] == True
 
 
 @cluster('mapr')
