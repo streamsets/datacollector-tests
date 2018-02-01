@@ -296,6 +296,105 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
 
 
 @database('oracle')
+@pytest.mark.parametrize('buffer_locally', [True])
+def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_locally):
+    """Tests SDC-8359. The basic premise of the test:
+    - Start a transaction, and insert some data
+    - Wait for 1 second so timestamp of next transaction is different
+    - Start a 2nd transaction, insert data and commit
+    - Start pipeline
+    - Get snapshot, make sure the 2nd txn's data is read
+    - Stop pipeline
+    - Commit transaction 1
+    - Start pipeline, get snapshot
+    - Must contain all data from transaction 1
+    (Pre-8359, this would fail when buffer_locally=true with 2nd snapshot timing out, since no data is read)
+    Runs oracle_cdc_client >> trash
+    """
+
+    db_engine = database.engine
+    pipeline = None
+    table = None
+
+    try:
+        src_table_name = get_random_string(string.ascii_uppercase, 9)
+
+        connection = database.engine.connect()
+        connection2 = database.engine.connect()
+        table = setup_table(database=database,
+                            table_name=src_table_name,
+                            create_primary_key=False)
+
+        logger.info('Using table name %s', src_table_name)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = get_oracle_cdc_client_origin(connection=connection,
+                                                         database=database,
+                                                         sdc_builder=sdc_builder,
+                                                         pipeline_builder=pipeline_builder,
+                                                         buffer_locally=buffer_locally,
+                                                         src_table_name=src_table_name)
+
+        # Start transaction
+        long_txn = connection2.begin()
+
+        # Insert data, don't commit
+        rows_c2 = [{'ID': 100, 'NAME': 'TEST_LONG_TXN'} for _ in range(0, 10)]
+        connection2.execute(table.insert(), rows_c2)
+
+        # Ensure timestamp changes
+        sleep(5)
+
+        # Insert data into txn 2, and commit immediately
+        rows_c1 = [{'ID': 200, 'NAME': 'TEST_SHORT_TXN'} for _ in range(0, 10)]
+        connection.execute(table.insert(), rows_c1)
+
+        # Start pipeline, get snapshot
+        trash = pipeline_builder.add_stage('Trash')
+
+        # Why do we need to wait?
+        # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
+        # If the DB is ahead, the batch end time the origin may not be after all the changes were written to the DB.
+        # So we wait until the time here is past the time at which all data was written out to the DB (current time)
+        wait_until_time(get_current_oracle_time(connection=connection))
+
+        oracle_cdc_client >> trash
+        pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline,
+                                   force=True)
+
+        def compare_output(output_records, rows):
+            assert len(output_records) == len(rows)
+            for i, output_record in enumerate(output_records):
+                assert output_record.value2['ID'] == rows[i]['ID']
+                assert output_record.value2['NAME'] == rows[i]['NAME']
+
+        # assert all the data captured have the same as rows_c1
+        output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        compare_output(output, rows_c1)
+
+        # Now commit the older transaction, which has overlapped over the second one
+        long_txn.commit()
+
+        # Pre-3.1.0.0, this times out
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline,
+                                   force=True)
+        # assert all the data captured have the same raw_data
+        output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        compare_output(output, rows_c2)
+
+    finally:
+        if table is not None:
+            table.drop(db_engine)
+            logger.info('Table: %s dropped.', src_table_name)
+
+
+@database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('use_pattern', [True, False])
 def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
