@@ -19,9 +19,12 @@ another.
 
 import logging
 import os
+import pytest
 import string
 import tempfile
+import time
 
+from testframework.markers import sdc_min_version
 from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -54,7 +57,8 @@ def test_directory_origin(sdc_builder, sdc_executor):
     files_pipeline = pipeline_builder.build('Generate files pipeline')
     sdc_executor.add_pipeline(files_pipeline)
 
-    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10) # generate some batches/files
+    # generate some batches/files
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10)
     sdc_executor.stop_pipeline(files_pipeline)
 
     # 2nd pipeline which reads the files using Directory Origin stage
@@ -75,3 +79,73 @@ def test_directory_origin(sdc_builder, sdc_executor):
     # assert all the data captured have the same raw_data
     for record in snapshot.snapshot_batches[0][directory.instance_name].output:
         assert raw_data == record.value['value']['text']['value']
+
+
+@pytest.mark.parametrize('no_of_threads', [1, 5])
+@sdc_min_version('3.1.0.0')
+def test_directory_origin_order_by_timestamp(sdc_builder, sdc_executor, no_of_threads):
+    """Test Directory Origin. We make sure we covered race condition
+    when directory origin is configured order by last modified timestamp.
+    The default wait time for directory spooler is 5 seconds,
+    when the files are modified between 5 seconds make sure all files are processed.
+    The pipelines looks like:
+
+        dev_raw_data_source >> local_fs
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    # 1st pipeline which writes one record per file with interval 0.1 seconds
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=1,
+                                      delay_between_batches=10)
+
+    dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=os.path.join(tmp_directory),
+                            files_prefix='sdc-${sdc:id()}', files_suffix='txt', max_records_in_file=1)
+
+    dev_data_generator >> local_fs
+
+    # run the 1st pipeline to create the directory and starting files
+    files_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(files_pipeline)
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(1)
+    sdc_executor.stop_pipeline(files_pipeline)
+
+    # 2nd pipeline which reads the files using Directory Origin stage
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(batch_wait_time_in_secs=1,
+                             data_format='TEXT', file_name_pattern='sdc*.txt',
+                             file_name_pattern_mode='GLOB', file_post_processing='DELETE',
+                             files_directory=tmp_directory, process_subdirectories=True,
+                             read_order='TIMESTAMP', number_of_threads=no_of_threads)
+    trash = pipeline_builder.add_stage('Trash')
+    directory >> trash
+
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+    sdc_executor.start_pipeline(directory_pipeline)
+
+    # re-run the 1st pipeline
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10)
+    sdc_executor.stop_pipeline(files_pipeline)
+
+    # wait till 2nd pipeline reads all files
+    time.sleep(10)
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # Validate history is as expected
+    file_pipeline_history = sdc_executor.pipeline_history(files_pipeline)
+    msgs_sent_count1 = file_pipeline_history.entries[4].metrics.counter('pipeline.batchOutputRecords.counter').count
+    msgs_sent_count2 = file_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    directory_pipeline_history = sdc_executor.pipeline_history(directory_pipeline)
+    msgs_result_count = directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    assert msgs_result_count == msgs_sent_count1 + msgs_sent_count2
