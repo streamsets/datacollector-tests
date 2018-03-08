@@ -19,10 +19,9 @@ import string
 
 import pytest
 import sqlalchemy
-
-from testframework.environments.databases import Oracle
-from testframework.markers import database
-from testframework.utils import get_random_string
+from streamsets.testframework.environments.databases import Oracle
+from streamsets.testframework.markers import database
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'%{src_table_prefix}%'}])
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{src_table_prefix}%'}])
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -140,7 +139,7 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'%{src_table_prefix}%'}])
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{src_table_prefix}%'}])
     finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     trash = pipeline_builder.add_stage('Trash')
 

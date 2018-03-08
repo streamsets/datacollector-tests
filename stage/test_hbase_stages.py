@@ -14,8 +14,8 @@
 import logging
 import string
 
-from testframework.markers import cluster, parcelpackaging
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import cluster, parcelpackaging
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

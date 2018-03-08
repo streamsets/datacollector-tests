@@ -12,18 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import hashlib
 import json
 import logging
 import re
 from datetime import datetime
 
-from testframework.markers import sdc_min_version
+from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -39,7 +34,7 @@ def test_field_flattener(sdc_builder, sdc_executor):
     With given raw_data below, /contact/address will move to newcontact/address and its elements will be flatten as
     home.state and home.zipcode
     """
-    name_seperator = '.'
+    name_separator = '.'
     raw_data = """
         {
           "contact": {
@@ -63,8 +58,8 @@ def test_field_flattener(sdc_builder, sdc_executor):
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
     field_flattener = pipeline_builder.add_stage('Field Flattener')
     field_flattener.set_attributes(fields=['/contact/address'], flatten_in_place=False,
-                                   flatten_target_field='/newcontact/address', flatten_type='SPECIFIC_FIELDS',
-                                   name_seperator=name_seperator, remove_flatten_field=True)
+                                   target_field='/newcontact/address', flatten='SPECIFIC_FIELDS',
+                                   name_separator=name_separator, remove_flattened_field=True)
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> field_flattener >> trash
@@ -78,8 +73,8 @@ def test_field_flattener(sdc_builder, sdc_executor):
     # assert remove_flatten_field
     assert 'address' not in new_value['contact']['value']
     # assert flatten_target_field with name_seperator
-    assert f'home{name_seperator}state' in new_value['newcontact']['value']['address']['value']
-    assert f'home{name_seperator}zipcode' in new_value['newcontact']['value']['address']['value']
+    assert f'home{name_separator}state' in new_value['newcontact']['value']['address']['value']
+    assert f'home{name_separator}zipcode' in new_value['newcontact']['value']['address']['value']
 
 
 def test_field_hasher(sdc_builder, sdc_executor):
@@ -94,13 +89,13 @@ def test_field_hasher(sdc_builder, sdc_executor):
     raw_passcode = 'mysecretcode'
     raw_dict = dict(contact=dict(name='Jane Smith', id=raw_id, passcode=raw_passcode))
     raw_data = json.dumps(raw_dict)
-    field_hasher_in_place_configs = [
+    hash_in_place = [
         {
             'sourceFieldsToHash': ['/contact/id'],
             'hashType': 'MD5'
         }
     ]
-    field_hasher_target_configs = [
+    hash_to_target = [
         {
             'sourceFieldsToHash': ['/contact/passcode'],
             'hashType': 'MD5',
@@ -123,11 +118,11 @@ def test_field_hasher(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
     field_hasher = pipeline_builder.add_stage('Field Hasher')
-    field_hasher.set_attributes(field_hasher_in_place_configs=field_hasher_in_place_configs,
-                                field_hasher_target_configs=field_hasher_target_configs,
-                                record_hasher_hash_entire_record=True, record_hasher_hash_type='MD5',
-                                record_hasher_header_attribute='myrecord', record_hasher_include_record_header=False,
-                                record_hasher_target_field='/myrecord')
+    field_hasher.set_attributes(hash_in_place=hash_in_place,
+                                hash_to_target=hash_to_target,
+                                hash_entire_record=True, hash_type='MD5',
+                                header_attribute='myrecord', include_record_header=False,
+                                target_field='/myrecord')
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> field_hasher >> trash
@@ -174,7 +169,7 @@ def test_field_masker(sdc_builder, sdc_executor):
     raw_dict = dict(fixed_passwd='donKey', variable_passwd='donKey', custom_ph='617-567-8888',
                     custom_zip='94086-6161', social='30529 - 123-45-6789')
     raw_data = json.dumps(raw_dict)
-    mask_configs = [
+    field_mask_configs = [
         {
             'fields': ['/fixed_passwd'],
             'maskType': 'FIXED_LENGTH',
@@ -209,7 +204,7 @@ def test_field_masker(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
     field_masker = pipeline_builder.add_stage('Field Masker')
-    field_masker.set_attributes(mask_configs=mask_configs)
+    field_masker.set_attributes(field_mask_configs=field_mask_configs)
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> field_masker >> trash
@@ -257,7 +252,7 @@ def test_field_merger(sdc_builder, sdc_executor):
         }
     """
     raw_dict = json.loads(raw_data)
-    merge_mapping_configs = [
+    fields_to_merge = [
         {
             'fromField': '/identity',
             'toField': '/uniqueid'
@@ -272,7 +267,7 @@ def test_field_merger(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
     field_merger = pipeline_builder.add_stage('Field Merger')
-    field_merger.set_attributes(merge_mapping=merge_mapping_configs, overwrite_existing=True)
+    field_merger.set_attributes(fields_to_merge=fields_to_merge, overwrite_fields=True)
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> field_merger >> trash
@@ -313,16 +308,16 @@ def test_field_order(sdc_builder, sdc_executor):
         }
     """
     extra_field = '/address/home/country'
-    extra_field_value = 'USA'
-    ordered_fields = ['/address/home/zipcode', '/address/home/state', extra_field]
+    default_value = 'USA'
+    fields_to_order = ['/address/home/zipcode', '/address/home/state', extra_field]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
     field_order = pipeline_builder.add_stage('Field Order')
-    field_order.set_attributes(extra_field_action='DISCARD', fields_to_order=ordered_fields,
-                               missing_field_action='USE_DEFAULT', missing_field_data_type='STRING',
-                               missing_field_default_value=extra_field_value, output_type='LIST_MAP')
+    field_order.set_attributes(extra_fields='DISCARD', fields_to_order=fields_to_order,
+                               missing_fields='USE_DEFAULT', default_type='STRING',
+                               default_value=default_value, output_type='LIST_MAP')
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> field_order >> trash
@@ -334,10 +329,10 @@ def test_field_order(sdc_builder, sdc_executor):
 
     new_value = snapshot[field_order.instance_name].output[0].value['value']
     # assert we got ordered fields and we don't have discarded fields
-    assert ordered_fields == [i['sqpath'].replace("'", '').replace('.', '/') for i in new_value]
+    assert fields_to_order == [i['sqpath'].replace("'", '').replace('.', '/') for i in new_value]
     # assert we got extra field value as expected
     extra_fields = [i['value'] for i in new_value if i['sqpath'].replace("'", '').replace('.', '/') == extra_field]
-    assert extra_fields[0] == extra_field_value
+    assert extra_fields[0] == default_value
 
 
 def test_field_pivoter(sdc_builder, sdc_executor):
@@ -407,11 +402,11 @@ def test_field_remover(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
     field_remover1 = pipeline_builder.add_stage('Field Remover')
-    field_remover1.set_attributes(fields=['/id', '/name'], field_operation='REMOVE')
+    field_remover1.set_attributes(fields=['/id', '/name'], action='REMOVE')
     field_remover2 = pipeline_builder.add_stage('Field Remover')
-    field_remover2.set_attributes(fields=['/checknull1', '/checknull2'], field_operation='REMOVE_NULL')
+    field_remover2.set_attributes(fields=['/checknull1', '/checknull2'], action='REMOVE_NULL')
     field_remover3 = pipeline_builder.add_stage('Field Remover')
-    field_remover3.set_attributes(fields=['/address/home/zipcode', '/address/home/country'], field_operation='KEEP')
+    field_remover3.set_attributes(fields=['/address/home/zipcode', '/address/home/country'], action='KEEP')
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> field_remover1 >> field_remover2 >> field_remover3 >> trash
@@ -780,15 +775,15 @@ def test_value_replacer(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
     value_replacer = pipeline_builder.add_stage('Value Replacer', type='processor')
-    value_replacer.set_attributes(conditional_replace_values=[{
+    value_replacer.set_attributes(conditionally_replace_values=[{
         'fieldNames': ['/contact/address/home/state', '/contact/state'],
         'operator': 'ALL',
         'comparisonValue': 'North Carolina',
         'replacementValue': expected_state_value
-    }], fields_to_null=[{
+    }], replace_null_values=[{
         'fields': ['/contact/password'],
         'newValue': expected_password_value
-    }], replace_null_values=[{
+    }], fields_to_null=[{
         'fieldsToNull': ['/contact/*name'],
         'condition': "${record:value('/contact/id') > 0}"
     }])

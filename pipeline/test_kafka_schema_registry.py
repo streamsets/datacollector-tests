@@ -27,10 +27,9 @@ import string
 
 import avro
 import pytest
-
-from testframework.markers import cluster, confluent, sdc_min_version
-from testframework.sdc_models import Configuration
-from testframework.utils import get_random_string
+from streamsets.sdk.models import Configuration
+from streamsets.testframework.markers import cluster, confluent, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -39,64 +38,64 @@ AVRO_SCHEMA = '{"type":"record","name":"Brno","doc":"","fields":[{"name":"a","ty
 
 
 @pytest.fixture(scope='function')
-def topic_name():
+def topic():
     """Topic name used for this specific test."""
-    kafka_topic_name = get_random_string(string.ascii_letters, 10)
-    logger.debug('Using Topic: %s', kafka_topic_name)
-    return kafka_topic_name
+    topic = get_random_string(string.ascii_letters, 10)
+    logger.debug('Using Topic: %s', topic)
+    return topic
 
 
 @pytest.fixture(scope='function')
-def consumer_single(sdc_builder, topic_name, cluster, confluent):
+def consumer_single(sdc_builder, topic, cluster, confluent):
     """Single threaded Kafka consumer configured to read schema from the registry."""
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     kafka_consumer = builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(kafka_topic_name = topic_name,
-                                  data_format = 'AVRO',
-                                  avro_schema_location = 'REGISTRY',
-                                  lookup_schema_by = 'AUTO',
-                                  key_deserializer = 'CONFLUENT',
-                                  value_deserializer = 'CONFLUENT',
-                                  kafka_configuration = [{'key': 'auto.offset.reset', 'value': 'earliest'}])
+    kafka_consumer.set_attributes(topic=topic,
+                                  data_format='AVRO',
+                                  avro_schema_location='REGISTRY',
+                                  lookup_schema_by='AUTO',
+                                  key_deserializer='CONFLUENT',
+                                  value_deserializer='CONFLUENT',
+                                  kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
     trash = builder.add_stage(label='Trash')
     kafka_consumer >> trash
 
-    return builder.build(title=f'Single Consumer for {topic_name}').configure_for_environment(cluster, confluent)
+    return builder.build(title=f'Single Consumer for {topic}').configure_for_environment(cluster, confluent)
 
 
 @pytest.fixture(scope='function')
-def consumer_multi(sdc_builder, topic_name, cluster, confluent):
+def consumer_multi(sdc_builder, topic, cluster, confluent):
     """Multithreaded threaded Kafka consumer configured to read schema from the registry."""
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     kafka_consumer = builder.add_stage('Kafka Multitopic Consumer')
-    kafka_consumer.set_attributes(topic_list = [topic_name],
-                                  data_format = 'AVRO',
-                                  avro_schema_location = 'REGISTRY',
-                                  lookup_schema_by = 'AUTO',
-                                  key_deserializer = 'CONFLUENT',
-                                  value_deserializer = 'CONFLUENT',
-                                  kafka_configuration = [{'key': 'auto.offset.reset', 'value': 'earliest'}])
+    kafka_consumer.set_attributes(topic_list=[topic],
+                                  data_format='AVRO',
+                                  avro_schema_location='REGISTRY',
+                                  lookup_schema_by='AUTO',
+                                  key_deserializer='CONFLUENT',
+                                  value_deserializer='CONFLUENT',
+                                  configuration_properties=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
     trash = builder.add_stage(label='Trash')
     kafka_consumer >> trash
 
-    return builder.build(title=f'Multi Consumer for {topic_name}').configure_for_environment(cluster, confluent)
+    return builder.build(title=f'Multi Consumer for {topic}').configure_for_environment(cluster, confluent)
 
 @pytest.fixture(scope='function')
-def producer_header(sdc_builder, topic_name, cluster, confluent):
+def producer_header(sdc_builder, topic, cluster, confluent):
     """Kafka producer that receives avro schema in record header."""
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = '{"a": 1, "b": "Text"}'
-    dev_raw_data_source.stop_after_first_batch = True
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data='{"a": 1, "b": "Text"}',
+                                       stop_after_first_batch=True)
 
     schema_generator = builder.add_stage('Schema Generator')
     schema_generator.schema_name = 'Brno'
@@ -104,69 +103,69 @@ def producer_header(sdc_builder, topic_name, cluster, confluent):
     kafka_destination = builder.add_stage('Kafka Producer',
                                           library=cluster.kafka.standalone_stage_lib)
 
-    kafka_destination.set_attributes(topic = topic_name,
-                                     data_format = 'AVRO',
-                                     avro_schema_location = 'HEADER',
-                                     include_schema = False,
-                                     register_schema = True,
-                                     schema_subject = topic_name,
-                                     key_serializer = 'CONFLUENT',
-                                     value_serializer = 'CONFLUENT')
+    kafka_destination.set_attributes(topic=topic,
+                                     data_format='AVRO',
+                                     avro_schema_location='HEADER',
+                                     include_schema=False,
+                                     register_schema=True,
+                                     schema_subject=topic,
+                                     key_serializer='CONFLUENT',
+                                     value_serializer='CONFLUENT')
 
     dev_raw_data_source >> schema_generator >> kafka_destination
-    return builder.build(title=f'Producer in Header for {topic_name}').configure_for_environment(cluster, confluent)
+    return builder.build(title=f'Producer in Header for {topic}').configure_for_environment(cluster, confluent)
 
 
 @pytest.fixture(scope='function')
-def producer_inline(sdc_builder, topic_name, cluster, confluent):
+def producer_inline(sdc_builder, topic, cluster, confluent):
     """Kafka producer that receives avro schema the pipeline configuration."""
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = '{"a": 1, "b": "Text"}'
-    dev_raw_data_source.stop_after_first_batch = True
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data='{"a": 1, "b": "Text"}',
+                                       stop_after_first_batch=True)
 
     kafka_destination = builder.add_stage('Kafka Producer',
                                           library=cluster.kafka.standalone_stage_lib)
-    kafka_destination.set_attributes(topic = topic_name,
-                                     data_format = 'AVRO',
-                                     avro_schema_location = 'INLINE',
-                                     avro_schema = AVRO_SCHEMA,
-                                     include_schema = False,
-                                     register_schema = True,
-                                     schema_subject = topic_name,
-                                     key_serializer = 'CONFLUENT',
-                                     value_serializer = 'CONFLUENT')
+    kafka_destination.set_attributes(topic=topic,
+                                     data_format='AVRO',
+                                     avro_schema_location='INLINE',
+                                     avro_schema=AVRO_SCHEMA,
+                                     include_schema=False,
+                                     register_schema=True,
+                                     schema_subject=topic,
+                                     key_serializer='CONFLUENT',
+                                     value_serializer='CONFLUENT')
 
     dev_raw_data_source >> kafka_destination
-    return builder.build(title=f'Producer Inline for {topic_name}').configure_for_environment(cluster, confluent)
+    return builder.build(title=f'Producer Inline for {topic}').configure_for_environment(cluster, confluent)
 
 
 @pytest.fixture(scope='function')
-def producer_registry(sdc_builder, topic_name, cluster, confluent):
+def producer_registry(sdc_builder, topic, cluster, confluent):
     """Kafka producer that receives avro schema from schema registry (must exists before pipeline run)."""
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = '{"a": 1, "b": "Text"}'
-    dev_raw_data_source.stop_after_first_batch = True
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data='{"a": 1, "b": "Text"}',
+                                       stop_after_first_batch=True)
 
     kafka_destination = builder.add_stage('Kafka Producer',
                                           library=cluster.kafka.standalone_stage_lib)
-    kafka_destination.set_attributes(topic = topic_name,
-                                     data_format = 'AVRO',
-                                     avro_schema_location = 'REGISTRY',
-                                     include_schema = False,
-                                     schema_subject = topic_name,
-                                     key_serializer = 'CONFLUENT',
-                                     value_serializer = 'CONFLUENT')
+    kafka_destination.set_attributes(topic=topic,
+                                     data_format='AVRO',
+                                     avro_schema_location='REGISTRY',
+                                     include_schema=False,
+                                     schema_subject=topic,
+                                     key_serializer='CONFLUENT',
+                                     value_serializer='CONFLUENT')
 
     dev_raw_data_source >> kafka_destination
-    return builder.build(title=f'Producer Registry for {topic_name}').configure_for_environment(cluster, confluent)
+    return builder.build(title=f'Producer Registry for {topic}').configure_for_environment(cluster, confluent)
 
 
 @cluster('cdh', 'kafka')
@@ -200,10 +199,10 @@ def test_multi_inline(sdc_executor, producer_inline, consumer_multi):
 @cluster('cdh', 'kafka')
 @confluent
 @sdc_min_version('3.1.0.0')
-def test_single_registry(sdc_executor, topic_name, producer_registry, consumer_single, confluent):
+def test_single_registry(sdc_executor, topic, producer_registry, consumer_single, confluent):
     # We need to register the schema before running the pipelines
     schema = avro.schema.Parse(AVRO_SCHEMA)
-    confluent.schema_registry.register(topic_name, schema)
+    confluent.schema_registry.register(topic, schema)
 
     perform_test(sdc_executor, producer_registry, consumer_single)
 
@@ -211,10 +210,10 @@ def test_single_registry(sdc_executor, topic_name, producer_registry, consumer_s
 @cluster('cdh', 'kafka')
 @confluent
 @sdc_min_version('3.1.0.0')
-def test_multi_registry(sdc_executor, topic_name, producer_registry, consumer_multi, confluent):
+def test_multi_registry(sdc_executor, topic, producer_registry, consumer_multi, confluent):
     # We need to register the schema before running the pipelines
     schema = avro.schema.Parse(AVRO_SCHEMA)
-    confluent.schema_registry.register(topic_name, schema)
+    confluent.schema_registry.register(topic, schema)
 
     perform_test(sdc_executor, producer_registry, consumer_multi)
 

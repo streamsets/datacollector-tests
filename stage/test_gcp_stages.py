@@ -17,9 +17,8 @@ import time
 from string import ascii_letters
 
 from google.cloud.bigquery import SchemaField
-
-from testframework.markers import gcp, sdc_min_version
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import gcp, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +260,7 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
         logger.info('Stopping Publisher pipeline and getting the count of records produced in total ...')
         sdc_executor.stop_pipeline(pipeline)
 
-        history = sdc_executor.pipeline_history(pipeline)
+        history = sdc_executor.get_pipeline_history(pipeline)
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
         logger.info('No. of messages sent in the pipeline = %s ...', msgs_sent_count)
 

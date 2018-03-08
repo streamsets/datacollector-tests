@@ -12,19 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import copy
 import logging
 import time
 from bson import binary
 from string import ascii_letters
 
-from testframework.markers import mongodb, sdc_min_version
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import mongodb, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +49,7 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
     mongodb_oplog = pipeline_builder.add_stage('MongoDB Oplog')
     database_name = get_random_string(ascii_letters, 10)
     # Specify that MongoDB Oplog needs to read changes occuring after time_now.
-    mongodb_oplog.set_attributes(collection='oplog.rs', initial_timestamp=time_now, initial_ordinal=1)
+    mongodb_oplog.set_attributes(collection='oplog.rs', initial_timestamp_in_secs=time_now, initial_ordinal=1)
 
     trash = pipeline_builder.add_stage('Trash')
     mongodb_oplog >> trash
@@ -98,7 +93,7 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
     pipeline_builder.add_error_stage('Discard')
 
     mongodb_origin = pipeline_builder.add_stage('MongoDB', type='origin')
-    mongodb_origin.set_attributes(is_capped=False,
+    mongodb_origin.set_attributes(capped_collection=False,
                                   database=get_random_string(ascii_letters, 5),
                                   collection=get_random_string(ascii_letters, 10))
 
@@ -155,7 +150,7 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
     pipeline_builder.add_error_stage('Discard')
 
     mongodb_origin = pipeline_builder.add_stage('MongoDB', type='origin')
-    mongodb_origin.set_attributes(is_capped=False,
+    mongodb_origin.set_attributes(capped_collection=False,
                                   database=get_random_string(ascii_letters, 5),
                                   collection=get_random_string(ascii_letters, 10))
 
@@ -208,8 +203,8 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     # MongoDB destination uses the CRUD operation in the sdc.operation.type record header attribute when writing
     # to MongoDB. Value 4 specified below is for UPSERT.
-    expression_evaluator.header_expressions = [{'attributeToSet': 'sdc.operation.type',
-                                                'headerAttributeExpression': '4'}]
+    expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
+                                                          'headerAttributeExpression': '4'}]
 
     mongodb_dest = pipeline_builder.add_stage('MongoDB', type='destination')
     mongodb_dest.set_attributes(database=get_random_string(ascii_letters, 5),

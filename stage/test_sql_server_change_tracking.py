@@ -17,9 +17,8 @@ import logging
 import string
 
 import sqlalchemy
-
-from testframework.markers import database
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import database
+from streamsets.testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -12,18 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import logging
 import string
 
 import pika
-
-from testframework.markers import rabbitmq
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import rabbitmq
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -39,17 +33,17 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
         rabbitmq_consumer >> trash
     """
     # build consumer pipeline
-    queue_name = get_random_string(string.ascii_letters, 10)
+    name = get_random_string(string.ascii_letters, 10)
 
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     # we set to use default exchange and hence exchange does not need to be pre-created or given
-    rabbitmq_consumer = builder.add_stage('RabbitMQ Consumer').set_attributes(queue_name=queue_name,
+    rabbitmq_consumer = builder.add_stage('RabbitMQ Consumer').set_attributes(name=name,
                                                                               data_format='TEXT',
-                                                                              queue_durable=True,
-                                                                              queue_auto_delete=False,
-                                                                              exchanges=[])
+                                                                              durable=True,
+                                                                              auto_delete=False,
+                                                                              bindings=[])
     trash = builder.add_stage('Trash')
 
     rabbitmq_consumer >> trash
@@ -63,12 +57,12 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
     channel = connection.channel()
     try:
         # https://www.rabbitmq.com/tutorials/amqp-concepts.html about default exchange routing
-        channel.queue_declare(queue=queue_name, durable=True, exclusive=False, auto_delete=False)
+        channel.queue_declare(queue=name, durable=True, exclusive=False, auto_delete=False)
         channel.confirm_delivery()
         for i in range(10):
             expected_message = 'Message {0}'.format(i)
             if channel.basic_publish(exchange="",
-                                     routing_key=queue_name,  # routing key has to be same as queue name
+                                     routing_key=name,  # routing key has to be same as queue name
                                      body=expected_message,
                                      properties=pika.BasicProperties(content_type='text/plain',
                                                                      delivery_mode=1),
@@ -98,7 +92,7 @@ def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
         dev_raw_data_source >> rabbitmq_producer
     """
     # build producer pipeline
-    queue_name = get_random_string(string.ascii_letters, 10)
+    name = get_random_string(string.ascii_letters, 10)
     exchange_name = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
 
@@ -109,12 +103,12 @@ def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
                                                                                   raw_data=raw_str)
 
     rabbitmq_producer = builder.add_stage('RabbitMQ Producer')
-    rabbitmq_producer.set_attributes(queue_name=queue_name, data_format='TEXT',
-                                     queue_durable=False, queue_auto_delete=True,
-                                     exchanges=[dict(name=exchange_name,
-                                                     type='DIRECT',
-                                                     durable=False,
-                                                     autoDelete=True)])
+    rabbitmq_producer.set_attributes(name=name, data_format='TEXT',
+                                     durable=False, auto_delete=True,
+                                     bindings=[dict(name=exchange_name,
+                                                    type='DIRECT',
+                                                    durable=False,
+                                                    autoDelete=True)])
 
     dev_raw_data_source >> rabbitmq_producer
     producer_dest_pipeline = builder.build(title='RabbitMQ Producer pipeline').configure_for_environment(rabbitmq)
@@ -125,7 +119,7 @@ def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
     sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(10)
     sdc_executor.stop_pipeline(producer_dest_pipeline)
 
-    history = sdc_executor.pipeline_history(producer_dest_pipeline)
+    history = sdc_executor.get_pipeline_history(producer_dest_pipeline)
     msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
     logger.debug('Number of messages ingested into the pipeline = %s', msgs_sent_count)
 
@@ -135,7 +129,7 @@ def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
     try:
         # Get one message at a time from RabbitMQ.
         # Returns a sequence with the method frame, message properties, and body.
-        msgs_received = [channel.basic_get(queue_name, False)[2].decode().replace('\n', '')
+        msgs_received = [channel.basic_get(name, False)[2].decode().replace('\n', '')
                          for _ in range(msgs_sent_count)]
     finally:
         channel.close()

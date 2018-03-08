@@ -17,9 +17,8 @@ import pytest
 import urllib.request
 
 from javaproperties import Properties
-from testframework import sdc
-from testframework.markers import cluster, sdc_min_version
-from testframework.utils import join_url_parts
+from streamsets.testframework import sdc
+from streamsets.testframework.markers import cluster, sdc_min_version
 
 # Skip all tests in this module if --sdc-version < 3.1.0.0
 pytestmark = sdc_min_version('3.1.0.0-SNAPSHOT')

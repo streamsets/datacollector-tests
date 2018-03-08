@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
 import json
 import logging
 import string
@@ -24,10 +20,10 @@ from datetime import datetime
 
 import pytest
 import sqlalchemy
+from streamsets.testframework.markers import cluster, parcelpackaging, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 from . import test_apache
-from testframework.markers import cluster, parcelpackaging, sdc_min_version
-from testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -198,9 +194,9 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
                                  dict(favorite_rank=2)]
 
     raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
-    key_column_mapping = [dict(field='/favorite_rank', columnName='rank')]
-    output_column_mapping = [dict(columnName='name', field='/name', defaultValue=None),
-                             dict(columnName='wins', field='/wins', defaultValue='0')]
+    key_columns_mapping = [dict(field='/favorite_rank', columnName='rank')]
+    column_to_output_field_mapping = [dict(columnName='name', field='/name', defaultValue=None),
+                                      dict(columnName='wins', field='/wins', defaultValue='0')]
 
     kudu_table_name = get_random_string(string.ascii_letters, 10)
     kudu_master_address = '{}:{}'.format(cluster.server_host, DEFAULT_KUDU_PORT)
@@ -211,11 +207,11 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              table_name=kudu_table_name,
-                                                              key_column_mapping=key_column_mapping,
-                                                              output_column_mapping=output_column_mapping,
+                                                              kudu_table_name=kudu_table_name,
+                                                              key_columns_mapping=key_columns_mapping,
+                                                              column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=True,
-                                                              ignore_missing=True)
+                                                              ignore_missing_value=True)
 
     record_deduplicator = builder.add_stage('Record Deduplicator')
     to_error = builder.add_stage('To Error')
@@ -279,9 +275,9 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
                                  dict(favorite_rank=2)]
 
     raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
-    key_column_mapping = [dict(field='/favorite_rank', columnName='rank')]
-    output_column_mapping = [dict(columnName='name', field='/name'),
-                             dict(columnName='wins', field='/wins')]
+    key_columns_mapping = [dict(field='/favorite_rank', columnName='rank')]
+    column_to_output_field_mapping = [dict(columnName='name', field='/name'),
+                                      dict(columnName='wins', field='/wins')]
 
     kudu_table_name = get_random_string(string.ascii_letters, 10)
     kudu_master_address = '{}:{}'.format(cluster.server_host, DEFAULT_KUDU_PORT)
@@ -292,11 +288,11 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              table_name=kudu_table_name,
-                                                              key_column_mapping=key_column_mapping,
-                                                              output_column_mapping=output_column_mapping,
+                                                              kudu_table_name=kudu_table_name,
+                                                              key_columns_mapping=key_columns_mapping,
+                                                              column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=False,
-                                                              ignore_missing=True)
+                                                              ignore_missing_value=True)
     trash = builder.add_stage('Trash')
     dev_raw_data_source >> kudu >> trash
 
@@ -362,15 +358,15 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
                                  dict(favorite_rank=5, name='StreamSets,Inc')]  # This should go to error record
 
     raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
-    key_column_mapping = [dict(field='/favorite_rank', columnName='rank'),
-                          dict(field='/name', columnName='name')]
+    key_columns_mapping = [dict(field='/favorite_rank', columnName='rank'),
+                           dict(field='/name', columnName='name')]
 
     # Generate different field names than column names in Kudu
-    output_column_mapping = [dict(columnName='wins', field='/wins', defaultValue='0'),
-                             dict(columnName='consecutive', field='/consecutive_2017', defaultValue='false'),
-                             dict(columnName='prize', field='/prize_2017', defaultValue='0'),
-                             dict(columnName='total_miles', field='/total_miles_2017', defaultValue='0'),
-                             dict(columnName='average_speed', field='/avg_speed_2017', defaultValue='0')]
+    column_to_output_field_mapping = [dict(columnName='wins', field='/wins', defaultValue='0'),
+                                      dict(columnName='consecutive', field='/consecutive_2017', defaultValue='false'),
+                                      dict(columnName='prize', field='/prize_2017', defaultValue='0'),
+                                      dict(columnName='total_miles', field='/total_miles_2017', defaultValue='0'),
+                                      dict(columnName='average_speed', field='/avg_speed_2017', defaultValue='0')]
 
     kudu_table_name = get_random_string(string.ascii_letters, 10)
     kudu_master_address = '{}:{}'.format(cluster.server_host, DEFAULT_KUDU_PORT)
@@ -381,11 +377,11 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              table_name=kudu_table_name,
-                                                              key_column_mapping=key_column_mapping,
-                                                              output_column_mapping=output_column_mapping,
+                                                              kudu_table_name=kudu_table_name,
+                                                              key_columns_mapping=key_columns_mapping,
+                                                              column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=True,
-                                                              ignore_missing=True)
+                                                              ignore_missing_value=True)
     record_deduplicator = builder.add_stage('Record Deduplicator')
     to_error = builder.add_stage('To Error')
     trash = builder.add_stage('Trash')
@@ -464,9 +460,9 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
                                  dict(favorite_rank=2)]
 
     raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
-    key_column_mapping = [dict(field='/favorite_rank', columnName='rank')]
-    output_column_mapping = [dict(columnName='name', field='/name'),
-                             dict(columnName='wins', field='/wins')]
+    key_columns_mapping = [dict(field='/favorite_rank', columnName='rank')]
+    column_to_output_field_mapping = [dict(columnName='name', field='/name'),
+                                      dict(columnName='wins', field='/wins')]
 
     kudu_table_name = get_random_string(string.ascii_letters, 10)
     kudu_master_address = '{}:{}'.format(cluster.server_host, DEFAULT_KUDU_PORT)
@@ -477,11 +473,11 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              table_name=kudu_table_name,
-                                                              key_column_mapping=key_column_mapping,
-                                                              output_column_mapping=output_column_mapping,
+                                                              kudu_table_name=kudu_table_name,
+                                                              key_columns_mapping=key_columns_mapping,
+                                                              column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=True,
-                                                              ignore_missing=False)
+                                                              ignore_missing_value=False)
     record_deduplicator = builder.add_stage('Record Deduplicator')
     to_error = builder.add_stage('To Error')
     trash = builder.add_stage('Trash')
@@ -540,9 +536,9 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
                                  dict(name='Greg LeMond')]
 
     raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
-    key_column_mapping = [dict(field='/name', columnName='name')]
-    output_column_mapping = [dict(field='/favorite_rank', columnName='rank'),
-                             dict(field='/wins', columnName='wins')]
+    key_columns_mapping = [dict(field='/name', columnName='name')]
+    column_to_output_field_mapping = [dict(field='/favorite_rank', columnName='rank'),
+                                      dict(field='/wins', columnName='wins')]
 
     kudu_table_name = get_random_string(string.ascii_letters, 10)
 
@@ -553,11 +549,11 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              table_name=kudu_table_name,
-                                                              key_column_mapping=key_column_mapping,
-                                                              output_column_mapping=output_column_mapping,
+                                                              kudu_table_name=kudu_table_name,
+                                                              key_columns_mapping=key_columns_mapping,
+                                                              column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=True,
-                                                              ignore_missing=False)
+                                                              ignore_missing_value=False)
     record_deduplicator = builder.add_stage('Record Deduplicator')
     to_error = builder.add_stage('To Error')
     trash = builder.add_stage('Trash')
@@ -623,8 +619,8 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster):
                                                    >> trash
     """
     hive_table_name = get_random_string(string.ascii_letters, 10)
-    hive_queries = ["CREATE TABLE ${record:value('/text')} (id int, name string)"]
     hive_cursor = cluster.hive.client.cursor()
+    sql_queries = ["CREATE TABLE ${record:value('/text')} (id int, name string)"]
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -632,7 +628,7 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=hive_table_name)
     record_deduplicator = builder.add_stage('Record Deduplicator')
     trash = builder.add_stage('Trash')
-    hive_query = builder.add_stage('Hive Query', type='executor').set_attributes(queries=hive_queries)
+    hive_query = builder.add_stage('Hive Query', type='executor').set_attributes(sql_queries=sql_queries)
 
     dev_raw_data_source >> record_deduplicator >> hive_query
     record_deduplicator >> trash
@@ -732,7 +728,7 @@ def test_spark_executor(sdc_builder, sdc_executor, cluster):
     python_data = 'print("Hello World!")'
     tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
     python_suffix = 'py'
-    yarn_application_name = ''.join(['stf_', get_random_string(string.ascii_letters, 10)])
+    application_name = ''.join(['stf_', get_random_string(string.ascii_letters, 10)])
 
     # build the 1st pipeline - file generator
     builder = sdc_builder.get_pipeline_builder()
@@ -756,14 +752,20 @@ def test_spark_executor(sdc_builder, sdc_executor, cluster):
 
     # build the 2nd pipeline - spark executor
     builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT', raw_data='dummy')
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  raw_data='dummy')
     record_deduplicator = builder.add_stage('Record Deduplicator')
     trash = builder.add_stage('Trash')
     spark_executor = builder.add_stage('Spark Executor', type='executor')
-    spark_executor.set_attributes(cluster_manager='YARN', min_executors=1, max_executors=1,
-                                  yarn_application_name=yarn_application_name, yarn_deploy_mode='CLUSTER',
-                                  yarn_driver_memory='10m', yarn_executor_memory='10m',
-                                  yarn_resource_file=file_path, yarn_resource_language='PYTHON')
+    spark_executor.set_attributes(cluster_manager='YARN',
+                                  minimum_number_of_worker_nodes=1,
+                                  maximum_number_of_worker_nodes=1,
+                                  application_name=application_name,
+                                  deploy_mode='CLUSTER',
+                                  driver_memory='10m',
+                                  executor_memory='10m',
+                                  application_resource=file_path,
+                                  language='PYTHON')
 
     dev_raw_data_source >> record_deduplicator >> spark_executor
     record_deduplicator >> trash
@@ -774,4 +776,4 @@ def test_spark_executor(sdc_builder, sdc_executor, cluster):
     sdc_executor.stop_pipeline(pipeline)
 
     # assert Spark executor has triggered the YARN job
-    assert cluster.yarn.wait_for_app_to_register(yarn_application_name)
+    assert cluster.yarn.wait_for_app_to_register(application_name)

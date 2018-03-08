@@ -12,23 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import json
 import logging
 import string
 
-from testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
 # Specify a port for SDC RPC stages to use.
-SDC_RPC_PORT = 20000
+SDC_RPC_LISTENING_PORT = 20000
 
 
 def test_sdcrpc_origin_target(sdc_builder, sdc_executor):
@@ -44,15 +39,15 @@ def test_sdcrpc_origin_target(sdc_builder, sdc_executor):
             dev_raw_data_source >> sdc_rpc_destination
     """
     # test static
-    rpc_id = get_random_string(string.ascii_letters, 10)
+    sdc_rpc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
 
     # Build the SDC RPC origin pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
-    sdc_rpc_origin.rpc_port = SDC_RPC_PORT
-    sdc_rpc_origin.rpc_id = rpc_id
+    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
+    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_id
 
     sdc_rpc_origin >> (builder.add_stage(label='Trash'))
     rpc_origin_pipeline = builder.build('SDC RPC origin pipeline')
@@ -65,8 +60,8 @@ def test_sdcrpc_origin_target(sdc_builder, sdc_executor):
     dev_raw_data_source.raw_data = raw_str
 
     sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.rpc_connections.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT))
-    sdc_rpc_destination.rpc_id = rpc_id
+    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_LISTENING_PORT))
+    sdc_rpc_destination.sdc_rpc_id = sdc_rpc_id
 
     dev_raw_data_source >> sdc_rpc_destination
     rpc_target_pipeline = builder.build('SDC RPC target pipeline')
@@ -101,12 +96,13 @@ def test_write_to_another_pipeline_error_stage(sdc_builder, sdc_executor):
                           dict(name='Mark Cavendish', reason='Abandoned')]
     raw_data = ''.join(json.dumps(dns) for dns in tdf_did_not_starts)
 
+    sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
     sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     # Build the Write to Another Pipeline error stage pipeline.
     builder = sdc_builder.get_pipeline_builder()
     write_to_another_pipeline = builder.add_error_stage('Write to Another Pipeline')
-    write_to_another_pipeline.set_attributes(sdc_rpc_connection=[f'{sdc_executor.server_host}:{SDC_RPC_PORT}'],
+    write_to_another_pipeline.set_attributes(sdc_rpc_connection=sdc_rpc_connection,
                                              sdc_rpc_id=sdc_rpc_id)
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
@@ -122,8 +118,8 @@ def test_write_to_another_pipeline_error_stage(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     sdc_rpc_origin = builder.add_stage('SDC RPC', type='origin')
-    sdc_rpc_origin.set_attributes(rpc_id=sdc_rpc_id,
-                                  rpc_port=SDC_RPC_PORT)
+    sdc_rpc_origin.set_attributes(sdc_rpc_id=sdc_rpc_id,
+                                  sdc_rpc_listening_port=SDC_RPC_LISTENING_PORT)
 
     trash = builder.add_stage('Trash')
 

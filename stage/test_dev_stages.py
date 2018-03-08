@@ -16,10 +16,9 @@ import logging
 from time import sleep
 
 import pytest
-
-from testframework import sdc_api
-from testframework.markers import parcelpackaging, rpmpackaging
-from testframework.utils import Version
+from streamsets.sdk import sdc_api
+from streamsets.testframework.markers import parcelpackaging, rpmpackaging
+from streamsets.testframework.utils import Version
 
 logger = logging.getLogger(__name__)
 

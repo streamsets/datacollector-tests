@@ -16,7 +16,7 @@ import json
 import logging
 import textwrap
 
-from testframework.markers import rpmpackaging
+from streamsets.testframework.markers import rpmpackaging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

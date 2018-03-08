@@ -15,8 +15,7 @@
 import logging
 
 import pytest
-
-from testframework import sdc
+from streamsets.testframework import sdc
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -54,11 +53,11 @@ def pipeline(data_collector):
 # Validate "current" user switching and getting the proper groups and roles.
 def test_current_user(data_collector):
     data_collector.set_user('admin')
-    user = data_collector.current_user()
+    user = data_collector.current_user
     assert user.name == 'admin'
 
     data_collector.set_user('jarcec')
-    user = data_collector.current_user()
+    user = data_collector.current_user
     assert user.name == 'jarcec'
     assert user.groups == ['all', 'jarcec', 'employee']
     assert user.roles == ['admin']
@@ -72,7 +71,7 @@ def test_pipeline_history(data_collector, pipeline):
     data_collector.set_user('dima')
     data_collector.stop_pipeline(pipeline)
 
-    history = data_collector.pipeline_history(pipeline)
+    history = data_collector.get_pipeline_history(pipeline)
 
     # History is in descending order.
 

@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import logging
 import os
 import pytest
@@ -24,8 +19,8 @@ import string
 import tempfile
 import time
 
-from testframework.markers import sdc_min_version
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -141,11 +136,11 @@ def test_directory_origin_order_by_timestamp(sdc_builder, sdc_executor, no_of_th
     sdc_executor.stop_pipeline(directory_pipeline)
 
     # Validate history is as expected
-    file_pipeline_history = sdc_executor.pipeline_history(files_pipeline)
+    file_pipeline_history = sdc_executor.get_pipeline_history(files_pipeline)
     msgs_sent_count1 = file_pipeline_history.entries[4].metrics.counter('pipeline.batchOutputRecords.counter').count
     msgs_sent_count2 = file_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
-    directory_pipeline_history = sdc_executor.pipeline_history(directory_pipeline)
+    directory_pipeline_history = sdc_executor.get_pipeline_history(directory_pipeline)
     msgs_result_count = directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
     assert msgs_result_count == msgs_sent_count1 + msgs_sent_count2

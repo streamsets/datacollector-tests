@@ -12,16 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module are basic reusable functions which can be called by different relevant environments.
-The test follow a pattern of creating pipelines with :py:obj:`testframework.sdc_models.PipelineBuilder` in one version
-of SDC and then importing and running them in another.
-"""
-
 import json
 import logging
 import string
 
-from testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -67,7 +62,9 @@ def basic_solr_target(distribution, sdc_builder, sdc_executor, environment):
     to_error = builder.add_stage('To Error')
 
     solr_target = builder.add_stage('Solr', type='destination')
-    solr_target.set_attributes(instance_type='SINGLE_NODE', indexing_mode='RECORD', fields=json_fields_map,
+    solr_target.set_attributes(instance_type='SINGLE_NODE',
+                               record_indexing_mode='RECORD',
+                               fields=json_fields_map,
                                solr_uri=sdc_solr_uri)
 
     dev_raw_data_source >> record_deduplicator >> solr_target
