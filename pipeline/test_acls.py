@@ -15,9 +15,8 @@
 import logging
 
 import pytest
-
-from testframework import sdc
-from testframework.common_exceptions import InternalServerError
+from streamsets.sdk.exceptions import InternalServerError
+from streamsets.testframework import sdc
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)

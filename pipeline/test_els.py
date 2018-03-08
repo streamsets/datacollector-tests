@@ -15,8 +15,7 @@
 import logging
 
 import pytest
-
-from testframework import sdc
+from streamsets.testframework import sdc
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +32,9 @@ def data_collector():
 
 
 def test_pipeline_el_user(random_expression_pipeline_builder, data_collector):
-    random_expression_pipeline_builder.expression_evaluator.header_expressions = [
-        {'attributeToSet': 'user', 'headerAttributeExpression': '${pipeline:user()}'},
+    random_expression_pipeline_builder.expression_evaluator.header_attribute_expressions = [
+        {'attributeToSet': 'user',
+        'headerAttributeExpression': '${pipeline:user()}'}
     ]
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     data_collector.add_pipeline(pipeline)
@@ -57,7 +57,7 @@ def test_pipeline_el_user(random_expression_pipeline_builder, data_collector):
 
 
 def test_pipeline_el_name_title_id_version(random_expression_pipeline_builder, sdc_executor):
-    random_expression_pipeline_builder.expression_evaluator.header_expressions = [
+    random_expression_pipeline_builder.expression_evaluator.header_attribute_expressions = [
         {'attributeToSet': 'title', 'headerAttributeExpression': '${pipeline:title()}'},
         {'attributeToSet': 'name', 'headerAttributeExpression': '${pipeline:name()}'},
         {'attributeToSet': 'version', 'headerAttributeExpression': '${pipeline:version()}'},

@@ -16,8 +16,8 @@ import logging
 from collections import namedtuple
 
 import pytest
+from streamsets.sdk.sdc_models import DataDriftRule, DataRule
 
-from testframework.sdc_models import DataDriftRule, DataRule
 logger = logging.getLogger(__name__)
 
 

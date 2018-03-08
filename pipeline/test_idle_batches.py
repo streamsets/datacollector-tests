@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 
-import json
-import pytest
-
-from testframework import sdc
-
 logger = logging.getLogger(__name__)
+
 
 def test_idle_batches_are_generated(sdc_builder, sdc_executor):
     """Validate that framework will properly create "idle batches" when runners are
@@ -50,4 +47,3 @@ def test_idle_batches_are_generated(sdc_builder, sdc_executor):
 
     # Batch wait time is 5 seconds, the idle time is 1 second and we have two threads (4 * 1 * 2)
     assert runtimeStats['idleBatchCount'] >= 8
-

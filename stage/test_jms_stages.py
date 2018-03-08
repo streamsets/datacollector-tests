@@ -20,9 +20,8 @@ import pytest
 # Import TestListener with a leading underscore to prevent pytest from
 # thinking that it's a test class.
 from stomp.listener import TestListener as _TestListener
-
-from testframework.markers import jms
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import jms
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 

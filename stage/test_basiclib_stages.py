@@ -17,10 +17,9 @@ import logging
 import string
 
 import pytest
-
-from testframework import sdc
-from testframework.utils import get_random_string
-from testframework.sdc_models import Configuration
+from streamsets.sdk.models import Configuration
+from streamsets.testframework import sdc
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ def pipeline_shell_generator(sdc_shell):
     dev_raw_data_source.raw_data = '{}'
 
     shell_executor = builder.add_stage('Shell')
-    shell_executor.environment = Configuration(property_key='key', file='${FILE}')
+    shell_executor.environment_variables = Configuration(property_key='key', file='${FILE}')
     shell_executor.script = 'echo `whoami` > $file'
 
     dev_raw_data_source >> shell_executor

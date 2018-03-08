@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import logging
 import string
 from collections import namedtuple
@@ -19,9 +20,9 @@ from time import sleep
 
 import pytest
 import sqlalchemy
-
-from testframework.markers import database
-from testframework.utils import get_random_string, Version
+from streamsets.sdk.utils import Version
+from streamsets.testframework.markers import database
+from streamsets.testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -432,7 +433,7 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
         dest_table = setup_table(database, dest_table_name)
         jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
 
-        jdbc_producer.set_attributes(table_name_template=dest_table_name,
+        jdbc_producer.set_attributes(table_name=dest_table_name,
                                      default_operation='INSERT',
                                      # A framework bug creates a 1-element array, so remove the entry
                                      field_to_column_mapping=[])

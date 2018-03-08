@@ -15,13 +15,12 @@
 import logging
 
 import pytest
-
-from testframework.markers import sdc_min_version
+from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
 
 # Port for SDC RPC stages to exchange error records
-SDC_RPC_PORT = 20000
+SDC_RPC_LISTENING_PORT = 20000
 SDC_RPC_ID = 'lifecycle'
 
 
@@ -83,8 +82,8 @@ def successful_receiver_pipeline(sdc_builder):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('SDC RPC', type='origin')
-    origin.rpc_port = SDC_RPC_PORT
-    origin.rpc_id = SDC_RPC_ID
+    origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
+    origin.sdc_rpc_id = SDC_RPC_ID
 
     trash = builder.add_stage('Trash')
 
@@ -98,8 +97,8 @@ def failing_receiver_pipeline(sdc_builder):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('SDC RPC', type='origin')
-    origin.rpc_port = SDC_RPC_PORT
-    origin.rpc_id = SDC_RPC_ID
+    origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
+    origin.sdc_rpc_id = SDC_RPC_ID
 
     jython = builder.add_stage('Jython Evaluator')
     jython.script = '1 / 0'  # ~ throw exception and stop the pipeline
@@ -117,7 +116,7 @@ def failing_receiver_pipeline(sdc_builder):
 def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event on pipeline start."""
     start_stage = generator_trash_builder.add_start_event_stage('Write to Another Pipeline')
-    start_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
+    start_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
     start_stage.sdc_rpc_id = SDC_RPC_ID
 
     start_event_pipeline = generator_trash_builder.build('Start Event')
@@ -150,7 +149,7 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
 def test_stop_event_user_action(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline is stopped by user."""
     stop_stage = generator_trash_builder.add_stop_event_stage('Write to Another Pipeline')
-    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
+    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
     stop_stage.sdc_rpc_id = SDC_RPC_ID
 
     stop_event_pipeline = generator_trash_builder.build('Stop Event - User Action')
@@ -184,7 +183,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
 def test_stop_event_finished(generator_finisher_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline finishes."""
     stop_stage = generator_finisher_builder.add_stop_event_stage('Write to Another Pipeline')
-    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
+    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
     stop_stage.sdc_rpc_id = SDC_RPC_ID
 
     stop_event_pipeline = generator_finisher_builder.build('Stop Event - Finished')
@@ -217,7 +216,7 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
 def test_stop_event_failure(generator_failure_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline crashes."""
     stop_stage = generator_failure_builder.add_stop_event_stage('Write to Another Pipeline')
-    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
+    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
     stop_stage.sdc_rpc_id = SDC_RPC_ID
 
     stop_event_pipeline = generator_failure_builder.build('Stop Event - Failure')
@@ -251,7 +250,7 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
 def test_start_event_handler_failure(generator_trash_builder, failing_receiver_pipeline, sdc_executor):
     """ Validate that failure to process start event will terminate the pipeline."""
     start_stage = generator_trash_builder.add_start_event_stage('Write to Another Pipeline')
-    start_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
+    start_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
     start_stage.sdc_rpc_id = SDC_RPC_ID
 
     start_event_pipeline = generator_trash_builder.build('Start Event: Handler Failure')
@@ -272,7 +271,7 @@ def test_start_event_handler_failure(generator_trash_builder, failing_receiver_p
     sdc_executor.get_pipeline_status(start_event_pipeline).wait_for_status('START_ERROR', ignore_errors=True)
 
     # Validate history is as expected
-    history = sdc_executor.pipeline_history(start_event_pipeline)
+    history = sdc_executor.get_pipeline_history(start_event_pipeline)
     entry = history.entries[0]
     assert entry['status'] == 'START_ERROR'
 
@@ -281,7 +280,7 @@ def test_start_event_handler_failure(generator_trash_builder, failing_receiver_p
 def test_stop_event_handler_failure(generator_trash_builder, failing_receiver_pipeline, sdc_executor):
     """ Validate that failure to process stop event will terminate the pipeline."""
     stop_stage = generator_trash_builder.add_stop_event_stage('Write to Another Pipeline')
-    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_PORT}']
+    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
     stop_stage.sdc_rpc_id = SDC_RPC_ID
 
     stop_event_pipeline = generator_trash_builder.build('Stop Event: Handler Failure')
@@ -303,6 +302,6 @@ def test_stop_event_handler_failure(generator_trash_builder, failing_receiver_pi
     sdc_executor.get_pipeline_status(stop_event_pipeline).wait_for_status('STOP_ERROR', ignore_errors=True)
 
     # Validate history is as expected
-    history = sdc_executor.pipeline_history(stop_event_pipeline)
+    history = sdc_executor.get_pipeline_history(stop_event_pipeline)
     entry = history.entries[0]
     assert entry['status'] == 'STOP_ERROR'

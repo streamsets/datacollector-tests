@@ -12,19 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import logging
 import string
 
 import pytest
 import sqlalchemy
-
-from testframework.markers import database, cluster
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import database, cluster
+from streamsets.testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -63,7 +57,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
 
         sdc_executor.start_pipeline(pipeline)
 
-        metrics = sdc_executor.pipeline_history(pipeline).latest.metrics
+        metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
         assert metrics.counter("pipeline.batchCount.counter").count == 1
         assert metrics.counter("pipeline.batchInputRecords.counter").count == 3
         assert metrics.counter("pipeline.batchOutputRecords.counter").count == 4

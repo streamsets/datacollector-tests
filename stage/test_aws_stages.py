@@ -12,20 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 from datetime import datetime
 import json
 import logging
 import string
 import time
 
-from testframework.markers import aws, sdc_min_version
-from testframework.utils import get_random_string
-from testframework.sdc_models import Configuration
+from streamsets.sdk.models import Configuration
+from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -52,7 +47,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 
     kinesis_consumer = builder.add_stage('Kinesis Consumer')
     kinesis_consumer.set_attributes(application_name=application_name, data_format='TEXT',
-                                    initial_position_in_stream='TRIM_HORIZON',
+                                    initial_position='TRIM_HORIZON',
                                     stream_name=stream_name)
 
     trash = builder.add_stage('Trash')
@@ -128,7 +123,7 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(10)
         sdc_executor.stop_pipeline(producer_dest_pipeline)
 
-        history = sdc_executor.pipeline_history(producer_dest_pipeline)
+        history = sdc_executor.get_pipeline_history(producer_dest_pipeline)
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
         logger.debug('Number of messages ingested into the pipeline = %s', msgs_sent_count)
 
@@ -167,8 +162,8 @@ def test_s3_origin(sdc_builder, sdc_executor, aws):
     builder.add_error_stage('Discard')
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
-    # partition_prefix uses ant based pattern
-    s3_origin.set_attributes(bucket=s3_bucket, data_format='TEXT', partition_prefix='{0}*'.format(s3_key))
+    # prefix_pattern uses ant based pattern
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='TEXT', prefix_pattern='{0}*'.format(s3_key))
 
     trash = builder.add_stage('Trash')
 
@@ -319,8 +314,8 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
 
     s3_executor = builder.add_stage('Amazon S3', type='executor')
     s3_executor.set_attributes(bucket='${record:value("/bucket")}',
-                               task_type='CREATE_NEW_OBJECT',
-                               object_key=s3_key,
+                               task='CREATE_NEW_OBJECT',
+                               object=s3_key,
                                content='${record:value("/company")}')
 
     dev_raw_data_source >> record_deduplicator >> s3_executor
@@ -377,8 +372,8 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
 
     s3_executor = builder.add_stage('Amazon S3', type='executor')
     s3_executor.set_attributes(bucket='${record:value("/bucket")}',
-                               task_type='CHANGE_EXISTING_OBJECT',
-                               object_key='${record:value("/key")}',
+                               task='CHANGE_EXISTING_OBJECT',
+                               object='${record:value("/key")}',
                                tags=Configuration(property_key='key', company='${record:value("/company")}'))
 
     dev_raw_data_source >> record_deduplicator >> s3_executor
@@ -423,8 +418,8 @@ def test_s3_executor_non_existing_bucket(sdc_builder, sdc_executor, aws):
 
     s3_executor = builder.add_stage('Amazon S3', type='executor')
     s3_executor.set_attributes(bucket='${record:value("/bucket")}',
-                               task_type='CREATE_NEW_OBJECT',
-                               object_key=s3_key,
+                               task='CREATE_NEW_OBJECT',
+                               object=s3_key,
                                content='${record:value("/company")}')
 
     dev_raw_data_source >> s3_executor
@@ -459,8 +454,8 @@ def test_s3_executor_non_existing_object(sdc_builder, sdc_executor, aws):
 
     s3_executor = builder.add_stage('Amazon S3', type='executor')
     s3_executor.set_attributes(bucket='${record:value("/bucket")}',
-                               task_type='CHANGE_EXISTING_OBJECT',
-                               object_key='${record:value("/key")}',
+                               task='CHANGE_EXISTING_OBJECT',
+                               object='${record:value("/key")}',
                                tags=Configuration(property_key='key', company='${record:value("/company")}'))
 
     dev_raw_data_source >> s3_executor

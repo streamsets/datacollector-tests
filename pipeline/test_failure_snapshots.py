@@ -15,8 +15,7 @@
 import logging
 
 import pytest
-
-from testframework.markers import sdc_min_version
+from streamsets.testframework.markers import sdc_min_version
 
 @pytest.fixture(scope='module')
 def sdc_builder_hook():

@@ -22,10 +22,10 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from streamsets.sdk import sdc_models
+from streamsets.sdk.utils import pipeline_json_encoder
 
-from testframework import sdc_models
-from testframework.markers import upgrade
-from testframework.utils import pipeline_json_encoder
+from streamsets.testframework.markers import upgrade
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,7 +57,8 @@ def test_pipeline_upgrade(sdc_builder):
     logger.info(f'Importing and checking pipeline JSON files from {DIR_TO_READ} ...')
     for pipeline_file in DIR_TO_READ.glob('**/*.json'):
         uuid = str(uuid4())
-        logger.debug(f'Using pipeline id {uuid} for file {pipeline_file}')
+        print(f'File is {pipeline_file}')
+        logger.info(f'Using pipeline id {uuid} for file {pipeline_file}')
         pipeline = sdc_models.Pipeline(pipeline_file)
         pipeline.id = uuid
         sdc_builder.add_pipeline(pipeline)

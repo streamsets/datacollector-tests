@@ -18,15 +18,15 @@ import string
 from pathlib import Path
 from uuid import uuid4
 
-from testframework import sdc
-from testframework.markers import cluster, parcelpackaging, upgrade
-from testframework.utils import get_random_string
+from streamsets.testframework import sdc
+from streamsets.testframework.markers import cluster, parcelpackaging, upgrade
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
-SDC_RPC_PORT = 20000
+SDC_RPC_LISTENING_PORT = 20000
 
 pytestmark = [parcelpackaging]
 
@@ -107,9 +107,9 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     hadoop_fs.input_paths.append(hadoop_fs_folder)
 
     sdc_rpc_destination = builder.add_stage('SDC RPC', type='destination')
-    sdc_rpc_destination.rpc_connections.append('{}:{}'.format(sdc_executor.server_host,
-                                                              SDC_RPC_PORT))
-    sdc_rpc_destination.rpc_id = get_random_string(string.ascii_letters, 10)
+    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host,
+                                                                 SDC_RPC_LISTENING_PORT))
+    sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     hadoop_fs >> sdc_rpc_destination
     hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
@@ -120,8 +120,8 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = builder.add_stage('SDC RPC', type='origin')
-    sdc_rpc_origin.rpc_port = SDC_RPC_PORT
-    sdc_rpc_origin.rpc_id = sdc_rpc_destination.rpc_id
+    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
+    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
     # Since YARN jobs take a while to get going, set RPC origin batch wait time to 5 min. to avoid
     # getting an empty batch in the snapshot.
     sdc_rpc_origin.batch_wait_time_in_secs = 300

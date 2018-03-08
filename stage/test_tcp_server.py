@@ -12,16 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""These are tests for the TCP server origin.  They make use of the TCP client provided in the testframework
-environment.
-"""
-
 import logging
 from collections import namedtuple
 
 import pytest
-
-from testframework.environment import TCPClient
+from streamsets.testframework.environment import TCPClient
 
 logger = logging.getLogger(__name__)
 

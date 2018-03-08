@@ -18,9 +18,8 @@ import string
 import tempfile
 
 import pytest
-
-from testframework import sdc_api
-from testframework.utils import get_random_string
+from streamsets.sdk import sdc_api
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +28,12 @@ ERROR_CODE_STAGE_REQUIRED_FIELDS = 'CONTAINER_0050'
 # Stage precondition: CONTAINER_0051 - Unsatisfied precondition.
 ERROR_CODE_UNSATISFIED_PRECONDITION = 'CONTAINER_0051'
 # Port for SDC RPC stages to exchange error records
-SDC_RPC_PORT = 20000
+SDC_RPC_LISTENING_PORT = 20000
 
 
 def test_error_records_stop_pipeline_on_required_field(random_expression_pipeline_builder, sdc_executor):
-    random_expression_pipeline_builder.expression_evaluator.stage_on_record_error = 'STOP_PIPELINE'
-    random_expression_pipeline_builder.expression_evaluator.stage_required_fields = ['/b']
+    random_expression_pipeline_builder.expression_evaluator.on_record_error = 'STOP_PIPELINE'
+    random_expression_pipeline_builder.expression_evaluator.required_fields = ['/b']
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
@@ -47,8 +46,8 @@ def test_error_records_stop_pipeline_on_required_field(random_expression_pipelin
 
 
 def test_error_records_stop_pipeline_on_record_precondition(random_expression_pipeline_builder, sdc_executor):
-    random_expression_pipeline_builder.expression_evaluator.stage_on_record_error = 'STOP_PIPELINE'
-    random_expression_pipeline_builder.expression_evaluator.stage_record_preconditions = ['${1 == 2}']
+    random_expression_pipeline_builder.expression_evaluator.on_record_error = 'STOP_PIPELINE'
+    random_expression_pipeline_builder.expression_evaluator.preconditions = ['${1 == 2}']
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
@@ -61,8 +60,8 @@ def test_error_records_stop_pipeline_on_record_precondition(random_expression_pi
 
 
 def test_error_records_to_error_on_required_field(random_expression_pipeline_builder, sdc_executor):
-    random_expression_pipeline_builder.expression_evaluator.stage_on_record_error = 'TO_ERROR'
-    random_expression_pipeline_builder.expression_evaluator.stage_required_fields = ['/b']
+    random_expression_pipeline_builder.expression_evaluator.on_record_error = 'TO_ERROR'
+    random_expression_pipeline_builder.expression_evaluator.required_fields = ['/b']
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
@@ -77,8 +76,8 @@ def test_error_records_to_error_on_required_field(random_expression_pipeline_bui
 
 
 def test_error_records_to_error_on_record_precondition(random_expression_pipeline_builder, sdc_executor):
-    random_expression_pipeline_builder.expression_evaluator.stage_on_record_error = 'TO_ERROR'
-    random_expression_pipeline_builder.expression_evaluator.stage_record_preconditions = ['${1 == 2}']
+    random_expression_pipeline_builder.expression_evaluator.on_record_error = 'TO_ERROR'
+    random_expression_pipeline_builder.expression_evaluator.preconditions = ['${1 == 2}']
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
@@ -93,8 +92,8 @@ def test_error_records_to_error_on_record_precondition(random_expression_pipelin
 
 
 def test_error_records_discard_on_required_field(random_expression_pipeline_builder, sdc_executor):
-    random_expression_pipeline_builder.expression_evaluator.stage_on_record_error = 'DISCARD'
-    random_expression_pipeline_builder.expression_evaluator.stage_required_fields = ['/b']
+    random_expression_pipeline_builder.expression_evaluator.on_record_error = 'DISCARD'
+    random_expression_pipeline_builder.expression_evaluator.required_fields = ['/b']
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
@@ -108,8 +107,8 @@ def test_error_records_discard_on_required_field(random_expression_pipeline_buil
 
 
 def test_error_records_discard_on_record_precondition(random_expression_pipeline_builder, sdc_executor):
-    random_expression_pipeline_builder.expression_evaluator.stage_on_record_error = 'DISCARD'
-    random_expression_pipeline_builder.expression_evaluator.stage_record_preconditions = ['${1 == 2}']
+    random_expression_pipeline_builder.expression_evaluator.on_record_error = 'DISCARD'
+    random_expression_pipeline_builder.expression_evaluator.preconditions = ['${1 == 2}']
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
@@ -129,15 +128,15 @@ def policy_write_builder(sdc_builder, sdc_executor):
     dev_data_generator = builder.add_stage('Dev Data Generator')
 
     expression_evaluator = builder.add_stage('Expression Evaluator')
-    expression_evaluator.header_expressions = [{'attributeToSet': 'changed',
-                                                'headerAttributeExpression': 'yes'}]
+    expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'changed',
+                                                          'headerAttributeExpression': 'yes'}]
 
     to_error = builder.add_stage('To Error')
 
     dev_data_generator >> expression_evaluator >> to_error
 
     error = builder.add_error_stage('Write to Another Pipeline')
-    error.sdc_rpc_connection = ['{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT)]
+    error.sdc_rpc_connection = ['{}:{}'.format(sdc_executor.server_host, SDC_RPC_LISTENING_PORT)]
     error.sdc_rpc_id = 'error_policy'
 
     yield builder
@@ -148,8 +147,8 @@ def policy_read_builder(sdc_builder):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('SDC RPC', type='origin')
-    origin.rpc_port = SDC_RPC_PORT
-    origin.rpc_id = 'error_policy'
+    origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
+    origin.sdc_rpc_id = 'error_policy'
 
     trash = builder.add_stage('Trash')
 

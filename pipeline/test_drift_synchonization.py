@@ -12,18 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import logging
 import string
 
 import sqlalchemy
-
-from testframework.markers import database, cluster
-from testframework.utils import get_random_string
+from streamsets.testframework.markers import database, cluster
+from streamsets.testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

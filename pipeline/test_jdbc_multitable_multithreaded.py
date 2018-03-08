@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 from collections import namedtuple
 import logging
 import random
@@ -26,9 +21,9 @@ from time import sleep, time
 
 import pytest
 import sqlalchemy
-
-from testframework.markers import database
-from testframework.utils import get_random_string, Version
+from streamsets.sdk.utils import Version
+from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.markers import database
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -141,8 +136,8 @@ def teardown_tables(database, table_names):
 @pytest.mark.parametrize('table_name_characters', [string.ascii_lowercase, string.digits])
 @pytest.mark.parametrize('table_name_length', [14])
 @pytest.mark.parametrize('no_of_tables', [9])
-@pytest.mark.parametrize('no_of_threads', [1, 5])
-@pytest.mark.parametrize('batch_strategy', ["SWITCH_TABLES", "PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE"])
+@pytest.mark.parametrize('number_of_threads', [1, 5])
+@pytest.mark.parametrize('per_batch_strategy', ["SWITCH_TABLES", "PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE"])
 @pytest.mark.parametrize('partitioning_mode', ["DISABLED", "BEST_EFFORT"])
 @pytest.mark.parametrize('non_incremental', [True, False])
 @pytest.mark.timeout(300)
@@ -150,8 +145,8 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                                           table_name_characters,
                                           table_name_length,
                                           no_of_tables,
-                                          no_of_threads,
-                                          batch_strategy,
+                                          number_of_threads,
+                                          per_batch_strategy,
                                           partitioning_mode,
                                           non_incremental):
     """Tests Multithreaded Multi-table JDBC source. Replicates a set of tables with prefix 'src' to a another
@@ -174,19 +169,21 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
 
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
 
-    table_configuration = [{'tablePattern': f'{SRC_TABLE_PREFIX}%',
-                            'partitioningMode': partitioning_mode,
-                            'partitionSize': PARTITION_SIZE}]
+    table_configs = [{'tablePattern': f'{SRC_TABLE_PREFIX}%',
+                      'partitioningMode': partitioning_mode,
+                      'partitionSize': PARTITION_SIZE}]
     if Version(sdc_builder.version) >= Version('3.0.0.0'):
-        table_configuration[0]['enableNonIncremental'] = non_incremental
-    jdbc_multitable_consumer.set_attributes(no_of_threads=no_of_threads, batch_strategy=batch_strategy,
-                                            max_pool_size=no_of_threads, min_idle_connections=no_of_threads,
-                                            table_configuration=table_configuration)
+        table_configs[0]['enableNonIncremental'] = non_incremental
+    jdbc_multitable_consumer.set_attributes(number_of_threads=number_of_threads,
+                                            per_batch_strategy=per_batch_strategy,
+                                            maximum_pool_size=number_of_threads,
+                                            minimum_idle_connections=number_of_threads,
+                                            table_configs=table_configs)
 
     if partitioning_mode == 'BEST_EFFORT' and Version(sdc_builder.version) < Version('3.0.0.0'):
         # pipeline upgraded across 3.0 boundary with partitioning; default resulting queriesPerSecond will be
         # unacceptably slow for partitioning, so set query interval to 0 instead
-        jdbc_multitable_consumer.configuration['commonSourceConfigBean.queryInterval'] = 0
+        jdbc_multitable_consumer.query_interval = 0
 
     # The target used to replicate is JDBCQueryExecutor.
     # After SDC-5757 is resolved, we can use JDBCProducer.
@@ -205,7 +202,8 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
     jdbc_multitable_consumer >> jdbc_query_dest
     jdbc_multitable_consumer >= jdbc_query_event
     non_inc = ', non-incremental' if non_incremental else ''
-    pipeline_name = f'JDBC multitable consumer pipeline - {batch_strategy} batch strategy, {no_of_threads} threads, {partitioning_mode} partitioning{non_inc}'
+    pipeline_name = (f'JDBC multitable consumer pipeline - {per_batch_strategy} batch strategy, '
+                     f'{number_of_threads} threads, {partitioning_mode} partitioning{non_inc}')
     pipeline = pipeline_builder.build(pipeline_name).configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 

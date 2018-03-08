@@ -17,10 +17,10 @@ import logging
 import json
 import pytest
 from javaproperties import Properties
+from streamsets.sdk import sdc_models
+from streamsets.testframework.markers import sdc_min_version
 from uuid import uuid4
 
-from testframework import sdc_models
-from testframework.markers import sdc_min_version
 
 # Skip all tests in this module if --sdc-version < 2.6.0.0-SNAPSHOT
 pytestmark = sdc_min_version('2.6.0.0-SNAPSHOT')

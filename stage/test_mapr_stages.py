@@ -12,27 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The tests in this module follow a pattern of creating pipelines with
-:py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
-another.
-"""
-
 import json
 import logging
 import os
-import pytest
 import string
 from pathlib import Path
 from uuid import uuid4
 
-from testframework.markers import cluster, sdc_min_version
-from testframework.utils import get_random_string
+import pytest
+from streamsets.testframework.markers import cluster, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
-SDC_RPC_PORT = 20000
+SDC_LISTENING_RPC_PORT = 20000
 
 
 @cluster('mapr')
@@ -70,11 +65,13 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
                                                                                            stop_after_first_batch=True,
                                                                                            raw_data=raw_data)
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
-    header_expression = ("${record:value('/operation')=='insert'?1:"
-                         "record:value('/operation')=='update'?3:"
-                         "record:value('/operation')=='delete'?2:1}")
-    expression_evaluator.set_attributes(header_expressions=[{'attributeToSet': 'sdc.operation.type',
-                                                             'headerAttributeExpression': header_expression}])
+    header_attribute_expressions = ("${record:value('/operation')=='insert'?1:"
+                                    "record:value('/operation')=='update'?3:"
+                                    "record:value('/operation')=='delete'?2:1}")
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {'attributeToSet': 'sdc.operation.type',
+         'headerAttributeExpression': header_attribute_expressions}
+    ])
     field_remover = pipeline_builder.add_stage('Field Remover')
     field_remover.set_attributes(fields=['/operation'])
     mapr_db_json = pipeline_builder.add_stage('MapR DB JSON', type='destination')
@@ -220,9 +217,9 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
     mapr_fs_origin.input_paths.append(mapr_fs_folder)
 
     sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.rpc_connections.append('{}:{}'.format(sdc_executor.server_host,
-                                                              SDC_RPC_PORT))
-    sdc_rpc_destination.rpc_id = get_random_string(string.ascii_letters, 10)
+    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host,
+                                                                 SDC_RPC_LISTENING_PORT))
+    sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     mapr_fs_origin >> sdc_rpc_destination
     mapr_fs_pipeline = builder.build(title='MapR FS pipeline').configure_for_environment(cluster)
@@ -233,8 +230,8 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
-    sdc_rpc_origin.rpc_port = SDC_RPC_PORT
-    sdc_rpc_origin.rpc_id = sdc_rpc_destination.rpc_id
+    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
+    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
     # Since YARN jobs take a while to get going, set RPC origin batch wait time to 5 min. to avoid
     # getting an empty batch in the snapshot.
     sdc_rpc_origin.batch_wait_time_in_secs = 300
@@ -363,7 +360,7 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source.raw_data = 'Hello World!'
 
     mapr_streams_producer = builder.add_stage('MapR Streams Producer')
-    mapr_streams_producer.topic_name = stream_topic_name
+    mapr_streams_producer.topic = stream_topic_name
     mapr_streams_producer.data_format = 'TEXT'
 
     dev_raw_data_source >> mapr_streams_producer
@@ -422,7 +419,7 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
     # MapR Stream name has to be pre-created in MapR cluster. Clusterdock MapR image has this already.
     stream_name = '/sample-stream'
     stream_topic_name = stream_name + ':' + get_random_string(string.ascii_letters, 10)
-    rpc_id = get_random_string(string.ascii_letters, 10)
+    sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     # Build the MapR Stream producer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -432,7 +429,7 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source.raw_data = 'Hello World!'
 
     mapr_streams_producer = builder.add_stage('MapR Streams Producer')
-    mapr_streams_producer.topic_name = stream_topic_name
+    mapr_streams_producer.topic = stream_topic_name
     mapr_streams_producer.data_format = 'TEXT'
 
     dev_raw_data_source >> mapr_streams_producer
@@ -447,8 +444,8 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
     mapr_streams_consumer.data_format = 'TEXT'
 
     sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.rpc_connections.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT))
-    sdc_rpc_destination.rpc_id = rpc_id
+    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_LISTENING_PORT))
+    sdc_rpc_destination.sdc_rpc_id = sdc_rpc_id
 
     mapr_streams_consumer >> sdc_rpc_destination
     consumer_pipeline = builder.build('Streams Consumer - cluster').configure_for_environment(cluster)
@@ -459,8 +456,8 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
 
     sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
-    sdc_rpc_origin.rpc_port = SDC_RPC_PORT
-    sdc_rpc_origin.rpc_id = rpc_id
+    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
+    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_id
     # Since YARN jobs take a while to get going, set RPC origin batch wait time to 5 min. to avoid
     # getting an empty batch in the snapshot.
     sdc_rpc_origin.batch_wait_time_in_secs = 300
