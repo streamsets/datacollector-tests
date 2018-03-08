@@ -93,9 +93,11 @@ def get_kafka_consumer_stage(pipeline_builder, cluster, cluster_mode):
 
     pipeline_builder.add_error_stage('Discard')
 
+    if cluster_mode:
+        kafka_cluster_stage_lib, kafka_cluster_env_lib = cluster.kafka.cluster_stage_lib_env_lib
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
                                                 type='origin',
-                                                library=(cluster.kafka.cluster_stage_lib
+                                                library=(kafka_cluster_stage_lib
                                                          if cluster_mode
                                                          else cluster.kafka.standalone_stage_lib))
     topic_name = get_random_string(string.ascii_letters, 10)
