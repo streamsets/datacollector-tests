@@ -17,6 +17,7 @@ import logging
 import string
 
 import avro
+import pytest
 
 from testframework.markers import cluster, confluent, parcelpackaging, sdc_min_version
 from testframework.utils import get_random_string
@@ -226,6 +227,8 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
         sdc_rpc_origin >> trash
     """
 
+    if cluster.kafka.is_kerberized:
+        pytest.skip('Cluster mode test for Kerberized Kafka is skipped until SDC-6857 is fixed.')
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = get_kafka_consumer_stage(builder, cluster, cluster_mode=True)
