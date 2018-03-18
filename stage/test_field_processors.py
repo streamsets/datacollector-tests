@@ -463,6 +463,47 @@ def test_field_renamer(sdc_builder, sdc_executor):
         assert key not in new_value and key.strip(strip_word) in new_value
 
 
+def test_field_replacer(sdc_builder, sdc_executor):
+    """Test field replacer processor. The pipeline would look like:
+
+        dev_raw_data_source >> field_replacer >> trash
+
+    With the given replacement rules, we do following:
+        change value of ssn field to be 'XXX-XX-XXXX',
+        set ranking field to null,
+        set statistics field to null if it contains 'NA' or 'not_available'
+    """
+    winners = [dict(ssn='111-11-1111', year='2010', ranking='3', statistics='NA'),
+               dict(ssn='111-22-1111', year='2011', ranking='2', statistics='2-3-3'),
+               dict(ssn='111-33-1111', year='2012', ranking='1', statistics='not_available')]
+    raw_data = ''.join([json.dumps(winner) for winner in winners])
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    field_replacer = pipeline_builder.add_stage('Field Replacer')
+    field_replacer.replacement_rules = [{'setToNull': False, 'fields': '/ssn', 'replacement': 'XXX-XX-XXXX'},
+                                        {'setToNull': True, 'fields': '/ranking'},
+                                        {'setToNull': True,
+                                         'fields': '/*[${f:value() == "NA" || f:value() == "not_available"}]'}]
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_replacer >> trash
+    pipeline = pipeline_builder.build('Field Replacer pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    for rec in winners:
+        rec['ssn'] = 'XXX-XX-XXXX'
+        rec['ranking'] = None
+        if rec['statistics'] == 'NA' or rec['statistics'] == 'not_available':
+            rec['statistics'] = None
+    actual_data = [rec.value2 for rec in snapshot[field_replacer.instance_name].output]
+    assert actual_data == winners
+
+
 def test_field_splitter(sdc_builder, sdc_executor):
     """Test field splitter processor. The pipeline would look like:
 
