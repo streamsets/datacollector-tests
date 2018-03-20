@@ -23,6 +23,8 @@ import logging
 import re
 from datetime import datetime
 
+from testframework.markers import sdc_min_version
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -463,6 +465,7 @@ def test_field_renamer(sdc_builder, sdc_executor):
         assert key not in new_value and key.strip(strip_word) in new_value
 
 
+@sdc_min_version('3.1.0.0')
 def test_field_replacer(sdc_builder, sdc_executor):
     """Test field replacer processor. The pipeline would look like:
 
