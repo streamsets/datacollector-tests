@@ -26,6 +26,7 @@ def basic_rules_pipeline_builder(sdc_builder):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.number_of_threads = 5
     dev_data_generator.fields_to_generate = [{'type': 'STRING',
                                               'precision': 10,
                                               'scale': 2,
@@ -60,6 +61,7 @@ def test_basic_data_rules(basic_rules_pipeline_builder, sdc_executor):
     pipeline_builder.add_data_rule(data_rule_data_lane, data_rule_event_lane)
 
     pipeline = pipeline_builder.build('Data rules')
+    pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(100)
 
@@ -97,6 +99,7 @@ def test_basic_drift_rules(basic_rules_pipeline_builder, sdc_executor):
     pipeline_builder.add_data_drift_rule(drift_rule_data_lane, drift_rule_event_lane)
 
     pipeline = pipeline_builder.build('Drift rules')
+    pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
 
