@@ -14,19 +14,31 @@
 import json
 import logging
 import os
+import sched
 import string
+import time
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from streamsets.testframework import sdc
-from streamsets.testframework.markers import cluster, parcelpackaging, upgrade
+from streamsets.testframework.markers import cluster, large, parcelpackaging, upgrade
 from streamsets.testframework.utils import get_random_string
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_LISTENING_PORT = 20000
+
+# Duration for which pipeline would run in case of long-running test/s.
+LARGE_TEST_DURATION_IN_SECS = 3600
+# Duration at which pipeline status will be checked for long-running test/s.
+LARGE_TEST_STATUS_CHECK_DURATION_IN_SECS = int(LARGE_TEST_DURATION_IN_SECS / 10)
+# Statuses that signify a pipeline that isn't failing.
+SUCCESS_STATUSES = ['EDITED', 'STARTING', 'RUNNING']
 
 pytestmark = [parcelpackaging]
 
@@ -207,3 +219,75 @@ def test_hadoop_fs_strict_impersonation(args, sdc_builder, cluster):
         if data_collector.tear_down_on_exit:
             data_collector.tear_down()
         cluster.hdfs.client.delete(hdfs_path, recursive=True)
+
+
+def _check_pipeline_status(pipeline, sdc_executor, is_pipeline_stopped):
+    """Make sure the pipeline has not entered any of the unsuccessful states.
+    While pipeline is running, pipeline needs to have exactly one entry for status of 'RUNNING'.
+    After the pipeline is stopped,
+    pipeline needs to have exactly one entry for status of 'RUNNING' and 'STOPPED' each."""
+    history = sdc_executor.get_pipeline_history(pipeline)
+    logger.debug('Inside _check_pipeline_status at %s ...', time.ctime())
+    assert sum(1 for entry in history.entries if entry['status'] == 'RUNNING') == 1
+    if is_pipeline_stopped:
+        SUCCESS_STATUSES.extend(['STOPPING', 'STOPPED'])
+        assert sum(1 for entry in history.entries if entry['status'] == 'STOPPED') == 1
+    error_msg = f'History entries={[entry["status"] for entry in history.entries]}'
+    assert not any(item not in SUCCESS_STATUSES for item in [entry['status'] for entry in history.entries]), error_msg
+
+
+@large
+@cluster('cdh', 'hdp')
+def test_kerberos_ticket_expiration_hadoop_fs_destination(sdc_builder, sdc_executor, cluster):
+    """ Test Hadoop FS destination stage against kerberized cluster where Kerberos ticket will be expired
+    every few minutes (e.g. 10 minutes). And the pipeline will be run for an hour.
+    The purpose is to test if the pipeline runs for an hour by renewing kerberos ticket.
+    Data is sent to Hadoop FS destination using Dev Data Generator stage.
+    Using pipeline history, checks are done at regular intervals that pipeline did not enter
+    any of the not successful statuses. And to make sure it ran without any glitches.
+
+    The pipeline looks like:
+        dev_data_generator >> hadoop_fs
+    """
+    if 'hdfs' not in cluster.kerberized_services:
+        pytest.skip('test_kerberos_ticket_expiration_hadoop_fs_destination runs only for kerberized HDFS.')
+
+    hdfs_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+    logger.info('Pipeline will write to HDFS directory %s ...', hdfs_directory)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=1,
+                                      delay_between_batches=1000,
+                                      fields_to_generate=[{'type': 'STRING',
+                                                           'precision': 10,
+                                                           'scale': 2,
+                                                           'field': 'random_string'}])
+
+    hadoop_fs = builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(data_format='JSON', directory_template=hdfs_directory,
+                             files_prefix='stages', files_suffix='txt')
+
+    dev_data_generator >> hadoop_fs
+
+    pipeline = builder.build(title='Kerberos tkt expiration- Hadoop FS Dest').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        scheduler = sched.scheduler(time.time, time.sleep)
+        sdc_executor.start_pipeline(pipeline)
+        # Keep checking the status by scheduling the verify task.
+        for i in range(0, LARGE_TEST_DURATION_IN_SECS-10, LARGE_TEST_STATUS_CHECK_DURATION_IN_SECS):
+            scheduler.enter(i, 1, _check_pipeline_status, argument=(pipeline, sdc_executor, False))
+        # Schedule to stop the pipeline after LARGE_TEST_DURATION_IN_SECS.
+        logger.debug('LARGE_TEST_DURATION_IN_SECS = %d', LARGE_TEST_DURATION_IN_SECS)
+        scheduler.enter(LARGE_TEST_DURATION_IN_SECS, 1, sdc_executor.stop_pipeline, argument=(pipeline,))
+
+        scheduler.run()
+        _check_pipeline_status(pipeline, sdc_executor, True)
+
+    finally:
+        # remove HDFS files
+        logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
+        cluster.hdfs.client.delete(hdfs_directory, recursive=True)
