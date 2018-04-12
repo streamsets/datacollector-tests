@@ -20,6 +20,7 @@ import logging
 import string
 import time
 
+import pytest
 import sqlalchemy
 from streamsets.testframework.markers import cluster, parcelpackaging, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -31,6 +32,7 @@ pytestmark = [parcelpackaging]
 
 @cluster('cdh', 'hdp')
 @sdc_min_version('3.2.0.0')
+@pytest.mark.timeout(600)
 def test_avro_orc_mapreduce_executor(sdc_builder, sdc_executor, cluster):
     """Tests the Avro to ORC MapReduce job type.
 
@@ -85,8 +87,8 @@ def test_avro_orc_mapreduce_executor(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
 
         hdfs_files = []
-        sleep_time = 5
-        max_wait_iters = 24
+        sleep_time = 10
+        max_wait_iters = 50
         wait_iter = 0
         all_coverted = False
         while wait_iter < max_wait_iters:
