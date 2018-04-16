@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
-SDC_LISTENING_RPC_PORT = 20000
+SDC_RPC_LISTENING_PORT = 20000
 
 
 @cluster('mapr')
