@@ -186,7 +186,7 @@ def test_directory_origin_in_whole_file_dataformat(sdc_builder, sdc_executor, no
     sdc_executor.stop_pipeline(files_pipeline)
 
     # get the how many records are sent
-    file_pipeline_history = sdc_executor.pipeline_history(files_pipeline)
+    file_pipeline_history = sdc_executor.get_pipeline_history(files_pipeline)
     msgs_sent_count = file_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
     # compute the expected number of batches to process all files
@@ -216,7 +216,7 @@ def test_directory_origin_in_whole_file_dataformat(sdc_builder, sdc_executor, no
     sdc_executor.start_pipeline(directory_pipeline).wait_for_pipeline_batch_count(no_of_input_files)
     sdc_executor.stop_pipeline(directory_pipeline)
 
-    directory_pipeline_history = sdc_executor.pipeline_history(directory_pipeline)
+    directory_pipeline_history = sdc_executor.get_pipeline_history(directory_pipeline)
     msgs_result_count = directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
     assert msgs_result_count == no_of_input_files
