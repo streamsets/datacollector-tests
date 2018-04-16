@@ -372,7 +372,7 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     builder.add_error_stage('Discard')
 
     mapr_streams_consumer = builder.add_stage('MapR Streams Consumer')
-    mapr_streams_consumer.topic_name = stream_topic_name
+    mapr_streams_consumer.topic = stream_topic_name
     mapr_streams_consumer.data_format = 'TEXT'
 
     trash = builder.add_stage(label='Trash')
@@ -440,7 +440,7 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
 
     mapr_streams_consumer = builder.add_stage('MapR Streams Consumer')
-    mapr_streams_consumer.topic_name = stream_topic_name
+    mapr_streams_consumer.topic = stream_topic_name
     mapr_streams_consumer.data_format = 'TEXT'
 
     sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
