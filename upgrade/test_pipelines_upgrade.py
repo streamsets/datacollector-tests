@@ -15,16 +15,16 @@
 provided for running the upgrade against.
 """
 
+import glob
 import json
 import logging
-from os.path import dirname
+from os.path import dirname, join, realpath
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from streamsets.sdk import sdc_models
 from streamsets.sdk.utils import pipeline_json_encoder
-
 from streamsets.testframework.markers import upgrade
 
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +42,9 @@ def sdc_builder_hook(args):
             logger.info(f'Configuring SDC for pipeline JSON files of {DIR_TO_READ} ...')
             for pipeline_file in DIR_TO_READ.glob('**/*.json'):
                 logger.debug(f'Configuring SDC for pipeline {pipeline_file}')
-                pipeline = sdc_models.Pipeline(pipeline_file)
+                with open(pipeline_file) as f:
+                    exported_pipeline = json.loads(f.read())
+                pipeline = sdc_models.Pipeline(exported_pipeline)
                 data_collector.configure_for_pipeline(pipeline)
         else:
             pytest.skip('Test only runs for one given SDC version.')
@@ -50,22 +52,25 @@ def sdc_builder_hook(args):
 
 
 @upgrade
-def test_pipeline_upgrade(sdc_builder):
+def test_pipeline_upgrade(sdc_builder, pipeline_full_path):
     """Test pipeline upgrades by importing JSON files against a given SDC version and asserting that they
     have no pipeline import issues."""
-    issue_pipelines = []
-    logger.info(f'Importing and checking pipeline JSON files from {DIR_TO_READ} ...')
-    for pipeline_file in DIR_TO_READ.glob('**/*.json'):
-        uuid = str(uuid4())
-        print(f'File is {pipeline_file}')
-        logger.info(f'Using pipeline id {uuid} for file {pipeline_file}')
-        pipeline = sdc_models.Pipeline(pipeline_file)
-        pipeline.id = uuid
-        sdc_builder.add_pipeline(pipeline)
-        issues = sdc_builder.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
-        if issues['issueCount']:
-            issue_pipelines.append(pipeline_file)
-            print(f'\nFor pipeline {pipeline_file} the issue(s) are ...')
-            print(json.dumps(issues, indent=4, default=pipeline_json_encoder))
+    logger.info('Importing and checking pipeline JSON file %s', pipeline_full_path)
+    uuid = str(uuid4())
+    logger.debug('Using pipeline id %s for file %s', uuid, pipeline_full_path)
+    with open(pipeline_full_path) as f:
+        exported_pipeline = json.loads(f.read())
+    pipeline = sdc_models.Pipeline(exported_pipeline)
+    pipeline.id = uuid
+    sdc_builder.add_pipeline(pipeline)
+    issues = sdc_builder.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
+    if issues['issueCount']:
+        pytest.fail(json.dumps(issues, indent=4, default=pipeline_json_encoder))
 
-    assert not issue_pipelines, f'Number of pipelines having import issues: {len(issue_pipelines)}'
+
+# pytest_generate_tests helps to parametrize pipelines which we will read from disk.
+# More about pytest parametrization at http://doc.pytest.org/en/latest/parametrize.html
+def pytest_generate_tests(metafunc):
+    pipelines = glob.iglob(join(dirname(realpath(__file__)), DIR_TO_READ, '**', '*.json'),
+                           recursive=True)
+    metafunc.parametrize('pipeline_full_path', pipelines)
