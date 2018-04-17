@@ -71,10 +71,10 @@ def test_field_path_stress_pipeline(sdc_builder, sdc_executor, benchmark, number
     source.set_attributes(data_format='JSON', raw_data=raw_data)
 
     remover = pipeline_builder.add_stage('Field Remover')
-    remover.set_attributes(fields=['/second/f'], field_operation='REMOVE')
+    remover.set_attributes(fields=['/second/f'], action='REMOVE')
 
     value_replacer = pipeline_builder.add_stage('Value Replacer', type='processor')
-    value_replacer.set_attributes(fields_to_null=[{
+    value_replacer.set_attributes(replace_null_values=[{
         'fields': ['/*/*/*2'],
         'newValue': '42.0'
     }])
@@ -94,8 +94,8 @@ def test_field_path_stress_pipeline(sdc_builder, sdc_executor, benchmark, number
        'targetField': '/thirdHash'
     }]
     hasher = pipeline_builder.add_stage('Field Hasher')
-    hasher.set_attributes(field_hasher_target_configs=hasher_target_configs,
-                          record_hasher_hash_entire_record=False)
+    hasher.set_attributes(hash_to_target=hasher_target_configs,
+                          hash_entire_record=False)
 
     masker_configs = [{
         'fields': ['/second/d'],
@@ -105,7 +105,7 @@ def test_field_path_stress_pipeline(sdc_builder, sdc_executor, benchmark, number
     }]
 
     masker = pipeline_builder.add_stage('Field Masker')
-    masker.set_attributes(mask_configs=masker_configs)
+    masker.set_attributes(field_mask_configs=masker_configs)
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -136,7 +136,7 @@ def test_large_number_of_fields_stress_pipeline(sdc_builder, sdc_executor, bench
     source.set_attributes(data_format='JSON', raw_data=raw_data)
 
     remover = pipeline_builder.add_stage('Field Remover')
-    remover.set_attributes(fields=['/field1*'], field_operation='REMOVE')
+    remover.set_attributes(fields=['/field1*'], action='REMOVE')
 
     trash = pipeline_builder.add_stage('Trash')
 

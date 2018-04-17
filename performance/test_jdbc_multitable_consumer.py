@@ -47,7 +47,7 @@ def test_jdbc_multitable_consumer_origin_default(sdc_builder, database, benchmar
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configuration=[{"tablePattern": f'{src_table_prefix}%'}])
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'{src_table_prefix}%'}])
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -96,10 +96,10 @@ def test_jdbc_multitable_consumer_origin_multithreaded(sdc_builder, database, be
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configuration=[{'tablePattern': f'{src_table_prefix}%',
-                                                                  'partitionSize': partition_size}],
-                                            no_of_threads=number_of_threads,
-                                            max_pool_size=number_of_threads)
+    jdbc_multitable_consumer.set_attributes(table_configs=[{'tablePattern': f'{src_table_prefix}%',
+                                                            'partitionSize': partition_size}],
+                                            number_of_threads=number_of_threads,
+                                            maximum_pool_size=number_of_threads)
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -145,8 +145,8 @@ def test_jdbc_multitable_consumer_origin_partitioning_disabled(sdc_builder, data
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configuration=[{'tablePattern': f'{src_table_prefix}%',
-                                                                  'partitioningMode': 'DISABLED'}])
+    jdbc_multitable_consumer.set_attributes(table_configs=[{'tablePattern': f'{src_table_prefix}%',
+                                                            'partitioningMode': 'DISABLED'}])
 
     trash = pipeline_builder.add_stage('Trash')
 
