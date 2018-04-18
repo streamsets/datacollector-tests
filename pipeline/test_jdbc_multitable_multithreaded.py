@@ -23,7 +23,7 @@ import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
 from streamsets.testframework.utils import get_random_string
-from streamsets.testframework.markers import database
+from streamsets.testframework.markers import database, sdc_min_version
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -62,28 +62,6 @@ def assert_tables_replicated(database=None, src_tables=None):
         target_result.close()
 
         assert src_result_list == target_result_list
-
-
-def wait_for_no_data_event(event_table_name, database=None, timeout_sec=240):
-    """Wait for no_data_event update on EVENT_TABLE (i.e, event column should be set to 1)."""
-    logger.info('Waiting for no_data_event to be updated in %s seconds ...', timeout_sec)
-    start_waiting_time = time()
-    stop_waiting_time = start_waiting_time + timeout_sec
-    db_engine = database.engine
-
-    while time() < stop_waiting_time:
-        event_table = sqlalchemy.Table(event_table_name, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
-        event_result = db_engine.execute(sqlalchemy.select([event_table.c[EVENT_COLUMN_NAME]]))
-        event_result_list = event_result.fetchall()
-        event_result.close()
-
-        if event_result_list[0][0] == 1:
-            logger.info('Received NO_MORE_DATA_EVENT')
-            return
-        sleep(5)
-
-    raise Exception('Timed out after %s seconds while waiting for no data event.')
-
 
 def setup_tables(database, src_tables, target_tables, event_table_name):
     """Creates source, target and event tables, inserts rows to the source table and
@@ -141,6 +119,7 @@ def teardown_tables(database, table_names):
 @pytest.mark.parametrize('partitioning_mode', ["DISABLED", "BEST_EFFORT"])
 @pytest.mark.parametrize('non_incremental', [True, False])
 @pytest.mark.timeout(300)
+@sdc_min_version('2.5.0.0')
 def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                                           table_name_characters,
                                           table_name_length,
@@ -151,11 +130,12 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                                           non_incremental):
     """Tests Multithreaded Multi-table JDBC source. Replicates a set of tables with prefix 'src' to a another
     set of tables with 'target' prefix. Also leveraging the NO_MORE_DATA EVENT by the Multi-table JDBC source after
-    no data in tables. On Event path a JDBC Executor updates a special event table to mark data read to stop pipeline.
+    no data in tables. On Event path, the pipeline will execute the pipeline finisher if the event type is seen to
+    be no-more-data
     The pipeline would look like:
 
             jdbc_multitable_consumer >> jdbc_query_dest
-                                     >= jdbc_query_event
+                                     >= stream_selector >> finisher
     """
 
     if non_incremental and Version(sdc_builder.version) < Version('3.0.0.0'):
@@ -196,11 +176,13 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
              f", '${{record:value('/{OTHER_COLUMN if not database.type == 'Oracle' else OTHER_COLUMN.upper()}')}}')")
 
     jdbc_query_dest.set_attributes(sql_query=query)
-    jdbc_query_event = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_event.set_attributes(sql_query=update_event_table_statement)
+
+    finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
     jdbc_multitable_consumer >> jdbc_query_dest
-    jdbc_multitable_consumer >= jdbc_query_event
+    jdbc_multitable_consumer >= finisher
+
     non_inc = ', non-incremental' if non_incremental else ''
     pipeline_name = (f'JDBC multitable consumer pipeline - {per_batch_strategy} batch strategy, '
                      f'{number_of_threads} threads, {partitioning_mode} partitioning{non_inc}')
@@ -227,11 +209,8 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                      for table_name in table_names]
     try:
         setup_tables(database, src_tables, target_tables, event_table_name)
-        sdc_executor.start_pipeline(pipeline)
-        wait_for_no_data_event(event_table_name, database)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         assert_tables_replicated(database, src_tables)
     finally:
-        # must stop pipeline before tables can be dropped.
-        sdc_executor.stop_pipeline(pipeline)
         logger.info('Dropping test related tables in %s database...', database.type)
         teardown_tables(database, [table.name for table in src_tables + target_tables] + [event_table_name])
