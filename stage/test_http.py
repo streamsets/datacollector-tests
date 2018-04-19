@@ -14,10 +14,13 @@
 
 import json
 import logging
+import string
 from collections import namedtuple
 
 import pytest
+from pretenders.common.constants import FOREVER
 from streamsets.testframework.markers import http
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +98,7 @@ def http_client_pipeline(sdc_builder, sdc_executor):
                                                   http_client)
 
 
+@http
 def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
     # Start HTTP Server pipeline.
     server_runtime_parameters = {'HTTP_PORT': 9999,
@@ -118,8 +122,8 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
     processor_data = snapshot[http_client_pipeline.expression_evaluator.instance_name]
     assert len(origin_data.output) == 2
     assert len(processor_data.output) == 2
-    assert origin_data.output[0].value['value']['f1']['value'] == 'abc'
-    assert origin_data.output[1].value['value']['f1']['value'] == 'xyz'
+    assert origin_data.output[0].value2['f1'] == 'abc'
+    assert origin_data.output[1].value2['f1'] == 'xyz'
 
     # Capture snapshot for HTTP Server pipeline.
     snapshot = sdc_executor.capture_snapshot(http_server_pipeline.pipeline).snapshot
@@ -127,18 +131,19 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
     processor_data = snapshot[http_server_pipeline.javascript_evaluator.instance_name]
     assert len(origin_data.output) == 2
     assert len(processor_data.output) == 2
-    assert origin_data.output[0].value['value']['f1']['value'] == 'abc'
-    assert origin_data.output[1].value['value']['f1']['value'] == 'xyz'
-    assert processor_data.output[0].value['value']['f1']['value'] == 'abc'
-    assert processor_data.output[0].value['value']['javscriptField']['value'] == '5000'
-    assert processor_data.output[1].value['value']['f1']['value'] == 'xyz'
-    assert processor_data.output[1].value['value']['javscriptField']['value'] == '5000'
+    assert origin_data.output[0].value2['f1'] == 'abc'
+    assert origin_data.output[1].value2['f1'] == 'xyz'
+    assert processor_data.output[0].value2['f1'] == 'abc'
+    assert processor_data.output[0].value2['javscriptField'] == 5000
+    assert processor_data.output[1].value2['f1'] == 'xyz'
+    assert processor_data.output[1].value2['javscriptField'] == 5000
 
     # Stop the pipelines.
     sdc_executor.stop_pipeline(http_client_pipeline.pipeline)
     sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
 
 
+@http
 def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
     # Start HTTP Client pipeline with invalid resource URL.
     client_runtime_parameters = {'RAW_DATA': '{"f1": "abc"}{"f1": "xyz"}',
@@ -150,8 +155,8 @@ def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
     processor_data = snapshot[http_client_pipeline.expression_evaluator.instance_name]
     assert len(origin_data.output) == 2
     assert len(processor_data.output) == 2
-    assert origin_data.output[0].value['value']['f1']['value'] == 'abc'
-    assert origin_data.output[1].value['value']['f1']['value'] == 'xyz'
+    assert origin_data.output[0].value2['f1'] == 'abc'
+    assert origin_data.output[1].value2['f1'] == 'xyz'
 
     # Since resource URL is invalid, all the records should go to error in target stage.
     target_data = snapshot[http_client_pipeline.http_client.instance_name]
@@ -169,29 +174,38 @@ def test_http_processor_get(sdc_builder, sdc_executor, http_client):
         dev_raw_data_source >> http_client_processor >> trash
     """
     expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
+    expected_data = json.dumps(expected_dict)
     record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
 
-    builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
-    http_client_processor = builder.add_stage('HTTP Client', type='processor')
-    http_client_processor.set_attributes(data_format='JSON', http_method='GET',
-                                         resource_url=f'{http_client.http_server_url}/testGetJsonEndpoint',
-                                         output_field=f'/{record_output_field}')
-    trash = builder.add_stage('Trash')
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
 
-    dev_raw_data_source >> http_client_processor >> trash
-    pipeline = builder.build(title='HTTP Lookup GET Processor pipeline')
-    sdc_executor.add_pipeline(pipeline)
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', http_method='GET',
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+        trash = builder.add_stage('Trash')
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title='HTTP Lookup GET Processor pipeline')
+        sdc_executor.add_pipeline(pipeline)
 
-    # ensure HTTP GET result is only stored to one record and assert the data
-    assert len(snapshot[http_client_processor.instance_name].output) == 1
-    record = snapshot[http_client_processor.instance_name].output[0].value['value']
-    assert record[record_output_field]['value']['latitude']['value'] == expected_dict['latitude']
-    assert record[record_output_field]['value']['longitude']['value'] == expected_dict['longitude']
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # ensure HTTP GET result is only stored to one record and assert the data
+        assert len(snapshot[http_client_processor.instance_name].output) == 1
+        record = snapshot[http_client_processor.instance_name].output[0].value2
+        assert record[record_output_field]['latitude'] == expected_dict['latitude']
+        assert record[record_output_field]['longitude'] == expected_dict['longitude']
+    except:
+        http_mock.delete_mock()
 
 
 @http
@@ -204,29 +218,75 @@ def test_http_processor_post(sdc_builder, sdc_executor, http_client):
     raw_dict = dict(city='San Francisco')
     raw_data = json.dumps(raw_dict)
     expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
+    expected_data = json.dumps(expected_dict)
     record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
 
-    builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
-    http_client_processor = builder.add_stage('HTTP Client', type='processor')
-    # for POST, we post 'raw_data' and expect 'expected_dict' as response data
-    http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
-                                         headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
-                                         http_method='POST', request_data="${record:value('/text')}",
-                                         resource_url=f'{http_client.http_server_url}/testPostJsonEndpoint',
-                                         output_field=f'/{record_output_field}')
-    trash = builder.add_stage('Trash')
+    try:
+        http_mock.when(f'POST /{mock_path}', body=raw_data).reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
 
-    dev_raw_data_source >> http_client_processor >> trash
-    pipeline = builder.build(title='HTTP Lookup POST Processor pipeline')
-    sdc_executor.add_pipeline(pipeline)
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        # for POST, we post 'raw_data' and expect 'expected_dict' as response data
+        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='POST', request_data="${record:value('/text')}",
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+        trash = builder.add_stage('Trash')
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title='HTTP Lookup POST Processor pipeline')
+        sdc_executor.add_pipeline(pipeline)
 
-    # ensure HTTP POST result is only stored to one record and assert the data
-    assert len(snapshot[http_client_processor.instance_name].output) == 1
-    record = snapshot[http_client_processor.instance_name].output[0].value['value']
-    assert record[record_output_field]['value']['latitude']['value'] == expected_dict['latitude']
-    assert record[record_output_field]['value']['longitude']['value'] == expected_dict['longitude']
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # ensure HTTP POST result is only stored to one record and assert the data
+        assert len(snapshot[http_client_processor.instance_name].output) == 1
+        record = snapshot[http_client_processor.instance_name].output[0].value2
+        assert record[record_output_field]['latitude'] == expected_dict['latitude']
+        assert record[record_output_field]['longitude'] == expected_dict['longitude']
+    except:
+        http_mock.delete_mock()
+
+
+@http
+def test_http_client_source_simple(sdc_builder, sdc_executor, http_client):
+    """Test HTTP Client source basic (single batch, not streaming) HTTP server endpoint and
+    assert expected data. The pipeline looks like:
+
+        http_client_source >> trash
+    """
+    raw_data = '{"first:": 1}'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(raw_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        http_client_source = builder.add_stage('HTTP Client', type='origin')
+        http_client_source.set_attributes(data_format='JSON', resource_url=mock_uri)
+
+        trash = builder.add_stage('Trash')
+
+        http_client_source >> trash
+
+        pipeline = builder.build(title='HTTP Client Simple')
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, batches=1, batch_size=1,
+                                                 start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        origin_stage_output = snapshot[http_client_source.instance_name]
+
+        assert len(origin_stage_output.output) == 1
+        assert json.dumps(origin_stage_output.output[0].value2) == raw_data
+    finally:
+        http_mock.delete_mock()
