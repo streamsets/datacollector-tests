@@ -89,25 +89,21 @@ def test_avro_orc_mapreduce_executor(sdc_builder, sdc_executor, cluster):
         hdfs_files = []
         sleep_time = 10
         max_wait_iters = 50
-        wait_iter = 0
-        all_coverted = False
-        while wait_iter < max_wait_iters:
+        for wait_iter in range(max_wait_iters):
             hdfs_files = cluster.hdfs.client.list(hdfs_directory)
             logger.info('List of files in %s directory: %s', hdfs_directory, ",".join(hdfs_files))
-            total_orc_files = 0
-            for hdfs_file in hdfs_files:
-                if hdfs_file.endswith('orc'):
-                    total_orc_files += 1
+            total_orc_files = sum(1 for hdfs_file in hdfs_files if hdfs_file.endswith('orc'))
             if total_orc_files == 3:
-                all_converted = True
-                break;
+                break
             else:
                 logger.info('Waiting for %d seconds (up to %d more times) for all files in %s to be converted to ORC',
                              sleep_time, max_wait_iters - wait_iter, hdfs_directory)
                 time.sleep(sleep_time)
-                wait_iter += 1
+        else:
+            pytest.fail('Reached %s iterations without reaching expected number of orc files (saw %s)',
+                        max_wait_iters,
+                        total_orc_files)
 
-        assert all_converted
         #TODO: also check contents of ORC files once STF-439 is done
 
     finally:
