@@ -100,9 +100,8 @@ def test_avro_orc_mapreduce_executor(sdc_builder, sdc_executor, cluster):
                              sleep_time, max_wait_iters - wait_iter, hdfs_directory)
                 time.sleep(sleep_time)
         else:
-            pytest.fail('Reached %s iterations without reaching expected number of orc files (saw %s)',
-                        max_wait_iters,
-                        total_orc_files)
+            pytest.fail(f'Reached {max_wait_iters} iterations without reaching expected '
+                        f'number of orc files (saw {total_orc_files})')
 
         #TODO: also check contents of ORC files once STF-439 is done
 
