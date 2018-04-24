@@ -172,7 +172,7 @@ def test_jms_producer_destination(sdc_builder, sdc_executor, jms, input_type, pr
         # Send messages using pipeline to JMS Destination.
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.stop_pipeline(pipeline)
-        history = sdc_executor.pipeline_history(pipeline)
+        history = sdc_executor.get_pipeline_history(pipeline)
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
         logger.debug('No. of messages sent in the pipeline = %s', msgs_sent_count)
 
