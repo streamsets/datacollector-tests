@@ -21,7 +21,7 @@ from datetime import datetime
 import pytest
 import sqlalchemy
 from streamsets.testframework.markers import cluster, parcelpackaging, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 from . import test_apache
 
@@ -249,7 +249,10 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         for result in snapshot[kudu.instance_name].output:
-            assert result.value['value']['name']['value'] == 'None'
+            if Version(sdc_executor.version) >= Version('3.2.0.0'):
+                assert 'name' not in result.value['value']
+            else:
+                assert result.value['value']['name']['value'] == 'None'
             assert int(result.value['value']['wins']['value']) == 0
 
     finally:
