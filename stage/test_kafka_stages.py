@@ -19,6 +19,7 @@ import string
 import avro
 import pytest
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import cluster, confluent, parcelpackaging, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -28,6 +29,8 @@ logger.setLevel(logging.DEBUG)
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
+
+MIN_SDC_VERSION_WITH_SPARK_2_LIB = Version('3.3.0')
 
 pytestmark = [parcelpackaging]
 
@@ -89,13 +92,16 @@ def test_kafka_destination(sdc_builder, sdc_executor, cluster):
     assert msgs_received == [dev_raw_data_source.raw_data] * msgs_sent_count
 
 
-def get_kafka_consumer_stage(pipeline_builder, cluster, cluster_mode):
+def get_kafka_consumer_stage(sdc_version, pipeline_builder, cluster, cluster_mode):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
 
     pipeline_builder.add_error_stage('Discard')
 
     if cluster_mode:
-        kafka_cluster_stage_lib, kafka_cluster_env_lib = cluster.kafka.cluster_stage_lib_env_lib
+        if Version(sdc_version.rsplit('-RC')[0]) < MIN_SDC_VERSION_WITH_SPARK_2_LIB:
+            kafka_cluster_stage_lib, kafka_cluster_env_lib = cluster.kafka.cluster_stage_lib_env_lib
+        else:
+            kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
                                                 type='origin',
                                                 library=(kafka_cluster_stage_lib
@@ -155,7 +161,7 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
 
     # Build the Kafka consumer pipeline with Standalone mode.
     builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster, cluster_mode=False)
+    kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster, cluster_mode=False)
 
     trash = builder.add_stage(label='Trash')
     kafka_consumer >> trash
@@ -228,11 +234,9 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
         sdc_rpc_origin >> trash
     """
 
-    if cluster.kafka.is_kerberized:
-        pytest.skip('Cluster mode test for Kerberized Kafka is skipped until SDC-6857 is fixed.')
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster, cluster_mode=True)
+    kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster, cluster_mode=True)
 
     sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
     sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host,
