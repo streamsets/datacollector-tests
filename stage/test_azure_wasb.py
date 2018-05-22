@@ -20,7 +20,7 @@ import os
 import string
 
 import pytest
-from streamsets.testframework import sdc
+
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -28,21 +28,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 HDP_LIBRARY_NAME = 'streamsets-datacollector-hdp_2_6-lib'
-# Specify a port for SDC RPC stages to use.
-SDC_RPC_PORT = 20000
+SDC_RPC_PORT = 20000 # Specify a port for SDC RPC stages to use.
 
 
 @pytest.fixture(scope='module')
-def sdc_builder_hook():
+def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib(HDP_LIBRARY_NAME)
-    return hook
 
-
-@pytest.fixture(scope='module')
-def sdc_executor_hook():
-    def hook(data_collector):
-        data_collector.add_stage_lib(HDP_LIBRARY_NAME)
     return hook
 
 

@@ -25,16 +25,10 @@ SDC_RPC_ID = 'lifecycle'
 
 
 @pytest.fixture(scope='module')
-def sdc_builder_hook():
+def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
-    return hook
 
-
-@pytest.fixture(scope='module')
-def sdc_executor_hook():
-    def hook(data_collector):
-        data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
     return hook
 
 

@@ -15,42 +15,39 @@
 import logging
 
 import pytest
-from streamsets.testframework import sdc
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope='module')
-def data_collector():
-    data_collector = sdc.DataCollector()
-    data_collector.add_user('arvind', roles=['admin'])
-    data_collector.add_user('girish', roles=['admin'])
-    data_collector.start()
-    yield data_collector
-    if data_collector.tear_down_on_exit:
-        data_collector.tear_down()
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_user('arvind', roles=['admin'])
+        data_collector.add_user('girish', roles=['admin'])
+
+    return hook
 
 
-def test_pipeline_el_user(random_expression_pipeline_builder, data_collector):
+def test_pipeline_el_user(random_expression_pipeline_builder, sdc_executor):
     random_expression_pipeline_builder.expression_evaluator.header_attribute_expressions = [
         {'attributeToSet': 'user',
         'headerAttributeExpression': '${pipeline:user()}'}
     ]
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
-    data_collector.add_pipeline(pipeline)
+    sdc_executor.add_pipeline(pipeline)
 
     # Run the pipeline as one user.
-    data_collector.set_user('arvind')
-    snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    data_collector.stop_pipeline(pipeline)
+    sdc_executor.set_user('arvind')
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
     assert record.header['user'] == 'arvind'
 
     # And then try different user.
-    data_collector.set_user('girish')
-    snapshot = data_collector.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    data_collector.stop_pipeline(pipeline)
+    sdc_executor.set_user('girish')
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
     assert record.header['user'] == 'girish'

@@ -17,7 +17,7 @@ import pytest
 import urllib.request
 
 from javaproperties import Properties
-from streamsets.testframework import sdc
+
 from streamsets.testframework.markers import cluster, sdc_min_version
 
 # Skip all tests in this module if --sdc-version < 3.1.0.0
@@ -46,7 +46,7 @@ EXCLUDE_LIBS = {
 
 
 @pytest.fixture(scope='module')
-def sdc_builder_hook():
+def sdc_common_hook():
     def hook(data_collector):
         # Add all the stage libraries that we should
         for stage_library in get_all_stage_libs():
@@ -54,6 +54,7 @@ def sdc_builder_hook():
 
         # Enable classpath validation itself
         data_collector.sdc_properties.update(ENABLE_CLASSPATH_VALIDATION)
+
     return hook
 
 

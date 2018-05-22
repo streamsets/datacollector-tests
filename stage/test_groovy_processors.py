@@ -16,7 +16,6 @@ import json
 import logging
 
 import pytest
-from streamsets.testframework import sdc
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -25,51 +24,11 @@ logger.setLevel(logging.DEBUG)
 
 
 @pytest.fixture(scope='module')
-def sdc_builder(args):
-    """Create specific sdc_builder for this test which will load Groovy stage lib. Note: this one will override
-    STF conftest sdc_builder.
-    """
-    data_collector = sdc.DataCollector(version=args.pre_upgrade_sdc_version or args.sdc_version,
-                                       username=args.sdc_username,
-                                       password=args.sdc_password,
-                                       server_url=args.sdc_server_url,
-                                       tear_down_on_exit=not args.keep_sdc_instances,
-                                       always_pull=args.sdc_always_pull,
-                                       enable_kerberos=args.kerberos)
-
-    # Load Groovy stage lib required for tests of this module.
-    data_collector.add_stage_lib('streamsets-datacollector-groovy_2_4-lib')
-    data_collector.start()
-
-    yield data_collector
-
-    if data_collector.tear_down_on_exit:
-        data_collector.tear_down()
-
-
-@pytest.fixture(scope='module')
-def sdc_executor(args, sdc_builder):
-    """Create specific sdc_executor for this test which will load Groovy stage lib. Note: this one will override
-    STF conftest sdc_executor.
-    """
-    if args.pre_upgrade_sdc_version != args.post_upgrade_sdc_version:
-        data_collector = sdc.DataCollector(version=args.post_upgrade_sdc_version,
-                                           username=args.sdc_username,
-                                           password=args.sdc_password,
-                                           server_url=args.sdc_server_url,
-                                           tear_down_on_exit=not args.keep_sdc_instances,
-                                           always_pull=args.sdc_always_pull,
-                                           enable_kerberos=args.kerberos)
-        # Load Groovy stage lib required for tests of this module.
+def sdc_common_hook():
+    def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-groovy_2_4-lib')
-        data_collector.start()
 
-        yield data_collector
-
-        if data_collector.tear_down_on_exit:
-            data_collector.tear_down()
-    else:
-        yield sdc_builder
+    return hook
 
 
 def test_groovy_evaluator(sdc_builder, sdc_executor):

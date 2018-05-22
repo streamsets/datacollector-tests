@@ -22,21 +22,19 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope='module')
-def data_collector():
-    data_collector = sdc.DataCollector()
-    data_collector.add_user('jarcec', roles=['admin'], groups=['jarcec', 'employee'])
-    data_collector.add_user('dima', roles=['admin'], groups=['dima', 'employee'])
-    data_collector.add_user('bryan', roles=['manager', 'creator'], groups=['bryan', 'contractor'])
-    data_collector.add_user('arvind', roles=['guest'], groups=['arvind', 'guests'])
-    data_collector.start()
-    yield data_collector
-    if data_collector.tear_down_on_exit:
-        data_collector.tear_down()
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_user('jarcec', roles=['admin'], groups=['jarcec', 'employee'])
+        data_collector.add_user('dima', roles=['admin'], groups=['dima', 'employee'])
+        data_collector.add_user('bryan', roles=['manager', 'creator'], groups=['bryan', 'contractor'])
+        data_collector.add_user('arvind', roles=['guest'], groups=['arvind', 'guests'])
+
+    return hook
 
 
 @pytest.fixture(scope='module')
-def pipeline(data_collector):
-    builder = data_collector.get_pipeline_builder()
+def pipeline(sdc_executor):
+    builder = sdc_executor.get_pipeline_builder()
 
     dev_data_generator = builder.add_stage('Dev Data Generator')
     trash = builder.add_stage('Trash')
@@ -44,34 +42,34 @@ def pipeline(data_collector):
     dev_data_generator >> trash
 
     pipeline = builder.build()
-    data_collector.set_user('admin')
-    data_collector.add_pipeline(pipeline)
+    sdc_executor.set_user('admin')
+    sdc_executor.add_pipeline(pipeline)
 
     yield pipeline
 
 
 # Validate "current" user switching and getting the proper groups and roles.
-def test_current_user(data_collector):
-    data_collector.set_user('admin')
-    user = data_collector.current_user
+def test_current_user(sdc_executor):
+    sdc_executor.set_user('admin')
+    user = sdc_executor.current_user
     assert user.name == 'admin'
 
-    data_collector.set_user('jarcec')
-    user = data_collector.current_user
+    sdc_executor.set_user('jarcec')
+    user = sdc_executor.current_user
     assert user.name == 'jarcec'
     assert user.groups == ['all', 'jarcec', 'employee']
     assert user.roles == ['admin']
 
 
 # Ensure that the operations are indeed executed by the current user.
-def test_pipeline_history(data_collector, pipeline):
-    data_collector.set_user('jarcec')
-    data_collector.start_pipeline(pipeline)
+def test_pipeline_history(sdc_executor, pipeline):
+    sdc_executor.set_user('jarcec')
+    sdc_executor.start_pipeline(pipeline)
 
-    data_collector.set_user('dima')
-    data_collector.stop_pipeline(pipeline)
+    sdc_executor.set_user('dima')
+    sdc_executor.stop_pipeline(pipeline)
 
-    history = data_collector.get_pipeline_history(pipeline)
+    history = sdc_executor.get_pipeline_history(pipeline)
 
     # History is in descending order.
 

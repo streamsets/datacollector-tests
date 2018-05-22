@@ -22,10 +22,8 @@ from uuid import uuid4
 
 import pytest
 
-from streamsets.testframework import sdc
-from streamsets.testframework.markers import cluster, large, parcelpackaging, upgrade
+from streamsets.testframework.markers import cluster, large, parcelpackaging
 from streamsets.testframework.utils import get_random_string
-
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -172,53 +170,6 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         assert lines_from_snapshot == lines_in_file
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
-
-
-@cluster('cdh', 'hdp')
-@upgrade
-def test_hadoop_fs_strict_impersonation(args, sdc_builder, cluster):
-    """ Test strict impersonation (SDC-3704) of Hadoop FS target. The pipeline would look like:
-
-        dev_data_generator >> hadoop_fs
-
-    Note: Test is expected to fail till TEST-138 is addressed.
-    """
-    hdfs_path = os.path.join(os.sep, "tmp", str(uuid4()))
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
-    dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
-    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
-    hadoop_fs.set_attributes(data_format='TEXT', directory_template=hdfs_path, files_prefix='sdc-${sdc:id()}')
-
-    dev_data_generator >> hadoop_fs
-    pipeline = pipeline_builder.build(title='Hadoop FS impersonation pipeline').configure_for_environment(cluster)
-
-    try:
-        data_collector = sdc.DataCollector(version=args.post_upgrade_sdc_version or args.sdc_version,
-                                           username=args.sdc_username, password=args.sdc_password,
-                                           server_url=args.sdc_server_url,
-                                           tear_down_on_exit=not args.keep_sdc_instances,
-                                           always_pull=args.sdc_always_pull, enable_kerberos=args.kerberos)
-        data_collector.configure_for_environment(cluster)
-        data_collector.set_user('admin')
-        data_collector.add_pipeline(pipeline)
-        data_collector.sdc_properties['stage.conf_hadoop.always.impersonate.current.user'] = 'true'
-        data_collector.start()
-        # Run at least one batch of data to Hadoop FS.
-        data_collector.capture_snapshot(pipeline=pipeline, start_pipeline=True)
-        data_collector.stop_pipeline(pipeline)
-
-        # Validate that the files were created with proper user name.
-        hdfs_fs_files = cluster.hdfs.client.list(hdfs_path)
-        assert len(hdfs_fs_files) == 1
-
-        status = cluster.hdfs.client.status(f'{hdfs_path}/{hdfs_fs_files[0]}')
-        assert status['owner'] == 'admin'
-    finally:
-        if data_collector.tear_down_on_exit:
-            data_collector.tear_down()
-        cluster.hdfs.client.delete(hdfs_path, recursive=True)
 
 
 def _check_pipeline_status(pipeline, sdc_executor, is_pipeline_stopped):

@@ -17,17 +17,12 @@ import logging
 import pytest
 from streamsets.testframework.markers import sdc_min_version
 
-@pytest.fixture(scope='module')
-def sdc_builder_hook():
-    def hook(data_collector):
-        data_collector.add_stage_lib('streamsets-datacollector-groovy_2_4-lib')
-    return hook
-
 
 @pytest.fixture(scope='module')
-def sdc_executor_hook():
+def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-groovy_2_4-lib')
+
     return hook
 
 

@@ -16,7 +16,6 @@ import logging
 
 import pytest
 from streamsets.sdk.exceptions import InternalServerError
-from streamsets.testframework import sdc
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -26,19 +25,17 @@ ERROR_CODE_PIPELINE_PERMISSIONS = 'CONTAINER_01200'
 
 
 @pytest.fixture(scope='module')
-def data_collector():
-    dc = sdc.DataCollector()
-    dc.add_user('testuser', roles=['manager'], groups=['contractor'])
-    dc.sdc_properties['pipeline.access.control.enabled'] = 'true'
-    dc.start()
-    yield dc
-    if dc.tear_down_on_exit:
-        dc.tear_down()
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_user('testuser', roles=['manager'], groups=['contractor'])
+        data_collector.sdc_properties['pipeline.access.control.enabled'] = 'true'
+
+    return hook
 
 
 @pytest.fixture(scope='module')
-def pipeline(data_collector):
-    pipeline_builder = data_collector.get_pipeline_builder()
+def pipeline(sdc_executor):
+    pipeline_builder = sdc_executor.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
@@ -50,12 +47,12 @@ def pipeline(data_collector):
     dev_raw_data_source >> trash
 
     pipeline = pipeline_builder.build()
-    data_collector.add_pipeline(pipeline)
+    sdc_executor.add_pipeline(pipeline)
     yield pipeline
 
 
-def test_validate_default_acl(data_collector, pipeline):
-    acl_response = data_collector.get_pipeline_acl(pipeline)
+def test_validate_default_acl(sdc_executor, pipeline):
+    acl_response = sdc_executor.get_pipeline_acl(pipeline)
     assert acl_response['resourceOwner'] == 'admin'
     assert acl_response['resourceType'] == 'PIPELINE'
     assert acl_response['resourceId'] == pipeline.id
@@ -66,8 +63,8 @@ def test_validate_default_acl(data_collector, pipeline):
             assert i['actions'] == ['READ', 'WRITE', 'EXECUTE']
 
 
-def test_validate_default_permissions(data_collector, pipeline):
-    perm_response = data_collector.get_pipeline_permissions(pipeline)
+def test_validate_default_permissions(sdc_executor, pipeline):
+    perm_response = sdc_executor.get_pipeline_permissions(pipeline)
     assert any(i['subjectType'] == 'USER' for i in perm_response.permissions)
     for i in perm_response.permissions:
         if i['subjectType'] == 'USER':
@@ -75,17 +72,17 @@ def test_validate_default_permissions(data_collector, pipeline):
             assert i['actions'] == ['READ', 'WRITE', 'EXECUTE']
 
 
-def test_modified_acl(data_collector, pipeline):
-    acl_mod = data_collector.get_pipeline_acl(pipeline)
+def test_modified_acl(sdc_executor, pipeline):
+    acl_mod = sdc_executor.get_pipeline_acl(pipeline)
     for permission in acl_mod.permissions:
         if permission['subjectType'] == 'USER':
             permission['subjectId'] = 'testuser'
             permission['actions'] = ['READ', 'WRITE']
-    data_collector.set_pipeline_acl(pipeline, pipeline_acl=acl_mod)
+    sdc_executor.set_pipeline_acl(pipeline, pipeline_acl=acl_mod)
 
-    data_collector.set_user('testuser')
-    data_collector.dump_log_on_error = False
+    sdc_executor.set_user('testuser')
+    sdc_executor.dump_log_on_error = False
     with pytest.raises(InternalServerError) as exception_info:
-        data_collector.start_pipeline(pipeline)
-    data_collector.dump_log_on_error = True
+        sdc_executor.start_pipeline(pipeline)
+    sdc_executor.dump_log_on_error = True
     assert ERROR_CODE_PIPELINE_PERMISSIONS in exception_info.value.text
