@@ -16,7 +16,9 @@ import logging
 import time
 from string import ascii_letters
 
-from google.cloud.bigquery import SchemaField
+from google.cloud.bigquery import Dataset, SchemaField, Table
+from time import sleep
+
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -74,18 +76,15 @@ def test_google_bigquery_destination(sdc_builder, sdc_executor, gcp):
     pipeline = pipeline_builder.build(title='Google BigQuery Destination').configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
 
+    bigquery_client = gcp.bigquery_client
+    schema = [SchemaField('full_name', 'STRING', mode='required'),
+              SchemaField('age', 'INTEGER', mode='required')]
+    dataset_ref = Dataset(bigquery_client.dataset(dataset_name))
+
     try:
         logger.info('Creating dataset %s using Google BigQuery client ...', dataset_name)
-        bigquery_client = gcp.bigquery_client
-        dataset = bigquery_client.dataset(dataset_name)
-        dataset.create()
-        assert dataset.exists()
-        table = dataset.table(table_name)
-        table.create()
-        assert table.exists()
-        table.schema = [SchemaField('full_name', 'STRING', mode='required'),
-                        SchemaField('age', 'INTEGER', mode='required')]
-        table.update()
+        dataset = bigquery_client.create_dataset(dataset_ref)
+        table = bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=schema))
 
         logger.info('Starting BigQuery Destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
@@ -94,12 +93,12 @@ def test_google_bigquery_destination(sdc_builder, sdc_executor, gcp):
         sdc_executor.stop_pipeline(pipeline)
 
         # Verify by reading records using Google BigQuery client
-        data_from_bigquery = [row for row in table.fetch_data()]
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
         data_from_bigquery.sort()
+        logger.debug('read_data = {}'.format(data_from_bigquery))
         assert ROWS_TO_INSERT == data_from_bigquery
     finally:
-        table.delete()
-        dataset.delete()
+        bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
 
 
 @gcp
@@ -125,20 +124,17 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
     pipeline = pipeline_builder.build(title='Google BigQuery').configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
 
+    bigquery_client = gcp.bigquery_client
+    schema = [SchemaField('full_name', 'STRING', mode='required'),
+              SchemaField('age', 'INTEGER', mode='required')]
+    dataset_ref = Dataset(bigquery_client.dataset(dataset_name))
     try:
         # Using Google bigquery client, create dataset, table and data inside table
         logger.info('Creating dataset %s using Google bigquery client ...', dataset_name)
-        bigquery_client = gcp.bigquery_client
-        dataset = bigquery_client.dataset(dataset_name)
-        dataset.create()
-        assert dataset.exists()
-        table = dataset.table(table_name)
-        table.create()
-        assert table.exists()
-        table.schema = [SchemaField('full_name', 'STRING', mode='required'),
-                        SchemaField('age', 'INTEGER', mode='required')]
-        table.update()
-        table.insert_data(ROWS_TO_INSERT)
+        dataset = bigquery_client.create_dataset(dataset_ref)
+        table = bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=schema))
+        errors = bigquery_client.insert_rows(table, ROWS_TO_INSERT)
+        assert errors == []
 
         # Start pipeline and verify correct rows are received using snaphot.
         logger.info('Starting pipeline and snapshot')
@@ -150,9 +146,7 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
 
         assert rows_from_snapshot == ROWS_TO_INSERT
     finally:
-        table.delete()
-        dataset.delete()
-
+        bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
 
 @gcp
 @sdc_min_version('2.7.0.0')
@@ -177,20 +171,22 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
 
     trash = pipeline_builder.add_stage('Trash')
     google_pubsub_subscriber >> trash
-    pipeline = pipeline_builder.build(title='Google Pub/Sub Subscriber').configure_for_environment(gcp)
+    pipeline = pipeline_builder.build(title='Google Pub Sub Subscriber Pipeline').configure_for_environment(gcp)
 
+    pubsub_publisher_client = gcp.pubsub_publisher_client
+    pubsub_subscriber_client = gcp.pubsub_subscriber_client
+
+    project_id = gcp.project_id
+    topic_path = pubsub_publisher_client.topic_path(project_id, topic_name)
+    subscription_path = pubsub_subscriber_client.subscription_path(project_id, subscription_id)
     try:
         # Using Google pub/sub client, create topic and subscription
         logger.info('Creating topic %s using Google pub/sub client ...', topic_name)
-        pubsub_client = gcp.pubsub_client
-        topic = pubsub_client.topic(topic_name)
-        topic.create()
-        assert topic.exists()
-        subscription = topic.subscription(subscription_id)
-        subscription.create()
-        assert subscription.exists()
+        topic = pubsub_publisher_client.create_topic(topic_path)
 
-        # Start pipeline and verify messages are received using snaphot.
+        subscription = pubsub_subscriber_client.create_subscription(subscription_path, topic_path)
+
+        # Start pipeline and verify messages are received using snapshot.
         logger.info('Starting pipeline and snapshot')
         sdc_executor.add_pipeline(pipeline)
         snapshot_pipeline_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
@@ -199,7 +195,7 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
         encoded_msg_data = MSG_DATA.encode()
         num = 10
         for _ in range(num):
-            topic.publish(encoded_msg_data)
+            pubsub_publisher_client.publish(topic_path, encoded_msg_data)
 
         logger.debug('Finish the snapshot and verify')
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC).snapshot
@@ -210,8 +206,8 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
         logger.debug(rows_from_snapshot)
         assert rows_from_snapshot == [MSG_DATA] * num
     finally:
-        subscription.delete()
-        topic.delete()
+        pubsub_subscriber_client.delete_subscription(subscription_path)
+        pubsub_publisher_client.delete_topic(topic_path)
 
 
 @gcp
@@ -233,24 +229,25 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
     subscription_id = get_random_string(ascii_letters, 5)
     topic_name = get_random_string(ascii_letters, 5)
     google_pubsub_publisher = pipeline_builder.add_stage('Google Pub Sub Publisher', type='destination')
-    google_pubsub_publisher.set_attributes(topic_id=topic_name,
-                                           data_format='TEXT')
+    google_pubsub_publisher.set_attributes(topic_id=topic_name, data_format='TEXT')
 
     dev_raw_data_source >> google_pubsub_publisher
-    pipeline = pipeline_builder.build(title='Google Pub/Sub Publisher').configure_for_environment(gcp)
+    pipeline = pipeline_builder.build(title='Google Pub Sub Publisher Pipeline').configure_for_environment(gcp)
     pipeline.rate_limit = 1
 
+    pubsub_publisher_client = gcp.pubsub_publisher_client
+    pubsub_subscriber_client = gcp.pubsub_subscriber_client
+
+    project_id = gcp.project_id
+    topic_path = pubsub_publisher_client.topic_path(project_id, topic_name)
+    subscription_path = pubsub_subscriber_client.subscription_path(project_id, subscription_id)
     try:
         # Using Google pub/sub client, create topic and subscription
         logger.info('Creating topic %s using Google pub/sub client ...', topic_name)
-        pubsub_client = gcp.pubsub_client
-        topic = pubsub_client.topic(topic_name)
-        topic.create()
-        assert topic.exists()
-        logger.info('Creating subscription')
-        subscription = topic.subscription(subscription_id)
-        subscription.create()
-        assert subscription.exists()
+
+        topic = pubsub_publisher_client.create_topic(topic_path)
+
+        subscription = pubsub_subscriber_client.create_subscription(subscription_path, topic_path)
 
         # Send messages using pipeline to Google pub/sub publisher Destination.
         logger.info('Starting Publisher pipeline and waiting for it to produce records ...')
@@ -264,27 +261,33 @@ def test_google_pubsub_publisher(sdc_builder, sdc_executor, gcp):
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
         logger.info('No. of messages sent in the pipeline = %s ...', msgs_sent_count)
 
-        # Receive messages in a loop until timeout or expected no. of messages are received
+        msgs_to_be_received = msgs_sent_count
         results = []
-        msgs_received_count = msgs_sent_count
+
+        def callback(message):
+            nonlocal msgs_to_be_received
+            msgs_to_be_received = msgs_to_be_received - 1
+            results.append(message)
+            message.ack()
+
+        # Open the subscription, passing the callback.
+        future = pubsub_subscriber_client.subscribe(subscription_path, callback)
+
         timeout = 5  # in seconds
         start_time = time.time()
-        while time.time() < start_time + timeout and msgs_received_count > 0:
-            messages = subscription.pull(max_messages=msgs_sent_count)
-            results.extend(messages)
-            msgs_received_count = msgs_received_count - len(messages)
+        while time.time() < start_time + timeout and msgs_to_be_received > 0:
+            sleep(0.5)
+            logger.info('To be received messages %d...', msgs_to_be_received)
 
-        # Acknowldege the received messages so that the pub/sub does not resend them
-        if results:
-            subscription.acknowledge([ack_id for ack_id, message in results])
+        future.cancel()  # cancel the feature there by stopping subscribers
 
         # Verify
-        msgs_received = [message[1].data.decode().rstrip('\n') for message in results]
+        msgs_received = [message.data.decode().rstrip('\n') for message in results]
         assert msgs_received == [dev_raw_data_source.raw_data] * msgs_sent_count
 
     finally:
-        subscription.delete()
-        topic.delete()
+        pubsub_subscriber_client.delete_subscription(subscription_path)
+        pubsub_publisher_client.delete_topic(topic_path)
 
 
 @gcp
@@ -325,24 +328,25 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
     sdc_executor.add_pipeline(pipeline)
     pipeline.rate_limit = 1
 
-    connection = gcp.bigtable_connection
+    instance = gcp.bigtable_instance
+    table = instance.table(table_name)
+
     try:
         # Produce Google Bigtable records using pipeline.
-        logger.info('Starting Bigtable pipeline and waiting for it to produce records ...')
+        logger.info('Starting Big table pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
 
-        logger.info('Stopping Bigtable pipeline and getting the count of records produced in total ...')
+        logger.info('Stopping Big table pipeline and getting the count of records produced in total ...')
         sdc_executor.stop_pipeline(pipeline)
 
-        # Using happybase connection, read the contents in the Google Bigtable.
         logger.info('Reading contents from table %s ...', table_name)
-        table = connection.table(table_name)
-        scan_result = list(table.scan())
+        partial_rows = table.read_rows()
+        partial_rows.consume_all()
 
-        read_data = [(f'{row["cf:TransactionID".encode()].decode()},'
-                      f'{row["cf:Type".encode()].decode()},'
-                      f'{row["cf:UserID".encode()].decode()}')
-                     for key, row in scan_result]
+        read_data = [(f'{row.cells["cf"]["TransactionID".encode()][0].value.decode()},'
+                      f'{row.cells["cf"]["Type".encode()][0].value.decode()},'
+                      f'{row.cells["cf"]["UserID".encode()][0].value.decode()}')
+                     for row_key, row in partial_rows.rows.items()]
 
         logger.debug('read_data = {}'.format(read_data))
 
@@ -353,4 +357,4 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
         # providing a record of how the stored data has been altered over time.
         assert data[4:] == read_data
     finally:
-        connection.delete_table(table_name)
+        table.delete()
