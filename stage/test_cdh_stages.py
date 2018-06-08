@@ -118,6 +118,9 @@ def test_kudu_destination_unixtime_micro_datatype(sdc_builder, sdc_executor, clu
     if not hasattr(cluster, 'kudu'):
         pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
 
+    if Version(cluster.version) < Version('cdh5.12.0'):
+        pytest.skip('Test requires CDH 5.12.0+ to run')
+
     # Generate some data. Kudu does not store microsecond so set it 0.
     now = datetime.now().replace(microsecond=0)
     now_millisecond = time.mktime(now.timetuple()) * 1000
