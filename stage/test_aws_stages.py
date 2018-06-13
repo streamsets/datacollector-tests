@@ -538,3 +538,91 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
         if len(s3_put_keys) > 0:
             delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
             s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('emr', 's3')
+@sdc_min_version('3.4.0')
+def test_provision_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
+    """Test for EMR origin stage. We do so by putting data to a test S3 bucket using AWS S3 client and
+    having a pipeline which reads that data using EMR origin stage and writes to S3 destination. Data is then asserted
+    from destination S3 bucket to what is put by S3 client. The pipeline looks like:
+
+    EMR origin pipeline:
+        emr_origin >> s3_destination
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_input_key = '{0}/{1}/input'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
+    s3_output_key = '{0}/{1}/output'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
+
+    s3_staging_bucket = aws.emr_s3_staging_bucket_name
+    s3_staging_key = '{0}/{1}/sdc_staging'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
+    s3_logging_key = '{0}/{1}/sdc_logging'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
+    raw_str = 'Hello World!'
+    s3_obj_count = 2 # keep it low, so as the number of MR jobs don't spin a lot and take a while lot of time
+
+    logger.info('%s S3 bucket used with input key: %s output key: %s and object count: %s',
+                s3_bucket, s3_input_key, s3_output_key, s3_obj_count)
+    logger.info('%s S3 staging bucket used with EMR staging key: %s and EMR logging key: %s',
+                s3_staging_bucket, s3_staging_key, s3_logging_key)
+
+    # build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    emr_origin = builder.add_stage('Hadoop FS', type='origin')
+    emr_origin.set_attributes(input_paths=[f's3a://{s3_bucket}/{s3_input_key}'], data_format='TEXT')
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(bucket=s3_bucket, data_format='TEXT', partition_prefix=s3_output_key)
+
+    emr_origin >> s3_destination
+
+    pipeline = builder.build(title='Amazon EMR to S3 pipeline').configure_for_environment(aws)
+    pipeline.configuration.update({'executionMode': 'EMR_BATCH',
+                                   'amazonEMRConfig.userRegion': aws.sdc_formatted_region,
+                                   'amazonEMRConfig.accessKey': aws.aws_access_key_id,
+                                   'amazonEMRConfig.secretKey': aws.aws_secret_access_key,
+                                   'amazonEMRConfig.s3StagingUri': f's3://{s3_staging_bucket}/{s3_staging_key}',
+                                   'amazonEMRConfig.provisionNewCluster': True,
+                                   'amazonEMRConfig.clusterPrefix': 'stf_test',
+                                   'amazonEMRConfig.terminateCluster': True,
+                                   'amazonEMRConfig.enableEMRDebugging': False,
+                                   'amazonEMRConfig.s3LogUri': f's3://{s3_staging_bucket}/{s3_logging_key}',
+                                   'amazonEMRConfig.serviceRole': 'EMR_DefaultRole',
+                                   'amazonEMRConfig.jobFlowRole': 'EMR_EC2_DefaultRole',
+                                   'amazonEMRConfig.ec2SubnetId': aws.ec2_subnet_id,
+                                   'amazonEMRConfig.masterSecurityGroup': aws.ec2_security_group,
+                                   'amazonEMRConfig.slaveSecurityGroup': aws.ec2_security_group,
+                                   'amazonEMRConfig.instanceCount': 1,
+                                   'amazonEMRConfig.masterInstanceType': 'M4_LARGE',
+                                   'amazonEMRConfig.slaveInstanceType': 'M4_LARGE'})
+
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        logger.info('Creating input S3 data ...')
+        [client.put_object(Bucket=s3_staging_bucket, Key='{0}/{1}'.format(s3_input_key, i), Body=raw_str)
+         for i in range(s3_obj_count)]
+
+        # lets not wait for pipeline start, as the transition from START to RUNNING takes more time
+        sdc_executor.start_pipeline(pipeline, wait=False).wait_for_finished(timeout_sec=1800)
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_output_key)
+        assert len(list_s3_objs['Contents']) == s3_obj_count
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
+                       for s3_content in list_s3_objs['Contents']]
+
+        assert s3_contents == [raw_str] * s3_obj_count
+    finally:
+        logger.info('Deleting input S3 data ...')
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_input_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+        logger.info('Deleting output S3 data ...')
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_output_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
