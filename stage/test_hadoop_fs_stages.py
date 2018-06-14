@@ -106,7 +106,7 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     Snapshot pipeline:
         sdc_rpc_origin >> trash
     """
-    hadoop_fs_folder = os.path.join(os.sep, get_random_string(string.ascii_letters, 10))
+    hadoop_fs_folder = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
 
     # Build the Hadoop FS pipeline.
     builder = sdc_builder.get_pipeline_builder()
