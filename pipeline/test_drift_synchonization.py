@@ -73,6 +73,8 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
         hive_metadata >> hive_metastore
         hadoop_fs >= mapreduce
     """
+    if 'hive' in cluster.kerberized_services:
+        pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)  # lowercase for db compatibility (e.g. PostgreSQL)
 
     table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
@@ -150,6 +152,8 @@ def test_null_fields(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hive_metastore
         dev_data_generator >= pipeline_finisher
     """
+    if 'hive' in cluster.kerberized_services:
+        pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -215,6 +219,8 @@ def test_cold_start(sdc_builder, sdc_executor, cluster, db, stored_as_avro, exte
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    if 'hive' in cluster.kerberized_services:
+        pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     db_for_path = 'default' if not db else f'{db}.db' if db != 'default' else db
@@ -309,6 +315,8 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    if 'hive' in cluster.kerberized_services:
+        pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     if custom_table_location and not external_table:
@@ -422,6 +430,8 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_hive_type_info):
         dev_data_generator >= pipeline_finisher
     """
 
+    if 'hive' in cluster.kerberized_services:
+        pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     sdc_type, hive_type, supported = sdc_hive_type_info
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -562,6 +572,8 @@ def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type_and_
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    if 'hive' in cluster.kerberized_services:
+        pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     partition_type, partition_value = partition_type_and_value
