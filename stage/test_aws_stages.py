@@ -540,25 +540,58 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
             s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
 
 
-@aws('emr', 's3')
+@aws('provisionemr')
 @sdc_min_version('3.4.0')
 def test_provision_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
     """Test for EMR origin stage. We do so by putting data to a test S3 bucket using AWS S3 client and
     having a pipeline which reads that data using EMR origin stage and writes to S3 destination. Data is then asserted
-    from destination S3 bucket to what is put by S3 client. The pipeline looks like:
+    from destination S3 bucket to what is put by S3 client.
+
+    An Amazon EMR is created in the pipeline. The pipeline looks like:
 
     EMR origin pipeline:
         emr_origin >> s3_destination
     """
-    s3_bucket = aws.s3_bucket_name
+    # Set configurations so that pipeline can create Amazon EMR.
+    pipeline_configs = {'amazonEMRConfig.provisionNewCluster': True,
+                        'amazonEMRConfig.clusterPrefix': 'stf_test',
+                        'amazonEMRConfig.terminateCluster': True,
+                        'amazonEMRConfig.ec2SubnetId': aws.ec2_subnet_id,
+                        'amazonEMRConfig.masterSecurityGroup': aws.ec2_security_group,
+                        'amazonEMRConfig.slaveSecurityGroup': aws.ec2_security_group,
+                        'amazonEMRConfig.instanceCount': 1,
+                        'amazonEMRConfig.masterInstanceType': 'M4_LARGE',
+                        'amazonEMRConfig.slaveInstanceType': 'M4_LARGE'}
+    _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs)
+
+
+@aws('existingemr')
+@sdc_min_version('3.4.0')
+def test_existing_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
+    """Test for EMR origin stage. We do so by putting data to a test S3 bucket using AWS S3 client and
+    having a pipeline which reads that data using EMR origin stage and writes to S3 destination.
+    Data is then asserted from destination S3 bucket to what is put by S3 client.
+
+    The Amazon EMR with the passed aws-emr-cluster-id is used in the pipeline. The pipeline looks like:
+
+    EMR origin pipeline:
+        emr_origin >> s3_destination
+    """
+    pipeline_configs = {'amazonEMRConfig.clusterId': aws.emr_cluster_id}
+    _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs)
+
+
+def _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs):
+    s3_bucket = aws.emr_s3_bucket_name
     s3_input_key = '{0}/{1}/input'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
     s3_output_key = '{0}/{1}/output'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
 
     s3_staging_bucket = aws.emr_s3_staging_bucket_name
     s3_staging_key = '{0}/{1}/sdc_staging'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
     s3_logging_key = '{0}/{1}/sdc_logging'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
+
     raw_str = 'Hello World!'
-    s3_obj_count = 2 # keep it low, so as the number of MR jobs don't spin a lot and take a while lot of time
+    s3_obj_count = 2  # keep it low, so as the number of MR jobs don't spin a lot and take a while lot of time
 
     logger.info('%s S3 bucket used with input key: %s output key: %s and object count: %s',
                 s3_bucket, s3_input_key, s3_output_key, s3_obj_count)
@@ -577,25 +610,15 @@ def test_provision_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
     emr_origin >> s3_destination
 
     pipeline = builder.build(title='Amazon EMR to S3 pipeline').configure_for_environment(aws)
-    pipeline.configuration.update({'executionMode': 'EMR_BATCH',
-                                   'amazonEMRConfig.userRegion': aws.sdc_formatted_region,
-                                   'amazonEMRConfig.accessKey': aws.aws_access_key_id,
-                                   'amazonEMRConfig.secretKey': aws.aws_secret_access_key,
-                                   'amazonEMRConfig.s3StagingUri': f's3://{s3_staging_bucket}/{s3_staging_key}',
-                                   'amazonEMRConfig.provisionNewCluster': True,
-                                   'amazonEMRConfig.clusterPrefix': 'stf_test',
-                                   'amazonEMRConfig.terminateCluster': True,
-                                   'amazonEMRConfig.enableEMRDebugging': False,
-                                   'amazonEMRConfig.s3LogUri': f's3://{s3_staging_bucket}/{s3_logging_key}',
-                                   'amazonEMRConfig.serviceRole': 'EMR_DefaultRole',
-                                   'amazonEMRConfig.jobFlowRole': 'EMR_EC2_DefaultRole',
-                                   'amazonEMRConfig.ec2SubnetId': aws.ec2_subnet_id,
-                                   'amazonEMRConfig.masterSecurityGroup': aws.ec2_security_group,
-                                   'amazonEMRConfig.slaveSecurityGroup': aws.ec2_security_group,
-                                   'amazonEMRConfig.instanceCount': 1,
-                                   'amazonEMRConfig.masterInstanceType': 'M4_LARGE',
-                                   'amazonEMRConfig.slaveInstanceType': 'M4_LARGE'})
-
+    configs = {'executionMode': 'EMR_BATCH',
+               'amazonEMRConfig.userRegion': aws.sdc_formatted_region,
+               'amazonEMRConfig.accessKey': aws.aws_access_key_id,
+               'amazonEMRConfig.secretKey': aws.aws_secret_access_key,
+               'amazonEMRConfig.s3StagingUri': f's3://{s3_staging_bucket}/{s3_staging_key}',
+               'amazonEMRConfig.s3LogUri': f's3://{s3_staging_bucket}/{s3_logging_key}',
+               'amazonEMRConfig.enableEMRDebugging': False}
+    configs.update(pipeline_configs)
+    pipeline.configuration.update(configs)
     sdc_executor.add_pipeline(pipeline)
 
     client = aws.s3
