@@ -98,7 +98,7 @@ def get_kafka_consumer_stage(sdc_version, pipeline_builder, cluster, cluster_mod
     pipeline_builder.add_error_stage('Discard')
 
     if cluster_mode:
-        if Version(sdc_version.rsplit('-RC')[0]) < MIN_SDC_VERSION_WITH_SPARK_2_LIB:
+        if Version(sdc_version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB:
             kafka_cluster_stage_lib, kafka_cluster_env_lib = cluster.kafka.cluster_stage_lib_env_lib
         else:
             kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib
@@ -233,6 +233,10 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
     Snapshot pipeline:
         sdc_rpc_origin >> trash
     """
+    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
+            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
+        pytest.skip('Kafka cluster mode test only '
+                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
