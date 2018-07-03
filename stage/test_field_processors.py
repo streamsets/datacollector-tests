@@ -135,10 +135,10 @@ def test_field_hasher(sdc_builder, sdc_executor):
     new_header = snapshot[field_hasher.instance_name].output[0].header
     new_value = snapshot[field_hasher.instance_name].output[0].value['value']
     # assert new header fields are created same as generated value fields
-    assert new_header['sha1passcode'] == new_value['sha1passcode']['value']
-    assert new_header['myrecord'] == new_value['myrecord']['value']
-    assert new_header['md5passcode'] == new_value['md5passcode']['value']
-    assert new_header['sha2passcode'] == new_value['sha2passcode']['value']
+    assert new_header['values']['sha1passcode'] == new_value['sha1passcode']['value']
+    assert new_header['values']['myrecord'] == new_value['myrecord']['value']
+    assert new_header['values']['md5passcode'] == new_value['md5passcode']['value']
+    assert new_header['values']['sha2passcode'] == new_value['sha2passcode']['value']
     # assert in place record field being hashed as expected
     id_hash = hashlib.md5()
     id_hash.update(raw_id.encode())

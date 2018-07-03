@@ -131,7 +131,7 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
         record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
 
         assert record is not None
-        assert record.header['sdc.event.type'] == 'pipeline-start'
+        assert record.header['values']['sdc.event.type'] == 'pipeline-start'
         assert record.value['value']['user']['value'] == 'admin'
 
     finally:
@@ -166,7 +166,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
         record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
 
         assert record is not None
-        assert record.header['sdc.event.type'] == 'pipeline-stop'
+        assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
         assert record.value['value']['reason']['value'] == 'USER_ACTION'
 
     finally:
@@ -199,7 +199,7 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
         record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
 
         assert record is not None
-        assert record.header['sdc.event.type'] == 'pipeline-stop'
+        assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
         assert record.value['value']['reason']['value'] == 'FINISHED'
 
     finally:
@@ -233,7 +233,7 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
         record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
 
         assert record is not None
-        assert record.header['sdc.event.type'] == 'pipeline-stop'
+        assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
         assert record.value['value']['reason']['value'] == 'FAILURE'
 
     finally:

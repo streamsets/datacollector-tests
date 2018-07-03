@@ -173,8 +173,8 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
         for record in snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output:
             assert row_index == int(record.value['value']['ID']['value'])
             assert rows[op_index]['NAME'] == record.value['value']['NAME']['value']
-            assert int(record.header['sdc.operation.type']) == sdc_op_types[op_index]
-            assert record.header['oracle.cdc.operation'] == cdc_op_types[op_index]
+            assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
             op_index += 1
 

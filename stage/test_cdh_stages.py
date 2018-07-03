@@ -646,7 +646,8 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster):
         # assert successful query execution of the pipeline
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        assert snapshot[hive_query.instance_name].event_records[0].header['sdc.event.type'] == 'successful-query'
+        assert (snapshot[hive_query.instance_name].event_records[0].header['values']['sdc.event.type'] ==
+                'successful-query')
 
         # assert Hive table creation
         assert hive_cursor.table_exists(hive_table_name)
@@ -654,7 +655,7 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster):
         # Re-running the same query to create Hive table should fail the query. So assert the failure.
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        assert snapshot[hive_query.instance_name].event_records[0].header['sdc.event.type'] == 'failed-query'
+        assert snapshot[hive_query.instance_name].event_records[0].header['values']['sdc.event.type'] == 'failed-query'
     finally:
         # drop the Hive table
         hive_cursor.execute(f'DROP TABLE `{hive_table_name}`')

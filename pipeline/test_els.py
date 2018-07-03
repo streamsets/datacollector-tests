@@ -42,7 +42,7 @@ def test_pipeline_el_user(random_expression_pipeline_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
-    assert record.header['user'] == 'arvind'
+    assert record.header['values']['user'] == 'arvind'
 
     # And then try different user.
     sdc_executor.set_user('girish')
@@ -50,7 +50,7 @@ def test_pipeline_el_user(random_expression_pipeline_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
-    assert record.header['user'] == 'girish'
+    assert record.header['values']['user'] == 'girish'
 
 
 def test_pipeline_el_name_title_id_version(random_expression_pipeline_builder, sdc_executor):
@@ -68,10 +68,10 @@ def test_pipeline_el_name_title_id_version(random_expression_pipeline_builder, s
     sdc_executor.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
-    assert record.header['name'] == pipeline.id
-    assert record.header['id'] == pipeline.id
-    assert record.header['title'] == pipeline.title
-    assert record.header['version'] == '42'
+    assert record.header['values']['name'] == pipeline.id
+    assert record.header['values']['id'] == pipeline.id
+    assert record.header['values']['title'] == pipeline.title
+    assert record.header['values']['version'] == '42'
 
 
 def test_str_unescape_and_replace_el(sdc_builder, sdc_executor):

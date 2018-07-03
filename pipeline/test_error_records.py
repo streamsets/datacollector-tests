@@ -182,7 +182,7 @@ def test_error_record_policy_original_record(policy_write_builder, policy_read_b
 
         # Expecting KeyError as the header shouldn't exist
         with pytest.raises(KeyError):
-            record.header['changed']
+            record.header['values']['changed']
 
     finally:
         sdc_executor.stop_pipeline(write_pipeline)
@@ -212,7 +212,7 @@ def test_error_record_policy_stage_record(policy_write_builder, policy_read_buil
         snapshot = snapshot_command.wait_for_finished().snapshot
         record = snapshot[snapshot_pipeline.origin_stage].output[0]
 
-        assert record.header['changed'] == 'yes'
+        assert record.header['values']['changed'] == 'yes'
 
     finally:
         sdc_executor.stop_pipeline(write_pipeline)
