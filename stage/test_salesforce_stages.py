@@ -31,7 +31,6 @@ DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': 'User1', 'Email': 
                            {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtes3@example.comFROM'}]
 CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
 
-
 @salesforce
 def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
     """
@@ -83,7 +82,12 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-def test_salesforce_origin(sdc_builder, sdc_executor, salesforce):
+@pytest.mark.parametrize(('condition'), [
+    'query_without_prefix',
+    # Testing of SDC-9067
+    'query_with_prefix'
+])
+def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, condition):
     """
     Create data using Salesforce client
     and then check if Salesforce origin receives them using snapshot.
@@ -93,13 +97,21 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce):
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
+    if condition == 'query_without_prefix':
+      query = ("SELECT Id, FirstName, LastName, Email FROM Contact "
+               "WHERE Id > '000000000000000' AND "
+               "Email LIKE 'xtest%' "
+               "ORDER BY Id")
+    else:
+      # SDC-9067 - redundant object name prefix caused NPE
+      query = ("SELECT Contact.Id, Contact.FirstName, Contact.LastName, Contact.Email FROM Contact "
+               "WHERE Id > '000000000000000' AND "
+               "Email LIKE 'xtest%' "
+               "ORDER BY Id")
+
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     # Changing " with ' and vice versa in following string makes the query execution fail.
-    query_str = ("SELECT Id, FirstName, LastName, Email FROM Contact "
-                 "WHERE Id > '000000000000000' AND "
-                 "Email LIKE 'xtest%' "
-                 "ORDER BY Id")
-    salesforce_origin.set_attributes(soql_query=query_str,
+    salesforce_origin.set_attributes(soql_query=query,
                                      subscribe_for_notifications=False)
 
     trash = pipeline_builder.add_stage('Trash')
