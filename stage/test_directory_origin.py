@@ -74,6 +74,8 @@ def test_directory_origin(sdc_builder, sdc_executor):
     # assert all the data captured have the same raw_data
     for record in snapshot.snapshot_batches[0][directory.instance_name].output:
         assert raw_data == record.value['value']['text']['value']
+        assert record.header['sourceId'] is not None
+        assert record.header['stageCreator'] is not None
 
 
 @pytest.mark.parametrize('no_of_threads', [1, 5])
