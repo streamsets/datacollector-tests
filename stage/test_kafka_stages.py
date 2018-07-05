@@ -97,9 +97,9 @@ def get_kafka_consumer_stage(sdc_version, pipeline_builder, cluster, cluster_mod
 
     if cluster_mode:
         if Version(sdc_version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB:
-            kafka_cluster_stage_lib, kafka_cluster_env_lib = cluster.kafka.cluster_stage_lib_env_lib
+            kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib_spark1
         else:
-            kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib
+            kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib_spark2
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
                                                 type='origin',
                                                 library=(kafka_cluster_stage_lib
@@ -272,6 +272,7 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
                                     sdc_executor)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        sdc_executor.stop_pipeline(snapshot_pipeline)
 
 #
 # Schema Registry related tests
