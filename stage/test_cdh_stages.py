@@ -23,8 +23,6 @@ import sqlalchemy
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
-from . import test_apache
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -604,14 +602,6 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
     finally:
         logger.info('Dropping Kudu table %s ...', kudu_table_name)
         tdf_contenders_table.drop(engine)
-
-
-@cluster('cdh')
-def test_solr_destination(sdc_builder, sdc_executor, cluster):
-    """Test Solr target pipeline in CDH environment. Note: CDH 5.x at this time runs with Solr 4.x variants.
-    This version of Solr does not support API operations for schema and collections.
-    """
-    test_apache.basic_solr_target('cdh', sdc_builder, sdc_executor, cluster)
 
 
 @cluster('cdh')
