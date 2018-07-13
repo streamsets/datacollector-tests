@@ -20,7 +20,7 @@ from datetime import datetime
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import cluster, parcelpackaging, sdc_min_version
+from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
 from . import test_apache
@@ -34,8 +34,6 @@ SNAPSHOT_TIMEOUT_SEC = 120
 
 DEFAULT_IMPALA_DB = 'default'
 DEFAULT_KUDU_PORT = 7051
-
-pytestmark = [parcelpackaging]
 
 
 @cluster('cdh')

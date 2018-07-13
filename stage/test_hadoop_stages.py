@@ -22,13 +22,12 @@ import time
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import cluster, parcelpackaging, sdc_min_version
+from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-pytestmark = [parcelpackaging]
 
 @cluster('cdh', 'hdp')
 @sdc_min_version('3.2.0.0')

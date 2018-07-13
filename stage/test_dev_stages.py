@@ -17,12 +17,12 @@ from time import sleep
 
 import pytest
 from streamsets.sdk import sdc_api
-from streamsets.testframework.markers import parcelpackaging, rpmpackaging
+from streamsets.testframework.markers import rpmpackaging
 from streamsets.testframework.utils import Version
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [parcelpackaging, rpmpackaging]
+pytestmark = [rpmpackaging]
 
 
 @pytest.fixture(scope='module')

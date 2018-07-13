@@ -20,7 +20,7 @@ import avro
 import pytest
 
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import cluster, confluent, parcelpackaging, sdc_min_version
+from streamsets.testframework.markers import cluster, confluent, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,6 @@ SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
 
 MIN_SDC_VERSION_WITH_SPARK_2_LIB = Version('3.3.0')
-
-pytestmark = [parcelpackaging]
 
 
 @cluster('cdh', 'kafka')

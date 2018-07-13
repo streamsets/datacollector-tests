@@ -22,7 +22,7 @@ from uuid import uuid4
 
 import pytest
 
-from streamsets.testframework.markers import cluster, large, parcelpackaging
+from streamsets.testframework.markers import cluster, large
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,6 @@ LARGE_TEST_DURATION_IN_SECS = 3600
 LARGE_TEST_STATUS_CHECK_DURATION_IN_SECS = int(LARGE_TEST_DURATION_IN_SECS / 10)
 # Statuses that signify a pipeline that isn't failing.
 SUCCESS_STATUSES = ['EDITED', 'STARTING', 'RUNNING']
-
-pytestmark = [parcelpackaging]
 
 
 @cluster('cdh', 'hdp')
