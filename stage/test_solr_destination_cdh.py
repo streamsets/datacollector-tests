@@ -37,9 +37,6 @@ def test_solr_write_records_cdh(sdc_builder, sdc_executor, solr):
 
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
 
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
-
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
 
@@ -65,13 +62,13 @@ def test_solr_write_records_cdh(sdc_builder, sdc_executor, solr):
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = solr.client.query(solr_collection_name, {'q': query})
+        resp = solr.client.query(solr.core_name, {'q': query})
         assert resp.num_found > 0
         assert resp.data['response']['docs'][0][field_name_2][0] == field_val_2
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -87,9 +84,6 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, solr):
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': '/not_id', 'solrFieldName': field_name_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
@@ -117,7 +111,7 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, solr):
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = solr.client.query(solr_collection_name, {'q': query})
+        resp = solr.client.query(solr.core_name, {'q': query})
         assert 0 == resp.num_found
 
         stage = snapshot[solr_target.instance_name]
@@ -126,7 +120,7 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, solr):
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
         logger.info("Finished")
 
 
@@ -143,9 +137,6 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, solr):
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': '/not_id', 'solrFieldName': field_name_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
@@ -173,7 +164,7 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, solr):
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = solr.client.query(solr_collection_name, {'q': query})
+        resp = solr.client.query(solr.core_name, {'q': query})
         assert resp.num_found == 0
 
         stage = snapshot[solr_target.instance_name]
@@ -183,7 +174,7 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, solr):
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -201,9 +192,6 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, s
     data = [{'id': field_val_1, "name": field_val_2}, {'not_id': field_val_1, "name": field_val_2}]
 
     json_str = json.dumps(data)
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
@@ -231,7 +219,7 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, s
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_2}}}{field_val_2}'
-        resp = solr.client.query(solr_collection_name, {'q': query})
+        resp = solr.client.query(solr.core_name, {'q': query})
         assert resp.num_found == 0
 
         stage = snapshot[solr_target.instance_name]
@@ -240,7 +228,7 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, s
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -258,9 +246,6 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, solr)
     data = {'not_id': field_name_1, "name": field_val_2}
 
     json_str = json.dumps(data)
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
@@ -293,7 +278,7 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, solr)
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -311,9 +296,6 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, solr):
     data = {'id': field_name_1, "name": field_val_2}
 
     json_str = json.dumps(data)
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_val_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
@@ -346,7 +328,7 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, solr):
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -364,9 +346,6 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, solr):
     data = {'id': field_name_1, "name": field_val_2}
 
     json_str = json.dumps(data)
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_val_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
@@ -394,7 +373,7 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, solr):
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = solr.client.query(solr_collection_name, {'q': query})
+        resp = solr.client.query(solr.core_name, {'q': query})
         assert resp.num_found == 0
 
         stage = snapshot[solr_target.instance_name]
@@ -403,7 +382,7 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, solr):
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -421,9 +400,6 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, solr):
     data = {'id': field_name_1, "name": field_val_2}
 
     json_str = json.dumps(data)
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_val_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
@@ -451,7 +427,7 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, solr):
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = solr.client.query(solr_collection_name, {'q': query})
+        resp = solr.client.query(solr.core_name, {'q': query})
         assert 0 == resp.num_found
 
         stage = snapshot[solr_target.instance_name]
@@ -459,7 +435,7 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, solr):
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -475,9 +451,6 @@ def test_solr_test_validations_null_url(sdc_builder, sdc_executor, solr):
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': 'id', 'solrFieldName': field_name_1},
                        {'field': 'title', 'solrFieldName': field_name_2}]
@@ -513,7 +486,7 @@ def test_solr_test_validations_null_url(sdc_builder, sdc_executor, solr):
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -527,9 +500,6 @@ def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, solr):
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = []
 
@@ -560,7 +530,7 @@ def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, solr):
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
 
 
 @solr
@@ -576,9 +546,6 @@ def test_solr_test_validations_invalid_url(sdc_builder, sdc_executor, solr):
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
-
-    # 'sample_collection' schemaless collection has to be pre-created in CDH Solr.
-    solr_collection_name = 'sample_collection'
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
                        {'field': '/title', 'solrFieldName': field_name_2}]
@@ -612,4 +579,4 @@ def test_solr_test_validations_invalid_url(sdc_builder, sdc_executor, solr):
     finally:
         # Delete pipeline and SOLR information.
         sdc_executor.remove_pipeline(pipeline)
-        solr.client.delete_doc_by_id(solr_collection_name, field_val_1)
+        solr.client.delete_doc_by_id(solr.core_name, field_val_1)
