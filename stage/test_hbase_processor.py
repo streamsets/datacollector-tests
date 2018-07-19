@@ -138,12 +138,14 @@ def test_hbase_lookup_processor_empty_batch(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', table_name)
         cluster.hbase.client.create_table(name=table_name, families={'info': {}})
 
-        # Run preview.
-        preview = sdc_executor.run_pipeline_preview(pipeline).preview
-        assert preview is not None
+        # Start pipeline.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline)
 
-        assert preview.issues.issues_count == 0
+        assert 0 == len(list(cluster.hbase.client.table(table_name).scan()))
 
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        assert 'STOPPED' == status
     finally:
         # Remove pipeline and delete HBase table.
         sdc_executor.remove_pipeline(pipeline)
