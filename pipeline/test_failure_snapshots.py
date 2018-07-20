@@ -48,7 +48,7 @@ def test_failure_snapshots_off(pipeline_builder, sdc_executor):
     pipeline.configuration['shouldRetry'] = False
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_status('RUN_ERROR')
+    sdc_executor.start_pipeline(pipeline, wait=False).wait_for_status('RUN_ERROR', ignore_errors=True)
 
     snapshots = sdc_executor.get_snapshots(pipeline)
 
@@ -63,8 +63,27 @@ def test_failure_snapshots_on(pipeline_builder, sdc_executor):
     pipeline.configuration['shouldRetry'] = False
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_status('RUN_ERROR')
+    sdc_executor.start_pipeline(pipeline, wait=False).wait_for_status('RUN_ERROR', ignore_errors=True)
 
     snapshots = sdc_executor.get_snapshots(pipeline)
 
     assert len(snapshots) == 1
+
+
+@sdc_min_version('3.5.0')
+def test_failure_snapshots_on_multiple(pipeline_builder, sdc_executor):
+    """Ensure that only max 1 failure snapshot will be created per pipeline."""
+    pipeline = pipeline_builder.build('Failure Snapshots ON (Multiple failures)')
+    pipeline.configuration['shouldCreateFailureSnapshot'] = True
+    pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(pipeline)
+    # Run and let the pipeline fail at least twice
+    sdc_executor.start_pipeline(pipeline, wait=False).wait_for_status('RUN_ERROR', ignore_errors=True)
+    sdc_executor.start_pipeline(pipeline, wait=False).wait_for_status('RUN_ERROR', ignore_errors=True)
+
+    snapshots = sdc_executor.get_snapshots(pipeline)
+
+    assert len(snapshots) == 1
+
+
