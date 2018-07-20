@@ -360,8 +360,13 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source.raw_data = 'Hello World!'
 
     mapr_streams_producer = builder.add_stage('MapR Streams Producer')
-    mapr_streams_producer.topic = stream_topic_name
     mapr_streams_producer.data_format = 'TEXT'
+    # Runtime topic resolution is explicitly supported from 3.4.0
+    if Version(sdc_executor.version) >= Version('3.4.0'):
+        mapr_streams_producer.runtime_topic_resolution = True
+        mapr_streams_producer.topic_expression = stream_topic_name
+    else:
+        mapr_streams_producer.topic = stream_topic_name
 
     dev_raw_data_source >> mapr_streams_producer
     producer_pipeline = builder.build('MapR Streams producer pipeline - standalone').configure_for_environment(cluster)
@@ -429,8 +434,13 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source.raw_data = 'Hello World!'
 
     mapr_streams_producer = builder.add_stage('MapR Streams Producer')
-    mapr_streams_producer.topic = stream_topic_name
     mapr_streams_producer.data_format = 'TEXT'
+    # Runtime topic resolution is explicitly supported from 3.4.0
+    if Version(sdc_executor.version) >= Version('3.4.0'):
+        mapr_streams_producer.runtime_topic_resolution = True
+        mapr_streams_producer.topic_expression = stream_topic_name
+    else:
+        mapr_streams_producer.topic = stream_topic_name
 
     dev_raw_data_source >> mapr_streams_producer
     producer_pipeline = builder.build('Streams Producer - cluster').configure_for_environment(cluster)
