@@ -20,6 +20,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
