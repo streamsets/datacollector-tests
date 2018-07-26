@@ -1,0 +1,24 @@
+
+ä
+addressbook.proto")
+AddressBook
+contacts (2.Contact"2
+Address
+address_lines (	
+postcode (	"j
+Contact
+
+first_name (	
+	last_name (	
+address (2.Address
+phone_numbers (2.Phone"1
+Phone
+type (2
+.PhoneType
+number (	"*
+SearchResult
+contacts (2.Contact*%
+	PhoneType
+
+MOBILE
+LANDLINE
