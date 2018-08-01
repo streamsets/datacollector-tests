@@ -23,8 +23,8 @@ from streamsets.testframework.utils import get_random_string
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PRIMARY_KEY = 'ID'
-NAME_COLUMN = 'NAME'
+PRIMARY_KEY = 'id'
+NAME_COLUMN = 'name'
 OperationsData = namedtuple('OperationsData', ['kind', 'table', 'columnnames', 'columnvalues', 'oldkeys'])
 Oldkeys = namedtuple('Oldkeys', ['keynames', 'keyvalues'])
 
@@ -75,7 +75,7 @@ def _update(connection, table):
     txn = connection.begin()
     try:
         for row in UPDATE_ROWS:
-            connection.execute(table.update().where(table.c.ID == row[PRIMARY_KEY]).values(NAME=row[NAME_COLUMN]))
+            connection.execute(table.update().where(table.c.id == row[PRIMARY_KEY]).values(name=row[NAME_COLUMN]))
         txn.commit()
     except:
         txn.rollback()
@@ -96,7 +96,7 @@ def _delete(connection, table):
     txn = connection.begin()
     try:
         for row in DELETE_ROWS:
-            connection.execute(table.delete().where(table.c.ID == row[PRIMARY_KEY]))
+            connection.execute(table.delete().where(table.c.id == row[PRIMARY_KEY]))
         txn.commit()
     except:
         txn.rollback()
@@ -117,6 +117,8 @@ def _delete(connection, table):
 def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     """Basic test that inserts/updates/deletes to a Postgres table,
     and validates that they are read in the same order.
+    Here `Initial Change` config. is at default value = `From the latest change`.
+    With this, the origin processes all changes that occur after pipeline is started.
 
     The pipeline looks like:
         postgres_cdc_client >> trash
@@ -125,14 +127,19 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
-    postgres_cdc_client.set_attributes(replication_slot='slot')
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+                                       replication_slot=get_random_string(string.ascii_lowercase, 10))
     trash = pipeline_builder.add_stage('Trash')
     postgres_cdc_client >> trash
 
-    pipeline = pipeline_builder.build().configure_for_environment(database)
+    pipeline = pipeline_builder.build(title='PostgreSQL CDC Basic').configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     try:
+        # Database operations done after pipeline start will be captured by CDC.
+        # Hence start the pipeline but do not wait for the capture to be finished.
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
         # Create table and then perform insert, update and delete operations.
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
@@ -140,7 +147,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
         expected_operations_data += _update(connection=connection, table=table)
         expected_operations_data += _delete(connection=connection, table=table)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        snapshot = snapshot_command.wait_for_finished().snapshot
 
         # Verify snapshot data is received in exact order as expected.
         operation_index = 0
