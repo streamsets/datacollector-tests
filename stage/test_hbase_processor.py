@@ -332,7 +332,7 @@ def test_hbase_empty_key_expression(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', table_name)
         cluster.hbase.client.create_table(name=table_name, families={'info': {}})
 
-        issues = sdc_builder.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
+        issues = sdc_executor.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
         assert 0 == issues['issueCount']
 
         # Start pipeline.

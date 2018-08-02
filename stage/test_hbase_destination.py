@@ -172,7 +172,7 @@ def test_hbase_destination_invalid_configs(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf1': {}})
 
-        issues = sdc_builder.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
+        issues = sdc_executor.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
 
         assert 0 < issues['issueCount']
 
