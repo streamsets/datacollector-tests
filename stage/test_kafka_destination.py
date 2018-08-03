@@ -14,6 +14,7 @@
 
 import logging
 import string
+import pytest
 
 import avro
 
@@ -39,6 +40,9 @@ def validate_schema_was_registered(name, confluent):
     assert schema.fields[1].name == 'b'
     assert schema.fields[1].type.name == 'string'
 
+#
+# Kafka Destination
+#
 
 @cluster('cdh', 'kafka')
 def test_kafka_destination(sdc_builder, sdc_executor, cluster):
@@ -95,6 +99,128 @@ def test_kafka_destination(sdc_builder, sdc_executor, cluster):
     logger.debug('Verifying messages with Kafka consumer client ...')
     assert msgs_sent_count == len(msgs_received)
     assert msgs_received == [dev_raw_data_source.raw_data] * msgs_sent_count
+
+
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.0.0.0')
+def test_kafka_destination_expression_partitioner(sdc_builder, sdc_executor, cluster):
+    """This test generates three message all targeting the same partition in Kafka. We verify that all records indeed
+        were stored in the same partition.
+    """
+    topic = get_random_string(string.ascii_letters, 10)
+    logger.debug('Kafka topic name: %s', topic)
+
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = '{"part" : 0}\n{"part" : 0}\n{"part" : 0}'
+
+    destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                    library=cluster.kafka.standalone_stage_lib)
+    destination.topic = topic
+    destination.data_format = 'JSON'
+    destination.partition_strategy = 'EXPRESSION'
+    destination.partition_expression = "${record:value('/part')}"
+
+    source >> destination
+    pipeline = builder.build(title='Kafka Destination pipeline with Expression Partitioner').configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    consumer = cluster.kafka.consumer(consumer_timeout_ms=1000, auto_offset_reset='earliest')
+    consumer.subscribe([topic])
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    msgs_received = [message for message in consumer]
+    assert 3 == len(msgs_received)
+    assert msgs_received[0].partition == msgs_received[1].partition
+    assert msgs_received[0].partition == msgs_received[2].partition
+
+
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('expr', ['666', "${record:value('/') % 3}"])
+def test_kafka_destination_invalid_partition_expression(expr, sdc_builder, sdc_executor, cluster):
+    """Validate that records with invalid partition expression(s) will end up in error stream."""
+    topic = get_random_string(string.ascii_letters, 10)
+    logger.debug('Kafka topic name: %s', topic)
+
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'TEXT'
+    source.raw_data = 'random text'
+
+    destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                    library=cluster.kafka.standalone_stage_lib)
+    destination.topic = topic
+    destination.data_format = 'TEXT'
+    destination.partition_strategy = 'EXPRESSION'
+    destination.partition_expression = expr
+
+    source >> destination
+    pipeline = builder.build(title='Kafka Destination Invalid Partition Expression').configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    consumer = cluster.kafka.consumer(consumer_timeout_ms=1000, auto_offset_reset='earliest')
+    consumer.subscribe([topic])
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # There should be no messages in Kafka
+    msgs_received = [message for message in consumer]
+    assert 0 == len(msgs_received)
+
+    # And that one record should have ended up in error stream
+    history = sdc_executor.get_pipeline_history(pipeline)
+    assert 1 == history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count
+
+
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.0.0.0')
+def test_kafka_destination_xml(sdc_builder, sdc_executor, cluster):
+    """Text XML format with Kafka destination."""
+    topic = get_random_string(string.ascii_letters, 10)
+    logger.debug('Kafka topic name: %s', topic)
+
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = '{"key" : "value"}'
+
+    destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                    library=cluster.kafka.standalone_stage_lib)
+    destination.topic = topic
+    destination.data_format = 'XML'
+
+    source >> destination
+    pipeline = builder.build(title='Kafka Destination XML').configure_for_environment(cluster)
+    pipeline.configuration['rateLimit'] = 1
+
+    sdc_executor.add_pipeline(pipeline)
+
+    consumer = cluster.kafka.consumer(consumer_timeout_ms=1000, auto_offset_reset='earliest')
+    consumer.subscribe([topic])
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # There should be no messages in Kafka
+    msgs_received = [message for message in consumer]
+    assert 1 == len(msgs_received)
+    assert '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<key>value</key>\n' == msgs_received[0].value.decode()
 
 
 #
@@ -250,3 +376,40 @@ def test_kafka_write_string_records_round_robin(sdc_builder, sdc_executor, clust
     finally:
         # Remove pipeline
         sdc_executor.remove_pipeline(kafka_destination_pipeline)
+
+#
+# Kafka Error Destination
+#
+
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.0.0.0')
+def test_kafka_error_destination(sdc_builder, sdc_executor, cluster):
+    """Validate 'To Error' Kafka destination."""
+    topic = get_random_string(string.ascii_letters, 10)
+    logger.debug('Kafka topic name: %s', topic)
+
+    builder = sdc_builder.get_pipeline_builder()
+    error = builder.add_error_stage('Write to Kafka')
+    error.topic = topic
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.data_format = 'TEXT'
+    source.raw_data = 'Hello World!'
+    source.stop_after_first_batch = True
+
+    to_error = builder.add_stage('To Error')
+
+    source >> to_error
+
+    pipeline = builder.build('To Error Kafka').configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    consumer = cluster.kafka.consumer(consumer_timeout_ms=1000, auto_offset_reset='earliest')
+    consumer.subscribe([topic])
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    msgs_received = [message for message in consumer]
+    assert 1 == len(msgs_received)
+
