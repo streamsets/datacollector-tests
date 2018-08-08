@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import json
 import logging
 import random
 import string
@@ -29,6 +30,10 @@ ROWS_IN_DATABASE = [
     {'id': 1, 'name': 'Dima'},
     {'id': 2, 'name': 'Jarcec'},
     {'id': 3, 'name': 'Arvind'}
+]
+ROWS_TO_UPDATE = [
+    {'id': 2, 'name': 'Eddie'},
+    {'id': 4, 'name': 'Jarcec'},
 ]
 LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
 RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
@@ -342,6 +347,158 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
         data_from_database = result.fetchall()
         result.close()
         assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
+def test_jdbc_producer_insert(sdc_builder, sdc_executor, database):
+    """Simple JDBC Producer test with INSERT operation.
+    The pipeline inserts records into the database and verify that correct data is in the database.
+
+    This is achieved by using a deduplicator which assures there is only one ingest to the database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_producer
+                               record_deduplicator >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = create_table_in_database(table_name, database)
+
+    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=DATA)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+
+    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+    jdbc_producer.set_attributes(default_operation='INSERT',
+                                 table_name=table_name,
+                                 field_to_column_mapping=[],
+                                 stage_on_record_error='STOP_PIPELINE')
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> record_deduplicator >> jdbc_producer
+    record_deduplicator >> trash
+
+    pipeline = pipeline_builder.build(title='JDBC Producer Insert').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_IN_DATABASE))
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data_from_database = result.fetchall()
+        result.close()
+        assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
+def test_jdbc_producer_delete(sdc_builder, sdc_executor, database):
+    """Simple JDBC Producer test with DELETE operation.
+    The pipeline deletes records from the database and verify that correct data is in the database.
+    Records are deleted if the primary key is matched irrespective of other column values.
+
+    This is achieved by using a deduplicator which assures there is only one ingest to the database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_producer
+                               record_deduplicator >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = create_table_in_database(table_name, database)
+    logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_TO_UPDATE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=DATA)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+
+    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+    jdbc_producer.set_attributes(default_operation='DELETE',
+                                 table_name=table_name,
+                                 field_to_column_mapping=[],
+                                 stage_on_record_error='STOP_PIPELINE')
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> record_deduplicator >> jdbc_producer
+    record_deduplicator >> trash
+
+    pipeline = pipeline_builder.build(title='JDBC Producer Delete').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_TO_UPDATE))
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data_from_database = result.fetchall()
+        result.close()
+        removed_ids = [record['id'] for record in ROWS_TO_UPDATE]
+        assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE if record['id'] not in removed_ids]
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
+def test_jdbc_producer_update(sdc_builder, sdc_executor, database):
+    """Simple JDBC Producer test with UPDATE operation.
+    The pipeline updates records from the database and verify that correct data is in the database.
+    Records with matching primary key are updated, and no action for unmatched records.
+
+    This is achieved by using a deduplicator which assures there is only one ingest to the database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_producer
+                               record_deduplicator >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = create_table_in_database(table_name, database)
+    logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_TO_UPDATE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=DATA)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+
+    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+    jdbc_producer.set_attributes(default_operation='UPDATE',
+                                 table_name=table_name,
+                                 field_to_column_mapping=[],
+                                 stage_on_record_error='STOP_PIPELINE')
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> record_deduplicator >> jdbc_producer
+    record_deduplicator >> trash
+
+    pipeline = pipeline_builder.build(title='JDBC Producer Update').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_TO_UPDATE))
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data_from_database = result.fetchall()
+        result.close()
+        updated_names = {record['id']: record['name'] for record in ROWS_IN_DATABASE}
+        updated_names.update({record['id']: record['name'] for record in ROWS_TO_UPDATE})
+        assert data_from_database == [(updated_names[record['id']], record['id']) for record in ROWS_IN_DATABASE]
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
