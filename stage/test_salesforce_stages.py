@@ -31,6 +31,9 @@ DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': 'User1', 'Email': 
                            {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtes3@example.comFROM'}]
 CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
 
+ACCOUNTS_FOR_SUBQUERY = 5
+CONTACTS_FOR_SUBQUERY = 5
+
 @salesforce
 def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
     """
@@ -98,16 +101,16 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, condition):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     if condition == 'query_without_prefix':
-      query = ("SELECT Id, FirstName, LastName, Email FROM Contact "
-               "WHERE Id > '000000000000000' AND "
-               "Email LIKE 'xtest%' "
-               "ORDER BY Id")
+        query = ("SELECT Id, FirstName, LastName, Email FROM Contact "
+                 "WHERE Id > '000000000000000' AND "
+                 "Email LIKE 'xtest%' "
+                 "ORDER BY Id")
     else:
-      # SDC-9067 - redundant object name prefix caused NPE
-      query = ("SELECT Contact.Id, Contact.FirstName, Contact.LastName, Contact.Email FROM Contact "
-               "WHERE Id > '000000000000000' AND "
-               "Email LIKE 'xtest%' "
-               "ORDER BY Id")
+        # SDC-9067 - redundant object name prefix caused NPE
+        query = ("SELECT Contact.Id, Contact.FirstName, Contact.LastName, Contact.Email FROM Contact "
+                 "WHERE Id > '000000000000000' AND "
+                 "Email LIKE 'xtest%' "
+                 "ORDER BY Id")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     # Changing " with ' and vice versa in following string makes the query execution fail.
@@ -139,6 +142,7 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
         rows_from_snapshot = [record.value['value']
                               for record in snapshot[stage_name].output]
 
@@ -153,6 +157,9 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
         assert data_from_snapshot == expected_data
 
     finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting records ...')
         client.bulk.Contact.delete(inserted_ids)
 
@@ -194,3 +201,81 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data
         record['surName'] = record.pop('LastName')
     verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, LOOKUP_EXPECTED_DATA,
                        salesforce, data_to_insert=data)
+
+# Test SDC-9251, SDC-9493
+@salesforce
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
+    """
+    Create data using Salesforce client
+    and then check if Salesforce origin receives them using snapshot.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Also tests SDC-9742 (ORDER BY field causes parse error), SDC-9762 (NPE in sub-query when following relationship)
+    # We don't need to populate the ReportsTo field - the error was in retrieving its metadata
+    query = ("SELECT Id, Name, (SELECT Id, LastName, ReportsTo.LastName FROM Contacts ORDER BY Id) FROM Account "
+             "WHERE Id > '000000000000000' AND "
+             "Name LIKE 'Account %' "
+             "ORDER BY Id")
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    salesforce_origin.set_attributes(soql_query=query,
+                                     use_bulk_api=(api == 'bulk'),
+                                     subscribe_for_notifications=False)
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    pipeline = pipeline_builder.build(title=f'Salesforce Origin Subquery {api}').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    try:
+        expected_accounts = []
+        account_ids = []
+        logger.info('Creating accounts using Salesforce client ...')
+        for i in range(ACCOUNTS_FOR_SUBQUERY):
+            expected_accounts.append({'Name': f'Account {i}'})
+
+        result = client.bulk.Account.insert(expected_accounts)
+        account_ids = [{'Id': item['id']}
+                       for item in result]
+
+        expected_contacts = []
+        contact_ids = []
+        logger.info('Creating contacts using Salesforce client ...')
+        for i in range(len(expected_accounts)):
+            for j in range(CONTACTS_FOR_SUBQUERY):
+                contact = {'AccountId': account_ids[i]['Id'], 'LastName': f'Contact {i} {j}'}
+                expected_contacts.append(contact)
+
+        result = client.bulk.Contact.insert(expected_contacts)
+        contact_ids = [{'Id': item['id']}
+                       for item in result]
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # Verify correct rows are received using snapshot.
+        assert ACCOUNTS_FOR_SUBQUERY == len(snapshot[salesforce_origin].output)
+        for i, account in enumerate(snapshot[salesforce_origin].output):
+            assert expected_accounts[i]['Name'] == account.get_field_data('/Name')
+            assert CONTACTS_FOR_SUBQUERY == len(account.get_field_data('/Contacts'))
+            for j in range(CONTACTS_FOR_SUBQUERY):
+                assert expected_contacts[(i * 5) + j]['LastName'] == account.get_field_data(f'/Contacts/{j}/LastName')
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if account_ids:
+            client.bulk.Account.delete(account_ids)
+        if contact_ids:
+            client.bulk.Contact.delete(contact_ids)
