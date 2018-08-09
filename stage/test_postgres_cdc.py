@@ -16,8 +16,9 @@ import logging
 import string
 from collections import namedtuple
 
+import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logging.basicConfig(level=logging.INFO)
@@ -114,6 +115,7 @@ def _delete(connection, table):
 
 
 @database('postgresql')
+@sdc_min_version('3.4.0')
 def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     """Basic test that inserts/updates/deletes to a Postgres table,
     and validates that they are read in the same order.
@@ -123,6 +125,9 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     The pipeline looks like:
         postgres_cdc_client >> trash
     """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
