@@ -352,39 +352,46 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database
-def test_jdbc_producer_insert(sdc_builder, sdc_executor, database):
-    """Simple JDBC Producer test with INSERT operation.
-    The pipeline inserts records into the database and verify that correct data is in the database.
-
-    This is achieved by using a deduplicator which assures there is only one ingest to the database.
+def create_jdbc_producer_pipeline(pipeline_builder, pipeline_title, raw_data, table_name, operation):
+    """Helper function to create and return a pipeline with JDBC Producer
+    The Deduplicator assures there is only one ingest to database. The pipeline looks like:
     The pipeline looks like:
         dev_raw_data_source >> record_deduplicator >> jdbc_producer
                                record_deduplicator >> trash
     """
-    table_name = get_random_string(string.ascii_lowercase, 20)
-    table = create_table_in_database(table_name, database)
-
-    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
-    pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON',
-                                       raw_data=DATA)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
 
+    FIELD_MAPPINGS = [dict(field='/id', columnName='id'),
+                      dict(field='/name', columnName='name')]
     jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
-    jdbc_producer.set_attributes(default_operation='INSERT',
+    jdbc_producer.set_attributes(default_operation=operation,
                                  table_name=table_name,
-                                 field_to_column_mapping=[],
+                                 field_to_column_mapping=FIELD_MAPPINGS,
                                  stage_on_record_error='STOP_PIPELINE')
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> record_deduplicator >> jdbc_producer
     record_deduplicator >> trash
 
-    pipeline = pipeline_builder.build(title='JDBC Producer Insert').configure_for_environment(database)
-    sdc_executor.add_pipeline(pipeline)
+    return pipeline_builder.build(title=pipeline_title)
+
+
+@database
+def test_jdbc_producer_insert(sdc_builder, sdc_executor, database):
+    """Simple JDBC Producer test with INSERT operation.
+    The pipeline inserts records into the database and verify that correct data is in the database.
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = create_table_in_database(table_name, database)
+
+    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    pipeline = create_jdbc_producer_pipeline(pipeline_builder, 'JDBC Producer Insert', DATA, table_name, 'INSERT')
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
 
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_IN_DATABASE))
@@ -404,11 +411,6 @@ def test_jdbc_producer_delete(sdc_builder, sdc_executor, database):
     """Simple JDBC Producer test with DELETE operation.
     The pipeline deletes records from the database and verify that correct data is in the database.
     Records are deleted if the primary key is matched irrespective of other column values.
-
-    This is achieved by using a deduplicator which assures there is only one ingest to the database.
-    The pipeline looks like:
-        dev_raw_data_source >> record_deduplicator >> jdbc_producer
-                               record_deduplicator >> trash
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = create_table_in_database(table_name, database)
@@ -418,24 +420,9 @@ def test_jdbc_producer_delete(sdc_builder, sdc_executor, database):
 
     DATA = '\n'.join(json.dumps(rec) for rec in ROWS_TO_UPDATE)
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON',
-                                       raw_data=DATA)
 
-    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
-
-    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
-    jdbc_producer.set_attributes(default_operation='DELETE',
-                                 table_name=table_name,
-                                 field_to_column_mapping=[],
-                                 stage_on_record_error='STOP_PIPELINE')
-
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> record_deduplicator >> jdbc_producer
-    record_deduplicator >> trash
-
-    pipeline = pipeline_builder.build(title='JDBC Producer Delete').configure_for_environment(database)
-    sdc_executor.add_pipeline(pipeline)
+    pipeline = create_jdbc_producer_pipeline(pipeline_builder, 'JDBC Producer Delete', DATA, table_name, 'DELETE')
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
 
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_TO_UPDATE))
@@ -456,11 +443,6 @@ def test_jdbc_producer_update(sdc_builder, sdc_executor, database):
     """Simple JDBC Producer test with UPDATE operation.
     The pipeline updates records from the database and verify that correct data is in the database.
     Records with matching primary key are updated, and no action for unmatched records.
-
-    This is achieved by using a deduplicator which assures there is only one ingest to the database.
-    The pipeline looks like:
-        dev_raw_data_source >> record_deduplicator >> jdbc_producer
-                               record_deduplicator >> trash
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = create_table_in_database(table_name, database)
@@ -470,24 +452,9 @@ def test_jdbc_producer_update(sdc_builder, sdc_executor, database):
 
     DATA = '\n'.join(json.dumps(rec) for rec in ROWS_TO_UPDATE)
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON',
-                                       raw_data=DATA)
 
-    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
-
-    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
-    jdbc_producer.set_attributes(default_operation='UPDATE',
-                                 table_name=table_name,
-                                 field_to_column_mapping=[],
-                                 stage_on_record_error='STOP_PIPELINE')
-
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> record_deduplicator >> jdbc_producer
-    record_deduplicator >> trash
-
-    pipeline = pipeline_builder.build(title='JDBC Producer Update').configure_for_environment(database)
-    sdc_executor.add_pipeline(pipeline)
+    pipeline = create_jdbc_producer_pipeline(pipeline_builder, 'JDBC Producer Update', DATA, table_name, 'UPDATE')
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
 
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_TO_UPDATE))
