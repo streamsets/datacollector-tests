@@ -391,6 +391,7 @@ def test_kafka_error_destination(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     error = builder.add_error_stage('Write to Kafka')
     error.topic = topic
+    error.broker_uri = f'{cluster.server_host}:{cluster.kafka.broker_port}'
 
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'TEXT'
