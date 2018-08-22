@@ -785,7 +785,7 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
         assert len(unsupported_partition_values) == len(error_records)
 
         for error_record in error_records:
-            assert error_record.header['part'] in unsupported_partition_values
+            assert error_record.header['values']['part'] in unsupported_partition_values
 
         logger.info('Validating Supported Partition Characters for Table %s in Hive...', table_name)
         hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
@@ -1578,7 +1578,7 @@ def test_events(sdc_builder, sdc_executor, cluster):
         for event_idx in range(len(stage.event_records)):
             event_record = stage.event_records[event_idx]
             event_type, expected_event_values = expected_event_type_values[event_idx]
-            assert event_type == event_record.header['sdc.event.type']
+            assert event_type == event_record.header['values']['sdc.event.type']
             assert expected_event_values == event_record.field
 
         logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
@@ -1648,5 +1648,5 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster, stop_on_query_f
     for event_idx in range(len(stage.event_records)):
         event_record = stage.event_records[event_idx]
         expected_event_type, expected_event_values = event_type_expected_query_values[event_idx]
-        assert expected_event_type == event_record.header["sdc.event.type"]
+        assert expected_event_type == event_record.header['values']["sdc.event.type"]
         assert expected_event_values == stage.event_records[event_idx].field
