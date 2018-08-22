@@ -211,7 +211,7 @@ def test_hdfs_metadata_change_permission_octal(sdc_builder, sdc_executor, cluste
         hdfs_files = cluster.hdfs.client.list(hdfs_directory)
         assert len(hdfs_files) == 1
         status = cluster.hdfs.client.status(f'{hdfs_directory}/{hdfs_files[0]}')
-        status['permission'] == NEW_PERMISSION
+        assert status['permission'] == NEW_PERMISSION
     finally:
         sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
@@ -243,7 +243,7 @@ def test_hdfs_metadata_change_permission_unix(sdc_builder, sdc_executor, cluster
         hdfs_files = cluster.hdfs.client.list(hdfs_directory)
         assert len(hdfs_files) == 1
         status = cluster.hdfs.client.status(f'{hdfs_directory}/{hdfs_files[0]}')
-        status['permission'] == '600'
+        assert status['permission'] == '600'
     finally:
         sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
