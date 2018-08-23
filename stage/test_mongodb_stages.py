@@ -204,7 +204,7 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
     # MongoDB destination uses the CRUD operation in the sdc.operation.type record header attribute when writing
     # to MongoDB. Value 4 specified below is for UPSERT.
     expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
-                                                          'headerAttributeExpression': '4'}]
+                                                          'headerAttributeExpression': '1'}]
 
     mongodb_dest = pipeline_builder.add_stage('MongoDB', type='destination')
     mongodb_dest.set_attributes(database=get_random_string(ascii_letters, 5),
