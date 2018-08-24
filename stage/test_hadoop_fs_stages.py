@@ -17,7 +17,6 @@ import os
 import sched
 import string
 import time
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -38,57 +37,135 @@ LARGE_TEST_STATUS_CHECK_DURATION_IN_SECS = int(LARGE_TEST_DURATION_IN_SECS / 10)
 # Statuses that signify a pipeline that isn't failing.
 SUCCESS_STATUSES = ['EDITED', 'STARTING', 'RUNNING']
 
+# Current time in seconds since the epoch
+CURRENT_TIME = time.time()
 
-@cluster('cdh', 'hdp')
-def test_hadoop_fs_destination(sdc_builder, sdc_executor, cluster):
-    """Test Hadoop FS destination stage. This is achieved by using a deduplicator which assures us that there is
-    only one ingest to HDFS. We then read that to assert what we ingest. The pipeline looks like:
+PRODUCT_DATA = [
+    {'name': 'iphone', 'price': 649.99, 'release': CURRENT_TIME},
+    {'name': 'pixel',  'price': 649.89, 'release': CURRENT_TIME - 60 * 5}, # -5 minutes
+    {'name': 'galaxy', 'price': 549.89, 'release': CURRENT_TIME - 60 * 10} # -10 minutes
+]
+
+def create_hadoop_fs_dest_pipeline(pipeline_builder, pipeline_title, hdfs_directory, hadoop_fs):
+    """Helper function to create and return a pipeline with Hadoop FS destination
+    The Deduplicator assures there is only one ingest to HDFS. The pipeline looks like:
         dev_raw_data_source >> record_deduplicator >> hadoop_fs
                                                    >> trash
     """
-    product_data = [dict(name='iphone', price=649.99),
-                    dict(name='pixel', price=649.89)]
-    raw_data = ''.join([json.dumps(product) for product in product_data])
-    hdfs_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
-    logger.info(f'Pipeline will write to HDFS directory {hdfs_directory} ...')
+    raw_data = '\n'.join(json.dumps(product) for product in PRODUCT_DATA)
+    logger.info('Pipeline will write to HDFS directory %s ...', hdfs_directory)
 
-    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
 
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  raw_data=raw_data)
-    record_deduplicator = builder.add_stage('Record Deduplicator')
-    trash = builder.add_stage('Trash')
-    hadoop_fs = builder.add_stage('Hadoop FS', type='destination')
-    hadoop_fs.set_attributes(data_format='JSON', directory_template=hdfs_directory,
-                             files_prefix='stages', files_suffix='txt')
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
 
+    trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> record_deduplicator >> hadoop_fs
     record_deduplicator >> trash
+    return pipeline_builder.build(title=pipeline_title)
 
-    pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
-    sdc_executor.add_pipeline(pipeline)
+
+@cluster('cdh', 'hdp')
+def test_hadoop_fs_destination(sdc_builder, sdc_executor, cluster):
+    """Test Hadoop FS destination with file prefix and suffix
+    The data is written to a HDFS file, then check the contents.
+    """
+    hdfs_directory = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
+    FILES_PREFIX, FILES_SUFFIX = 'stages', 'txt'
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(data_format='JSON',
+                             directory_template=hdfs_directory,
+                             files_prefix=FILES_PREFIX,
+                             files_suffix=FILES_SUFFIX)
+
+    pipeline = create_hadoop_fs_dest_pipeline(pipeline_builder,
+                                              'Hadoop FS Destination',
+                                              hdfs_directory,
+                                              hadoop_fs)
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(cluster))
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(product_data))
-        # Wait for pipeline to be stopped in order to ensure file has been written.
-        sdc_executor.stop_pipeline(pipeline)
-
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(PRODUCT_DATA))
         hdfs_fs_files = cluster.hdfs.client.list(hdfs_directory)
-        # There should only be one file written.
         assert len(hdfs_fs_files) == 1
 
-        # Check that file prefix and suffix are respected.
         hdfs_fs_filename = hdfs_fs_files[0]
-        assert hdfs_fs_filename.startswith('stages') and hdfs_fs_filename.endswith('txt')
+        assert hdfs_fs_filename.startswith(FILES_PREFIX)
+        assert hdfs_fs_filename.endswith(FILES_SUFFIX)
 
-        with cluster.hdfs.client.read(str(Path(hdfs_directory, hdfs_fs_filename))) as reader:
+        with cluster.hdfs.client.read(f'{hdfs_directory}/{hdfs_fs_filename}') as reader:
             file_contents = reader.read()
-
         assert {tuple(json.loads(line).items())
                 for line in file_contents.decode().split()} == {tuple(stage.items())
-                                                                for stage in product_data}
+                                                                for stage in PRODUCT_DATA}
     finally:
-        # remove HDFS files
+        sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
+        cluster.hdfs.client.delete(hdfs_directory, recursive=True)
+
+
+@cluster('cdh', 'hdp')
+def test_hadoop_fs_destination_user(sdc_builder, sdc_executor, cluster):
+    """Test Hadoop FS destination with HDFS user
+    The data is written to a HDFS file, then check the owner of the file.
+    """
+    hdfs_directory = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
+    HDFS_USER = 'foo'
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(data_format='JSON',
+                             directory_template=hdfs_directory,
+                             hdfs_user=HDFS_USER)
+
+    pipeline = create_hadoop_fs_dest_pipeline(pipeline_builder,
+                                              'Hadoop FS Destination User',
+                                              hdfs_directory,
+                                              hadoop_fs)
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(cluster))
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(PRODUCT_DATA))
+        hdfs_files = cluster.hdfs.client.list(hdfs_directory)
+        assert len(hdfs_files) == 1
+        status = cluster.hdfs.client.status(f'{hdfs_directory}/{hdfs_files[0]}')
+        assert status['owner'] == HDFS_USER
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
+        cluster.hdfs.client.delete(hdfs_directory, recursive=True)
+
+
+@cluster('cdh', 'hdp')
+def test_hadoop_fs_destination_time_basis(sdc_builder, sdc_executor, cluster):
+    """Test Hadoop FS destination with time basis
+    The data is written to a HDFS file in every 10 minute interval based on release time.
+    """
+    hdfs_directory = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
+    DIR_TEMPLATE = hdfs_directory + '/${YY()}${MM()}${DD()}${hh()}${every(10, mm())}'
+    TIME_BASIS = "${time:millisecondsToDateTime(record:value('/release') * 1000)}"
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(data_format='JSON',
+                             directory_template=DIR_TEMPLATE,
+                             time_basis=TIME_BASIS)
+
+    pipeline = create_hadoop_fs_dest_pipeline(pipeline_builder,
+                                              'Hadoop FS Destination Time Basis',
+                                              hdfs_directory,
+                                              hadoop_fs)
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(cluster))
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(PRODUCT_DATA))
+        hdfs_dirs = cluster.hdfs.client.list(hdfs_directory)
+        assert len(hdfs_dirs) == 2
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
         cluster.hdfs.client.delete(hdfs_directory, recursive=True)
 
