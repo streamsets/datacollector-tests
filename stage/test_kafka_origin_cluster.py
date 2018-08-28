@@ -166,7 +166,7 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
         assert message[1] in str(record_field)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
     """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
     Because cluster mode pipelines don't support snapshots, we do this verification using a
@@ -220,7 +220,7 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, cluster):
     """Write simple text messages into Kafka multiple partitions and confirm that Kafka successfully reads them.
     Because cluster mode pipelines don't support snapshots, we do this verification using a
@@ -274,7 +274,7 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_origin_multiple_json_objects_single_record_cluster(sdc_builder, sdc_executor, cluster):
     """Write json objects messages into Kafka and confirm that Kafka successfully reads them.
     Kafka Consumer Origin pipeline with cluster mode:
@@ -289,7 +289,7 @@ def test_kafka_origin_multiple_json_objects_single_record_cluster(sdc_builder, s
     json_test(sdc_builder, sdc_executor, cluster, message, expected)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_origin_multiple_json_objects_multiple_records_cluster(sdc_builder, sdc_executor, cluster):
     """Write json objects messages into Kafka and confirm that Kafka successfully reads them.
     Kafka Consumer Origin pipeline with cluster mode:
@@ -305,7 +305,7 @@ def test_kafka_origin_multiple_json_objects_multiple_records_cluster(sdc_builder
     json_test(sdc_builder, sdc_executor, cluster, message, expected)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_origin_json_array_cluster(sdc_builder, sdc_executor, cluster):
     """Write json array messages into Kafka and confirm that Kafka successfully reads them.
     Kafka Consumer Origin pipeline with cluster mode:
@@ -361,7 +361,7 @@ def json_test(sdc_builder, sdc_executor, cluster, message, expected):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster):
     """Write simple XML messages into Kafka and confirm that Kafka successfully reads them.
 
@@ -412,7 +412,7 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, cluster):
     """Write simple XML messages into Kafka and confirm that Kafka successfully reads them.
 
@@ -464,7 +464,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster):
     """Write simple csv messages into Kafka and confirm that Kafka successfully reads them.
 
@@ -515,7 +515,7 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster):
     """Write simple binary messages into Kafka and confirm that Kafka successfully reads them.
 
@@ -566,7 +566,7 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
     """Write avro text messages into Kafka multiple partitions and confirm that Kafka successfully reads them.
     Because cluster mode pipelines don't support snapshots, we do this verification using a
@@ -621,7 +621,7 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster):
     """Write avro text messages into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
@@ -679,7 +679,7 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster)
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
     """Write a text message using UDP datagram mode SYSLOG
     into Kafka multiple partitions with the schema in the records
@@ -744,7 +744,7 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
     """Write a text message using UDP datagram mode NETFLOW
     into Kafka multiple partitions with the schema in the records
@@ -811,7 +811,7 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster):
     """Write a text message using UDP datagram mode COLLECTD
     into Kafka multiple partitions with the schema in the records
@@ -891,7 +891,7 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
-@cluster('cdh', 'kafka')
+@cluster('cdh')
 def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster):
     """Write simple log messages into Kafka and confirm that Kafka successfully reads them.
 
