@@ -69,7 +69,7 @@ def produce_kafka_messages(topic, cluster, message, data_format):
     # Get Kafka producer
     producer = cluster.kafka.producer()
 
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'PROTOBUF', 'TEXT', 'JSON']
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'TEXT', 'JSON']
 
     # Write records into Kafka depending on the data_format.
     if data_format in basic_data_formats:
@@ -113,7 +113,7 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 
 
     logger.debug('Time: %s', datetime.datetime.now())
 
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'PROTOBUF', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
 
     # Verify snapshot data.
     if data_format in basic_data_formats:
@@ -129,6 +129,10 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 
     elif data_format == 'BINARY':
         record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
         assert message == record_field[0]
+
+    elif data_format == 'PROTOBUF':
+        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
+        assert message in str(record_field[0])
 
     elif data_format == 'XML_MULTI_ELEMENT':
         record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
@@ -752,6 +756,78 @@ def test_kafka_origin_log_record(sdc_builder, sdc_executor, cluster):
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'LOG')
         verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 'LOG')
+
+    finally:
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+
+
+def produce_kafka_messages_protobuf(topic, sdc_builder, sdc_executor, cluster, message):
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'JSON'
+    dev_raw_data_source.raw_data = message
+
+    kafka_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                          library=cluster.kafka.standalone_stage_lib)
+    kafka_destination.topic = topic
+    kafka_destination.set_attributes(data_format='PROTOBUF', message_type='Contact',
+                                     protobuf_descriptor_file='protobuf/addressbook.desc', delimited_messages=False)
+
+    dev_raw_data_source >> kafka_destination
+    kafka_destination_pipeline = builder.build(
+        title='Kafka Origin PROTOBUF pipeline(Producer)').configure_for_environment(cluster)
+
+    kafka_destination_pipeline.configuration['rateLimit'] = 1
+
+    sdc_executor.add_pipeline(kafka_destination_pipeline)
+    sdc_executor.start_pipeline(kafka_destination_pipeline).wait_for_pipeline_batch_count(10)
+
+    sdc_executor.stop_pipeline(kafka_destination_pipeline)
+    history = sdc_executor.get_pipeline_history(kafka_destination_pipeline)
+    msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    assert msgs_sent_count != 0
+
+
+@cluster('cdh', 'kafka')
+def test_kafka_origin_protobuf_record(sdc_builder, sdc_executor, cluster):
+    """Write protobuf messages into Kafka and confirm that Kafka successfully reads them.
+
+    For this test /resources/protobuf/addressbook.desc need to be placed at resources/protobuf directory.
+
+    Kafka Consumer Origin pipeline with standalone mode:
+        kafka_consumer >> trash
+    """
+
+    message = '{"first_name": "Martin","last_name": "Balzamo"}'
+    expected = '(\'first_name\', Martin), (\'last_name\', Balzamo)'
+
+    # Build the Kafka consumer pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
+
+    # Override default configuration.
+    kafka_consumer.set_attributes(data_format='PROTOBUF', message_type='Contact',
+                                  protobuf_descriptor_file='protobuf/addressbook.desc', delimited_messages=True)
+
+    trash = builder.add_stage(label='Trash')
+    kafka_consumer >> trash
+    kafka_consumer_pipeline = builder.build(title='Kafka Origin PROTOBUF pipeline').configure_for_environment(cluster)
+
+    kafka_consumer_pipeline.configuration['shouldRetry'] = False
+    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(kafka_consumer_pipeline)
+
+    try:
+        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        produce_kafka_messages_protobuf(kafka_consumer.topic, sdc_builder, sdc_executor, cluster, message)
+
+        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'PROTOBUF')
 
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
