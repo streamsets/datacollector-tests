@@ -419,13 +419,13 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
 
 
 @cluster('cdh')
-@pytest.mark.parametrize('sdc_hive_type_info',
+@pytest.mark.parametrize('sdc_type, hive_type, supported',
                          [('BOOLEAN', 'BOOLEAN', True), ('STRING', 'STRING', True), ('INTEGER', 'INT', True),
                           ('SHORT', 'INT', True), ('LONG', 'BIGINT', True), ('FLOAT', 'FLOAT', True),
                           ('DOUBLE', 'DOUBLE', True), ('DECIMAL', 'DECIMAL(4,2)', True),
                           ('BYTE_ARRAY', 'BINARY', True), ('BYTE', None, False),
                           ('MAP', None, False), ('LIST_MAP', None, False)])
-def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_hive_type_info):
+def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supported):
     """Validate Different Types of SDC Fields (supported and unsupported for hive) and assert data present
        or error records. The pipeline looks like:
 
@@ -437,7 +437,7 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_hive_type_info):
 
     if 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
-    sdc_type, hive_type, supported = sdc_hive_type_info
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -538,6 +538,8 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_hive_type_info):
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         stage = snapshot[hive_metadata.instance_name]
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
+
         list_of_record_output_from_hive_metastore = stage.output_lanes[hive_metadata.output_lanes[0]]
         if not supported:
             assert len(stage.error_records) == 1
@@ -557,11 +559,10 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_hive_type_info):
             assert len(hive_values) == 1
 
             hive_values = hive_values[0]
-            custom_value = record_output_from_hive_metastore.field['custom']
+            custom_value = record_output_from_hive_metastore.field['custom'].value
             # hive client returns the binary as string
             custom_value = custom_value.decode() if hive_type == 'BINARY' else custom_value
             expected_row_values = [record_output_from_hive_metastore.field['id'], custom_value]
-
             assert hive_values == expected_row_values
     finally:
         logger.info('Dropping table %s in Hive...', table_name)
@@ -570,8 +571,8 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_hive_type_info):
 
 @sdc_min_version('3.0.0.0')
 @cluster('cdh')
-@pytest.mark.parametrize('partition_type_and_value', [('INT', 1), ('BIGINT', 1), ('STRING', 'abc')])
-def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type_and_value):
+@pytest.mark.parametrize('partition_type, partition_value', [('INT', 1), ('BIGINT', 1), ('STRING', 'abc')])
+def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type, partition_value):
     """Validate different supported partition types and assert data is read properly. The pipeline looks like:
 
         dev_raw_data_source >> hive_metadata
@@ -581,8 +582,6 @@ def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type_and_
     if 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
-
-    partition_type, partition_value = partition_type_and_value
 
     raw_data = [OrderedDict(id=1, name='abc', value=partition_value, part=partition_value)]
 
@@ -642,10 +641,13 @@ def test_multiplexing(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
-    raw_data = [dict(id=1, name='San Francisco', table='towns', country='US', year='2016'),
-                dict(id=2, customer='John', value=200, table='invoice', country='India', year='2015'),
-                dict(id=3, name='Friedberg', table='towns', country='Germany', year='2017'),
-                dict(id=4, customer='James', value=300, table='invoice', country='Argentina', year='2014')]
+    table_suffix = get_random_string(string.ascii_lowercase, 10)
+
+    raw_data = [dict(id=1, name='San Francisco', table=f'towns_{table_suffix}', country='US', year='2016'),
+                dict(id=2, customer='John', value=200, table=f'invoice_{table_suffix}', country='India', year='2015'),
+                dict(id=3, name='Friedberg', table=f'towns_{table_suffix}', country='Germany', year='2017'),
+                dict(id=4, customer='James', value=300, table=f'invoice_{table_suffix}',
+                     country='Argentina', year='2014')]
 
     table_to_rows = {k: [[val for key, val in v.items() if key != 'table']
                          for v in sorted(list(g), key=itemgetter('id'))]
@@ -721,14 +723,13 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
         hive_metadata >> hive_metastore
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
-    partition_values = {partition_value: supported for partition_value, supported in
-                        [("-", True), ("_", True), ("$", True), (",", True),
-                         ("(", True), (")", True), ("&", True), ("@", True),
-                         ("!", True), (".", True), ("|", True), ("~", True),
-                         ("`", True),
-                         ("\\", False), ("'", False), ("[", False), ("]", False),
-                         ("/", False), ("?", False), ("*", False), ("\"", False),
-                         ("%", False), ("=", False), ("^", False)]}
+    partition_values = OrderedDict([("-", True), ("_", True), ("$", True), (",", True),
+                                    ("(", True), (")", True), ("&", True), ("@", True),
+                                    ("!", True), (".", True), ("|", True), ("~", True),
+                                    ("`", True),
+                                    ("\\", False), ("'", False), ("[", False), ("]", False),
+                                    ("/", False), ("?", False), ("*", False), ("\"", False),
+                                    ("%", False), ("=", False), ("^", False)])
 
     unsupported_partition_values = set([partition_value for partition_value, supported in partition_values.items()
                                         if not supported])
@@ -780,6 +781,7 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         stage = snapshot[hive_metadata.instance_name]
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
 
         error_records = stage.error_records
         assert len(unsupported_partition_values) == len(error_records)
@@ -791,8 +793,10 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
         hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
         hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
-        assert sorted(hive_values, key=itemgetter(1)) == sorted([list(row.values()) for row in raw_data if
-                                                                 partition_values[row['part']]], key=itemgetter(1))
+        hive_values = sorted(hive_values, key=itemgetter(1))
+        expected_values = sorted([list(row.values()) for row in raw_data
+                                  if partition_values[row['part']]], key=itemgetter(1))
+        assert expected_values == hive_values
     finally:
         logger.info('Dropping table %s in Hive...', table_name)
         hive_cursor.execute('DROP TABLE `{0}`'.format(table_name))
@@ -1075,6 +1079,8 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         stage = snapshot[hive_metadata.instance_name]
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
+
         logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
         hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
         hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
@@ -1162,32 +1168,32 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name_suffix = get_random_string(string.ascii_lowercase, 20)
 
-    raw_data = [OrderedDict([('id', 0), ('table', f'column_rename_add{table_name}')]),
-                OrderedDict([('id', 1), ('col1', 'col11'), ('table', f'column_rename_add{table_name}')]),
-                OrderedDict([('id', 2), ('col2', 'col22'), ('table', f'column_rename_add{table_name}')]),
+    raw_data = [OrderedDict([('id', 0), ('table', f'column_rename_add{table_name_suffix}')]),
+                OrderedDict([('id', 1), ('col1', 'col11'), ('table', f'column_rename_add{table_name_suffix}')]),
+                OrderedDict([('id', 2), ('col2', 'col22'), ('table', f'column_rename_add{table_name_suffix}')]),
                 OrderedDict([('id', 3), ('col1', 'col31'), ('middle', 'middle'),
-                             ('col2', 'col32'), ('table', 'column_rename_add')]),
+                             ('col2', 'col32'), ('table', f'column_rename_add{table_name_suffix}')]),
 
-                OrderedDict([('first', 0), ('second', 0), ('third', 0), ('table', f'reorder{table_name}')]),
-                OrderedDict([('second', 1), ('third', 1), ('first', 1), ('table', f'reorder{table_name}')]),
+                OrderedDict([('first', 0), ('second', 0), ('third', 0), ('table', f'reorder{table_name_suffix}')]),
+                OrderedDict([('second', 1), ('third', 1), ('first', 1), ('table', f'reorder{table_name_suffix}')]),
 
-                OrderedDict([('id', 4), ('removed', 'removed'), ('table', f'removed{table_name}')]),
-                OrderedDict([('id', 5), ('table', f'removed{table_name}')]),
+                OrderedDict([('id', 4), ('removed', 'removed'), ('table', f'removed{table_name_suffix}')]),
+                OrderedDict([('id', 5), ('table', f'removed{table_name_suffix}')]),
 
-                OrderedDict([('id', 8), ('col', 'col_lower_case'), ('table', f'column_case{table_name}')]),
-                OrderedDict([('id', 9), ('COL', 'col_upper_case'), ('table', f'column_case{table_name}')]),
+                OrderedDict([('id', 8), ('col', 'col_lower_case'), ('table', f'column_case{table_name_suffix}')]),
+                OrderedDict([('id', 9), ('COL', 'col_upper_case'), ('table', f'column_case{table_name_suffix}')]),
 
-                OrderedDict([('id', 10), ('col', 1), ('table', f'column_type_change{table_name}')]),
-                OrderedDict([('id', 11), ('col', 'col'), ('table', f'column_type_change{table_name}')])]
+                OrderedDict([('id', 10), ('col', 1), ('table', f'column_type_change{table_name_suffix}')]),
+                OrderedDict([('id', 11), ('col', 'col'), ('table', f'column_type_change{table_name_suffix}')])]
 
     table_path_prefix = '/tmp/sdc/hive/warehouse/default/' if external_table else ''
 
-    table_path_template = table_path_prefix + '${record:attribute("table")}'
+    table_path_template = table_path_prefix + "${record:attribute('table')}"
 
-    table_to_invalid_rows = {f'column_type_change{table_name}': [OrderedDict([('id', 11), ('col', 'col'),
-                                                                 ('table', f'column_type_change{table_name}')])]}
+    table_to_invalid_rows = {f'column_type_change{table_name_suffix}': [OrderedDict(
+        [('id', 11), ('col', 'col'), ('table', f'column_type_change{table_name_suffix}')])]}
 
     table_to_raw_data = {k: [{col.lower(): val for col, val in v.items() if col != 'table'} for v in list(g)]
                          for k, g in groupby(sorted(raw_data, key=itemgetter('table')), key=itemgetter('table'))}
@@ -1240,6 +1246,7 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         stage = snapshot[hive_metadata.instance_name]
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
         assert len(stage.error_records) == 1  # column_type_change
         for table_name in table_to_raw_data.keys():
             logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
@@ -1249,12 +1256,14 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
             data_table_cols = table_to_cols[table_name]
             assert hive_table_columns == list(data_table_cols.keys())
             hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
-            hive_values = [list(row) for row in hive_cursor.fetchall()]
+            hive_values = sorted([list(row) for row in hive_cursor.fetchall()], key=itemgetter(0))
             invalid_rows = ([[v for k, v in row.items() if k != 'table'] for row in table_to_invalid_rows[table_name]]
                             if table_name in table_to_invalid_rows else [])
-            expected_data = [[data[col] if col in data else None for col in hive_table_columns]
-                             for data in table_to_raw_data[table_name] if list(data.values()) not in invalid_rows]
-            assert sorted(hive_values, key=itemgetter(0)) == sorted(expected_data, key=itemgetter(0))
+            expected_data = sorted([[data[col] if col in data else None for col in hive_table_columns]
+                                    for data in table_to_raw_data[table_name]
+                                    if list(data.values()) not in invalid_rows],
+                                   key=itemgetter(0))
+            assert hive_values == expected_data
 
         error_values = [[fld for k, fld in error_record.field.items()] for error_record in stage.error_records]
         assert error_values == [[v for k, v in row.items() if k != 'table']
@@ -1322,6 +1331,7 @@ def test_unsupported_table_data_formats(sdc_builder, sdc_executor, cluster, data
 
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         stage = snapshot[hive_metadata.instance_name]
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
         assert len(stage.error_records) == 1
 
         logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
@@ -1574,6 +1584,7 @@ def test_events(sdc_builder, sdc_executor, cluster):
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         stage = snapshot[hive_metastore.instance_name]
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
         assert len(stage.event_records) == 6
         for event_idx in range(len(stage.event_records)):
             event_record = stage.event_records[event_idx]
