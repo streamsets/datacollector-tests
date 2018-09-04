@@ -479,7 +479,7 @@ def test_solr_test_validations_null_url(sdc_builder, sdc_executor, solr):
             sdc_executor.start_pipeline(pipeline)
             sdc_executor.stop_pipeline(pipeline)
 
-        issues = sdc_builder.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
+        issues = sdc_executor.api_client.export_pipeline(pipeline.id)['pipelineConfig']['issues']
 
         assert 'VALIDATION_0007 - Configuration value is required' in issues['stageIssues']['Solr_01'][0]['message']
 
