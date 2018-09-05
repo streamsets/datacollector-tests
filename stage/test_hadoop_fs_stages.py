@@ -60,6 +60,9 @@ def create_hadoop_fs_dest_pipeline(pipeline_builder, pipeline_title, hdfs_direct
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
 
+    # triggered the destination file to be closed after writing all data.
+    hadoop_fs.set_attributes(max_records_in_file=len(PRODUCT_DATA))
+
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> record_deduplicator >> hadoop_fs
     record_deduplicator >> trash
