@@ -87,6 +87,7 @@ def test_classpath(sdc_executor, stagelib):
     assert result_stage
 
     result_stage = result_stage[0]
+    logger.info('result_stage = %s', result_stage)
     assert not result_stage['unparseablePaths']
     assert not result_stage['versionCollisions']
     assert result_stage['valid'] == True
