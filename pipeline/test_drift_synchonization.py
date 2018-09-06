@@ -1031,10 +1031,10 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
-    valid_rows = [dict(id=1, dec=12.12), dict(id=2, dec=1.0), dict(id=3, dec=12.0),
-                  dict(id=4, dec=0.1), dict(id=5, dec=0.12), dict(id=6, dec=12)]
+    valid_rows = [dict(id=1, number=12.12), dict(id=2, number=1.0), dict(id=3, number=12.0),
+                  dict(id=4, number=0.1), dict(id=5, number=0.12), dict(id=6, number=12)]
     # incompatible scale, precision
-    invalid_rows = [dict(id=7, dec=0.123), dict(id=8, dec=12345)]
+    invalid_rows = [dict(id=7, number=0.123), dict(id=8, number=12345)]
     raw_data = valid_rows + invalid_rows
     dev_raw_data_source_data = ''.join(json.dumps(d) for d in raw_data)
 
@@ -1046,7 +1046,7 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
 
     field_type_converter = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter.conversion_method = 'BY_FIELD'
-    field_type_converter.set_attributes(field_type_converter_configs=[{'fields': ['/dec'],
+    field_type_converter.set_attributes(field_type_converter_configs=[{'fields': ['/number'],
                                                                        'targetType':'DECIMAL', }])
 
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
@@ -1073,7 +1073,7 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
     pipeline = pipeline_builder.build(title='Hive drift test - Decimal Test').configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
-    create_table_command = ('CREATE TABLE IF NOT EXISTS {0} (id int, dec decimal(4, 2))'
+    create_table_command = ('CREATE TABLE IF NOT EXISTS {0} (id int, number decimal(4, 2))'
                             ' STORED AS AVRO').format(get_qualified_table_name(None, table_name))
     hive_cursor.execute(create_table_command)
     try:
@@ -1085,10 +1085,10 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
         hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
         hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
-        assert hive_values == [[Decimal(str(v)) if k == 'dec' else v for k, v in row.items()]
+        assert hive_values == [[Decimal(str(v)) if k == 'number' else v for k, v in row.items()]
                                for row in valid_rows]
         error_values = [[fld for k, fld in error_record.field.items()] for error_record in stage.error_records]
-        assert error_values == [[Decimal(str(v)) if k == 'dec' else v for k, v in row.items()]
+        assert error_values == [[Decimal(str(v)) if k == 'number' else v for k, v in row.items()]
                                 for row in invalid_rows]
     finally:
         logger.info('Dropping table %s in Hive...', table_name)
