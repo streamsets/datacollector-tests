@@ -33,6 +33,8 @@ SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
 
 MIN_SDC_VERSION_WITH_SPARK_2_LIB = Version('3.3.0')
+# Protobuf file path relative to $SDC_RESOURCES.
+PROTOBUF_FILE_PATH = 'resources/protobuf/addressbook.desc'
 
 SCHEMA = {
     'namespace': 'example.avro',
@@ -774,7 +776,7 @@ def produce_kafka_messages_protobuf(topic, sdc_builder, sdc_executor, cluster, m
                                           library=cluster.kafka.standalone_stage_lib)
     kafka_destination.topic = topic
     kafka_destination.set_attributes(data_format='PROTOBUF', message_type='Contact',
-                                     protobuf_descriptor_file='protobuf/addressbook.desc', delimited_messages=False)
+                                     protobuf_descriptor_file=PROTOBUF_FILE_PATH, delimited_messages=False)
 
     dev_raw_data_source >> kafka_destination
     kafka_destination_pipeline = builder.build(
@@ -796,7 +798,8 @@ def produce_kafka_messages_protobuf(topic, sdc_builder, sdc_executor, cluster, m
 def test_kafka_origin_protobuf_record(sdc_builder, sdc_executor, cluster):
     """Write protobuf messages into Kafka and confirm that Kafka successfully reads them.
 
-    For this test /resources/protobuf/addressbook.desc need to be placed at resources/protobuf directory.
+    For this test, ./resources/protobuf/addressbook.desc needs to be placed in
+    $SDC_RESOURCES/resources/protobuf directory.
 
     Kafka Consumer Origin pipeline with standalone mode:
         kafka_consumer >> trash
@@ -812,7 +815,7 @@ def test_kafka_origin_protobuf_record(sdc_builder, sdc_executor, cluster):
 
     # Override default configuration.
     kafka_consumer.set_attributes(data_format='PROTOBUF', message_type='Contact',
-                                  protobuf_descriptor_file='protobuf/addressbook.desc', delimited_messages=True)
+                                  protobuf_descriptor_file=PROTOBUF_FILE_PATH, delimited_messages=True)
 
     trash = builder.add_stage(label='Trash')
     kafka_consumer >> trash

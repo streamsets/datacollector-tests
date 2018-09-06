@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 # TODO: convert to pipeline param. seems to not work (see below)
 TCP_PORT = 17892
 TCP_SSL_FILE_PATH = './resources/tcp_server/file.txt'
+# TCP keystore file path relative to $SDC_RESOURCES.
+TCP_KEYSTORE_FILE_PATH = 'resources/tcp_server/keystore.jks'
 
 
 @pytest.fixture(scope='module')
@@ -88,7 +90,7 @@ def test_tcp_server_ssl(sdc_builder, sdc_executor):
                               port=[str(TCP_PORT)],
                               tcp_mode='DELIMITED_RECORDS',
                               use_tls=True,
-                              keystore_file='keystore.jks',
+                              keystore_file=TCP_KEYSTORE_FILE_PATH,
                               keystore_type='JKS',
                               keystore_password='password',
                               keystore_key_algorithm='SunX509',
