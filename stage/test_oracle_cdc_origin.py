@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 PRIMARY_KEY = 'ID'
 OTHER_COLUMN = 'NAME'
-BATCH_SIZE = 12
+BATCH_SIZE = 10  # Max limit imposed by SDC for snapshots
 Operations = namedtuple('Operations', ['rows', 'cdc_op_types', 'sdc_op_types', 'change_count'])
 
 
@@ -229,13 +229,10 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
                                                          pipeline_builder=pipeline_builder,
                                                          buffer_locally=buffer_locally,
                                                          src_table_name=src_table_pattern)
-        # SDC-9962
-        # Oracle CDC Origin always produces batches with 1 record less at the beginning of the logminer window (since it
-        # uses a dummy record to identify the start of a logminer window, so max changes in a batch where a new logminer
-        # window starts is batch_size minus 1. So a max of 9 records can be tested for on startup.
         rows = [{'ID': 100, 'NAME': 'NULL'},
                 {'ID': None, 'NAME': 'Whose Name?'},
-                {'ID': 123, 'NAME': None}]
+                {'ID': 123, 'NAME': None},
+                {'ID': None, 'NAME': None}]
         txn = connection.begin()
 
         connection.execute(table.insert(), rows)
@@ -248,7 +245,7 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
             row = {'ID': None, 'NAME': 'New Name'}
             update_table_where_id(row)
             # The above statement will update 2 rows, so the change generates 2 records.
-            rows.append(row)
+            rows += [row for _ in range(0, 2)]
 
             row = {'ID': 100, 'NAME': None}
             update_table_where_id(row)
@@ -260,7 +257,7 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
 
             row = {'ID': None, 'NAME': 'New Name'}
             connection.execute(table.update().where(table.c.NAME == row['NAME']).values(ID=row['ID']))
-            rows.append(row)
+            rows += [row for _ in range(0, 2)]
 
             txn.commit()
         except:
@@ -345,14 +342,14 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         long_txn = connection2.begin()
 
         # Insert data, don't commit
-        rows_c2 = [{'ID': 100, 'NAME': 'TEST_LONG_TXN'} for _ in range(0, 9)]
+        rows_c2 = [{'ID': 100, 'NAME': 'TEST_LONG_TXN'} for _ in range(0, 10)]
         connection2.execute(table.insert(), rows_c2)
 
         # Ensure timestamp changes
         sleep(5)
 
         # Insert data into txn 2, and commit immediately
-        rows_c1 = [{'ID': 200, 'NAME': 'TEST_SHORT_TXN'} for _ in range(0, 9)]
+        rows_c1 = [{'ID': 200, 'NAME': 'TEST_SHORT_TXN'} for _ in range(0, 10)]
         connection.execute(table.insert(), rows_c1)
 
         # Start pipeline, get snapshot
@@ -426,11 +423,7 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
 
         logger.info('Using table pattern %s', src_table_pattern)
         batch_size = 10
-        # SDC-9962
-        # Oracle CDC Origin always produces batches with 1 record less at the beginning of the logminer window (since it
-        # uses a dummy record to identify the start of a logminer window, so max changes in a batch where a new logminer
-        # window starts is batch_size minus 1.
-        change_count = batch_size - 1
+
         oracle_cdc_client = get_oracle_cdc_client_origin(connection=connection,
                                                          database=database,
                                                          sdc_builder=sdc_builder,
@@ -456,7 +449,7 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
 
         inserts = insert(connection=connection,
                          table=src_table,
-                         count=change_count).rows
+                         count=batch_size).rows
 
         start_pipeline_cmd = sdc_executor.start_pipeline(pipeline)
         start_pipeline_cmd.wait_for_pipeline_batch_count(1)
@@ -465,14 +458,14 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
 
         updates = update(connection=connection,
                          table=src_table,
-                         count=change_count).rows
+                         count=batch_size).rows
         start_pipeline_cmd.wait_for_pipeline_batch_count(2)
 
         assert [tuple(row.values()) for row in updates] == select_from_table(db_engine=db_engine, dest_table=dest_table)
 
         delete(connection=connection,
                table=src_table,
-               count=change_count)
+               count=batch_size)
 
         start_pipeline_cmd.wait_for_pipeline_batch_count(3)
 
