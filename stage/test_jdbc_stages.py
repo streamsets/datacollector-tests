@@ -21,7 +21,7 @@ import string
 import pytest
 import sqlalchemy
 from streamsets.testframework.environments.databases import Oracle
-from streamsets.testframework.markers import database
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ ROWS_IN_DATABASE = [
 ]
 ROWS_TO_UPDATE = [
     {'id': 2, 'name': 'Eddie'},
-    {'id': 4, 'name': 'Jarcec'},
+    {'id': 4, 'name': 'Jarcec'}
 ]
 LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
 RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
@@ -300,6 +300,84 @@ def test_jdbc_tee_processor(sdc_builder, sdc_executor, database):
                                item.value['value'][1]['sqpath'].strip('/'): int(item.value['value'][1]['value'])}
                               for item in snapshot[jdbc_tee].output]
         assert rows_from_snapshot == ROWS_IN_DATABASE
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
+@pytest.mark.parametrize('use_multi_row', [True, False])
+@sdc_min_version('3.0.0.0') #stop_after_first_batch
+def test_jdbc_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_multi_row):
+    """JDBC Tee processor with multiple operations
+    Pipeline will delete/update/insert records into database with one batch and then update 'id'
+    field if it is inserted. The 'operation' field is used for the record header sdc.operation.type
+    which defines the CRUD operation (1: Insert, 2: Delete, 3: Update). The pipeline looks like:
+        dev_raw_data_source >> expression evaluator >> jdbc_tee >> trash
+    """
+    if type(database) == Oracle:
+        pytest.skip('JDBC Tee Processor does not support Oracle')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    DATA = [
+        {'operation': 2, 'name': 'Jarcec', 'id': 2}, # delete
+        {'operation': 3, 'name': 'Hari', 'id': 3}, # update
+        {'operation': 1, 'name': 'Eddie'} # insert, id will be added by JDBC Tee
+    ]
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data='\n'.join(json.dumps(rec) for rec in DATA),
+                                       stop_after_first_batch=True)
+
+    HEADER_EXPRESSIONS = [dict(attributeToSet='sdc.operation.type',
+                               headerAttributeExpression="${record:value('/operation')}")]
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.header_attribute_expressions = HEADER_EXPRESSIONS
+
+    FIELD_TO_COLUMN = [dict(columnName='name', field='/name', paramValue='?')]
+    jdbc_tee = pipeline_builder.add_stage('JDBC Tee')
+    jdbc_tee.set_attributes(default_operation='INSERT',
+                            field_to_column_mapping=FIELD_TO_COLUMN,
+                            generated_column_mappings=[dict(columnName='id', field='/id')],
+                            table_name=table_name,
+                            use_multi_row_operation=use_multi_row)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> expression_evaluator >> jdbc_tee >> trash
+    pipeline_title = 'JDBC Tee MultiOps MultiRow' if use_multi_row else 'JDBC Tee MultiOps SingleRow'
+    pipeline = pipeline_builder.build(title=pipeline_title).configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    table = create_table_in_database(table_name, database)
+    try:
+        logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
+        connection = database.engine.connect()
+        # Passing only names to get the correct sequence numbers esp. PostgreSQL
+        connection.execute(table.insert(), [{'name': row['name']} for row in ROWS_IN_DATABASE])
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True).snapshot
+        sequence_id = len(ROWS_IN_DATABASE)
+        # Verify the database is updated.
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1]) # order by id
+        result.close()
+        expected_data = [(row['name'], row['id']) for row in ROWS_IN_DATABASE]
+        for record in DATA:
+            if record['operation'] == 1: # insert
+                sequence_id += 1
+                expected_data.append((record['name'], sequence_id))
+            elif record['operation'] == 2: # delete
+                expected_data = [row for row in expected_data if row[1] != record['id']]
+            elif record['operation'] == 3: # update
+                expected_data = [row if row[1] != record['id'] else (record['name'], row[1]) for row in expected_data]
+        assert data_from_database == expected_data
+
+        # Verify the JDBC Tee processor has the new ID which were generated by database.
+        jdbc_tee_output = snapshot[jdbc_tee].output
+        name_id_from_output = [(record.field['name'], record.field['id']) for record in jdbc_tee_output]
+        assert name_id_from_output == [('Jarcec', 2), ('Hari', 3), ('Eddie', sequence_id)]
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
