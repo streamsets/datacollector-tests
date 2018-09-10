@@ -20,6 +20,7 @@ from time import sleep
 
 import pytest
 import sqlalchemy
+from sqlalchemy import text
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
@@ -479,6 +480,103 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
             src_table.drop(db_engine)
         if dest_table is not None:
             dest_table.drop(db_engine)
+
+
+@database('oracle')
+@pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('use_pattern', [True, False])
+def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
+    """Test that writes some data, then creates a save point, writes some more data and then rolls back to savepoint,
+    and validates that only the data that is before the save point and after the rollback is read
+    Runs oracle_cdc_client >> trash
+    """
+    db_engine = database.engine
+    pipeline = None
+    table = None
+
+    try:
+        src_table_name = get_random_string(string.ascii_uppercase, 9)
+
+        # If use_pattern is True, run the test if and only if sdc_builder >= 3.1.0.0
+        if use_pattern:
+            if Version(sdc_builder.version) >= Version('3.1.0.0'):
+                src_table_pattern = get_table_pattern(src_table_name)
+            else:
+                pytest.skip('Skipping test as SDC Builder version < 3.1.0.0')
+        else:
+            src_table_pattern = src_table_name
+
+        connection = database.engine.connect()
+        table = setup_table(database=database,
+                            table_name=src_table_name)
+
+        logger.info('Using table pattern %s', src_table_pattern)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = get_oracle_cdc_client_origin(connection=connection,
+                                                         database=database,
+                                                         sdc_builder=sdc_builder,
+                                                         pipeline_builder=pipeline_builder,
+                                                         buffer_locally=buffer_locally,
+                                                         src_table_name=src_table_pattern)
+        trash = pipeline_builder.add_stage('Trash')
+        lines = [
+            f"INSERT INTO {src_table_name} VALUES (1, 'MORDOR')",
+            f"INSERT INTO {src_table_name} VALUES (2, 'GONDOR')",
+            f"UPDATE {src_table_name} SET {OTHER_COLUMN} = 'MINAS MORGUL' WHERE {PRIMARY_KEY} = 1",
+            'SAVEPOINT stf_test_savepoint',
+            f"INSERT INTO {src_table_name} VALUES(3, 'ROHAN')",
+            f"UPDATE {src_table_name} SET {OTHER_COLUMN} = 'SHIRE' WHERE {PRIMARY_KEY} = 1",
+            f"DELETE FROM {src_table_name} WHERE {PRIMARY_KEY} = 1",
+            'ROLLBACK TO stf_test_savepoint',
+            f"UPDATE {src_table_name} SET {OTHER_COLUMN} = 'HOBBITON' WHERE {PRIMARY_KEY} = 2",
+            f"INSERT INTO {src_table_name} VALUES (3, 'GONDOR')",
+            'COMMIT'
+        ]
+        txn = connection.begin()
+        for line in lines:
+            transaction_text = text(line)
+            connection.execute(transaction_text)
+        txn.commit()
+
+        # Why do we need to wait?
+        # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
+        # If the DB is ahead, the batch end time the origin may not be after all the changes were written to the DB.
+        # So we wait until the time here is past the time at which all data was written out to the DB (current time)
+        wait_until_time(get_current_oracle_time(connection=connection))
+
+        oracle_cdc_client >> trash
+        pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        # assert all the data captured have the same raw_data
+        output_records = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        assert len(output_records) == 5
+        assert output_records[0].field[PRIMARY_KEY] == 1
+        assert output_records[0].field[OTHER_COLUMN] == 'MORDOR'
+        assert output_records[0].header['values']['sdc.operation.type'] == '1'
+        assert output_records[1].field[PRIMARY_KEY] == 2
+        assert output_records[1].field[OTHER_COLUMN] == 'GONDOR'
+        assert output_records[1].header['values']['sdc.operation.type'] == '1'
+        assert output_records[2].field[PRIMARY_KEY] == 1
+        assert output_records[2].field[OTHER_COLUMN] == 'MINAS MORGUL'
+        assert output_records[2].header['values']['sdc.operation.type'] == '3'
+        assert output_records[3].field[PRIMARY_KEY] == 2
+        assert output_records[3].field[OTHER_COLUMN] == 'HOBBITON'
+        assert output_records[3].header['values']['sdc.operation.type'] == '3'
+        assert output_records[4].field[PRIMARY_KEY] == 3
+        assert output_records[4].field[OTHER_COLUMN] == 'GONDOR'
+        assert output_records[4].header['values']['sdc.operation.type'] == '1'
+
+    finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
+        if table is not None:
+            table.drop(db_engine)
+            logger.info('Table: %s dropped.', src_table_name)
 
 
 def get_table_pattern(src_table_name):
