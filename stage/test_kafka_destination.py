@@ -18,6 +18,7 @@ import pytest
 
 import avro
 
+from streamsets.testframework.environments.kafka import KafkaCluster
 from streamsets.testframework.markers import cluster, confluent, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -391,7 +392,8 @@ def test_kafka_error_destination(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     error = builder.add_error_stage('Write to Kafka')
     error.topic = topic
-    error.broker_uri = f'{cluster.server_host}:{cluster.kafka.broker_port}'
+    error.broker_uri = (f'{cluster.kafka.brokers[0]}' if isinstance(cluster, KafkaCluster)
+                        else f'{cluster.server_host}:{cluster.kafka.broker_port}')
 
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'TEXT'
