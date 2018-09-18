@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import pytest
 import urllib.request
@@ -87,7 +88,7 @@ def test_classpath(sdc_executor, stagelib):
     assert result_stage
 
     result_stage = result_stage[0]
-    logger.info('result_stage = %s', result_stage)
+    logger.info('Health report: %s', json.dumps(result_stage, indent=4))
     assert not result_stage['unparseablePaths']
     assert not result_stage['versionCollisions']
     assert result_stage['valid'] == True
