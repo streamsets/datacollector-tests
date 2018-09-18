@@ -13,15 +13,14 @@
 # limitations under the License.
 
 import base64
-import datetime
 import io
 import json
 import logging
 import string
 
 import avro
+import pytest
 from avro.datafile import DataFileWriter
-from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -32,7 +31,6 @@ logger.setLevel(logging.DEBUG)
 SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
 
-MIN_SDC_VERSION_WITH_SPARK_2_LIB = Version('3.3.0')
 # Protobuf file path relative to $SDC_RESOURCES.
 PROTOBUF_FILE_PATH = 'resources/protobuf/addressbook.desc'
 
@@ -109,11 +107,8 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 
     snapshot_pipeline_command = sdc_executor.capture_snapshot(kafka_consumer_pipeline, start_pipeline=True, wait=False)
 
     logger.debug('Finish the snapshot and verify')
-    logger.debug('Time: %s', datetime.datetime.now())
     snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
     snapshot = snapshot_command.snapshot
-
-    logger.debug('Time: %s', datetime.datetime.now())
 
     basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
 
@@ -146,6 +141,15 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 
         assert message[0] in str(record_field)
         assert message[1] in str(record_field)
 
+    elif data_format == 'TEXT_TIMESTAMP':
+        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
+        record_header = [record.header for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
+        for element in record_header:
+            logger.debug('ELEMENT: %s', element['values'])
+            assert 'timestamp' in element['values']
+            assert 'timestampType' in element['values']
+        assert message == str(record_field[0])
+
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
@@ -175,6 +179,48 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
         verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
+
+    finally:
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+
+
+@cluster('cdh', 'kafka')
+def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
+    """Check that timestamp and timestamp type are included in record header. Verifies that for previous versions of
+    kafka (< 0.10), a validation issue is thrown.
+
+    Kafka Consumer Origin pipeline with standalone mode:
+        kafka_consumer >> trash
+    """
+    stage_libs = cluster.kafka.cloudera_manager_cluster.sdc_stage_lib
+
+    message = 'Hello World from SDC & DPM!'
+    expected = '{\'text\': Hello World from SDC & DPM!}'
+
+    # Build the Kafka consumer pipeline with Standalone mode.
+    builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
+    kafka_consumer.set_attributes(include_timestamps=True)
+
+    trash = builder.add_stage(label='Trash')
+    kafka_consumer >> trash
+    kafka_consumer_pipeline = builder.build(title='Kafka Standalone pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline.configuration['shouldRetry'] = False
+    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(kafka_consumer_pipeline)
+
+    try:
+        if 'apache-kafka_0_9-lib' in stage_libs or 'apache-kafka_0_8-lib' in stage_libs:
+            with pytest.raises(Exception) as e:
+                sdc_executor.start_pipeline(kafka_consumer_pipeline)
+
+            assert ('KAFKA_75 - Inherited timestamps from Kafka are enabled but not supported in this Kafka version'
+                    in e.value.message)
+        else:
+            # Publish messages to Kafka and verify using snapshot if the same messages are received.
+            produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
+            verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
 
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
