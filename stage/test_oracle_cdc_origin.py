@@ -90,6 +90,69 @@ def wait_until_time(time):
 
 
 @database('oracle')
+def test_decimal_attributes(sdc_builder, sdc_executor, database):
+    """Validates that Field attributes for decimal types will get properly generated
+    Runs oracle_cdc_client >> trash
+    """
+    db_engine = database.engine
+    pipeline = None
+    table = None
+
+    try:
+        src_table_name = get_random_string(string.ascii_uppercase, 9)
+        logger.info('Using table pattern %s', src_table_name)
+
+        connection = database.engine.connect()
+        table = sqlalchemy.Table(src_table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column(PRIMARY_KEY, sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.Numeric(20, 2)))
+        table.create(db_engine)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = get_oracle_cdc_client_origin(connection=connection,
+                                                         database=database,
+                                                         sdc_builder=sdc_builder,
+                                                         pipeline_builder=pipeline_builder,
+                                                         buffer_locally=True,
+                                                         src_table_name=src_table_name)
+        trash = pipeline_builder.add_stage('Trash')
+
+        lines = [
+            f"INSERT INTO {src_table_name} VALUES (1, 10.2)",
+        ]
+        txn = connection.begin()
+        for line in lines:
+            transaction_text = text(line)
+            connection.execute(transaction_text)
+        txn.commit()
+
+        # Why do we need to wait?
+        # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
+        # If the DB is ahead, the batch end time the origin may not be after all the changes were written to the DB.
+        # So we wait until the time here is past the time at which all data was written out to the DB (current time)
+        wait_until_time(get_current_oracle_time(connection=connection))
+
+        oracle_cdc_client >> trash
+        pipeline = pipeline_builder.build('Oracle CDC: Decimal Attributes').configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        # assert all the data captured have the same raw_data
+        output_records = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        assert len(output_records) == 1
+        attributes = output_records[0].get_field_attributes(f'/{OTHER_COLUMN}')
+        assert '20' == attributes['precision']
+        assert '2' == attributes['scale']
+
+    finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
+        if table is not None:
+            table.drop(db_engine)
+            logger.info('Table: %s dropped.', src_table_name)
+
+
+@database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('use_pattern', [True, False])
 def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
