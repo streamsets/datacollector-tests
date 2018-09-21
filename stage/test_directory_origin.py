@@ -15,6 +15,7 @@
 import logging
 import os
 import pytest
+import random
 import string
 import tempfile
 import time
@@ -222,3 +223,109 @@ def test_directory_origin_in_whole_file_dataformat(sdc_builder, sdc_executor, no
     msgs_result_count = directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
     assert msgs_result_count == no_of_input_files
+
+def test_directory_timestamp_ordering(sdc_builder, sdc_executor):
+    """This test is mainly for SDC-10019.  The bug that was fixed there involves a race condition.  It only manifests if
+    the files are ordered in increasing timestamp order and reverse alphabetical order AND the processing time required
+    for a batch is sufficiently high.  That's why the pipeline is configured to write relatively large files (200k
+    records, gzipped).
+
+    Functionally, the test simply ensures that the second pipeline (with the directory origin) reads the same number of
+    batches as was written by the first pipeline, and hence all data is read.  If the test times out, that essentially
+    means that bug has occurred.
+    """
+    max_records_per_file = random.randint(100000, 300000)
+    # randomize the batch size
+    batch_size = random.randint(100, 5000)
+    # generate enough batches to have 20 or so files
+    num_batches = random.randint(15, 25) * max_records_per_file/batch_size
+
+    random_str = get_random_string(string.ascii_letters, 10)
+    tmp_directory = os.path.join(tempfile.gettempdir(), 'directory_timestamp_ordering', random_str, 'data')
+    scratch_directory = os.path.join(tempfile.gettempdir(), 'directory_timestamp_ordering', random_str, 'scatch')
+    logger.info('Test run information: num_batches=%d, batch_size=%d, max_records_per_file=%d, tmp_directory=%s, scratch_directory=%s',
+                num_batches, batch_size, max_records_per_file, tmp_directory, scratch_directory)
+
+    # use one pipeline to generate the .txt.gz files to be consumed by the directory pipeline
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
+    dev_data_generator.set_attributes(delay_between_batches=0, batch_size=batch_size)
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=tmp_directory,
+                            files_prefix='sdc-${sdc:id()}',
+                            files_suffix='txt',
+                            compression_codec='GZIP',
+                            max_records_in_file=max_records_per_file)
+
+    dev_data_generator >> local_fs
+    shell_executor = pipeline_builder.add_stage('Shell')
+    shell_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'file-closed'}"])
+    shell_executor.set_attributes(environment_variables=[{'key': 'FILENAME', 'value': '${record:value(\'/filename\')}'},
+                                                         {'key': 'FILEPATH', 'value': '${record:value(\'/filepath\')}'}])
+    # this script will rename the completed txt.gz file to be of the form WORD_TIMESTAMP.txt.gz where WORD is chosen from
+    # a reverse-alphabetical list of cycling words and TIMESTAMP is the current timestamp, and also ; this ensures that newer files
+    # (i.e. those written later in the pipeline execution) will sometimes have earlier lexicographical orderings to
+    # trigger SDC-10091
+
+    shell_executor.set_attributes(script=f'''\
+#!/bin/bash
+
+if [[ ! -s {scratch_directory}/count.txt ]]; then
+  echo '0' > {scratch_directory}/count.txt
+fi
+COUNT=$(cat {scratch_directory}/count.txt)
+echo $(($COUNT+1)) > {scratch_directory}/count.txt
+
+if [[ ! -s {scratch_directory}/words.txt ]]; then
+  mkdir -p {scratch_directory}
+  echo 'eggplant
+dill
+cucumber
+broccoli
+apple' > {scratch_directory}/words.txt
+  WORD=fig
+else
+  WORD=$(head -1 {scratch_directory}/words.txt)
+  grep -v $WORD {scratch_directory}/words.txt > {scratch_directory}/words_new.txt
+  mv {scratch_directory}/words_new.txt {scratch_directory}/words.txt
+fi
+
+RAND_NUM=$(($RANDOM % 10))
+SUBDIR="subdir${{RAND_NUM}}"
+cd $(dirname $FILEPATH)
+mkdir -p $SUBDIR
+mv $FILENAME $SUBDIR/${{WORD}}_$COUNT.txt.gz
+    ''')
+    local_fs >= shell_executor
+    files_pipeline = pipeline_builder.build('Generate files pipeline')
+    sdc_executor.add_pipeline(files_pipeline)
+
+    # generate the input files
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(num_batches)
+    sdc_executor.stop_pipeline(files_pipeline)
+
+    # create the actual directory origin pipeline, which will read the generated *.txt.gz files (across
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='TEXT',
+                             file_name_pattern='*.txt.gz',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             compression_format='COMPRESSED_FILE',
+                             batch_size_in_recs=batch_size)
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build('Directory Origin pipeline')
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    # if we set the batch size to the same value in the directory origin pipeline, it should read exactly as many batches
+    # as were written by the first pipeline
+    sdc_executor.start_pipeline(directory_pipeline).wait_for_pipeline_batch_count(num_batches)
+    sdc_executor.stop_pipeline(directory_pipeline)
+
