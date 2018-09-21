@@ -25,7 +25,6 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.markers import database, sdc_min_version
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

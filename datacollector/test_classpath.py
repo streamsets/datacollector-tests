@@ -24,7 +24,6 @@ from streamsets.testframework.markers import cluster, sdc_min_version
 # Skip all tests in this module if --sdc-version < 3.1.0.0
 pytestmark = sdc_min_version('3.1.0.0-SNAPSHOT')
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Set of properties that needs to be enabled to perform the validation as we need to

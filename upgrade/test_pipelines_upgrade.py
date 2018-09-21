@@ -27,7 +27,6 @@ from streamsets.sdk import sdc_models
 from streamsets.sdk.utils import pipeline_json_encoder
 from streamsets.testframework.markers import upgrade
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DIR_TO_READ = Path(f'{dirname(__file__)}/pipelines')

@@ -20,7 +20,6 @@ import pytest
 from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

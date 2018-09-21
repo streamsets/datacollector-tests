@@ -25,7 +25,6 @@ from uuid import uuid4
 # Skip all tests in this module if --sdc-version < 2.6.0.0-SNAPSHOT
 pytestmark = sdc_min_version('2.6.0.0-SNAPSHOT')
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 

@@ -17,7 +17,6 @@ import logging
 import pytest
 from streamsets.sdk.exceptions import InternalServerError
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # CONTAINER_01200 - doesn't have permissions on pipeline.

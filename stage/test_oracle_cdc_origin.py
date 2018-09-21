@@ -25,7 +25,6 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 PRIMARY_KEY = 'ID'

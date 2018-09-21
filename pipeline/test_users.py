@@ -17,7 +17,6 @@ import logging
 import pytest
 from streamsets.testframework import sdc
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
