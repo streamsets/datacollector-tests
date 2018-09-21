@@ -579,7 +579,7 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     raw_str_value = 'hello again!'
     # note, date time here is in UTC. Each map is an SDC record to process.
     raw_col = [{'amInteger': 123}, {'amDouble': 12345.6789115}, {'amString': 'hello'}, {'amBool': True},
-               {'amDateTime': utc_datetime_str}, {'amString2': raw_str_value}]
+               {'amDateTime': utc_datetime_str}, {'amString2': raw_str_value}, {'amZonedDateTime': None}]
     raw_data = json.dumps(raw_col)
     field_type_converter_configs = [
         {
@@ -603,6 +603,9 @@ def test_field_type_converter(sdc_builder, sdc_executor):
         }, {
             'fields': ['/amString2'],
             'targetType': 'BYTE_ARRAY'
+        }, {
+            'fields': ['/amZonedDateTime'],
+            'targetType': 'ZONED_DATETIME'
         }
     ]
     whole_type_converter_configs = [
@@ -637,6 +640,10 @@ def test_field_type_converter(sdc_builder, sdc_executor):
             'targetType': 'STRING',
             'treatInputFieldAsDate': False,
             'encoding': 'UTF-8'
+        }, {
+            'sourceType': 'ZONED_DATETIME',
+            'targetType': 'STRING',
+            'encoding': 'UTF-8'
         }
     ]
 
@@ -666,6 +673,7 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     assert field_output[3].value['value']['amBool']['type'] == 'BOOLEAN'
     assert field_output[4].value['value']['amDateTime']['type'] == 'DATETIME'
     assert field_output[5].value['value']['amString2']['type'] == 'BYTE_ARRAY'
+    assert field_output[6].value['value']['amZonedDateTime']['type'] == 'ZONED_DATETIME'
     # assert data type conversion
     type_output = snapshot[field_type_converter_types.instance_name].output
     assert type_output[0].value['value']['amInteger']['type'] == 'DECIMAL'
@@ -674,6 +682,7 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     assert type_output[3].value['value']['amBool']['type'] == 'STRING'
     assert type_output[4].value['value']['amDateTime']['type'] == 'LONG'
     assert type_output[5].value['value']['amString2']['type'] == 'STRING'
+    assert type_output[6].value['value']['amZonedDateTime']['type'] == 'STRING'
     # assert values which can be compared
     assert utc_datetime_in_int == int(type_output[4].value['value']['amDateTime']['value'])
     assert raw_str_value == type_output[5].value['value']['amString2']['value']
