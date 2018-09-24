@@ -1,17 +1,3 @@
-<!--
-  Licensed under the Apache License, Version 2.0 (the "License");
-  you may not use this file except in compliance with the License.
-  You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-  Unless required by applicable law or agreed to in writing, software
-  distributed under the License is distributed on an "AS IS" BASIS,
-  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  See the License for the specific language governing permissions and
-  limitations under the License. See accompanying LICENSE file.
--->
-
 ===============================
 StreamSets Data Collector tests
 ===============================
@@ -33,6 +19,7 @@ Putting it all together:
 .. _default SDC version: https://streamsets.com/documentation/stf/latest/api.html#streamsets.testframework.sdc.DEFAULT_SDC_VERSION
 
 .. code-block:: console
+
     $ git clone https://github.com/streamsets/datacollector-tests.git
     Cloning into 'datacollector-tests'...
     remote: Enumerating objects: 192, done.
@@ -64,46 +51,44 @@ Putting it all together:
 Folder structure
 ================
 
-The folder structure of this repository (visualized below using ``tree``) is as follows:
+The folder structure of this repository (visualized below using ``tree``) is as follows:::
 
-```
-├── datacollector
-├── fault
-├── package
-├── performance
-├── pipeline
-├── resources
-│   ├── protobuf
-│   └── tcp_server
-├── stage
-└── upgrade
-    └── pipelines
-        ├── sdc_1.1.0
-        ├── sdc_1.6.0.0
-        ├── sdc_2.0.0.0
-        ├── sdc_2.1.0.0
-        └── sdc_2.2.0.0
-```
+    ├── datacollector
+    ├── fault
+    ├── package
+    ├── performance
+    ├── pipeline
+    ├── resources
+    │   ├── protobuf
+    │   └── tcp_server
+    ├── stage
+    └── upgrade
+        └── pipelines
+            ├── sdc_1.1.0
+            ├── sdc_1.6.0.0
+            ├── sdc_2.0.0.0
+            ├── sdc_2.1.0.0
+            └── sdc_2.2.0.0
 
-+ **datacollector/**: Tests that exercise DataCollector-wide functionality (e.g. classpath validation).
+* **datacollector/**: Tests that exercise DataCollector-wide functionality (e.g. classpath validation).
 
-+ **fault/** (in progress): Tests that exercise product resilience in the presence of injected faults.
+* **fault/** (in progress): Tests that exercise product resilience in the presence of injected faults.
 
-+ **package/** (in progress): Packaging tests.
+* **package/** (in progress): Packaging tests.
 
-+ **performance/** (in progress): Tests that focus on product performance using the `pytest-benchmark plugin`_.
+* **performance/** (in progress): Tests that focus on product performance using the `pytest-benchmark plugin`_.
 
-+ **pipeline/**: Tests that exercise end-to-end workflows (e.g. the drift synchronization solution)
-            or pipeline-level functionality. If the pipeline you want to test is complex, it should probably
-            have a test here.
+* **pipeline/**: Tests that exercise end-to-end workflows (e.g. the drift synchronization solution)
+  or pipeline-level functionality. If the pipeline you want to test is complex, it should probably
+  have a test here.
 
-+ **resources/**: Resources to be used within tests (e.g. protobuf object schema).
+* **resources/**: Resources to be used within tests (e.g. protobuf object schema).
 
-+ **stage/**: Tests that attempt to isolate functionality of individual stages. This tends to be in the form of
-            ``<dev origin> >> <stage>`` tests for destinations, ``<dev origin> >> stage >> <trash>`` tests for
-            processors, or ``<stage> >> <trash>`` tests for origins.
+* **stage/**: Tests that attempt to isolate functionality of individual stages. This tends to be in the form of
+  ``<dev origin> >> <stage>`` tests for destinations, ``<dev origin> >> stage >> <trash>`` tests for
+  processors, or ``<stage> >> <trash>`` tests for origins.
 
-+ **upgrade/**: Legacy SDC pipeline upgrade tests. Unless there's a really good reason to do so,
-            don't add new tests to this folder.
+* **upgrade/**: Legacy SDC pipeline upgrade tests. Unless there's a really good reason to do so,
+  don't add new tests to this folder.
 
 .. _pytest-benchmark plugin: https://pytest-benchmark.readthedocs.io/
