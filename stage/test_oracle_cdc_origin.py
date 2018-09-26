@@ -22,7 +22,7 @@ import pytest
 import sqlalchemy
 from sqlalchemy import text
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import database
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,7 @@ def wait_until_time(time):
         sleep((time - current_time).total_seconds() + 1)
 
 
+@sdc_min_version('3.6.0')
 @database('oracle')
 def test_decimal_attributes(sdc_builder, sdc_executor, database):
     """Validates that Field attributes for decimal types will get properly generated
