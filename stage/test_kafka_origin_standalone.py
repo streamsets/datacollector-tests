@@ -21,6 +21,8 @@ import string
 import avro
 import pytest
 from avro.datafile import DataFileWriter
+
+from streamsets.testframework.environments.kafka import KafkaCluster
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -185,6 +187,7 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh', 'kafka')
+@sdc_min_version('3.6.0')
 def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     """Check that timestamp and timestamp type are included in record header. Verifies that for previous versions of
     kafka (< 0.10), a validation issue is thrown.
@@ -192,7 +195,8 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     Kafka Consumer Origin pipeline with standalone mode:
         kafka_consumer >> trash
     """
-    stage_libs = cluster.kafka.cloudera_manager_cluster.sdc_stage_lib
+    stage_libs = (cluster.stage_lib if isinstance(cluster, KafkaCluster)
+                  else cluster.kafka.cloudera_manager_cluster.sdc_stage_lib)
 
     message = 'Hello World from SDC & DPM!'
     expected = '{\'text\': Hello World from SDC & DPM!}'
@@ -210,19 +214,17 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline)
 
-    try:
-        if 'apache-kafka_0_9-lib' in stage_libs or 'apache-kafka_0_8-lib' in stage_libs:
-            with pytest.raises(Exception) as e:
-                sdc_executor.start_pipeline(kafka_consumer_pipeline)
+    if ('streamsets-datacollector-apache-kafka_0_9-lib' in stage_libs or
+            'streamsets-datacollector-apache-kafka_0_8-lib' in stage_libs):
+        with pytest.raises(Exception) as e:
+            sdc_executor.start_pipeline(kafka_consumer_pipeline)
 
-            assert ('KAFKA_75 - Inherited timestamps from Kafka are enabled but not supported in this Kafka version'
-                    in e.value.message)
-        else:
-            # Publish messages to Kafka and verify using snapshot if the same messages are received.
-            produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
-            verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
-
-    finally:
+        assert ('KAFKA_75 - Inherited timestamps from Kafka are enabled but not supported in this Kafka version'
+                in e.value.message)
+    else:
+        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
+        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
 
