@@ -222,10 +222,12 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
         assert ('KAFKA_75 - Inherited timestamps from Kafka are enabled but not supported in this Kafka version'
                 in e.value.message)
     else:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            # Publish messages to Kafka and verify using snapshot if the same messages are received.
+            produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
+            verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
+        finally:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
 
 @cluster('cdh', 'kafka')
