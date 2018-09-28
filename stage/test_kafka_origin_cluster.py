@@ -22,11 +22,11 @@ import avro
 import pytest
 from avro.datafile import DataFileWriter
 from streamsets.sdk.utils import Version
+from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
@@ -48,122 +48,10 @@ SCHEMA = {
 }
 
 
-def get_kafka_consumer_stage(sdc_version, pipeline_builder, cluster):
-    """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
-    pipeline_builder.add_error_stage('Discard')
-
-    if Version(sdc_version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB:
-        kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib_spark1
-    else:
-        kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib_spark2
-
-    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
-                                                type='origin',
-                                                library=kafka_cluster_stage_lib)
-    kafka_consumer.set_attributes(data_format='TEXT',
-                                  batch_wait_time_in_ms=20000,
-                                  max_batch_size_in_records=10,
-                                  rate_limit_per_partition_in_kafka_messages=10,
-                                  topic=get_random_string(string.ascii_letters, 10),
-                                  kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
-
-    return kafka_consumer
-
-
-def get_rpc_origin(builder, sdc_rpc_destination):
-    """Create and return rpc origin stage with basic configuration"""
-    sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
-    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_PORT
-    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
-
-    # Since YARN jobs take a while to get going, set RPC origin batch wait time to MAX_BATCH_WAIT_TIME (30s).
-    sdc_rpc_origin.batch_wait_time_in_secs = MAX_BATCH_WAIT_TIME
-
-    return sdc_rpc_origin
-
-
-def get_rpc_destination(builder, sdc_executor):
-    """Create and return rpc destination stage with basic configuration"""
-    sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT))
-    sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
-
-    return sdc_rpc_destination
-
-
-def produce_kafka_messages(topic, cluster, message, data_format):
-    """Send basic messages to Kafka"""
-    producer = cluster.kafka.producer()
-
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'PROTOBUF', 'TEXT', 'JSON']
-
-    # Write records into Kafka depending on the data_format.
-    if data_format in basic_data_formats:
-        producer.send(topic, message)
-
-    elif data_format == 'WITH_KEY':
-        producer.send(topic, message, key=get_random_string(string.ascii_letters, 10).encode())
-
-    elif data_format == 'AVRO':
-        writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
-        bytes_writer = io.BytesIO()
-        encoder = avro.io.BinaryEncoder(bytes_writer)
-        writer.write(message, encoder)
-        raw_bytes = bytes_writer.getvalue()
-        producer.send(topic, raw_bytes)
-
-    elif data_format == 'AVRO_WITHOUT_SCHEMA':
-        bytes_writer = io.BytesIO()
-        datum_writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
-        data_file_writer = DataFileWriter(writer=bytes_writer, datum_writer=datum_writer,
-                                          writer_schema=avro.schema.Parse(json.dumps(SCHEMA)))
-        data_file_writer.append(message)
-        data_file_writer.flush()
-        raw_bytes = bytes_writer.getvalue()
-        data_file_writer.close()
-        producer.send(topic, raw_bytes)
-
-    producer.flush()
-
-
-def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, data_format):
-    """Start, stop pipeline and verify results using snapshot"""
-
-    # Start Pipeline.
-    snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True, wait=False)
-    sdc_executor.start_pipeline(kafka_consumer_pipeline)
-
-    logger.debug('Finish the snapshot and verify')
-    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
-    snapshot = snapshot_command.snapshot
-
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'PROTOBUF', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
-
-    # Verify snapshot data.
-    if data_format in basic_data_formats:
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
-
-        assert message == str(record_field[0])
-
-    elif data_format == 'BINARY':
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
-        assert message == record_field[0]
-
-    elif data_format == 'LOG':
-        stage = snapshot[snapshot_pipeline[0].instance_name]
-        assert 0 == len(stage.error_records)
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
-        assert message == str(record_field[0]['originalLine'])
-
-    elif data_format == 'XML_MULTI_ELEMENT':
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
-        assert message[0] == str(record_field[0])
-        assert message[1] == str(record_field[1])
-
-    elif data_format == 'NETFLOW':
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
-        assert message[0] in str(record_field)
-        assert message[1] in str(record_field)
+@pytest.fixture(autouse=True)
+def kafka_check(cluster):
+    if isinstance(cluster, ClouderaManagerCluster) and not hasattr(cluster, 'kafka'):
+        pytest.skip('Kafka tests require Kafka to be installed on the cluster')
 
 
 @cluster('cdh')
@@ -319,46 +207,6 @@ def test_kafka_origin_json_array_cluster(sdc_builder, sdc_executor, cluster):
     expected = '[Alex, Xavi]'
 
     json_test(sdc_builder, sdc_executor, cluster, message, expected)
-
-
-def json_test(sdc_builder, sdc_executor, cluster, message, expected):
-    """Generic method to tests using JSON format"""
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
-
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
-    kafka_consumer.set_attributes(data_format='JSON')
-
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
-
-    kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka JSON pipeline').configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-
-    # Build the Snapshot pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    builder.add_error_stage('Discard')
-
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster kafka JSON Snapshot pipeline')
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, json.dumps(message).encode(), 'JSON')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'JSON')
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-        sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
 @cluster('cdh')
@@ -945,3 +793,163 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster):
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
+
+
+def get_kafka_consumer_stage(sdc_version, pipeline_builder, cluster):
+    """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
+    pipeline_builder.add_error_stage('Discard')
+
+    if Version(sdc_version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB:
+        kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib_spark1
+    else:
+        kafka_cluster_stage_lib = cluster.kafka.cluster_stage_lib_spark2
+
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
+                                                type='origin',
+                                                library=kafka_cluster_stage_lib)
+    kafka_consumer.set_attributes(data_format='TEXT',
+                                  batch_wait_time_in_ms=20000,
+                                  max_batch_size_in_records=10,
+                                  rate_limit_per_partition_in_kafka_messages=10,
+                                  topic=get_random_string(string.ascii_letters, 10),
+                                  kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
+
+    return kafka_consumer
+
+
+def get_rpc_origin(builder, sdc_rpc_destination):
+    """Create and return rpc origin stage with basic configuration"""
+    sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
+    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_PORT
+    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
+
+    # Since YARN jobs take a while to get going, set RPC origin batch wait time to MAX_BATCH_WAIT_TIME (30s).
+    sdc_rpc_origin.batch_wait_time_in_secs = MAX_BATCH_WAIT_TIME
+
+    return sdc_rpc_origin
+
+
+def get_rpc_destination(builder, sdc_executor):
+    """Create and return rpc destination stage with basic configuration"""
+    sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
+    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT))
+    sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
+
+    return sdc_rpc_destination
+
+
+def produce_kafka_messages(topic, cluster, message, data_format):
+    """Send basic messages to Kafka"""
+    producer = cluster.kafka.producer()
+
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'PROTOBUF', 'TEXT', 'JSON']
+
+    # Write records into Kafka depending on the data_format.
+    if data_format in basic_data_formats:
+        producer.send(topic, message)
+
+    elif data_format == 'WITH_KEY':
+        producer.send(topic, message, key=get_random_string(string.ascii_letters, 10).encode())
+
+    elif data_format == 'AVRO':
+        writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
+        bytes_writer = io.BytesIO()
+        encoder = avro.io.BinaryEncoder(bytes_writer)
+        writer.write(message, encoder)
+        raw_bytes = bytes_writer.getvalue()
+        producer.send(topic, raw_bytes)
+
+    elif data_format == 'AVRO_WITHOUT_SCHEMA':
+        bytes_writer = io.BytesIO()
+        datum_writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
+        data_file_writer = DataFileWriter(writer=bytes_writer, datum_writer=datum_writer,
+                                          writer_schema=avro.schema.Parse(json.dumps(SCHEMA)))
+        data_file_writer.append(message)
+        data_file_writer.flush()
+        raw_bytes = bytes_writer.getvalue()
+        data_file_writer.close()
+        producer.send(topic, raw_bytes)
+
+    producer.flush()
+
+
+def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, data_format):
+    """Start, stop pipeline and verify results using snapshot"""
+
+    # Start Pipeline.
+    snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True, wait=False)
+    sdc_executor.start_pipeline(kafka_consumer_pipeline)
+
+    logger.debug('Finish the snapshot and verify')
+    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
+    snapshot = snapshot_command.snapshot
+
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'PROTOBUF', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
+
+    # Verify snapshot data.
+    if data_format in basic_data_formats:
+        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+
+        assert message == str(record_field[0])
+
+    elif data_format == 'BINARY':
+        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        assert message == record_field[0]
+
+    elif data_format == 'LOG':
+        stage = snapshot[snapshot_pipeline[0].instance_name]
+        assert 0 == len(stage.error_records)
+        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        assert message == str(record_field[0]['originalLine'])
+
+    elif data_format == 'XML_MULTI_ELEMENT':
+        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        assert message[0] == str(record_field[0])
+        assert message[1] == str(record_field[1])
+
+    elif data_format == 'NETFLOW':
+        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        assert message[0] in str(record_field)
+        assert message[1] in str(record_field)
+
+
+def json_test(sdc_builder, sdc_executor, cluster, message, expected):
+    """Generic method to tests using JSON format"""
+
+    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
+            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
+        pytest.skip('Kafka cluster mode test only '
+                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+
+    # Build the Kafka consumer pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
+    kafka_consumer.set_attributes(data_format='JSON')
+
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+
+    kafka_consumer >> sdc_rpc_destination
+    kafka_consumer_pipeline = builder.build(title='Cluster kafka JSON pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
+    kafka_consumer_pipeline.configuration['shouldRetry'] = False
+
+    # Build the Snapshot pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    trash = builder.add_stage(label='Trash')
+    sdc_rpc_origin >> trash
+    snapshot_pipeline = builder.build(title='Cluster kafka JSON Snapshot pipeline')
+
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+
+    try:
+        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        produce_kafka_messages(kafka_consumer.topic, cluster, json.dumps(message).encode(), 'JSON')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'JSON')
+    finally:
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        sdc_executor.stop_pipeline(snapshot_pipeline)
+
+

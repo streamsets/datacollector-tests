@@ -14,34 +14,23 @@
 
 import logging
 import string
-import pytest
 
 import avro
-
+import pytest
+from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.environments.kafka import KafkaCluster
 from streamsets.testframework.markers import cluster, confluent, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
-def validate_schema_was_registered(name, confluent):
-    # Validate that schema has been registered
-    registered = confluent.schema_registry.get_latest_schema(name)
-    assert registered is not None
-    assert 1 == registered[2]
+@pytest.fixture(autouse=True)
+def kafka_check(cluster):
+    if isinstance(cluster, ClouderaManagerCluster) and not hasattr(cluster, 'kafka'):
+        pytest.skip('Kafka tests require Kafka to be installed on the cluster')
 
-    schema = registered[1]
-    assert schema is not None
-    assert schema.avro_name == avro.schema.Name('Brno')
-    assert len(schema.fields) == 2
-    assert schema.fields[0].name == 'a'
-    assert schema.fields[0].type.name == 'int'
-    assert schema.fields[1].name == 'b'
-    assert schema.fields[1].type.name == 'string'
 
-#
 # Kafka Destination
 #
 
@@ -416,3 +405,18 @@ def test_kafka_error_destination(sdc_builder, sdc_executor, cluster):
     msgs_received = [message for message in consumer]
     assert 1 == len(msgs_received)
 
+
+def validate_schema_was_registered(name, confluent):
+    # Validate that schema has been registered
+    registered = confluent.schema_registry.get_latest_schema(name)
+    assert registered is not None
+    assert 1 == registered[2]
+
+    schema = registered[1]
+    assert schema is not None
+    assert schema.avro_name == avro.schema.Name('Brno')
+    assert len(schema.fields) == 2
+    assert schema.fields[0].name == 'a'
+    assert schema.fields[0].type.name == 'int'
+    assert schema.fields[1].name == 'b'
+    assert schema.fields[1].type.name == 'string'
