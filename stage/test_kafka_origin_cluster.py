@@ -781,7 +781,7 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
 
     # Override default configuration.
-    kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_packet_format='NETFLOW')
+    kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_data_format='NETFLOW')
 
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
 
