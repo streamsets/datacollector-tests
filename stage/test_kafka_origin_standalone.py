@@ -694,7 +694,7 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
     kafka_consumer = get_kafka_consumer_stage(builder, cluster)
 
     # Override default configuration.
-    kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_packet_format='NETFLOW')
+    kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_data_format='NETFLOW')
 
     trash = builder.add_stage(label='Trash')
     kafka_consumer >> trash
