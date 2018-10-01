@@ -105,3 +105,17 @@ def test_str_unescape_and_replace_el(sdc_builder, sdc_executor):
     assert output_records[0].value['value']['text']['value'] == 'here\nis\tsome\ndata'
     assert output_records[0].value['value']['transformed']['value'] == 'here<NEWLINE>is\tsome<NEWLINE>data'
     assert output_records[0].value['value']['transformed2']['value'] == 'here<NEWLINE>is<TAB>some<NEWLINE>data'
+
+
+def test_record_el(random_expression_pipeline_builder, sdc_executor):
+    random_expression_pipeline_builder.expression_evaluator.header_attribute_expressions = [
+        {'attributeToSet': 'valueOrDefault', 'headerAttributeExpression': '${valueOrDefault("/non-existing", 3)}'},
+    ]
+    pipeline = random_expression_pipeline_builder.pipeline_builder.build(title='Record ELs')
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
+    assert record.header['values']['valueOrDefault'] == 3
