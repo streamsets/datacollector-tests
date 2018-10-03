@@ -102,6 +102,4 @@ def test_parse_xml(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     assert len(snapshot['DataParser_01'].output) == 1
-    assert snapshot['DataParser_01'].output[0].value2['key'][0]['value'] == 'value'
-# TLKT-53
-#    assert snapshot['DataParser_01'].output[0].get_field_data('/key[0]') == 'value'
+    assert snapshot['DataParser_01'].output[0].get_field_data('/key[0]/value') == 'value'

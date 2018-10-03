@@ -162,16 +162,16 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
                 # each CDC  record change contains a list of 3 elements.
                 for i in range(3):
                     expected = expected_operations_data[operation_index]
-                    assert expected.kind == record.get_field_data(f'/change/[{i}]/kind')
-                    assert expected.table == record.get_field_data(f'/change/[{i}]/table')
+                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
                     # For delete operation there are no columnnames and columnvalues fields.
                     if expected.kind != KIND_FOR_DELETE:
-                        assert expected.columnnames == record.get_field_data(f'/change/[{i}]/columnnames')
-                        assert expected.columnvalues == record.get_field_data(f'/change/[{i}]/columnvalues')
+                        assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                        assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
                     if expected.kind != KIND_FOR_INSERT:
                         # For update and delete operations verify extra information about old keys.
-                        assert expected.oldkeys.keynames == record.get_field_data(f'/change/[{i}]/oldkeys/keynames')
-                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change/[{i}]/oldkeys/keyvalues')
+                        assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
                     operation_index += 1
 
     finally:
