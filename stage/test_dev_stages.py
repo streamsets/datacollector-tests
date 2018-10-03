@@ -17,7 +17,7 @@ from time import sleep
 
 import pytest
 from streamsets.sdk import sdc_api
-from streamsets.testframework.markers import rpmpackaging
+from streamsets.testframework.markers import rpmpackaging, sdc_min_version
 from streamsets.testframework.utils import Version
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,23 @@ def pipeline(sdc_builder, sdc_executor):
 
     # Wire up the stages.
     dev_raw_data_source >> trash
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    yield pipeline
+
+@pytest.fixture(scope='module')
+def pipeline_with_events(sdc_builder, sdc_executor):
+    """Create pipeline for the tests. """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    generator = pipeline_builder.add_stage(label='Dev Data Generator')
+    trash = pipeline_builder.add_stage('Trash')
+    event_trash = pipeline_builder.add_stage('Trash')
+
+    # Wire up the stages.
+    generator >> trash
+    generator >= event_trash
 
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
@@ -113,6 +130,12 @@ def test_pipeline_preview(sdc_executor, pipeline):
     preview_data = preview[pipeline.origin_stage.instance_name]
     assert len(preview_data.output) == 1
     assert preview_data.output[0].value['value']['emp_id']['value'] == '123456'
+
+
+@sdc_min_version('3.5.1')
+def test_validate(sdc_executor, pipeline_with_events):
+    """Validate pipeline with events on origin side."""
+    sdc_executor.validate_pipeline(pipeline_with_events)
 
 
 def test_invalid_execution_mode(sdc_executor, pipeline):
