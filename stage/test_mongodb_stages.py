@@ -192,7 +192,8 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
         confirm that MongoDB correctly received them using PyMongo.
 
     The pipeline looks like:
-        dev_raw_data_source >> expression_evaluator >> mongodb_dest
+        dev_raw_data_source >> record_deduplicator >> expression_evaluator >> mongodb_dest
+                               record_deduplicator >> trash
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -210,8 +211,10 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
     mongodb_dest.set_attributes(database=get_random_string(ascii_letters, 5),
                                 collection=get_random_string(ascii_letters, 10),
                                 unique_key_field='/text')
-
-    dev_raw_data_source >> expression_evaluator >> mongodb_dest
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> record_deduplicator >> expression_evaluator >> mongodb_dest
+    record_deduplicator >> trash
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
