@@ -30,6 +30,23 @@ ORIG_DOCS = [
     {'name': 'Violin'}
 ]
 
+NESTED_DOCS = [
+    {
+        'name': 'StreamSets',
+        'location': {
+            'city': 'San Francisco',
+            'state': 'California'
+        }
+    },
+    {
+        'name': 'MongoDB',
+        'location': {
+            'city': 'Palo Alto',
+            'state': 'California'
+        }
+    }
+]
+
 DATA = ['To be or not to be.',
         'Excellence is not an act, it is a habit.',
         'No pains, no gains.']
@@ -244,6 +261,122 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
         logger.info('Dropping %s database...', mongodb_origin.database)
         mongodb.engine.drop_database(mongodb_origin.database)
 
+
+@mongodb
+@sdc_min_version('3.5.0')
+def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
+    """
+    Create 2 nested documents in MongoDB and confirm that MongoDB Lookup Processor can find the documents.
+
+    The pipeline looks like:
+        dev_raw_data_source >> MongoDB Lookup Processor >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    lookup_data = ['name'] + [row['name'] for row in NESTED_DOCS]
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(lookup_data),
+                                       stop_after_first_batch=True)
+
+    mapping = [dict(keyName='name', sdcField='/name')]
+    mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
+    mongodb_lookup.set_attributes(capped_collection=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10),
+                                  result_field='/result',
+                                  document_to_sdc_field_mappings=mapping)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> mongodb_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(NESTED_DOCS)
+
+        # Create documents in MongoDB using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_lookup.collection)
+        mongodb_database = mongodb.engine[mongodb_lookup.database]
+        mongodb_collection = mongodb_database[mongodb_lookup.collection]
+
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents using snaphot.
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        for record, actual in zip(snapshot[mongodb_lookup].output, NESTED_DOCS):
+            assert record.get_field_data('/result/location/city') == actual['location']['city']
+            assert record.get_field_data('/result/location/state') == actual['location']['state']
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_lookup.database)
+        mongodb.engine.drop_database(mongodb_lookup.database)
+
+
+@mongodb
+@sdc_min_version('3.5.0')
+def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongodb):
+    """
+    Create 2 nested documents in MongoDB and confirm that MongoDB Lookup Processor can find the documents.
+
+    The pipeline looks like:
+        dev_raw_data_source >> MongoDB Lookup Processor >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    lookup_data = ['name,state'] + ['{},{}'.format(row['name'],row['location']['state']) for row in NESTED_DOCS]
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(lookup_data),
+                                       stop_after_first_batch=True)
+
+    mapping = [dict(keyName='name', sdcField='/name'),
+               dict(keyName='location.state', sdcField='/state')]
+
+    mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
+    mongodb_lookup.set_attributes(capped_collection=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10),
+                                  result_field='/result',
+                                  document_to_sdc_field_mappings=mapping)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> mongodb_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(NESTED_DOCS)
+
+        # Create documents in MongoDB using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_lookup.collection)
+        mongodb_database = mongodb.engine[mongodb_lookup.database]
+        mongodb_collection = mongodb_database[mongodb_lookup.collection]
+
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents using snaphot.
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        for record, actual in zip(snapshot[mongodb_lookup].output, NESTED_DOCS):
+            assert record.get_field_data('/result/location/city')  == actual['location']['city']
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_lookup.database)
+        mongodb.engine.drop_database(mongodb_lookup.database)
 
 @mongodb
 def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
