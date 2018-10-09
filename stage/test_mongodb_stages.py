@@ -198,7 +198,7 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
     pipeline_builder.add_error_stage('Discard')
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='\n'.join(DATA))
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='\n'.join(DATA), stop_after_first_batch=True)
 
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     # MongoDB destination uses the CRUD operation in the sdc.operation.type record header attribute when writing
@@ -217,8 +217,7 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
     try:
         # Data is generated in dev_raw_data_source and sent to MongoDB using pipeline.
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(DATA))
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Verify data is received correctly using PyMongo.
         # Similar to writing, while reading data, we specify MongoDB database and the collection inside it.
