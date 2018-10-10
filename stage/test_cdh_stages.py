@@ -17,6 +17,7 @@ import logging
 import string
 import time
 from datetime import datetime
+from decimal import Decimal
 
 import pytest
 import sqlalchemy
@@ -173,6 +174,88 @@ def test_kudu_destination_unixtime_micro_datatype(sdc_builder, sdc_executor, clu
     finally:
         logger.info('Dropping Kudu table %s ...', kudu_table_name)
         test_table.drop(engine)
+
+
+@cluster('cdh')
+@sdc_min_version('3.6.0')
+def test_kudu_destination_decimal_type(sdc_builder, sdc_executor, cluster):
+    """Simple Dev Raw Data Source to Kudu pipeline inserting column of decimal type and checking later on
+    decimal type is correctly stored by querying Kudu database
+
+    dev_raw_data_source >> kudu
+    """
+    if not hasattr(cluster, 'kudu'):
+        pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
+    # Generate some data.
+    tour_de_france_contenders = [dict(favorite_rank=1, name='Chris Froome', wins=3, weight=153.22),
+                                 dict(favorite_rank=2, name='Greg LeMond', wins=3, weight=158.73),
+                                 dict(favorite_rank=4, name='Vincenzo Nibali', wins=1, weight=144),
+                                 dict(favorite_rank=3, name='Nairo Quintana', wins=0, weight=165.34)]
+    raw_data = '\n'.join([json.dumps(contender) for contender in tour_de_france_contenders])
+
+    field_to_column_mapping = [dict(field='/favorite_rank', columnName='rank'),
+                               dict(field='/name', columnName='name'),
+                               dict(field='/wins', columnName='wins'),
+                               dict(field='/weight', columnName='weight')]
+
+    kudu_table_name = get_random_string(string.ascii_letters, 10)
+    kudu_master_address = '{}:{}'.format(cluster.server_host, DEFAULT_KUDU_PORT)
+
+    # Build the pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_data)
+    kudu = builder.add_stage('Kudu',
+                             type='destination').set_attributes(table_name='{}.{}'.format('impala::default',
+                                                                                          kudu_table_name),
+                                                                default_operation='INSERT',
+                                                                field_to_column_mapping=field_to_column_mapping)
+    dev_raw_data_source >> kudu
+
+    pipeline = builder.build().configure_for_environment(cluster)
+    pipeline.delivery_guarantee = 'AT_MOST_ONCE'
+    # We want to write data once and then stop, but Dev Raw Data Source will keep looping, so we set the rate limit to
+    # a low value and will rely upon pipeline metrics to know when to stop the pipeline.
+    pipeline.rate_limit = 4
+
+    metadata = sqlalchemy.MetaData()
+    tdf_contenders_table = sqlalchemy.Table(kudu_table_name,
+                                            metadata,
+                                            sqlalchemy.Column('rank', sqlalchemy.Integer, primary_key=True),
+                                            sqlalchemy.Column('name', sqlalchemy.String),
+                                            sqlalchemy.Column('wins', sqlalchemy.Integer),
+                                            sqlalchemy.Column('weight', sqlalchemy.DECIMAL(5, 2)),
+                                            impala_partition_by='HASH PARTITIONS 16',
+                                            impala_stored_as='KUDU',
+                                            impala_table_properties={
+                                                'kudu.master_addresses': kudu_master_address,
+                                                'kudu.num_tablet_replicas': '1'
+                                            })
+
+    try:
+        logger.info('Creating Kudu table %s ...', kudu_table_name)
+        engine = cluster.kudu.engine
+        tdf_contenders_table.create(engine)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(len(tour_de_france_contenders))
+        sdc_executor.stop_pipeline(pipeline)
+
+        connection = engine.connect()
+        result = connection.execute(sqlalchemy.sql.select([tdf_contenders_table]).order_by('rank'))
+        result_list = list(result)
+
+        sorted_tour_de_france_contenders = [tuple([item['favorite_rank'], item['name'], item['wins'],
+                                                   round(Decimal(item['weight']), 2)])
+                                            for item in sorted(tour_de_france_contenders,
+                                                               key=lambda key: key['favorite_rank'])]
+
+        assert result_list == sorted_tour_de_france_contenders
+
+    finally:
+        logger.info('Dropping Kudu table %s ...', kudu_table_name)
+        tdf_contenders_table.drop(engine)
 
 
 @cluster('cdh')
@@ -599,6 +682,80 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
             assert actual.value['value']['favorite_rank']['value'] == str(expected['rank'])
             assert actual.value['value']['wins']['value'] == str(expected['wins'])
             assert actual.value['value']['name']['value'] == str(expected['name'])
+    finally:
+        logger.info('Dropping Kudu table %s ...', kudu_table_name)
+        tdf_contenders_table.drop(engine)
+
+
+@cluster('cdh')
+@sdc_min_version('3.6.0')
+def test_kudu_lookup_decimal_type(sdc_builder, sdc_executor, cluster):
+    """
+    After inserting rows in a Kudu table containing a decimal type column check that decimal type column is correctly
+    retrieved by Kudu processor
+
+    dev_raw_data_source >> kudu >> trash
+    """
+    if not hasattr(cluster, 'kudu'):
+        pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
+    tour_de_france_contenders = [dict(rank=1, weight=150.58),
+                                 dict(rank=2, weight=140.11)]
+
+    raw_data = ''.join([json.dumps(contender) for contender in tour_de_france_contenders])
+    key_columns_mapping = [dict(field='/rank', columnName='rank')]
+    column_to_output_field_mapping = [dict(columnName='rank', field='/rank'),
+                                      dict(columnName='weight', field='/weight', defaultValue='0')]
+
+    kudu_table_name = get_random_string(string.ascii_letters, 10)
+    kudu_master_address = '{}:{}'.format(cluster.server_host, DEFAULT_KUDU_PORT)
+
+    # Build the pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_data)
+    kudu = builder.add_stage('Kudu Lookup',
+                             type='processor').set_attributes(kudu_masters=kudu_master_address,
+                                                              kudu_table_name='{}.{}'.format('impala::default',
+                                                                                             kudu_table_name),
+                                                              key_columns_mapping=key_columns_mapping,
+                                                              column_to_output_field_mapping=column_to_output_field_mapping,
+                                                              case_sensitive=True,
+                                                              ignore_missing_value=True)
+
+    trash = builder.add_stage('Trash')
+
+    dev_raw_data_source >> kudu >> trash
+
+    pipeline = builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    metadata = sqlalchemy.MetaData()
+    tdf_contenders_table = sqlalchemy.Table(kudu_table_name,
+                                            metadata,
+                                            sqlalchemy.Column('rank', sqlalchemy.Integer, primary_key=True),
+                                            sqlalchemy.Column('weight', sqlalchemy.DECIMAL(5,2)),
+                                            impala_partition_by='HASH PARTITIONS 16',
+                                            impala_stored_as='KUDU',
+                                            impala_table_properties={
+                                                'kudu.master_addresses': kudu_master_address,
+                                                'kudu.num_tablet_replicas': '1'
+                                            })
+
+    try:
+        logger.info('Creating Kudu table %s ...', kudu_table_name)
+        engine = cluster.kudu.engine
+        tdf_contenders_table.create(engine)
+        conn = engine.connect()
+        conn.execute(tdf_contenders_table.insert(), tour_de_france_contenders)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        i = 0
+        for result in snapshot[kudu.instance_name].output:
+            assert result.value['value']['weight']['value'] == str(tour_de_france_contenders[i]['weight'])
+            i += 1
+
     finally:
         logger.info('Dropping Kudu table %s ...', kudu_table_name)
         tdf_contenders_table.drop(engine)
