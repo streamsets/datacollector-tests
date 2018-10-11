@@ -22,7 +22,6 @@ import avro
 import pytest
 from avro.datafile import DataFileWriter
 
-from streamsets.testframework.environments.kafka import KafkaCluster
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -195,8 +194,7 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     Kafka Consumer Origin pipeline with standalone mode:
         kafka_consumer >> trash
     """
-    stage_libs = (cluster.stage_lib if isinstance(cluster, KafkaCluster)
-                  else cluster.kafka.cloudera_manager_cluster.sdc_stage_lib)
+    stage_libs = cluster.sdc_stage_libs
 
     message = 'Hello World from SDC & DPM!'
     expected = '{\'text\': Hello World from SDC & DPM!}'
