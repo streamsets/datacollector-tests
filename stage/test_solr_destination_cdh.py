@@ -56,17 +56,18 @@ def test_solr_write_records_cdh(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
 
     # assert data ingested into Solr.
+    solr_client = cluster.solr.client
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = cluster.solr.client.query(cluster.solr.collection_name, {'q': query})
-        assert resp.num_found > 0
-        assert resp.data['response']['docs'][0][field_name_2][0] == field_val_2
+        results = solr_client.search(q=query)
+        assert len(results) > 0
+        assert results.docs[0][field_name_2][0] == field_val_2
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
+        solr_client.delete(id=field_val_1)
 
 
 def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster):
@@ -101,19 +102,20 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
     sdc_executor.add_pipeline(pipeline)
 
     # assert data ingested into Solr.
+    solr_client = cluster.solr.client
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = cluster.solr.client.query(cluster.solr.collection_name, {'q': query})
-        assert 0 == resp.num_found
+        results = solr_client.search(q=query)
+        assert 0 == len(results)
 
         stage = snapshot[solr_target.instance_name]
         assert 0 == len(stage.error_records)
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
+        solr_client.delete(id=field_val_1)
 
 
 def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster):
@@ -148,21 +150,21 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
     sdc_executor.add_pipeline(pipeline)
 
     # assert data ingested into Solr.
+    solr_client = cluster.solr.client
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = cluster.solr.client.query(cluster.solr.collection_name, {'q': query})
-        assert resp.num_found == 0
+        results = solr_client.search(q=query)
+        assert len(results) == 0
 
         stage = snapshot[solr_target.instance_name]
         assert 1 == len(stage.error_records)
         assert 'SOLR_06' == stage.error_records[0].header['errorCode']
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
-
+        solr_client.delete(id=field_val_1)
 
 def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, cluster):
     """Solr write records indexing error to error test case.
@@ -198,21 +200,21 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
     sdc_executor.add_pipeline(pipeline)
 
     # assert data ingested into Solr.
+    solr_client = cluster.solr.client
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_2}}}{field_val_2}'
-        resp = cluster.solr.client.query(cluster.solr.collection_name, {'q': query})
-        assert resp.num_found == 0
+        results = solr_client.search(q=query)
+        assert len(results) == 0
 
         stage = snapshot[solr_target.instance_name]
         assert 1 == len(stage.error_records)
         assert 'SOLR_06' == stage.error_records[0].header['errorCode']
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
-
+        solr_client.delete(id=field_val_1)
 
 def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, cluster):
     """Solr write records error stop pipeline test case.
@@ -257,8 +259,7 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, clust
         assert 'RUN_ERROR' == status
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
-
+        cluster.solr.client.delete(id=field_val_1)
 
 def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluster):
     """Solr write record empty stop pipeline test case.
@@ -303,8 +304,7 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluste
         assert 'RUN_ERROR' == status
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
-
+        cluster.solr.client.delete(id=field_val_1)
 
 def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
     """Solr write record empty to error test case.
@@ -340,21 +340,21 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
 
     # assert data ingested into Solr.
+    solr_client = cluster.solr.client
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = cluster.solr.client.query(cluster.solr.collection_name, {'q': query})
-        assert resp.num_found == 0
+        results = solr_client.search(q=query)
+        assert len(results) == 0
 
         stage = snapshot[solr_target.instance_name]
         assert 1 == len(stage.error_records)
         assert 'SOLR_06' == stage.error_records[0].header['errorCode']
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
-
+        solr_client.delete(id=field_val_1)
 
 def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
     """Solr write record empty dicard test case.
@@ -390,20 +390,20 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
 
     # assert data ingested into Solr.
+    solr_client = cluster.solr.client
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = cluster.solr.client.query(cluster.solr.collection_name, {'q': query})
-        assert 0 == resp.num_found
+        results = solr_client.search(q=query)
+        assert 0 == len(results)
 
         stage = snapshot[solr_target.instance_name]
         assert 0 == len(stage.error_records)
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
-
+        solr_client.delete(id=field_val_1)
 
 def test_solr_test_validations_null_url(sdc_builder, sdc_executor, cluster):
     """Solr basic validations null url.
@@ -449,8 +449,7 @@ def test_solr_test_validations_null_url(sdc_builder, sdc_executor, cluster):
 
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
-
+        cluster.solr.client.delete(id=field_val_1)
 
 def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, cluster):
     """Solr basic validations empty fields.
@@ -489,8 +488,7 @@ def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, cluster):
 
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
-
+        cluster.solr.client.delete(id=field_val_1)
 
 def test_solr_test_validations_invalid_url(sdc_builder, sdc_executor, cluster):
     """Solr basic validations invalid url.
@@ -534,4 +532,4 @@ def test_solr_test_validations_invalid_url(sdc_builder, sdc_executor, cluster):
 
     finally:
         # Delete Solr document created in the test.
-        cluster.solr.client.delete_doc_by_id(cluster.solr.collection_name, field_val_1)
+        cluster.solr.client.delete(id=field_val_1)

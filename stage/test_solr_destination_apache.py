@@ -33,7 +33,6 @@ def test_solr_write_records_apache(sdc_builder, sdc_executor, solr):
     """
     client = solr.client
     field_name_1 = get_random_string(string.ascii_letters, 10)
-    solr_collection_name = solr.core_name  # single instance of Solr, collection will be same as core
 
     field_name_2 = get_random_string(string.ascii_letters, 10)
     field_val_1 = get_random_string(string.ascii_letters, 10)
@@ -69,14 +68,10 @@ def test_solr_write_records_apache(sdc_builder, sdc_executor, solr):
         sdc_executor.stop_pipeline(solr_dest_pipeline)
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
-        resp = client.query(solr_collection_name, {'q': query})
-        assert resp.num_found > 0
-        assert resp.data['response']['docs'][0][field_name_2][0] == field_val_2
+        results = client.search(q=query)
+        assert len(results) > 0
+        assert results.docs[0][field_name_2][0] == field_val_2
     finally:
-        # Delete pipeline and SOLR information.
-        sdc_executor.remove_pipeline(solr_dest_pipeline)
-
         # cleanup the fields created by the test.
-        schema = client.schema
-        schema.delete_field(solr_collection_name, field_name_1)
-        schema.delete_field(solr_collection_name, field_name_2)
+        client.delete(id=field_name_1)
+        client.delete(id=field_name_2)
