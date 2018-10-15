@@ -28,6 +28,9 @@ def test_sql_server_change_tracking_no_more_data(sdc_builder, sdc_executor, data
     will look like:
         sqlserver_change_tracking >> trash
     """
+    if not database.is_ct_enabled:
+        pytest.skip('Test only runs against SQL Server with CT enabled.')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),

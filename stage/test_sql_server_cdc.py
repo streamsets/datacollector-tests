@@ -115,6 +115,9 @@ def test_sql_server_cdc_no_more_data(sdc_builder, sdc_executor, database, no_of_
         sql_server_cdc_origin >= pipeline_finisher_executor
         sql_server_cdc_origin >> jdbc_producer
     """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
     sql_server_cdc.set_attributes(max_pool_size=no_of_threads,
@@ -181,6 +184,8 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
         sql_server_cdc_origin >= pipeline_finisher_executor
         sql_server_cdc_origin >> jdbc_producer
     """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
 
     try:
         schema_name = DEFAULT_SCHEMA_NAME
