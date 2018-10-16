@@ -15,7 +15,7 @@
 import copy
 import logging
 import time
-from bson import binary
+from bson import binary, DBRef
 from string import ascii_letters
 
 from streamsets.sdk.utils import Version
@@ -130,6 +130,65 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
         logger.info('Dropping %s database...', mongodb_origin.database)
         mongodb.engine.drop_database(mongodb_origin.database)
 
+
+@mongodb
+@sdc_min_version('3.5.1')
+def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
+    """
+    DBRef datatype is a reference to a document in other collection.
+    Step 1. Create two collections(#1 and #2) in MongoDB and add sample documents in collection #1.
+    Step 2. Add test documents to collection #2 which refer to the sample documents in collection #1.
+    Step 3. Confirm that MongoDB origin reads the test documents from collection #2
+
+    The pipeline looks like:
+        mongodb_origin >> trash
+    """
+    database_name = get_random_string(ascii_letters, 5)
+    collection1 = get_random_string(ascii_letters, 10)
+    collection2 = get_random_string(ascii_letters, 10)
+    logger.debug('database_name: %s, collection1: %s, collection2: %s' , database_name, collection1, collection2)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_origin = pipeline_builder.add_stage('MongoDB', type='origin')
+    mongodb_origin.set_attributes(capped_collection=False,
+                                  database=database_name,
+                                  collection=collection2)
+
+    trash = pipeline_builder.add_stage('Trash')
+    mongodb_origin >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Step 1. A sample documents to collection #1
+        docs_in_database = copy.deepcopy(ORIG_DOCS)
+        mongodb_database = mongodb.engine[database_name]
+        mongodb_collection1 = mongodb_database[collection1]
+        insert_list = [mongodb_collection1.insert_one(doc) for doc in docs_in_database]
+        num_of_records  = len(insert_list)
+        logger.info('Added %i documents into %s collection', num_of_records, collection1)
+
+        # Step 2. Generate test documents with DBRef datatype and insert to collection #2
+        logger.info('Adding test documents into %s collection...', collection2)
+        mongodb_collection2 = mongodb_database[collection2]
+        docs_in_col1 = [] # This will be used to compare the result
+        # Obtain sample document's _id from collection #1 and assign it to test document as inserting into collection #2
+        for doc in mongodb_collection1.find().sort('_id', 1): # Sort by _id so that we can compare the result easily later
+            mongodb_collection2.insert_one({'test_ref': DBRef(collection=collection1, id=doc['_id'])})
+            docs_in_col1.append(doc)
+
+        # Step 3. Start pipeline and verify the documents using snapshot.
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        for record, expected in zip(snapshot[mongodb_origin].output, docs_in_col1):
+            assert record.get_field_data('/test_ref/$ref') == collection1
+            assert record.get_field_data('/test_ref/$id') == str(expected['_id'])
+
+    finally:
+        logger.info('Dropping %s database...', database_name)
+        mongodb.engine.drop_database(mongodb_origin.database)
 
 @mongodb
 @sdc_min_version('3.0.1.0')
