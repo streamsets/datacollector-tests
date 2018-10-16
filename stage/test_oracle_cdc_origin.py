@@ -254,6 +254,62 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
             logger.info('Table: %s dropped.', src_table_name)
 
 
+
+@database('oracle')
+@sdc_min_version('3.5.1')
+@pytest.mark.parametrize('buffer_locally', [True])
+@pytest.mark.parametrize('use_pattern', [False])
+def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
+    """
+    Test for SDC-8418.  Pipeline should stop with RUN ERROR when there is no archived log files.
+    Runs oracle_cdc_client >> trash
+    """
+    db_engine = database.engine
+    src_table_name = get_random_string(string.ascii_uppercase, 9)
+
+    try:
+        connection = database.engine.connect()
+        table = setup_table(database=database,
+                            table_name=src_table_name)
+
+        logger.info('Using table pattern: %s', src_table_name)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
+        # Obviously past time so there is no archived redo logs for this.
+        start_date = '30-09-2017 10:10:10'
+        tables = [{'schema': database.database, 'table': src_table_name, 'excludePattern': ''}]
+
+        oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
+                                         db_time_zone='UTC',
+                                         dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                         initial_change='DATE',
+                                         logminer_session_window='${10 * MINUTES}',
+                                         max_batch_size_in_records=BATCH_SIZE,
+                                         maximum_transaction_length='${1 * MINUTES}',
+                                         start_date=start_date,
+                                         tables=tables)
+
+        trash = pipeline_builder.add_stage('Trash')
+        wait_until_time(get_current_oracle_time(connection=connection))
+
+        oracle_cdc_client >> trash
+        pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+        pipeline.configuration["shouldRetry"] = False
+        sdc_executor.add_pipeline(pipeline)
+
+        # Pipeline should stop with StageExcception
+        with pytest.raises(Exception):
+            sdc_executor.start_pipeline(pipeline)
+            sdc_executor.stop_pipeline(pipeline)
+
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        assert 'RUN_ERROR' == status
+    finally:
+        if table is not None:
+            table.drop(db_engine)
+            logger.info('Table: %s dropped.', src_table_name)
+
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('use_pattern', [True, False])
