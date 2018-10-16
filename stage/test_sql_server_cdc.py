@@ -129,7 +129,7 @@ def test_sql_server_cdc_no_more_data(sdc_builder, sdc_executor, database, no_of_
     jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
 
     jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
-                                 table_name_template=dest_table_name,
+                                 table_name=dest_table_name,
                                  default_operation='INSERT',
                                  field_to_column_mapping=[])
 
@@ -221,7 +221,7 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
         jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
 
         jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
-                                     table_name_template=dest_table_name,
+                                     table_name=dest_table_name,
                                      default_operation='INSERT',
                                      field_to_column_mapping=[])
 
