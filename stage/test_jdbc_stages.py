@@ -422,7 +422,7 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
         sdc_executor.stop_pipeline(pipeline)
 
         result = database.engine.execute(table.select())
-        data_from_database = result.fetchall()
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1]) # order by id
         result.close()
         assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
     finally:
@@ -476,7 +476,7 @@ def test_jdbc_producer_insert(sdc_builder, sdc_executor, database):
         sdc_executor.stop_pipeline(pipeline)
 
         result = database.engine.execute(table.select())
-        data_from_database = result.fetchall()
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1]) # order by id
         result.close()
         assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
     finally:
