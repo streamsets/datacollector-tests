@@ -18,6 +18,7 @@ import time
 from bson import binary
 from string import ascii_letters
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import mongodb, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -209,8 +210,10 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
 
     mongodb_dest = pipeline_builder.add_stage('MongoDB', type='destination')
     mongodb_dest.set_attributes(database=get_random_string(ascii_letters, 5),
-                                collection=get_random_string(ascii_letters, 10),
-                                unique_key_field='/text')
+                                collection=get_random_string(ascii_letters, 10))
+    # From 3.6.0, unique key field is a list, otherwise single string for older version.
+    mongodb_dest.unique_key_field = ['/text'] if Version(sdc_builder.version) >= Version('3.6.0') else '/text'
+
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> record_deduplicator >> expression_evaluator >> mongodb_dest
