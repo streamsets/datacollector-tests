@@ -63,7 +63,8 @@ def test_kudu_destination(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu',
-                             type='destination').set_attributes(table_name=kudu_table_name,
+                             type='destination').set_attributes(table_name='{}.{}'.format('impala::default',
+                                                                                          kudu_table_name),
                                                                 default_operation='INSERT',
                                                                 field_to_column_mapping=field_to_column_mapping)
     dev_raw_data_source >> kudu
@@ -83,7 +84,6 @@ def test_kudu_destination(sdc_builder, sdc_executor, cluster):
                                             impala_partition_by='HASH PARTITIONS 16',
                                             impala_stored_as='KUDU',
                                             impala_table_properties={
-                                                'kudu.table_name': kudu_table_name,
                                                 'kudu.master_addresses': kudu_master_address,
                                                 'kudu.num_tablet_replicas': '1'
                                             })
@@ -135,7 +135,8 @@ def test_kudu_destination_unixtime_micro_datatype(sdc_builder, sdc_executor, clu
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu',
-                             type='destination').set_attributes(table_name=kudu_table_name,
+                             type='destination').set_attributes(table_name='{}.{}'.format('impala::default',
+                                                                                          kudu_table_name),
                                                                 default_operation='INSERT',
                                                                 field_to_column_mapping=field_to_column_mapping)
     dev_raw_data_source >> kudu
@@ -154,7 +155,6 @@ def test_kudu_destination_unixtime_micro_datatype(sdc_builder, sdc_executor, clu
                                   impala_partition_by='HASH PARTITIONS 16',
                                   impala_stored_as='KUDU',
                                   impala_table_properties={
-                                      'kudu.table_name': kudu_table_name,
                                       'kudu.master_addresses': kudu_master_address,
                                       'kudu.num_tablet_replicas': '1'
                                   })
@@ -289,7 +289,8 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=kudu_table_name,
+                                                              kudu_table_name='{}.{}'.format('impala::default',
+                                                                                             kudu_table_name),
                                                               key_columns_mapping=key_columns_mapping,
                                                               column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=True,
@@ -314,7 +315,6 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
                                             impala_partition_by='HASH PARTITIONS 16',
                                             impala_stored_as='KUDU',
                                             impala_table_properties={
-                                                'kudu.table_name': kudu_table_name,
                                                 'kudu.master_addresses': kudu_master_address,
                                                 'kudu.num_tablet_replicas': '1'
                                             })
@@ -373,7 +373,8 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=kudu_table_name,
+                                                              kudu_table_name='{}.{}'.format('impala::default',
+                                                                                             kudu_table_name),
                                                               key_columns_mapping=key_columns_mapping,
                                                               column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=False,
@@ -394,7 +395,6 @@ def test_kudu_lookup_case_sensitive(sdc_builder, sdc_executor, cluster):
                                             impala_partition_by='HASH PARTITIONS 16',
                                             impala_stored_as='KUDU',
                                             impala_table_properties={
-                                                'kudu.table_name': kudu_table_name,
                                                 'kudu.master_addresses': kudu_master_address,
                                                 'kudu.num_tablet_replicas': '1'
                                             })
@@ -462,7 +462,8 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=kudu_table_name,
+                                                              kudu_table_name='{}.{}'.format('impala::default',
+                                                                                             kudu_table_name),
                                                               key_columns_mapping=key_columns_mapping,
                                                               column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=True,
@@ -492,7 +493,6 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
                                             impala_partition_by='HASH PARTITIONS 16',
                                             impala_stored_as='KUDU',
                                             impala_table_properties={
-                                                'kudu.table_name': kudu_table_name,
                                                 'kudu.master_addresses': kudu_master_address,
                                                 'kudu.num_tablet_replicas': '1'
                                             })
@@ -558,7 +558,8 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=kudu_table_name,
+                                                              kudu_table_name='{}.{}'.format('impala::default',
+                                                                                             kudu_table_name),
                                                               key_columns_mapping=key_columns_mapping,
                                                               column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=True,
@@ -582,7 +583,6 @@ def test_kudu_lookup_ignore_missing(sdc_builder, sdc_executor, cluster):
                                             impala_partition_by='HASH PARTITIONS 16',
                                             impala_stored_as='KUDU',
                                             impala_table_properties={
-                                                'kudu.table_name': kudu_table_name,
                                                 'kudu.master_addresses': kudu_master_address,
                                                 'kudu.num_tablet_replicas': '1'
                                             })
@@ -634,7 +634,8 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data=raw_data)
     kudu = builder.add_stage('Kudu Lookup',
                              type='processor').set_attributes(kudu_masters=kudu_master_address,
-                                                              kudu_table_name=kudu_table_name,
+                                                              kudu_table_name='{}.{}'.format('impala::default',
+                                                                                             kudu_table_name),
                                                               key_columns_mapping=key_columns_mapping,
                                                               column_to_output_field_mapping=column_to_output_field_mapping,
                                                               case_sensitive=True,
@@ -659,7 +660,6 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
                                             impala_partition_by='HASH PARTITIONS 16',
                                             impala_stored_as='KUDU',
                                             impala_table_properties={
-                                                'kudu.table_name': kudu_table_name,
                                                 'kudu.master_addresses': kudu_master_address,
                                                 'kudu.num_tablet_replicas': '1'
                                             })
