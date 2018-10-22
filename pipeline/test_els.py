@@ -109,7 +109,7 @@ def test_str_unescape_and_replace_el(sdc_builder, sdc_executor):
 
 def test_record_el(random_expression_pipeline_builder, sdc_executor):
     random_expression_pipeline_builder.expression_evaluator.header_attribute_expressions = [
-        {'attributeToSet': 'valueOrDefault', 'headerAttributeExpression': '${valueOrDefault("/non-existing", 3)}'},
+        {'attributeToSet': 'valueOrDefault', 'headerAttributeExpression': '${record:valueOrDefault("/non-existing", 3)}'},
     ]
     pipeline = random_expression_pipeline_builder.pipeline_builder.build(title='Record ELs')
 
@@ -118,4 +118,4 @@ def test_record_el(random_expression_pipeline_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
-    assert record.header['values']['valueOrDefault'] == 3
+    assert record.header['values']['valueOrDefault'] == '3'
