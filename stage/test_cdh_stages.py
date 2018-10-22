@@ -187,6 +187,9 @@ def test_kudu_destination_decimal_type(sdc_builder, sdc_executor, cluster):
     if not hasattr(cluster, 'kudu'):
         pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
 
+    if not cluster.kudu.version >= '1.7.0':
+        pytest.skip('Test only designed to run on Kudu version >= 1.7.0')
+
     # Generate some data.
     tour_de_france_contenders = [dict(favorite_rank=1, name='Chris Froome', wins=3, weight=153.22),
                                  dict(favorite_rank=2, name='Greg LeMond', wins=3, weight=158.73),
@@ -698,6 +701,9 @@ def test_kudu_lookup_decimal_type(sdc_builder, sdc_executor, cluster):
     """
     if not hasattr(cluster, 'kudu'):
         pytest.skip('Kudu tests only run against clusters with the Kudu service present.')
+
+    if not cluster.kudu.version >= '1.7.0':
+        pytest.skip('Test only designed to run on Kudu version >= 1.7.0')
 
     tour_de_france_contenders = [dict(rank=1, weight=150.58),
                                  dict(rank=2, weight=140.11)]
