@@ -17,6 +17,7 @@ from time import sleep
 
 import pytest
 from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.markers import rpmpackaging, sdc_min_version
 from streamsets.testframework.utils import Version
 
@@ -145,13 +146,13 @@ def test_invalid_execution_mode(sdc_executor, pipeline):
     pipeline.id = 'Invalid_Execution_Mode Pipeline'
 
     try:
+        sdc_executor.add_pipeline(pipeline)
         # Do a version check since execution_mode handling changed starting in the 2.7.0.0 version.
         if Version(sdc_executor.version) >= Version('2.7.0.0'):
-            with pytest.raises(sdc_api.InternalServerError):
+            with pytest.raises(ValidationError):
                 sdc_executor.dump_log_on_error = False
-                sdc_executor.add_pipeline(pipeline)
+                sdc_executor.start_pipeline(pipeline)
         else:
-            sdc_executor.add_pipeline(pipeline)
             with pytest.raises(sdc_api.StartError):
                 sdc_executor.dump_log_on_error = False
                 sdc_executor.start_pipeline(pipeline)
