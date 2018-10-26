@@ -16,15 +16,20 @@ import logging
 import string
 
 import pytest
-
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
+
+
+@pytest.fixture(autouse=True)
+def version_check(sdc_builder, cluster):
+    if cluster.version == 'cdh6.0.0' and Version('3.5.0') <= Version(sdc_builder.version) < Version('3.6.0'):
+        pytest.skip('HBase Lookup processor is not included in streamsets-datacollector-cdh_6_0-lib in SDC 3.5')
 
 
 @cluster('cdh', 'hdp')
