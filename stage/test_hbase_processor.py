@@ -96,8 +96,7 @@ def test_hbase_lookup_processor(sdc_builder, sdc_executor, cluster):
                 for record in snapshot[hbase_lookup.instance_name].output] == bike_races
 
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
@@ -152,8 +151,7 @@ def test_hbase_lookup_processor_empty_batch(sdc_builder, sdc_executor, cluster):
         status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         assert 'STOPPED' == status
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
@@ -219,8 +217,7 @@ def test_hbase_lookup_processor_invalid_url(sdc_builder, sdc_executor, cluster):
         assert preview.issues.issues_count == 0
 
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
@@ -286,8 +283,7 @@ def test_hbase_lookup_processor_invalid_table_name(sdc_builder, sdc_executor, cl
         assert preview.issues.issues_count == 0
 
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
@@ -348,8 +344,7 @@ def test_hbase_empty_key_expression(sdc_builder, sdc_executor, cluster):
         assert 'HBASE_35 - Row key field has empty value' in e.value.message
 
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
@@ -410,8 +405,7 @@ def test_hbase_get_empty_key_to_discard(sdc_builder, sdc_executor, cluster):
         assert len(stage.error_records) == 0
 
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
@@ -473,8 +467,7 @@ def test_hbase_get_empty_key_to_error(sdc_builder, sdc_executor, cluster):
         assert len(stage.error_records) == 1
 
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
@@ -533,8 +526,7 @@ def test_hbase_lookup_processor_invalid_column_family(sdc_builder, sdc_executor,
         assert 'HBASE_36' in e.value.message
 
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
@@ -610,7 +602,6 @@ def test_hbase_lookup_processor_get_row(sdc_builder, sdc_executor, cluster):
         assert result_list == expected
 
     finally:
-        # Remove pipeline and delete HBase table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)

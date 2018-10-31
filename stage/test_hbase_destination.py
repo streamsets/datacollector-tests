@@ -76,8 +76,8 @@ def test_hbase_destination(sdc_builder, sdc_executor, cluster):
         assert [record.value2['text']
                 for record in snapshot[dev_raw_data_source.instance_name].output] == dumb_haiku
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -131,7 +131,6 @@ def test_hbase_destination_validate_no_config_issues(sdc_builder, sdc_executor, 
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
         logger.info('removing pipeline')
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -208,7 +207,6 @@ def test_hbase_destination_invalid_configs(sdc_builder, sdc_executor, cluster):
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
         logger.info('removing pipeline')
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -268,7 +266,6 @@ def test_hbase_destination_single_record_text_storage(sdc_builder, sdc_executor,
 
     finally:
         # Delete table.
-        sdc_executor.remove_pipeline(pipeline)
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -328,10 +325,9 @@ def test_hbase_implicit_field_mapping_null(sdc_builder, sdc_executor, cluster):
             assert expected_key == element[0]
             assert expected_data == element[1]
     finally:
-        # Remove pipeline and delete table.
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -380,8 +376,8 @@ def test_hbase_field_mapping(sdc_builder, sdc_executor, cluster):
             assert json_data in str(element)
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -437,10 +433,9 @@ def test_hbase_field_mapping_ignore_invalid_column(sdc_builder, sdc_executor, cl
             assert expected_key == element[0]
             assert expected_data == element[1]
     finally:
-        # Remove pipeline and delete table.
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -498,10 +493,9 @@ def test_hbase_field_mapping_not_ignore_invalid_column(sdc_builder, sdc_executor
         assert 1 == len(stage.error_records)
         assert 'HBASE_28' == stage.error_records[0].header['errorCode']
     finally:
-        # Remove pipeline and delete table.
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -549,20 +543,23 @@ def test_hbase_write_wrong_column(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        try:
+            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            sdc_executor.stop_pipeline(pipeline)
 
-        sdc_executor.stop_pipeline(pipeline)
+            assert 0 == len(list(cluster.hbase.client.table(random_table_name).scan()))
 
-        assert 0 == len(list(cluster.hbase.client.table(random_table_name).scan()))
-
-        stage = snapshot[hbase.instance_name]
-        logger.info('Error record %s ...', stage.error_records)
-        assert 1 == len(stage.error_records)
-        assert 'HBASE_10' == stage.error_records[0].header['errorCode']
+            stage = snapshot[hbase.instance_name]
+            logger.info('Error record %s ...', stage.error_records)
+            assert 1 == len(stage.error_records)
+            logger.error('Errors: ' + stage.error_records[0].header['errorCode'])
+            assert 'HBASE_10' == stage.error_records[0].header['errorCode']
+        except Exception as e:
+            assert 'HBASE_02' in e.response['message']
+            assert 'HBASE_26' in e.response['message']
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -618,8 +615,7 @@ def test_hbase_invalid_row_key(sdc_builder, sdc_executor, cluster):
         assert 'HBASE_27' == stage.error_records[0].header['errorCode']
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -673,8 +669,7 @@ def test_hbase_not_flat_map(sdc_builder, sdc_executor, cluster):
             assert json_data in str(element)
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -736,10 +731,9 @@ def test_hbase_not_map_error(sdc_builder, sdc_executor, cluster):
         assert 'HBASE_27' == stage.error_records[0].header['errorCode']
 
     finally:
-        # Remove pipeline and delete table.
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -799,7 +793,6 @@ def test_hbase_destination_single_record_binary_storage(sdc_builder, sdc_executo
         # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -885,8 +878,7 @@ def test_hbase_multiple_records(sdc_builder, sdc_executor, cluster):
             assert element[1] == expected_data
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -950,8 +942,8 @@ def test_hbase_collection_types(sdc_builder, sdc_executor, cluster):
             assert expected_data == element[1]
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1008,8 +1000,8 @@ def test_hbase_write_records_on_error_discard(sdc_builder, sdc_executor, cluster
         assert 0 == len(list(cluster.hbase.client.table(random_table_name).scan()))
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1071,8 +1063,8 @@ def test_hbase_write_records_on_error_send_to_error(sdc_builder, sdc_executor, c
         assert 'HBASE_12' == stage.error_records[0].header['errorCode']
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1132,8 +1124,8 @@ def test_hbase_write_records_on_error_stop_pipeline(sdc_builder, sdc_executor, c
         assert 'RUN_ERROR' == status
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1198,8 +1190,8 @@ def test_hbase_multiple_records_on_error(sdc_builder, sdc_executor, cluster):
         assert 'HBASE_12' == stage.error_records[2].header['errorCode']
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1275,8 +1267,8 @@ def test_hbase_custom_time_basis(sdc_builder, sdc_executor, cluster):
             assert element[1] == expected_data
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1352,8 +1344,8 @@ def test_hbase_empty_time_basis(sdc_builder, sdc_executor, cluster):
             assert element[1] == expected_data
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1429,8 +1421,8 @@ def test_hbase_now_time_basis(sdc_builder, sdc_executor, cluster):
             assert element[1] == expected_data
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1485,7 +1477,6 @@ def test_hbase_destination_invalid_column_family(sdc_builder, sdc_executor, clus
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
         logger.info('removing pipeline')
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -1543,8 +1534,8 @@ def test_hbase_regular_user(sdc_builder, sdc_executor, cluster):
             assert element[1] == expected_data
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
+
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1604,8 +1595,7 @@ def test_hbase_proxy_user(sdc_builder, sdc_executor, cluster):
             assert element[1] == expected_data
 
     finally:
-        # Remove pipeline and delete table.
-        sdc_executor.remove_pipeline(pipeline)
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1679,10 +1669,9 @@ def single_record_binary_storage_date_time_types(sdc_builder, sdc_executor, clus
         elements = list(cluster.hbase.client.table(random_table_name).scan())
         assert 0 == len(elements)
     finally:
-        # Remove pipeline and delete table.
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
-        sdc_executor.remove_pipeline(pipeline)
 
 
 @cluster('cdh', 'hdp')
@@ -1743,8 +1732,7 @@ def test_hbase_destination_cluster_mode_hbase_config_dir_abs_path(sdc_builder, s
         # Delete created file
         logger.debug("File " + full_file_path + " removed")
         os.remove(full_file_path)
-        # Remove pipeline and delete table.
+        # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
         logger.info('removing pipeline')
-        sdc_executor.remove_pipeline(pipeline)
