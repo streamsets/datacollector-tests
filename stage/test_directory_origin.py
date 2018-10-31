@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import os
 import pytest
@@ -224,6 +225,7 @@ def test_directory_origin_in_whole_file_dataformat(sdc_builder, sdc_executor, no
 
     assert msgs_result_count == no_of_input_files
 
+
 def test_directory_timestamp_ordering(sdc_builder, sdc_executor):
     """This test is mainly for SDC-10019.  The bug that was fixed there involves a race condition.  It only manifests if
     the files are ordered in increasing timestamp order and reverse alphabetical order AND the processing time required
@@ -329,3 +331,185 @@ mv $FILENAME $SUBDIR/${{WORD}}_$COUNT.txt.gz
     sdc_executor.start_pipeline(directory_pipeline).wait_for_pipeline_batch_count(num_batches)
     sdc_executor.stop_pipeline(directory_pipeline)
 
+
+@sdc_min_version('3.0.0.0')
+def test_directory_origin_avro_produce_less_file(sdc_builder, sdc_executor):
+    """Test Directory Origin in Avro data format. The sample Avro file has 5 lines and
+    the batch size is 1. The pipeline should produce the event, "new-file" and 1 record
+
+    The pipelines looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    avro_records = setup_avro_file(sdc_executor, tmp_directory)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='AVRO', file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             process_subdirectories=True, read_order='TIMESTAMP')
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert all the data captured have the same raw_data
+    output_records = snapshot[directory.instance_name].output
+    event_records = snapshot[directory.instance_name].event_records
+
+    assert 1 == len(event_records)
+    assert 1 == len(output_records)
+
+    assert 'new-file' == event_records[0].header['values']['sdc.event.type']
+
+    assert output_records[0].get_field_data('/name') == avro_records[0].get('name')
+    assert output_records[0].get_field_data('/age') == avro_records[0].get('age')
+    assert output_records[0].get_field_data('/emails') == avro_records[0].get('emails')
+    assert output_records[0].get_field_data('/boss') == avro_records[0].get('boss')
+
+
+@sdc_min_version('3.0.0.0')
+def test_directory_origin_avro_produce_full_file(sdc_builder, sdc_executor):
+    """ Test Directory Origin in Avro data format. The sample Avro file has 5 lines and
+    the batch size is 10. The pipeline should produce the event, "new-file" and "finished-file"
+    and 5 records
+
+    The pipelines looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    avro_records = setup_avro_file(sdc_executor, tmp_directory)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='AVRO', file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             process_subdirectories=True, read_order='TIMESTAMP')
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert all the data captured have the same raw_data
+    output_records = snapshot[directory.instance_name].output
+    event_records = snapshot[directory.instance_name].event_records
+
+    assert 2 == len(event_records)
+    assert 5 == len(output_records)
+
+    assert 'new-file' == event_records[0].header['values']['sdc.event.type']
+    assert 'finished-file' == event_records[1].header['values']['sdc.event.type']
+
+    for i in range(0, 5):
+        assert output_records[i].get_field_data('/name') == avro_records[i].get('name')
+        assert output_records[i].get_field_data('/age') == avro_records[i].get('age')
+        assert output_records[i].get_field_data('/emails') == avro_records[i].get('emails')
+        assert output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
+
+
+def setup_avro_file(sdc_executor, tmp_directory):
+    """Setup 5 avro records and save in local system. The pipelines looks like:
+
+        dev_raw_data_source >> local_fs
+
+    """
+    avro_records = [
+    {
+        "name": "sdc1",
+        "age": 3,
+        "emails": ["sdc1@streamsets.com", "sdc@company.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc2",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc3",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc4",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc5",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    }]
+
+    avro_schema = {
+        "type": "record",
+        "name": "Employee",
+        "fields": [
+            {"name": "name", "type": "string"},
+            {"name": "age", "type": "int"},
+            {"name": "emails", "type": {"type": "array", "items": "string"}},
+            {"name": "boss" ,"type": ["Employee", "null"]}
+        ]
+    }
+
+    raw_data = ''.join(json.dumps(avro_record) for avro_record in avro_records)
+
+    pipeline_builder = sdc_executor.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='AVRO',
+                            avro_schema_location='INLINE',
+                            avro_schema=json.dumps(avro_schema),
+                            directory_template=tmp_directory,
+                            files_prefix='sdc-${sdc:id()}', files_suffix='txt', max_records_in_file=5)
+
+    dev_raw_data_source >> local_fs
+    files_pipeline = pipeline_builder.build('Generate files pipeline')
+    sdc_executor.add_pipeline(files_pipeline)
+
+    # generate some batches/files
+    sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
+
+    return avro_records
