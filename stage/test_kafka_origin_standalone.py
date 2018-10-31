@@ -17,6 +17,7 @@ import io
 import json
 import logging
 import string
+import time
 
 import avro
 import pytest
@@ -65,6 +66,22 @@ def get_kafka_consumer_stage(pipeline_builder, cluster):
     return kafka_consumer
 
 
+def get_kafka_consumer_stage_since_sdc_3_6_0(pipeline_builder, cluster):
+    """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
+    # Default on error action.
+    pipeline_builder.add_error_stage('Discard')
+
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
+                                                type='origin',
+                                                library=cluster.kafka.standalone_stage_lib)
+    # Default stage configuration.
+    kafka_consumer.set_attributes(data_format='TEXT',
+                                  batch_wait_time_in_ms=20000,
+                                  topic=get_random_string(string.ascii_letters, 10))
+
+    return kafka_consumer
+
+
 def produce_kafka_messages(topic, cluster, message, data_format):
     """Send basic messages to Kafka"""
     # Get Kafka producer
@@ -99,6 +116,48 @@ def produce_kafka_messages(topic, cluster, message, data_format):
         producer.send(topic, raw_bytes)
 
     producer.flush()
+
+
+def produce_kafka_messages_in_different_timestamp(topic, cluster, messages, data_format, num_messages_to_send_first):
+    """send num_messages_to_send_first messages, sleep 30 seconds, then send the rest of the messages and return the
+    timestamp value after the 30 seconds sleep (<= timestamp of first message in second batch and >= last message in
+    first batch)
+    """
+    timestamp = -1
+    if num_messages_to_send_first < len(messages):
+        # Send first batch of messages.
+        for i in range(0, num_messages_to_send_first):
+            message = messages[i]
+            produce_kafka_messages(topic, cluster, message.encode(), data_format)
+
+        # Sleep for 30 seconds.
+        time.sleep(30)
+        timestamp = int(time.time() * 1000)
+
+        # Send second batch of messages.
+        for j in range(num_messages_to_send_first, len(messages)):
+            message = messages[j]
+            produce_kafka_messages(topic, cluster, message.encode(), data_format)
+
+    return timestamp
+
+
+def verify_kafka_origin_results_timestamp(kafka_consumer_pipeline, sdc_executor, message, data_format):
+    """Start, stop pipeline and verify results using snapshot"""
+
+    # Start Pipeline.
+    snapshot_pipeline_command = sdc_executor.capture_snapshot(kafka_consumer_pipeline, start_pipeline=True, wait=False)
+
+    logger.debug('Finish the snapshot and verify')
+    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
+    snapshot = snapshot_command.snapshot
+
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
+
+    # Verify snapshot data.
+    if data_format in basic_data_formats:
+        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
+        assert message == [str(record_field[0]), str(record_field[1])]
 
 
 def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, data_format):
@@ -224,6 +283,55 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
             # Publish messages to Kafka and verify using snapshot if the same messages are received.
             produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
             verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
+        finally:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+
+
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.6.0')
+def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, cluster):
+    """Check that accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
+    which timestamp >= Auto Offset Reset Timestamp configuration value.
+
+    Kafka Consumer Origin pipeline with standalone mode:
+        kafka_consumer >> trash
+    """
+    stage_libs = cluster.sdc_stage_libs
+
+    messages = [f'message{i}' for i in range(1, 5)]
+    expected = [f'{{\'text\': message{i}}}' for i in range(3, 5)]
+
+    # Build the Kafka consumer pipeline with Standalone mode.
+    builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = get_kafka_consumer_stage_since_sdc_3_6_0(builder, cluster)
+
+    timestamp = produce_kafka_messages_in_different_timestamp(kafka_consumer.topic, cluster, messages, 'TEXT', 2)
+
+    kafka_consumer.set_attributes(auto_offset_reset='TIMESTAMP',
+                                  auto_offset_reset_timestamp_in_ms=int(timestamp),
+                                  consumer_group=get_random_string(string.ascii_letters, 10))
+
+    trash = builder.add_stage(label='Trash')
+    kafka_consumer >> trash
+    kafka_consumer_pipeline = builder.build(title='Kafka Standalone pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline.configuration['shouldRetry'] = False
+    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(kafka_consumer_pipeline)
+
+    if ('streamsets-datacollector-apache-kafka_0_9-lib' in stage_libs or
+            'streamsets-datacollector-apache-kafka_0_8-lib' in stage_libs or
+            'streamsets-datacollector-apache-kafka_0_10-lib' in stage_libs):
+        with pytest.raises(Exception) as e:
+            sdc_executor.start_pipeline(kafka_consumer_pipeline)
+
+        assert ('KAFKA_76 - Auto Offset Reset = \'Timestamp\' can only be used for Kafka version >= 0.10.1.0'
+                in e.value.message)
+    else:
+        try:
+            # Publish messages to Kafka and verify using snapshot if the same messages are received.
+
+            verify_kafka_origin_results_timestamp(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
         finally:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
