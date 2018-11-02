@@ -414,6 +414,10 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
+    # SQL Server does not allow insert on identity column, 'id'
+    if type(database) == SQLServerDatabase:
+        query_str = f"INSERT INTO {table_name} (name) VALUES ('${{record:value('/name')}}')"
+
     jdbc_query_executor.set_attributes(sql_query=query_str)
 
     trash = pipeline_builder.add_stage('Trash')
