@@ -20,7 +20,7 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.environments.databases import Oracle
+from streamsets.testframework.environments.databases import Oracle, SQLServerDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -261,6 +261,8 @@ def test_jdbc_tee_processor(sdc_builder, sdc_executor, database):
     """
     if type(database) == Oracle:
         pytest.skip('JDBC Tee Processor does not support Oracle')
+    elif type(database) == SQLServerDatabase:
+        pytest.skip('JDBC Tee Processor does not support multi row op on SQL Server')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = create_table_in_database(table_name, database)
@@ -317,6 +319,9 @@ def test_jdbc_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_m
     """
     if type(database) == Oracle:
         pytest.skip('JDBC Tee Processor does not support Oracle')
+
+    if use_multi_row == True and type(database) == SQLServerDatabase:
+        pytest.skip('JDBC Tee Processor does not support multi row on SQL Server')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     pipeline_builder = sdc_builder.get_pipeline_builder()
