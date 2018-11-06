@@ -69,7 +69,7 @@ def setup_tables(database, src_tables, target_tables, event_table_name):
     db_engine = database.engine
 
     for src_table in src_tables:
-        first_col = sqlalchemy.Column(FIRST_COLUMN, sqlalchemy.Integer, primary_key=src_table.use_primary_key)
+        first_col = sqlalchemy.Column(FIRST_COLUMN, sqlalchemy.Integer, primary_key=src_table.use_primary_key, autoincrement=False)
         logger.info('Creating source table %s in %s database ...', src_table.name, database.type)
         table = sqlalchemy.Table(src_table.name, sqlalchemy.MetaData(), first_col,
                                  sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
@@ -85,7 +85,7 @@ def setup_tables(database, src_tables, target_tables, event_table_name):
             db_engine.execute(table.insert(), [insert_data])
 
     for target_table in target_tables:
-        first_col = sqlalchemy.Column(FIRST_COLUMN, sqlalchemy.Integer, primary_key=target_table.use_primary_key)
+        first_col = sqlalchemy.Column(FIRST_COLUMN, sqlalchemy.Integer, primary_key=target_table.use_primary_key, autoincrement=False)
         logger.info('Creating target table %s in %s database ...', target_table.name, database.type)
         table = sqlalchemy.Table(target_table.name, sqlalchemy.MetaData(), first_col,
                                  sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
