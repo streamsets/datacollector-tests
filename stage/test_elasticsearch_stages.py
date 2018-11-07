@@ -15,6 +15,7 @@
 import logging
 import string
 
+import pytest
 from elasticsearch_dsl import DocType, Index, Search as ESSearch
 from streamsets.testframework.markers import elasticsearch
 from streamsets.testframework.utils import get_random_string
@@ -116,7 +117,8 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
 
 
 @elasticsearch
-def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch):
+@pytest.mark.parametrize('additional_properties', ['{}', '{"_retry_on_conflict":3}'])
+def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, additional_properties):
     """Test for Elasticsearch target stage. We do so by ingesting data via Dev Raw Data source to
     Elasticsearch stage and then asserting what we ingest to what will be read from Elasticsearch.
     The pipeline looks like:
@@ -135,10 +137,12 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
                                                                                   raw_data=raw_str)
     es_target = builder.add_stage('Elasticsearch', type='destination')
-    es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index, mapping=es_mapping)
+    es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index, mapping=es_mapping,
+                             additional_properties=additional_properties)
 
     dev_raw_data_source >> es_target
     es_target_pipeline = builder.build(title='ES target pipeline').configure_for_environment(elasticsearch)
+    es_target_pipeline.configuration["shouldRetry"] = False
 
     sdc_executor.add_pipeline(es_target_pipeline)
 
