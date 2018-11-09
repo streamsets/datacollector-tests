@@ -94,6 +94,7 @@ def test_classpath(sdc_executor, stagelib):
     assert result_stage['valid'] == True
 
 
+@pytest.mark.skip(reason="See explanation in SDC-10319.")
 @cluster('mapr')
 def test_mapr_classpath(sdc_executor, cluster):
     for stagelib in cluster.sdc_stage_libs:
