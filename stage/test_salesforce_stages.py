@@ -16,7 +16,7 @@ import copy
 import logging
 
 import pytest
-from streamsets.testframework.markers import salesforce
+from streamsets.testframework.markers import salesforce, sdc_min_version
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.value
 
 ACCOUNTS_FOR_SUBQUERY = 5
 CONTACTS_FOR_SUBQUERY = 5
+
 
 @salesforce
 def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
@@ -78,6 +79,67 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
         read_ids = [{'Id': item['Id']} for item in result['records']]
 
         assert CSV_DATA_TO_INSERT[1:] == read_data
+
+    finally:
+        logger.info('Deleting records ...')
+        client.bulk.Contact.delete(read_ids)
+
+
+# Testing of SDC-10475
+@sdc_min_version('3.7.0')
+@salesforce
+def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor, salesforce):
+    """
+    Send text to Salesforce destination from Dev Raw Data Source and
+    confirm that Salesforce destination successfully reads them using Salesforce client.
+
+    It verifies that SalesForce destination is able to write data without stopping the pipeline.
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_destination
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, CSV_DATA_TO_INSERT)
+
+    salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
+    field_mapping = [{'sdcField': '/FirstName', 'salesforceField': 'FirstName'},
+                     {'sdcField': '/LastName', 'salesforceField': 'LastName'},
+                     {'sdcField': '/Email', 'salesforceField': 'Email'}]
+    salesforce_destination.set_attributes(default_operation='INSERT',
+                                          field_mapping=field_mapping,
+                                          sobject_type='Contact')
+
+    dev_raw_data_source >> salesforce_destination
+
+    pipeline = pipeline_builder.build(title='Salesforce destination').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    try:
+        # Produce Salesforce records using pipeline.
+        logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+
+        # Using Salesforce connection, read the contents in the Salesforce destination.
+        # Changing " with ' and vice versa in following string makes the query execution fail.
+        query_str = "SELECT Id, FirstName, LastName, Email FROM Contact WHERE Email LIKE 'xtest%' ORDER BY Id"
+        result = client.query(query_str)
+
+        read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]}'
+                     for item in result['records']]
+        # Following is used later to delete these records.
+        read_ids = [{'Id': item['Id']} for item in result['records']]
+
+        assert CSV_DATA_TO_INSERT[1:] == read_data
+
+        sdc_executor.stop_pipeline(pipeline)
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count > 3
+
+        # That will mean that duplicated are marked as error, but at the same time means that is able to commit
+        # records to SalesForce
+        assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count > 0
 
     finally:
         logger.info('Deleting records ...')
@@ -147,12 +209,12 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
                               for record in snapshot[stage_name].output]
 
         inserted_ids = [dict([(rec['sqpath'].strip('/'), rec['value'])
-                             for rec in item if rec['sqpath'] == '/Id'])
+                              for rec in item if rec['sqpath'] == '/Id'])
                         for item in rows_from_snapshot]
 
         # Verify correct rows are received using snaphot.
         data_from_snapshot = [dict([(rec['sqpath'].strip('/'), rec['value'])
-                                   for rec in item if rec['sqpath'] != '/Id'])
+                                    for rec in item if rec['sqpath'] != '/Id'])
                               for item in rows_from_snapshot]
         assert data_from_snapshot == expected_data
 
