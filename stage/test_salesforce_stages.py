@@ -214,9 +214,81 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
 
         # Verify correct rows are received using snaphot.
         data_from_snapshot = [dict([(rec['sqpath'].strip('/'), rec['value'])
-                                    for rec in item if rec['sqpath'] != '/Id'])
+                                    for rec in item if rec['sqpath'] != '/Id' and rec['sqpath'] != '/SystemModstamp'])
                               for item in rows_from_snapshot]
+
+        data_from_snapshot = sorted(data_from_snapshot, key=lambda k: k['FirstName'])
+
         assert data_from_snapshot == expected_data
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        client.bulk.Contact.delete(inserted_ids)
+
+
+# Test of SDC-10352
+@sdc_min_version('3.7.0')
+@salesforce
+def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
+    """
+    Create data using Salesforce client
+    and then check if Salesforce origin receives them using snapshot.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    query = (
+        "SELECT Id, FirstName, LastName, Email, SystemModstamp FROM Contact WHERE SystemModstamp > ${OFFSET} "
+        "ORDER BY SystemModstamp")
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    # Changing " with ' and vice versa in following string makes the query execution fail.
+    salesforce_origin.set_attributes(soql_query=query, subscribe_for_notifications=False, repeat_query='INCREMENTAL',
+                                     query_interval='${24 * HOURS}', initial_offset='2018-10-16T00:00:00.000Z',
+                                     offset_field='SystemModstamp')
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    pipeline = pipeline_builder.build(title='Salesforce Origin').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        client.bulk.Contact.insert(DATA_TO_INSERT)
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        rows_from_snapshot = [record.value['value']
+                              for record in snapshot[salesforce_origin].output]
+
+        inserted_ids = [dict([(rec['sqpath'].strip('/'), rec['value'])
+                              for rec in item if rec['sqpath'] == '/Id'])
+                        for item in rows_from_snapshot]
+
+        # Verify correct rows are received using snaphot.
+        data_from_snapshot = [dict([(rec['sqpath'].strip('/'), rec['value'])
+                                    for rec in item if rec['sqpath'] != '/Id' and rec['sqpath'] != '/SystemModstamp'])
+                              for item in rows_from_snapshot]
+
+        data_from_snapshot = sorted(data_from_snapshot, key=lambda k: k['FirstName'])
+
+        assert data_from_snapshot == DATA_TO_INSERT
+
+        sdc_executor.stop_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        rows_from_snapshot = [record.value['value']
+                              for record in snapshot[salesforce_origin].output]
+
+        assert len(rows_from_snapshot) == 0
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -263,6 +335,7 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data
         record['surName'] = record.pop('LastName')
     verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, LOOKUP_EXPECTED_DATA,
                        salesforce, data_to_insert=data)
+
 
 # Test SDC-9251, SDC-9493
 @salesforce
