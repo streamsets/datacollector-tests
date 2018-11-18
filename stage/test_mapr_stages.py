@@ -148,10 +148,10 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source >> mapr_db
     """
     # Generate some data.
-    bike_brands = [dict(name='Cannondale'),
-                   dict(name='Specialized'),
-                   dict(name='Bianchi'),
-                   dict(name='BMC')]
+    bike_brands = [dict(name='Bianchi'),
+                   dict(name='BMC'),
+                   dict(name='Cannondale'),
+                   dict(name='Specialized')]
     raw_data = ''.join(json.dumps(brand) for brand in bike_brands)
 
     table_name = '/user/sdc/{}'.format(get_random_string(string.ascii_letters, 10))
@@ -183,11 +183,17 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(len(bike_brands))
 
-        rows = [(key, value) for key, value in cluster.mapr_db.client.table(name=table_name).scan()]
+        table = cluster.mapr_db.client.table(name=table_name)
+        # Due to the following bug in MapR 6.0.1 MEP 5.0, MapR DB table.scan() call hangs and times out.
+        # https://mapr.com/support/s/article/Hung-issue-when-using-HappyBase-python-to-SCAN-MapRDB?language=ja%29
+        # Hence read the database table by using table.row() call instead of whole table scan.
+        result = [(bike_brand['name'].encode(), table.row(bike_brand['name'].encode()))
+                  for bike_brand in bike_brands]
         # Bike brands are stored in a list of dicts ('name' => brand). Manipulate this to match what we
         # expect our MapR-DB rows to look like (including putting them in lexicographic order).
-        assert sorted((bike_brand['name'].encode(), {b'cf1:cq1': bike_brand['name'].encode()})
-                      for bike_brand in bike_brands) == rows
+        assert [(bike_brand['name'].encode(), {b'cf1:cq1': bike_brand['name'].encode()})
+                for bike_brand in bike_brands] == result
+
     finally:
         logger.info('Deleting MapR-DB table %s ...', table_name)
         cluster.execute_command('table', 'delete', http_request_method='POST', data={'path': table_name})
