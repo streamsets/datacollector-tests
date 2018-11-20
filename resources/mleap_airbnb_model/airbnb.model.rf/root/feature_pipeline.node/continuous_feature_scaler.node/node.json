@@ -1,0 +1,13 @@
+{
+  "name": "continuous_feature_scaler",
+  "shape": {
+    "inputs": [{
+      "port": "input",
+      "name": "unscaled_continuous_features"
+    }],
+    "outputs": [{
+      "port": "output",
+      "name": "scaled_continuous_features"
+    }]
+  }
+}

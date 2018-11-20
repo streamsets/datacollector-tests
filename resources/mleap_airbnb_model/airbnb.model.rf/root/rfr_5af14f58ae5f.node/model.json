@@ -1,0 +1,16 @@
+{
+  "op": "random_forest_regression",
+  "attributes": {
+    "num_features": {
+      "long": 13
+    },
+    "tree_weights": {
+      "double": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+      "type": "list"
+    },
+    "trees": {
+      "string": ["tree0", "tree1", "tree2", "tree3", "tree4", "tree5", "tree6", "tree7", "tree8", "tree9", "tree10", "tree11", "tree12", "tree13", "tree14", "tree15", "tree16", "tree17", "tree18", "tree19"],
+      "type": "list"
+    }
+  }
+}

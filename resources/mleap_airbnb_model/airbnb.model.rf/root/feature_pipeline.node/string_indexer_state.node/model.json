@@ -1,0 +1,12 @@
+{
+  "op": "string_indexer",
+  "attributes": {
+    "labels": {
+      "string": ["Other", "NY", "CA", "London", "Berlin", "IL", "TX", "WA", "DC", "OR"],
+      "type": "list"
+    },
+    "handle_invalid": {
+      "string": "error"
+    }
+  }
+}

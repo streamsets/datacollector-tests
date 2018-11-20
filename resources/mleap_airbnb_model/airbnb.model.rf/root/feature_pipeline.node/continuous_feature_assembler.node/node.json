@@ -1,0 +1,34 @@
+{
+  "name": "continuous_feature_assembler",
+  "shape": {
+    "inputs": [{
+      "port": "input0",
+      "name": "bathrooms"
+    }, {
+      "port": "input1",
+      "name": "bedrooms"
+    }, {
+      "port": "input2",
+      "name": "security_deposit"
+    }, {
+      "port": "input3",
+      "name": "cleaning_fee"
+    }, {
+      "port": "input4",
+      "name": "extra_people"
+    }, {
+      "port": "input5",
+      "name": "number_of_reviews"
+    }, {
+      "port": "input6",
+      "name": "square_feet"
+    }, {
+      "port": "input7",
+      "name": "review_scores_rating"
+    }],
+    "outputs": [{
+      "port": "output",
+      "name": "unscaled_continuous_features"
+    }]
+  }
+}

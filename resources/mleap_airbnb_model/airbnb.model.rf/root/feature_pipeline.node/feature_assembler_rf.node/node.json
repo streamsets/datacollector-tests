@@ -1,0 +1,28 @@
+{
+  "name": "feature_assembler_rf",
+  "shape": {
+    "inputs": [{
+      "port": "input0",
+      "name": "room_type_index"
+    }, {
+      "port": "input1",
+      "name": "host_is_superhost_index"
+    }, {
+      "port": "input2",
+      "name": "cancellation_policy_index"
+    }, {
+      "port": "input3",
+      "name": "instant_bookable_index"
+    }, {
+      "port": "input4",
+      "name": "state_index"
+    }, {
+      "port": "input5",
+      "name": "scaled_continuous_features"
+    }],
+    "outputs": [{
+      "port": "output",
+      "name": "features_rf"
+    }]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "string_indexer_host_is_superhost",
+  "shape": {
+    "inputs": [{
+      "port": "input",
+      "name": "host_is_superhost"
+    }],
+    "outputs": [{
+      "port": "output",
+      "name": "host_is_superhost_index"
+    }]
+  }
+}

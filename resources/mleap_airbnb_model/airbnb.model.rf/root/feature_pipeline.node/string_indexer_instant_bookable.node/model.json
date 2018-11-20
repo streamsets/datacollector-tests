@@ -1,0 +1,12 @@
+{
+  "op": "string_indexer",
+  "attributes": {
+    "labels": {
+      "string": ["0.0", "1.0"],
+      "type": "list"
+    },
+    "handle_invalid": {
+      "string": "error"
+    }
+  }
+}

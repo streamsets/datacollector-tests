@@ -1,0 +1,33 @@
+{
+  "op": "vector_assembler",
+  "attributes": {
+    "input_shapes": {
+      "data_shape": [{
+        "base": "scalar",
+        "isNullable": true
+      }, {
+        "base": "scalar",
+        "isNullable": true
+      }, {
+        "base": "scalar",
+        "isNullable": true
+      }, {
+        "base": "scalar",
+        "isNullable": true
+      }, {
+        "base": "scalar",
+        "isNullable": true
+      }, {
+        "base": "tensor",
+        "isNullable": true,
+        "tensorShape": {
+          "dimensions": [{
+            "size": 8,
+            "name": ""
+          }]
+        }
+      }],
+      "type": "list"
+    }
+  }
+}

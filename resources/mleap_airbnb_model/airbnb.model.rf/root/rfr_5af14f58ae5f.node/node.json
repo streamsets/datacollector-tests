@@ -1,0 +1,13 @@
+{
+  "name": "rfr_5af14f58ae5f",
+  "shape": {
+    "inputs": [{
+      "port": "features",
+      "name": "features_rf"
+    }],
+    "outputs": [{
+      "port": "prediction",
+      "name": "price_prediction"
+    }]
+  }
+}

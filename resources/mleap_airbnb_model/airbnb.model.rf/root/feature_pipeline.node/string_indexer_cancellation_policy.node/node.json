@@ -1,0 +1,13 @@
+{
+  "name": "string_indexer_cancellation_policy",
+  "shape": {
+    "inputs": [{
+      "port": "input",
+      "name": "cancellation_policy"
+    }],
+    "outputs": [{
+      "port": "output",
+      "name": "cancellation_policy_index"
+    }]
+  }
+}

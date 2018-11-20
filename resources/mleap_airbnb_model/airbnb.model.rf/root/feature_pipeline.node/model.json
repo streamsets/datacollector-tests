@@ -1,0 +1,9 @@
+{
+  "op": "pipeline",
+  "attributes": {
+    "nodes": {
+      "string": ["continuous_feature_assembler", "continuous_feature_scaler", "string_indexer_room_type", "string_indexer_host_is_superhost", "string_indexer_cancellation_policy", "string_indexer_instant_bookable", "string_indexer_state", "feature_assembler_rf"],
+      "type": "list"
+    }
+  }
+}

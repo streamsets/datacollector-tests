@@ -1,0 +1,13 @@
+{
+  "name": "string_indexer_room_type",
+  "shape": {
+    "inputs": [{
+      "port": "input",
+      "name": "room_type"
+    }],
+    "outputs": [{
+      "port": "output",
+      "name": "room_type_index"
+    }]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "string_indexer_state",
+  "shape": {
+    "inputs": [{
+      "port": "input",
+      "name": "state"
+    }],
+    "outputs": [{
+      "port": "output",
+      "name": "state_index"
+    }]
+  }
+}

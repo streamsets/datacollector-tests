@@ -1,0 +1,13 @@
+{
+  "name": "string_indexer_instant_bookable",
+  "shape": {
+    "inputs": [{
+      "port": "input",
+      "name": "instant_bookable"
+    }],
+    "outputs": [{
+      "port": "output",
+      "name": "instant_bookable_index"
+    }]
+  }
+}

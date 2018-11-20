@@ -1,0 +1,12 @@
+{
+  "op": "string_indexer",
+  "attributes": {
+    "labels": {
+      "string": ["strict", "moderate", "flexible", "super_strict_30", "super_strict_60", "no_refunds", "long_term"],
+      "type": "list"
+    },
+    "handle_invalid": {
+      "string": "error"
+    }
+  }
+}

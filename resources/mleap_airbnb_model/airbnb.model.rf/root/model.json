@@ -1,0 +1,9 @@
+{
+  "op": "pipeline",
+  "attributes": {
+    "nodes": {
+      "string": ["feature_pipeline", "rfr_5af14f58ae5f"],
+      "type": "list"
+    }
+  }
+}
