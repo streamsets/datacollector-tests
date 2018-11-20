@@ -48,7 +48,7 @@ def _create_table_in_database(table_name, database):
 
 
 @database('memsql', 'mysql')
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_basic(sdc_builder, sdc_executor, database):
     """Test for MemSQL Fast Loader target stage. Data is inserted into MemSQL in the pipeline.
     Data is read from MemSQL using mysql client. We assert the data from the client to what has
@@ -92,7 +92,7 @@ def test_basic(sdc_builder, sdc_executor, database):
 
 
 @database('memsql', 'mysql')
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_memsql_fast_loader_ignore_duplicate(sdc_builder, sdc_executor, database):
     """Test records with duplicate keys. The existing records should be kept with IGNORE option.
 
@@ -136,7 +136,7 @@ def test_memsql_fast_loader_ignore_duplicate(sdc_builder, sdc_executor, database
 
 
 @database('memsql', 'mysql')
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_memsql_fast_loader_replace_duplicate(sdc_builder, sdc_executor, database):
     """Test records with duplicate keys. The existing records should be replaced with REPLACE option.
 
@@ -180,7 +180,7 @@ def test_memsql_fast_loader_replace_duplicate(sdc_builder, sdc_executor, databas
 
 
 @database('memsql', 'mysql')
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_memsql_fast_loader_invalid_ops(sdc_builder, sdc_executor, database):
     """Test records with invalid operations. MemSQL Fast Loader does not support CDC origins which
     contains sdc.operation.type in the header. Expression Evaluator is used to add the header
