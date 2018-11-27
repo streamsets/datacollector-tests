@@ -23,6 +23,7 @@ import avro
 import pytest
 from avro.datafile import DataFileWriter
 
+from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
