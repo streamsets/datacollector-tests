@@ -418,6 +418,347 @@ def test_directory_origin_avro_produce_full_file(sdc_builder, sdc_executor):
         assert output_records[i].get_field_data('/emails') == avro_records[i].get('emails')
         assert output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
 
+@sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('csv_record_type', ['LIST_MAP', 'LIST'])
+def test_directory_origin_csv_produce_full_file(sdc_builder, sdc_executor, csv_record_type):
+    """ Test Directory Origin in CSV data format. The sample CSV file has 3 lines and
+    the batch size is 10. The pipeline should produce the event, "new-file" and "finished-file"
+    and 3 records
+
+    The pipelines looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    csv_records = setup_basic_dilimited_file(sdc_executor, tmp_directory)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+
+    directory.set_attributes(data_format='DELIMITED',
+                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             process_subdirectories=True, read_order='TIMESTAMP',
+                             root_field_type=csv_record_type)
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert all the data captured have the same csv_records
+    output_records = snapshot[directory.instance_name].output
+    event_records = snapshot[directory.instance_name].event_records
+
+    assert 2 == len(event_records)
+    assert 3 == len(output_records)
+
+    assert 'new-file' == event_records[0].header['values']['sdc.event.type']
+    assert 'finished-file' == event_records[1].header['values']['sdc.event.type']
+
+    for i in range(0, 3):
+        csv_record_fields = csv_records[i].split(',')
+        for j in range(0, len(csv_record_fields)):
+            if type(output_records[i].get_field_data(f'/{j}')) is dict:
+               output_records[i].get_field_data(f'/{j}').get('value') == csv_record_fields[j]
+            else:
+                output_records[i].get_field_data(f'/{j}') == csv_record_fields[j]
+
+
+@sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('csv_record_type', ['LIST_MAP', 'LIST'])
+@pytest.mark.parametrize('header_line', ['WITH_HEADER', 'IGNORE_HEADER', 'NO_HEADER'])
+def test_directory_origin_csv_produce_less_file(sdc_builder, sdc_executor, csv_record_type, header_line):
+    """ Test Directory Origin in CSV data format. The sample CSV file has 3 lines and
+    the batch size is 1. The pipeline should produce the event, "new-file"
+    and 1 record
+
+    The pipelines looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    csv_records = setup_basic_dilimited_file(sdc_executor, tmp_directory)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED',
+                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             header_line=header_line, process_subdirectories=True,
+                             read_order='TIMESTAMP', root_field_type=csv_record_type)
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert all the data captured have the same csv_records
+    output_records = snapshot[directory.instance_name].output
+    event_records = snapshot[directory.instance_name].event_records
+
+    assert 1 == len(event_records)
+    assert 1 == len(output_records)
+
+    assert 'new-file' == event_records[0].header['values']['sdc.event.type']
+
+    csv_record_fields = csv_records[0].split(',')
+    for j in range(0, len(csv_record_fields)):
+        if type(output_records[0].get_field_data(f'/{j}')) is dict:
+           output_records[0].get_field_data(f'/{j}').get('value') == csv_record_fields[j]
+        else:
+            output_records[0].get_field_data(f'/{j}') == csv_record_fields[j]
+
+
+@sdc_min_version('3.0.0.0')
+def test_directory_origin_csv_custom_file(sdc_builder, sdc_executor):
+    """ Test Directory Origin in custom CSV data format. The sample CSV file has 1 custom CSV
+
+    The pipelines looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    csv_records = setup_custom_delimited_file(sdc_executor, tmp_directory)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
+                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             process_subdirectories=True, read_order='TIMESTAMP')
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    output_records = snapshot[directory.instance_name].output
+
+    assert 1 == len(output_records)
+    output_records[0].get_field_data('/0') == csv_records
+
+
+@sdc_min_version('3.0.0.0')
+def test_directory_origin_csv_custom_comment_file(sdc_builder, sdc_executor):
+    """ Test Directory Origin in custom CSV data format with comment enabled. The sample CSV file have
+    1 delimited line follow by 1 comment line and 1 delimited line
+
+    The pipelines looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    csv_records = setup_dilimited_with_comment_file(sdc_executor, tmp_directory)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
+                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             enable_comments = True,
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True, read_order='TIMESTAMP')
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert all the data captured have the same raw_data
+    output_records = snapshot[directory.instance_name].output
+
+    assert 2 == len(output_records)
+
+    assert output_records[0].get_field_data('/0') == csv_records[0]
+    assert output_records[1].get_field_data('/0') == csv_records[2]
+
+
+@sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('ignore_empty_line', [True, False])
+def test_directory_origin_custom_csv_empty_line_file(sdc_builder, sdc_executor, ignore_empty_line):
+    """ Test Directory Origin in custom CSV data format with empty line enabled and disabled.
+    The sample CSV file has 2 CSV records and 1 empty line.
+    The pipeline should produce 2 when empty line is enabled and 3 when empty line is disabled
+
+    The pipelines looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    csv_records = setup_dilimited_with_empty_line_file(sdc_executor, tmp_directory)
+    empty_line_position = [1]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
+                             ignore_empty_line = ignore_empty_line,
+                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True, read_order='TIMESTAMP')
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert all the data captured have the same raw_data
+    output_records = snapshot[directory.instance_name].output
+
+    expected_record_size = len(csv_records)
+    if ignore_empty_line:
+        expected_record_size = 2
+    assert expected_record_size == len(output_records)
+
+    assert output_records[0].get_field_data('/0') == csv_records[0]
+
+    if ignore_empty_line:
+        assert output_records[1].get_field_data('/0') == csv_records[2]
+    else:
+        assert output_records[2].get_field_data('/0') == csv_records[2]
+
+
+@sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('batch_size', [3,4,5,6])
+def test_directory_origin_csv_record_overrun_on_batch_boundary(sdc_builder, sdc_executor, batch_size):
+    """ Test Directory Origin in Delimited data format. The long delimited record in [2,4,5,8,9]th in the file
+    the long delimited record should be ignored in the batch
+
+    The pipelines looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    csv_records = setup_long_dilimited_file(sdc_executor, tmp_directory)
+    long_dilimited_record_position = [2,4,5,8,9]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED',
+                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             max_record_length_in_chars=10,
+                             process_subdirectories=True, read_order='TIMESTAMP')
+
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=batch_size).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert all the data captured have the same raw_data
+    output_records = snapshot[directory.instance_name].output
+
+    expected_batch_size = batch_size
+    for i in range(0, batch_size):
+        if i in long_dilimited_record_position:
+            expected_batch_size = expected_batch_size - 1
+
+    assert expected_batch_size == len(output_records)
+
+    j = 0
+    for i in range(0, batch_size):
+        if j not in long_dilimited_record_position:
+            csv_record_fields = csv_records[j].split(',')
+            for k in range(0, len(csv_record_fields)):
+                output_records[0].get_field_data(f'/{k}') == csv_record_fields[k]
+            j = j + 1
+
+
+# SDC-10424
+@sdc_min_version('3.5.3')
+def test_directory_post_delete_on_batch_failure(sdc_builder, sdc_executor):
+    """Make sure that post-actions are not executed on batch failure."""
+    raw_data = '1\n2\n3\n4\n5'
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    # 1st pipeline which generates the required files for Directory Origin
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.stop_after_first_batch = True
+    origin.set_attributes(data_format='TEXT', raw_data=raw_data)
+
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=os.path.join(tmp_directory, '${YYYY()}-${MM()}-${DD()}-${hh()}'),
+                            files_prefix='sdc-${sdc:id()}',
+                            files_suffix='txt',
+                            max_records_in_file=100)
+
+    origin >> local_fs
+    files_pipeline = builder.build('Generate files pipeline')
+    sdc_executor.add_pipeline(files_pipeline)
+
+    # Generate exactly one input file
+    sdc_executor.start_pipeline(files_pipeline).wait_for_finished()
+
+    # 2nd pipeline which reads the files using Directory Origin stage
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='TEXT',
+                             file_name_pattern='sdc*.txt',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP')
+    shell = builder.add_stage('Shell')
+    shell.script = "return -1"
+    shell.on_record_error = "STOP_PIPELINE"
+
+    directory >> shell
+    directory_pipeline = builder.build('Directory Origin pipeline')
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    sdc_executor.start_pipeline(directory_pipeline, wait=False).wait_for_status(status='RUN_ERROR', ignore_errors=True)
+
+    # The main check is now - the pipeline should not drop the input file
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Directory')
+    origin.set_attributes(data_format='WHOLE_FILE',
+                          file_name_pattern='sdc*.txt',
+                          file_name_pattern_mode='GLOB',
+                          file_post_processing='DELETE',
+                          files_directory=tmp_directory,
+                          process_subdirectories=True,
+                          read_order='TIMESTAMP')
+    trash = builder.add_stage('Trash')
+    origin >> trash
+
+    pipeline = builder.build('Validation')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+    assert 1 == len(snapshot[origin.instance_name].output)
+
 
 def setup_avro_file(sdc_executor, tmp_directory):
     """Setup 5 avro records and save in local system. The pipelines looks like:
@@ -515,69 +856,99 @@ def setup_avro_file(sdc_executor, tmp_directory):
     return avro_records
 
 
-# SDC-10424
-@sdc_min_version('3.5.3')
-def test_directory_post_delete_on_batch_failure(sdc_builder, sdc_executor):
-    """Make sure that post-actions are not executed on batch failure."""
-    raw_data = '1\n2\n3\n4\n5'
-    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+def setup_basic_dilimited_file(sdc_executor, tmp_directory):
+    """Setup simple 3 csv records and save in local system. The pipelines looks like:
 
-    # 1st pipeline which generates the required files for Directory Origin
-    builder = sdc_builder.get_pipeline_builder()
-    origin = builder.add_stage('Dev Raw Data Source')
-    origin.stop_after_first_batch = True
-    origin.set_attributes(data_format='TEXT', raw_data=raw_data)
+            dev_raw_data_source >> local_fs
 
-    local_fs = builder.add_stage('Local FS', type='destination')
-    local_fs.set_attributes(data_format='TEXT',
-                            directory_template=os.path.join(tmp_directory, '${YYYY()}-${MM()}-${DD()}-${hh()}'),
-                            files_prefix='sdc-${sdc:id()}',
-                            files_suffix='txt',
-                            max_records_in_file=100)
+    """
+    csv_records = ["A,B", "c,d", "e,f"]
+    return setup_dilimited_file(sdc_executor, tmp_directory, csv_records)
 
-    origin >> local_fs
-    files_pipeline = builder.build('Generate files pipeline')
+
+def setup_custom_delimited_file(sdc_executor, tmp_directory):
+    """Setup 1 custom csv records and save in local system. The pipelines looks like:
+
+            dev_raw_data_source >> local_fs
+
+    """
+    csv_records = ["A^!B !^$^A"]
+    return setup_dilimited_file(sdc_executor, tmp_directory, csv_records)
+
+
+def setup_long_dilimited_file(sdc_executor, tmp_directory):
+    """Setup 10 csv records and some records contain long charsets
+    and save in local system. The pipelines looks like:
+
+            dev_raw_data_source >> local_fs
+
+    """
+    csv_records = [
+        "a,b,c,d",
+        "e,f,g,h",
+        "aaa,bbb,ccc,ddd",
+        "i,j,k,l",
+        "aa1,bb1,cc1,dd1",
+        "aa2,bb2,cc2,dd2",
+        "m,n,o,p",
+        "q,r,s,t",
+        "aa3,bb3,cc3,dd3",
+        "aa4,bb5,cc5,dd5"
+    ]
+
+    return setup_dilimited_file(sdc_executor, tmp_directory, csv_records)
+
+
+def setup_dilimited_with_comment_file(sdc_executor, tmp_directory):
+    """Setup 3 csv records and save in local system. The pipelines looks like:
+
+            dev_raw_data_source >> local_fs
+
+    """
+    csv_records = [
+        "a,b",
+        "# This is comment",
+        "c,d"
+    ]
+
+    return setup_dilimited_file(sdc_executor, tmp_directory, csv_records)
+
+
+def setup_dilimited_with_empty_line_file(sdc_executor, tmp_directory):
+    """Setup 3 csv records and save in local system. The pipelines looks like:
+
+            dev_raw_data_source >> local_fs
+
+    """
+    csv_records = [
+        "a,b",
+        " ",
+        "c,d"
+    ]
+
+    return setup_dilimited_file(sdc_executor, tmp_directory, csv_records)
+
+
+def setup_dilimited_file(sdc_executor, tmp_directory, csv_records):
+    """Setup csv records and save in local system. The pipelines looks like:
+
+            dev_raw_data_source >> local_fs
+
+    """
+    raw_data = "\n".join(csv_records)
+    pipeline_builder = sdc_executor.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED', raw_data=raw_data, stop_after_first_batch=True)
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='DELIMITED',
+                            directory_template=tmp_directory,
+                            files_prefix='sdc-${sdc:id()}', files_suffix='csv')
+
+    dev_raw_data_source >> local_fs
+    files_pipeline = pipeline_builder.build('Generate files pipeline')
     sdc_executor.add_pipeline(files_pipeline)
 
-    # Generate exactly one input file
-    sdc_executor.start_pipeline(files_pipeline).wait_for_finished()
+    # generate some batches/files
+    sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
 
-    # 2nd pipeline which reads the files using Directory Origin stage
-    builder = sdc_builder.get_pipeline_builder()
-    directory = builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='TEXT',
-                             file_name_pattern='sdc*.txt',
-                             file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE',
-                             files_directory=tmp_directory,
-                             process_subdirectories=True,
-                             read_order='TIMESTAMP')
-    shell = builder.add_stage('Shell')
-    shell.script = "return -1"
-    shell.on_record_error = "STOP_PIPELINE"
-
-    directory >> shell
-    directory_pipeline = builder.build('Directory Origin pipeline')
-    sdc_executor.add_pipeline(directory_pipeline)
-
-    sdc_executor.start_pipeline(directory_pipeline, wait=False).wait_for_status(status='RUN_ERROR', ignore_errors=True)
-
-    # The main check is now - the pipeline should not drop the input file
-    builder = sdc_builder.get_pipeline_builder()
-    origin = builder.add_stage('Directory')
-    origin.set_attributes(data_format='WHOLE_FILE',
-                          file_name_pattern='sdc*.txt',
-                          file_name_pattern_mode='GLOB',
-                          file_post_processing='DELETE',
-                          files_directory=tmp_directory,
-                          process_subdirectories=True,
-                          read_order='TIMESTAMP')
-    trash = builder.add_stage('Trash')
-    origin >> trash
-
-    pipeline = builder.build('Validation')
-    sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-    assert 1 == len(snapshot[origin.instance_name].output)
+    return csv_records
