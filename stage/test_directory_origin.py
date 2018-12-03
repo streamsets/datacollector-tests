@@ -513,3 +513,71 @@ def setup_avro_file(sdc_executor, tmp_directory):
     sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
 
     return avro_records
+
+
+# SDC-10424
+@sdc_min_version('3.5.3')
+def test_directory_post_delete_on_batch_failure(sdc_builder, sdc_executor):
+    """Make sure that post-actions are not executed on batch failure."""
+    raw_data = '1\n2\n3\n4\n5'
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    # 1st pipeline which generates the required files for Directory Origin
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.stop_after_first_batch = True
+    origin.set_attributes(data_format='TEXT', raw_data=raw_data)
+
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=os.path.join(tmp_directory, '${YYYY()}-${MM()}-${DD()}-${hh()}'),
+                            files_prefix='sdc-${sdc:id()}',
+                            files_suffix='txt',
+                            max_records_in_file=100)
+
+    origin >> local_fs
+    files_pipeline = builder.build('Generate files pipeline')
+    sdc_executor.add_pipeline(files_pipeline)
+
+    # Generate exactly one input file
+    sdc_executor.start_pipeline(files_pipeline).wait_for_finished()
+
+    # 2nd pipeline which reads the files using Directory Origin stage
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='TEXT',
+                             file_name_pattern='sdc*.txt',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP')
+    shell = builder.add_stage('Shell')
+    shell.script = "return -1"
+    shell.on_record_error = "STOP_PIPELINE"
+
+    directory >> shell
+    directory_pipeline = builder.build('Directory Origin pipeline')
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    sdc_executor.start_pipeline(directory_pipeline, wait=False).wait_for_status(status='RUN_ERROR', ignore_errors=True)
+
+    # The main check is now - the pipeline should not drop the input file
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Directory')
+    origin.set_attributes(data_format='WHOLE_FILE',
+                          file_name_pattern='sdc*.txt',
+                          file_name_pattern_mode='GLOB',
+                          file_post_processing='DELETE',
+                          files_directory=tmp_directory,
+                          process_subdirectories=True,
+                          read_order='TIMESTAMP')
+    trash = builder.add_stage('Trash')
+    origin >> trash
+
+    pipeline = builder.build('Validation')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+    assert 1 == len(snapshot[origin.instance_name].output)
