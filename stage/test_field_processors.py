@@ -18,6 +18,7 @@ import logging
 import re
 from datetime import datetime
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ def test_field_hasher(sdc_builder, sdc_executor):
         dev_raw_data_source >> field_hasher >> trash
 
     With the given config below, we will have md5passcode, sha1passcode, sha2passcode and myrecord md5 holding for
-    entire record.
+    entire record.  In versions >= 3.7.0, we'll have sha256passcode instead of sha2passcode, as well as sha512passcode.
     """
     raw_id = '557'
     raw_passcode = 'mysecretcode'
@@ -106,13 +107,35 @@ def test_field_hasher(sdc_builder, sdc_executor):
             'hashType': 'SHA1',
             'targetField': '/sha1passcode',
             'headerAttribute': 'sha1passcode'
-        }, {
-            'sourceFieldsToHash': ['/contact/passcode'],
-            'hashType': 'SHA2',
-            'targetField': '/sha2passcode',
-            'headerAttribute': 'sha2passcode'
         }
     ]
+    # In 3.7.0, SHA2 was renamed to SHA256 (it will be automatically upgraded) and SHA512 was added
+    if Version(sdc_builder.version) < Version('3.7.0'):
+        hash_to_target.append(
+            {
+                'sourceFieldsToHash': ['/contact/passcode'],
+                'hashType': 'SHA2',
+                'targetField': '/sha2passcode',
+                'headerAttribute': 'sha2passcode'
+            }
+        )
+    if Version(sdc_executor.version) >= Version('3.7.0'):
+        hash_to_target.append(
+            {
+                'sourceFieldsToHash': ['/contact/passcode'],
+                'hashType': 'SHA256',
+                'targetField': '/sha256passcode',
+                'headerAttribute': 'sha256passcode'
+            }
+        )
+        hash_to_target.append(
+            {
+                'sourceFieldsToHash': ['/contact/passcode'],
+                'hashType': 'SHA512',
+                'targetField': '/sha512passcode',
+                'headerAttribute': 'sha512passcode'
+            }
+        )
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
@@ -138,7 +161,11 @@ def test_field_hasher(sdc_builder, sdc_executor):
     assert new_header['values']['sha1passcode'] == new_value['sha1passcode']['value']
     assert new_header['values']['myrecord'] == new_value['myrecord']['value']
     assert new_header['values']['md5passcode'] == new_value['md5passcode']['value']
-    assert new_header['values']['sha2passcode'] == new_value['sha2passcode']['value']
+    if Version(sdc_builder.version) < Version('3.7.0'):
+        assert new_header['values']['sha2passcode'] == new_value['sha2passcode']['value']
+    if Version(sdc_executor.version) >= Version('3.7.0'):
+        assert new_header['values']['sha256passcode'] == new_value['sha256passcode']['value']
+        assert new_header['values']['sha512passcode'] == new_value['sha512passcode']['value']
     # assert in place record field being hashed as expected
     id_hash = hashlib.md5()
     id_hash.update(raw_id.encode())
@@ -154,7 +181,15 @@ def test_field_hasher(sdc_builder, sdc_executor):
     # assert new record field has an expected hash of SHA2
     passcode_sha2hash = hashlib.sha256()
     passcode_sha2hash.update(raw_passcode.encode())
-    assert new_value['sha2passcode']['value'] == passcode_sha2hash.hexdigest()
+    if Version(sdc_builder.version) < Version('3.7.0'):
+        assert new_value['sha2passcode']['value'] == passcode_sha2hash.hexdigest()
+    if Version(sdc_executor.version) >= Version('3.7.0'):
+        # assert new record field has an expected hash of SHA256
+        assert new_value['sha256passcode']['value'] == passcode_sha2hash.hexdigest()
+        # assert new record field has an expected hash of SHA512
+        passcode_sha512hash = hashlib.sha512()
+        passcode_sha512hash.update(raw_passcode.encode())
+        assert new_value['sha512passcode']['value'] == passcode_sha512hash.hexdigest()
 
 
 def test_field_masker(sdc_builder, sdc_executor):
