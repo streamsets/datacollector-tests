@@ -230,7 +230,7 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
 
 
 # Test of SDC-10352
-@sdc_min_version('3.7.0')
+@sdc_min_version('3.6.1')
 @salesforce
 def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
     """
