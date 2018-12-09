@@ -16,7 +16,7 @@ import copy
 import logging
 
 import pytest
-from streamsets.testframework.markers import salesforce, sdc_min_version
+from streamsets.testframework.markers import salesforce
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,6 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
 
 
 # Testing of SDC-10475
-@sdc_min_version('3.7.0')
 @salesforce
 def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor, salesforce):
     """
@@ -230,7 +229,6 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
 
 
 # Test of SDC-10352
-@sdc_min_version('3.6.1')
 @salesforce
 def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
     """
