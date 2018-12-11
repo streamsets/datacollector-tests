@@ -26,9 +26,14 @@ PMML_IRIS_MODEL_PATH = '/resources/resources/pmml_iris_model/iris_rf.pmml'
 
 
 @pytest.fixture(scope='module')
-def sdc_common_hook():
+def sdc_common_hook(args):
     def hook(data_collector):
-        data_collector.add_stage_lib(CustomLib('streamsets-datacollector-pmml-lib', '1.5.0-SNAPSHOT'))
+        if not args.custom_stage_lib:
+            pytest.skip('Tensorflow processor tests only run if --custom-stage-lib is passed')
+        stage_lib_version = [lib.split(',')[1] for lib in args.custom_stage_lib if 'pmml' in lib]
+        if len(stage_lib_version) == 0:
+            pytest.skip('Tensorflow processor tests only run if --custom-stage-lib contains pmml')
+        data_collector.add_stage_lib(CustomLib('streamsets-datacollector-pmml-lib', stage_lib_version[0]))
     return hook
 
 
@@ -97,7 +102,7 @@ def test_tensorflow_evaluator(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    # assert TensorFlow Model evaluation Output
+    # Assert PMML Model evaluation Output
     pmml_output = snapshot[pmml_evaluator.instance_name].output
     assert pmml_output[0].value['value']['output']['type'] == 'LIST_MAP'
     outputField = pmml_output[0].value['value']['output']['value']
