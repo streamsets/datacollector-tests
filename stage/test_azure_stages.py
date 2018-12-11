@@ -30,6 +30,9 @@ logger.setLevel(logging.DEBUG)
 # Azure IoT/Event Hub Consumer stage's full name in tests.
 AZURE_IOT_EVENT_HUB_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_eventhubs_EventHubConsumerDSource'
 
+# Another stage label tweak introduced in 3.7.0 (SDC-10651) necessitates the same
+# workaround.
+AZURE_DATA_LAKE_STORAGE_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_datalake_DataLakeDTarget'
 
 @azure('datalake')
 @sdc_min_version('2.2.0.0')
@@ -59,7 +62,7 @@ def test_datalake_destination(sdc_builder, sdc_executor, azure):
     record_deduplicator = builder.add_stage('Record Deduplicator')
     to_error = builder.add_stage('To Error')
 
-    azure_data_lake_store_destination = builder.add_stage('Azure Data Lake Store', type='destination')
+    azure_data_lake_store_destination = builder.add_stage(name=AZURE_DATA_LAKE_STORAGE_STAGE_NAME, type='destination')
     azure_data_lake_store_destination.set_attributes(directory_template=directory_name,
                                                      files_prefix=files_prefix,
                                                      files_suffix=files_suffix)
@@ -126,7 +129,7 @@ def test_datalake_destination_max_records(sdc_builder, sdc_executor, azure):
                                        raw_data=dev_raw_data_source_data,
                                        stop_after_first_batch=True)
 
-    azure_data_lake_store = pipeline_builder.add_stage('Azure Data Lake Store', type='destination')
+    azure_data_lake_store = pipeline_builder.add_stage(name=AZURE_DATA_LAKE_STORAGE_STAGE_NAME, type='destination')
     azure_data_lake_store.set_attributes(directory_template=directory_name,
                                          files_prefix=files_prefix,
                                          files_suffix=files_suffix,
