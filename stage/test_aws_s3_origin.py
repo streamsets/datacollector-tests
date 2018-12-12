@@ -32,6 +32,86 @@ MULTITHREADED = 5
 DEFAULT_NUMBER_OF_RECORDS = 5
 
 
+# Keep this tests as first in the file since it will cause problems due a non-read s3 objects
+@aws('s3')
+def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
+    """Basic setup for amazon S3Origin tests. It receives different variables indicating the read order, data format...
+    In order to parametrize all this configuration properties and make tests simpler.
+    The pipeline looks like:
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/get_random_string(string.ascii_letters, 10)/sdc'
+
+    field_val_1 = get_random_string(string.ascii_letters, 10)
+    field_val_2 = get_random_string(string.ascii_letters, 10)
+    json_str = '{"f1":"' + field_val_1 + '", "f2":"' + field_val_2 + '"}'
+
+    s3_obj_count = 50
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format=DEFAULT_DATA_FORMAT,
+                             prefix_pattern=f'{s3_key}*', number_of_threads=5, read_order=DEFAULT_READ_ORDER)
+
+    trash = builder.add_stage('Trash')
+
+    s3_origin >> trash
+
+    s3_origin_pipeline = builder.build(title='Amazon S3 origin multithreaded pipeline').configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        for i in range(s3_obj_count):
+            client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}{i}', Body=json_str)
+
+        input_records = 0
+        output_records = 0
+
+        # In case of multithreaded pipeline we want to verify the amount of records.
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        time.sleep(2)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        time.sleep(5)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        time.sleep(20)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        assert output_records == s3_obj_count
+        assert input_records == s3_obj_count
+
+    finally:
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
+
 @aws('s3')
 @pytest.mark.parametrize('data_format', ['JSON', 'WHOLE_FILE', 'TEXT'])
 def test_s3_origin_data_formats(sdc_builder, sdc_executor, aws, data_format):
@@ -186,85 +266,6 @@ def test_s3_origin_empty_bucket(sdc_builder, sdc_executor, aws):
     history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
     assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == s3_obj_count
     assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == s3_obj_count
-
-
-@aws('s3')
-def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
-    """Basic setup for amazon S3Origin tests. It receives different variables indicating the read order, data format...
-    In order to parametrize all this configuration properties and make tests simpler.
-    The pipeline looks like:
-
-    S3 Origin pipeline:
-        s3_origin >> trash
-    """
-    s3_key = f'{S3_SANDBOX_PREFIX}/get_random_string(string.ascii_letters, 10)/sdc'
-
-    field_val_1 = get_random_string(string.ascii_letters, 10)
-    field_val_2 = get_random_string(string.ascii_letters, 10)
-    json_str = '{"f1":"' + field_val_1 + '", "f2":"' + field_val_2 + '"}'
-
-    s3_obj_count = 50
-
-    # Build pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    builder.add_error_stage('Discard')
-
-    s3_origin = builder.add_stage('Amazon S3', type='origin')
-
-    s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format=DEFAULT_DATA_FORMAT,
-                             prefix_pattern=f'{s3_key}*', number_of_threads=5, read_order=DEFAULT_READ_ORDER)
-
-    trash = builder.add_stage('Trash')
-
-    s3_origin >> trash
-
-    s3_origin_pipeline = builder.build(title='Amazon S3 origin multithreaded pipeline').configure_for_environment(aws)
-    s3_origin_pipeline.configuration['shouldRetry'] = False
-    sdc_executor.add_pipeline(s3_origin_pipeline)
-
-    client = aws.s3
-    try:
-        # Insert objects into S3.
-        for i in range(s3_obj_count):
-            client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}{i}', Body=json_str)
-
-        input_records = 0
-        output_records = 0
-
-        # In case of multithreaded pipeline we want to verify the amount of records.
-        sdc_executor.start_pipeline(s3_origin_pipeline)
-        time.sleep(2)
-        sdc_executor.stop_pipeline(s3_origin_pipeline)
-
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
-        sdc_executor.start_pipeline(s3_origin_pipeline)
-        time.sleep(5)
-        sdc_executor.stop_pipeline(s3_origin_pipeline)
-
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
-        sdc_executor.start_pipeline(s3_origin_pipeline)
-        time.sleep(20)
-        sdc_executor.stop_pipeline(s3_origin_pipeline)
-
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
-        assert output_records == s3_obj_count
-        assert input_records == s3_obj_count
-
-    finally:
-        # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
 
 @aws('s3')
