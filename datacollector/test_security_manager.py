@@ -27,7 +27,7 @@ logger.setLevel(logging.DEBUG)
 
 
 @pytest.mark.parametrize('dir_name', ('dataDir', 'configDir'))
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_protect_read(dir_name, sdc_builder, sdc_executor):
     """Ensure that pipeline can't read from SDC internal directory."""
     input_dir = sdc_executor.api_client.get_sdc_directories()[dir_name]
@@ -53,7 +53,7 @@ def test_protect_read(dir_name, sdc_builder, sdc_executor):
 
 
 @pytest.mark.parametrize('dir_name', ('dataDir', 'configDir', 'resourcesDir'))
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_protect_write(dir_name, sdc_builder, sdc_executor):
     """Ensure that pipeline can't write into SDC internal directory."""
     output_dir = sdc_executor.api_client.get_sdc_directories()[dir_name]
@@ -77,4 +77,43 @@ def test_protect_write(dir_name, sdc_builder, sdc_executor):
     status = sdc_executor.get_pipeline_status(pipeline).response.json()
     assert 'java.lang.SecurityException' in status['message']
     assert 'is not allowed access to Data Collector internal directories' in status['message']
+
+
+@sdc_min_version('3.7.0')
+def test_access_to_ldap_conf(sdc_builder, sdc_executor):
+    """Read ldap-login.conf file that is whitelisted by default"""
+    ldap_login = sdc_executor.api_client.get_sdc_directories()['configDir'] + "/ldap-login.conf"
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='TEXT', raw_data='nothing important', stop_after_first_batch=True)
+
+    jython = builder.add_stage('Jython Evaluator')
+    jython.script = f"""# Script
+for record in records:
+  lines = []
+  file = open("{ldap_login}", "r")
+  for line in file:
+    lines.append(line)
+
+  record.value['lines'] = lines
+
+  output.write(record)
+    """
+
+    trash = builder.add_stage('Trash')
+
+    source >> jython >> trash
+
+    pipeline = builder.build(f'Reading ldap-login.conf')
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    # Generate snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert len(snapshot[jython].output) == 1
+
+    # There should be field lines that is an array of 2+ entries (each row)
+    record = snapshot[jython].output[0]
+    assert len(record.value2['lines']) > 2
 
