@@ -193,7 +193,6 @@ def get_dev_raw_data_source(pipeline_builder, raw_data):
                                        raw_data='\n'.join(raw_data))
     return dev_raw_data_source
 
-
 def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesforce, data_to_insert=DATA_TO_INSERT):
     client = salesforce.client
     try:
@@ -302,7 +301,12 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
     # Testing of SDC-7548
     DATA_WITH_FROM_IN_EMAIL
 ])
-def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data):
+@pytest.mark.parametrize(('query_with_time'), [
+    # Testing of SDC-10207
+    True,
+    False
+])
+def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data, query_with_time):
     """Simple Salesforce Lookup processor test.
     Pipeline will enrich records with the 'LastName' of contacts by adding a field as 'surName'.
 
@@ -317,6 +321,14 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data
     # Changing " with ' and vice versa in following string makes the query execution fail.
     query_str = ("SELECT Id, FirstName, LastName FROM Contact "
                  "WHERE Email = '${record:value(\"/Email\")}'")
+
+    if query_with_time:
+        # Testing of SDC-10207 - select records that changed before an hour from now -
+        # i.e. all of them! We're just checking here that the time functions are supported
+        query_str += (" AND LastModifiedDate < ${time:extractStringFromDate("
+                      "     time:millisecondsToDateTime(time:dateTimeToMilliseconds("
+                      "         time:now()) + 3600000), \"yyyy-MM-dd'T'HH:mm:ss.SSSXXX\")}")
+
     field_mappings = [dict(dataType='USE_SALESFORCE_TYPE',
                            salesforceField='LastName',
                            sdcField='/surName')]
