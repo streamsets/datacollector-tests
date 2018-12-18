@@ -495,6 +495,32 @@ def test_field_renamer(sdc_builder, sdc_executor):
         assert key not in new_value and key.strip(strip_word) in new_value
 
 
+@sdc_min_version('3.7.0')
+def test_field_renamer_uppercasing(sdc_builder, sdc_executor):
+    """Test uppercasing of all fields - a common action done with the renamer."""
+    raw_dict = dict(first_key='IPO', second_key='StreamSets')
+    raw_data = json.dumps(raw_dict)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    field_renamer = pipeline_builder.add_stage('Field Renamer')
+    field_renamer.fields_to_rename = [{'fromFieldExpression':'/(.*)',
+                                       'toFieldExpression': '/${str:toUpper("$1")}'}]
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_renamer >> trash
+    pipeline = pipeline_builder.build('Field Renamer pipeline: Upper casing of fields')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    record = snapshot[field_renamer.instance_name].output[0]
+    assert record.value2['FIRST_KEY'] == "IPO"
+    assert record.value2['SECOND_KEY'] == "StreamSets"
+
+
 @sdc_min_version('3.1.0.0')
 def test_field_replacer(sdc_builder, sdc_executor):
     """Test field replacer processor. The pipeline would look like:
