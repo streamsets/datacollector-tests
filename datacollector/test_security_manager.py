@@ -13,17 +13,18 @@
 # limitations under the License.
 
 import logging
-import os
 import pytest
-import random
-import string
-import tempfile
-import time
 
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+
+
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
+    return hook
 
 
 @pytest.mark.parametrize('dir_name', ('dataDir', 'configDir'))
