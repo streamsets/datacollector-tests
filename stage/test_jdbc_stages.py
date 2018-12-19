@@ -492,6 +492,45 @@ def test_jdbc_producer_insert(sdc_builder, sdc_executor, database):
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+@database
+def test_jdbc_producer_coerced_insert(sdc_builder, sdc_executor, database):
+    """Extension of the Simple JDBC Producer test with INSERT operation.
+    The pipeline inserts records into the database.
+     In one record, data is represented as type String, where column is type Integer.
+     This should be passed to the database to coerce.
+     Verify that correct data is in the database.
+
+     Please note the use of local COERCE_ROWS_IN_DATABASE to insert
+     and global ROWS_IN_DATABASE to verify.
+
+     COERCE_ has id (integer) set to string.
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = create_table_in_database(table_name, database)
+
+    COERCE_ROWS_IN_DATABASE = [
+        {'id': '1', 'name': 'Dima'},
+        {'id': '2', 'name': 'Jarcec'},
+        {'id': '3', 'name': 'Arvind'}
+    ]
+
+    DATA = '\n'.join(json.dumps(rec) for rec in COERCE_ROWS_IN_DATABASE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    pipeline = create_jdbc_producer_pipeline(pipeline_builder, 'JDBC Producer Insert', DATA, table_name, 'INSERT')
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_IN_DATABASE))
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1]) # order by id
+        result.close()
+        assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
 
 @database
 def test_jdbc_producer_delete(sdc_builder, sdc_executor, database):
