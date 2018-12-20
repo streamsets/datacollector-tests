@@ -610,7 +610,7 @@ def test_directory_origin_custom_csv_empty_line_file(sdc_builder, sdc_executor, 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
-                             ignore_empty_line = ignore_empty_line,
+                             ignore_empty_lines = ignore_empty_line,
                              file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE',
                              files_directory=tmp_directory,
@@ -922,7 +922,7 @@ def setup_dilimited_with_empty_line_file(sdc_executor, tmp_directory):
     """
     csv_records = [
         "a,b",
-        " ",
+        "",
         "c,d"
     ]
 
