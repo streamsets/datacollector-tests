@@ -938,9 +938,9 @@ def setup_dilimited_file(sdc_executor, tmp_directory, csv_records):
     raw_data = "\n".join(csv_records)
     pipeline_builder = sdc_executor.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='DELIMITED', raw_data=raw_data, stop_after_first_batch=True)
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
     local_fs = pipeline_builder.add_stage('Local FS', type='destination')
-    local_fs.set_attributes(data_format='DELIMITED',
+    local_fs.set_attributes(data_format='TEXT',
                             directory_template=tmp_directory,
                             files_prefix='sdc-${sdc:id()}', files_suffix='csv')
 
