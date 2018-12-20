@@ -513,10 +513,11 @@ def test_directory_origin_csv_produce_less_file(sdc_builder, sdc_executor, csv_r
 
     csv_record_fields = csv_records[0].split(',')
     for j in range(0, len(csv_record_fields)):
-        if type(output_records[0].get_field_data(f'/{j}')) is dict:
-           output_records[0].get_field_data(f'/{j}').get('value') == csv_record_fields[j]
+        name = csv_record_fields[j] if header_line == 'WITH_HEADER' and csv_record_type == 'LIST_MAP' else j
+        if type(output_records[0].get_field_data(f'/{name}')) is dict:
+           output_records[0].get_field_data(f'/{name}').get('value') == csv_record_fields[j]
         else:
-            output_records[0].get_field_data(f'/{j}') == csv_record_fields[j]
+            output_records[0].get_field_data(f'/{name}') == csv_record_fields[j]
 
 
 @sdc_min_version('3.0.0.0')
