@@ -192,12 +192,22 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
 
 def create_table_in_database(table_name, database):
     metadata = sqlalchemy.MetaData()
-    table = sqlalchemy.Table(
-        table_name,
-        metadata,
-        sqlalchemy.Column('name', sqlalchemy.String(32)),
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)
-    )
+
+    if type(database) == SQLServerDatabase:
+        table = sqlalchemy.Table(
+            table_name,
+            metadata,
+            sqlalchemy.Column('name', sqlalchemy.String(32)),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, autoincrement=False)
+        )
+    else:
+        table = sqlalchemy.Table(
+            table_name,
+            metadata,
+            sqlalchemy.Column('name', sqlalchemy.String(32)),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)
+        )
+
     logger.info('Creating table %s in %s database ...', table_name, database.type)
     table.create(database.engine)
     return table
@@ -359,7 +369,10 @@ def test_jdbc_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_m
         logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
         connection = database.engine.connect()
         # Passing only names to get the correct sequence numbers esp. PostgreSQL
-        connection.execute(table.insert(), [{'name': row['name']} for row in ROWS_IN_DATABASE])
+        if type(database) == SQLServerDatabase:
+            connection.execute(table.insert(), [{'id': row['id'], 'name': row['name']} for row in ROWS_IN_DATABASE])
+        else:
+            connection.execute(table.insert(), [{'name': row['name']} for row in ROWS_IN_DATABASE])
 
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
                                                  start_pipeline=True).snapshot
@@ -413,10 +426,6 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
-
-    # SQL Server does not allow insert on identity column, 'id'
-    if type(database) == SQLServerDatabase:
-        query_str = f"INSERT INTO {table_name} (name) VALUES ('${{record:value('/name')}}')"
 
     jdbc_query_executor.set_attributes(sql_query=query_str)
 
