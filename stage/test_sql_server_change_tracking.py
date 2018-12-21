@@ -44,6 +44,7 @@ def test_sql_server_change_tracking_no_more_data(sdc_builder, sdc_executor, data
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     sql_server_change_tracking = pipeline_builder.add_stage('SQL Server Change Tracking Client')
+    sql_server_change_tracking.set_attributes(table_configs=[{'initialOffset': 0, 'schema': 'dbo', 'tablePattern': f'{table_name}'}])
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -65,17 +66,18 @@ def test_sql_server_change_tracking_no_more_data(sdc_builder, sdc_executor, data
         logger.info('Adding %s rows into %s...', len(rows_in_database), table_name)
         connection.execute(table.insert(), rows_in_database)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=10).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        output_records = [record.value['value']
-                          for record in snapshot[sql_server_change_tracking].output]
+        # assert all the data captured have the same raw_data
+        output_records = snapshot[sql_server_change_tracking.instance_name].output
 
-        output_values = [data.value for data in output_records[0]]
+        assert 3 == len(output_records)
 
-        assert sorted(rows_in_database) == sorted(output_values)
-
+        for i in range(0, 3):
+            assert output_records[i].get_field_data('/id') == rows_in_database[i].get('id')
+            assert output_records[i].get_field_data('/name') == rows_in_database[i].get('name')
+            assert output_records[i].get_field_data('/dt') == rows_in_database[i].get('dt')
     finally:
         logger.info('Dropping table %s...', table_name)
         table.drop(database.engine)
