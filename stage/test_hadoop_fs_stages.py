@@ -250,6 +250,52 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
 
 
+@cluster('cdh', 'hdp')
+@pytest.mark.parametrize('filename', ['file.txt', '_tmp_file.txt', '.tmp_file.txt'])
+def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filename):
+    """Write a simple file into a Hadoop FS folder with a randomly-generated name and confirm that the Hadoop FS origin
+    successfully reads it. Specifically, this would look like:
+    Hadoop FS pipeline:
+        hadoop_fs_origin >> trash
+    """
+    hadoop_fs_folder = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+
+    # Build the Hadoop FS pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
+    hadoop_fs.set_attributes(data_format='WHOLE_FILE', files_directory=hadoop_fs_folder, file_name_pattern='*')
+
+    trash = builder.add_stage(label='Trash')
+
+    hadoop_fs >> trash
+    hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
+    hadoop_fs_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(hadoop_fs_pipeline)
+
+    try:
+        lines_in_file = ['hello', 'hi', 'how are you?']
+
+        logger.debug('Writing file %s/file.txt to Hadoop FS ...', hadoop_fs_folder)
+        cluster.hdfs.client.makedirs(hadoop_fs_folder)
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, filename), data='\n'.join(lines_in_file))
+
+        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(hadoop_fs_pipeline, start_pipeline=True, wait=False)
+
+        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        sdc_executor.stop_pipeline(hadoop_fs_pipeline, force=True)
+
+        lines_from_snapshot = [record.field['fileInfo']['file']
+                               for record in snapshot[hadoop_fs_pipeline[0].instance_name].output]
+
+        assert lines_from_snapshot[0] == f"{hadoop_fs_folder}/{filename}"
+    finally:
+        cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
+
+
 def _check_pipeline_status(pipeline, sdc_executor, is_pipeline_stopped):
     """Make sure the pipeline has not entered any of the unsuccessful states.
     While pipeline is running, pipeline needs to have exactly one entry for status of 'RUNNING'.
