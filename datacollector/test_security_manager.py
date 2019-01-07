@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
+        data_collector.sdc_properties['security_manager.sdc_manager.enable'] = 'true'
     return hook
 
 
