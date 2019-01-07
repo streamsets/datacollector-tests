@@ -16,6 +16,8 @@ import logging
 import os
 import string
 import tempfile
+from datetime import datetime
+from decimal import Decimal
 
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -122,28 +124,15 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
     assert len(snapshot.snapshot_batches[0][directory.instance_name].output) == 1
     record = snapshot.snapshot_batches[0][directory.instance_name].output[0]
 
-    # Assert proper types
-    assert 'STRING' == record.value['value']['str']['type']
-    assert 'INTEGER' == record.value['value']['int']['type']
-    assert 'BOOLEAN' == record.value['value']['boolean']['type']
-    assert 'DECIMAL' == record.value['value']['decimal']['type']
-    assert 'DATE' == record.value['value']['date']['type']
-    assert 'TIME' == record.value['value']['time']['type']
-    assert 'DATETIME' == record.value['value']['datetime']['type']
-    assert 'LIST' == record.value['value']['list']['type']
-    assert 'STRING' == record.value['value']['list']['value'][0]['type']
-    assert 'MAP' == record.value['value']['map']['type']
-    assert 'STRING' == record.value['value']['map']['value']['first-key']['type']
-
-    # Assert proper values
-    assert 'str' == record.value['value']['str']['value']
-    assert '10' == record.value['value']['int']['value']
-    assert record.value['value']['boolean']['value'] is True
-    assert '10.50' == record.value['value']['decimal']['value']
-    assert 1483228800000 == record.value['value']['date']['value']
-    assert 36548000 == record.value['value']['time']['value']
-    assert 1483265348000 == record.value['value']['datetime']['value']
-    assert 'a' == record.value['value']['list']['value'][0]['value']
-    assert 'b' == record.value['value']['list']['value'][1]['value']
-    assert 'value' == record.value['value']['map']['value']['first-key']['value']
-    assert 'secret value' == record.value['value']['map']['value']['second-key']['value']
+    # Assert proper values & types
+    assert 'str' == record.value2['str']
+    assert 10 == record.value2['int']
+    assert record.value2['boolean'] is True
+    assert Decimal('10.50') == record.value2['decimal']
+    assert datetime(2017, 1, 1, 8, 0) == record.value2['date']
+    assert datetime(1970, 1, 1, 18, 9, 8) == record.value2['time']
+    assert datetime(2017, 1, 1, 18, 9, 8) == record.value2['datetime']
+    assert 'a' == record.value2['list'][0]
+    assert 'b' == record.value2['list'][1]
+    assert 'value' == record.value2['map']['first-key']
+    assert 'secret value' == record.value2['map']['second-key']
