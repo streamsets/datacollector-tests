@@ -229,7 +229,11 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
 
 # Test of SDC-10352
 @salesforce
-def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
     """
     Create data using Salesforce client
     and then check if Salesforce origin receives them using snapshot.
@@ -245,8 +249,12 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     # Changing " with ' and vice versa in following string makes the query execution fail.
-    salesforce_origin.set_attributes(soql_query=query, subscribe_for_notifications=False, repeat_query='INCREMENTAL',
-                                     query_interval='${24 * HOURS}', initial_offset='2018-10-16T00:00:00.000Z',
+    salesforce_origin.set_attributes(soql_query=query,
+                                     use_bulk_api=(api == 'bulk'),
+                                     subscribe_for_notifications=False,
+                                     repeat_query='INCREMENTAL',
+                                     query_interval='${24 * HOURS}',
+                                     initial_offset='2018-10-16T00:00:00.000Z',
                                      offset_field='SystemModstamp')
 
     trash = pipeline_builder.add_stage('Trash')
@@ -261,7 +269,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
         client.bulk.Contact.insert(DATA_TO_INSERT)
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=60).snapshot
 
         rows_from_snapshot = [record.value['value']
                               for record in snapshot[salesforce_origin].output]
@@ -270,7 +278,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
                               for rec in item if rec['sqpath'] == '/Id'])
                         for item in rows_from_snapshot]
 
-        # Verify correct rows are received using snaphot.
+        # Verify correct rows are received using snapshot.
         data_from_snapshot = [dict([(rec['sqpath'].strip('/'), rec['value'])
                                     for rec in item if rec['sqpath'] != '/Id' and rec['sqpath'] != '/SystemModstamp'])
                               for item in rows_from_snapshot]
@@ -279,9 +287,13 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
 
         assert data_from_snapshot == DATA_TO_INSERT
 
+        # SDC-10773 - source IDs must be unique
+        source_ids = {contact.header['sourceId'] for contact in snapshot[salesforce_origin].output}
+        assert len(source_ids) == len(snapshot[salesforce_origin].output)
+
         sdc_executor.stop_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=60).snapshot
         rows_from_snapshot = [record.value['value']
                               for record in snapshot[salesforce_origin].output]
 
