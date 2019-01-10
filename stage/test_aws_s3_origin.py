@@ -32,7 +32,6 @@ MULTITHREADED = 5
 DEFAULT_NUMBER_OF_RECORDS = 5
 
 
-# Keep this tests as first in the file since it will cause problems due a non-read s3 objects
 @aws('s3')
 def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     """Basic setup for amazon S3Origin tests. It receives different variables indicating the read order, data format...
@@ -42,7 +41,7 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     S3 Origin pipeline:
         s3_origin >> trash
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/get_random_string(string.ascii_letters, 10)/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
 
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
@@ -150,7 +149,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         s3_origin >> trash
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/get_random_string(string.ascii_letters, 10)/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
 
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
@@ -238,7 +237,7 @@ def test_s3_origin_empty_bucket(sdc_builder, sdc_executor, aws):
         s3_origin >> trash
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/get_random_string(string.ascii_letters, 10)/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
     s3_obj_count = 0
 
     # Build pipeline.
@@ -276,7 +275,7 @@ def test_invalid_configs_same_bucket_same_prefix(sdc_builder, sdc_executor, aws)
     S3 Origin pipeline:
         s3_origin >> trash
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/get_random_string(string.ascii_letters, 10)/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
     prefix = 'myprefix'
 
     # Build pipeline.
@@ -320,7 +319,7 @@ def test_invalid_configs_diff_bucket_same_prefix(sdc_builder, sdc_executor, aws)
     S3 Origin pipeline:
         s3_origin >> trash
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/get_random_string(string.ascii_letters, 10)/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
     prefix = 'myprefix'
 
     # Build pipeline.
