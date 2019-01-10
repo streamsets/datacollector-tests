@@ -214,7 +214,7 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     # getting an empty batch in the snapshot.
     sdc_rpc_origin.batch_wait_time_in_secs = 300
 
-    trash = builder.add_stage(label='Trash')
+    trash = builder.add_stage('Trash')
 
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Snapshot pipeline')
@@ -268,7 +268,7 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
     hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
     hadoop_fs.set_attributes(data_format='WHOLE_FILE', files_directory=hadoop_fs_folder, file_name_pattern='*')
 
-    trash = builder.add_stage(label='Trash')
+    trash = builder.add_stage('Trash')
 
     hadoop_fs >> trash
     hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
@@ -293,6 +293,76 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
                                for record in snapshot[hadoop_fs_pipeline[0].instance_name].output]
 
         assert lines_from_snapshot[0] == f"{hadoop_fs_folder}/{filename}"
+    finally:
+        cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
+
+
+# Test developed to avoid multi-threading issues causing duplicated parsing of records, raised in SDC-10704
+@cluster('cdh', 'hdp')
+def test_hadoop_fs_origin_standalone_multi_thread(sdc_builder, sdc_executor, cluster):
+    """
+    - Write multiple files into a Hadoop FS folder with a randomly-generated name
+    - Add a field renamer to add some delay
+    - Confirm that the Hadoop FS origin successfully reads it only once
+    Specifically, this would look like: Hadoop FS pipeline: hadoop_fs_origin >> trash
+    """
+    hadoop_fs_folder = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+    hadoop_fs_filename = '_tmp_file.txt'
+    hdfs_lines_per_file = 5500
+    hdfs_files_count = 100
+    hdfs_number_of_threads = 3
+
+    # Build the Hadoop FS pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
+    hadoop_fs.set_attributes(data_format='DELIMITED', files_directory=hadoop_fs_folder,
+                             file_name_pattern='*', number_of_threads=hdfs_number_of_threads)
+
+    field_renamer = builder.add_stage('Field Renamer')
+    field_renamer.fields_to_rename = [{'fromFieldExpression': '/(.*)',
+                                       'toFieldExpression': '/field$1'}]
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    hadoop_fs >> field_renamer >> trash
+    hadoop_fs >= pipeline_finished_executor
+
+    hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline multithread').configure_for_environment(cluster)
+    hadoop_fs_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(hadoop_fs_pipeline)
+
+    try:
+        file_line = (
+            'CEEE11949C17DF1A1A742EDB90FA8C59,C361A55D95993FB3E20BB25E0A0FBC78,VTS,CRD,12,0.5,0.5,2.5,0,15.5,1,'
+            '2013-01-13 02:07:00,2013-01-13 02:16:00,5,540,3.63,-73.982124,40.731152,-73.954063,'
+            '40.77449,5222071822065944')
+        file_lines = [file_line for _ in range(hdfs_lines_per_file)]
+
+        cluster.hdfs.client.makedirs(hadoop_fs_folder)
+
+        logger.debug('Writing files in %s', hadoop_fs_folder)
+        for i in range(hdfs_files_count):
+            cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, f'{i}{hadoop_fs_filename}'),
+                                      data='\n'.join(file_lines))
+
+        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
+
+        # We want to verify the amount of records
+        sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished(timeout_sec=180)
+
+        history = sdc_executor.get_pipeline_history(hadoop_fs_pipeline)
+
+        input_records_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        output_records_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        assert input_records_count == hdfs_lines_per_file * hdfs_files_count
+        assert output_records_count == hdfs_lines_per_file * hdfs_files_count + hdfs_number_of_threads
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
 
