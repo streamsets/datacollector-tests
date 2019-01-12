@@ -20,9 +20,9 @@ from streamsets.testframework.markers import salesforce
 
 logger = logging.getLogger(__name__)
 
-DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName': 'User1', 'Email': 'xtest1@example.com'},
-                  {'FirstName': 'Test2', 'LastName': 'User2', 'Email': 'xtest2@example.com'},
-                  {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtest3@example.com'}]
+DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName': 'User1', 'Email': 'xtest1@example.com', 'LeadSource': 'Advertisement'},
+                  {'FirstName': 'Test2', 'LastName': 'User2', 'Email': 'xtest2@example.com', 'LeadSource': 'Partner'},
+                  {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtest3@example.com', 'LeadSource': 'Web'}]
 # For testing of SDC-7548
 # Since email is used in WHERE clause in lookup processory query,
 # create data containing 'from' word in emails to verify the bug is fixed.
@@ -435,4 +435,225 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
         if account_ids:
             client.bulk.Account.delete(account_ids)
         if contact_ids:
+            client.bulk.Contact.delete(contact_ids)
+
+
+# Test SDC-10694
+@salesforce
+def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce):
+    """
+    Create data using Salesforce client
+    and then check if Salesforce origin retrieves correct aggregate data using snapshot.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    query = "SELECT COUNT() FROM Contact"
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    salesforce_origin.set_attributes(soql_query=query,
+                                     use_bulk_api=False,
+                                     subscribe_for_notifications=False,
+                                     disable_query_validation=True)
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    pipeline = pipeline_builder.build(title='Salesforce Origin Aggregate Count').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        result = client.bulk.Contact.insert(DATA_TO_INSERT)
+        contact_ids = [{'Id': item['id']}
+                       for item in result]
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # There should be a single row with a count field
+        assert len(snapshot[salesforce_origin].output) == 1
+        assert snapshot[salesforce_origin].output[0].get_field_data('/count') == 3
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        if contact_ids:
+            logger.info('Deleting records ...')
+            client.bulk.Contact.delete(contact_ids)
+
+
+@salesforce
+def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
+    """
+    Create data using Salesforce client
+    and then check if Salesforce origin retrieves correct aggregate data using snapshot.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    query = ("SELECT COUNT(Id), "
+             "MAX(NumberOfEmployees), "
+             "MIN(Industry), "
+             "SUM(AnnualRevenue) "
+             "FROM Account")
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    salesforce_origin.set_attributes(soql_query=query,
+                                     use_bulk_api=False,
+                                     subscribe_for_notifications=False,
+                                     disable_query_validation=True)
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    pipeline = pipeline_builder.build(title='Salesforce Origin Aggregate').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        data_to_insert = [{'Name': 'Test1',
+                           'NumberOfEmployees': 1,
+                           'Industry': 'Agriculture',
+                           'AnnualRevenue': 123},
+                          {'Name': 'Test2',
+                           'NumberOfEmployees': 2,
+                           'Industry': 'Finance',
+                           'AnnualRevenue': 456},
+                          {'Name': 'Test3',
+                           'NumberOfEmployees': 3,
+                           'Industry': 'Utilities',
+                           'AnnualRevenue': 789}]
+        result = client.bulk.Account.insert(data_to_insert)
+        account_ids = [{'Id': item['id']}
+                       for item in result]
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # There should be a single row with a count field
+        assert len(snapshot[salesforce_origin].output) == 1
+        assert snapshot[salesforce_origin].output[0].get_field_data('/expr0') == 3
+        assert snapshot[salesforce_origin].output[0].get_field_data('/expr1') == 3
+        assert snapshot[salesforce_origin].output[0].get_field_data('/expr2') == 'Agriculture'
+        assert snapshot[salesforce_origin].output[0].get_field_data('/expr3') == 1368
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        if account_ids:
+            logger.info('Deleting records ...')
+            client.bulk.Account.delete(account_ids)
+
+
+@salesforce
+def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce):
+    """Simple Salesforce Lookup processor test.
+    Pipeline will enrich records with the number of contacts whose FirstName
+    matches the /prefix field, adding the value as a string in the /count field
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_lookup >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    lookup_data = ['prefix', 'Test']
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
+
+    salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
+    # Changing " with ' and vice versa in following string makes the query execution fail.
+    query_str = ("SELECT COUNT() FROM Contact "
+                 "WHERE FirstName LIKE '${record:value(\"/prefix\")}%'")
+
+    salesforce_lookup.set_attributes(soql_query=query_str)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> salesforce_lookup >> trash
+    pipeline = pipeline_builder.build(title='Salesforce Lookup Aggregate').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        result = client.bulk.Contact.insert(DATA_TO_INSERT)
+        contact_ids = [{'Id': item['id']}
+                       for item in result]
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # There should be a single row with a /count field containing an integer
+        assert len(snapshot[salesforce_lookup].output) == 1
+        assert snapshot[salesforce_lookup].output[0].get_field_data('/count') == 3
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        if contact_ids:
+            logger.info('Deleting records ...')
+            client.bulk.Contact.delete(contact_ids)
+
+
+@salesforce
+def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
+    """Simple Salesforce Lookup processor test.
+    Pipeline will enrich records with the number of contacts whose FirstName
+    matches the /prefix field, adding the value as a string in the /count field
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_lookup >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    lookup_data = ['prefix', 'Test']
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
+
+    salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
+    # Changing " with ' and vice versa in following string makes the query execution fail.
+    query_str = ("SELECT COUNT(Id), MIN(LeadSource), MAX(LeadSource) FROM Contact "
+                 "WHERE FirstName LIKE '${record:value(\"/prefix\")}%'")
+
+    field_mappings = [dict(dataType='STRING',
+                           salesforceField='expr0',
+                           sdcField='/count')]
+    salesforce_lookup.set_attributes(soql_query=query_str,
+                                     field_mappings=field_mappings)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> salesforce_lookup >> trash
+    pipeline = pipeline_builder.build(title='Salesforce Lookup Aggregate').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    try:
+        contact_ids = []
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        result = client.bulk.Contact.insert(DATA_TO_INSERT)
+        contact_ids = [{'Id': item['id']}
+                       for item in result]
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # There should be a single row with a /count field containing three strings
+        assert len(snapshot[salesforce_lookup].output) == 1
+        assert snapshot[salesforce_lookup].output[0].get_field_data('/count') == '3'
+        assert snapshot[salesforce_lookup].output[0].get_field_data('/expr1') == 'Advertisement'
+        assert snapshot[salesforce_lookup].output[0].get_field_data('/expr2') == 'Web'
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        if contact_ids:
+            logger.info('Deleting records ...')
             client.bulk.Contact.delete(contact_ids)
