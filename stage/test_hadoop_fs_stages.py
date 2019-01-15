@@ -17,10 +17,8 @@ import os
 import sched
 import string
 import time
-from uuid import uuid4
 
 import pytest
-
 from streamsets.testframework.markers import cluster, large, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -42,9 +40,10 @@ CURRENT_TIME = time.time()
 
 PRODUCT_DATA = [
     {'name': 'iphone', 'price': 649.99, 'release': CURRENT_TIME},
-    {'name': 'pixel',  'price': 649.89, 'release': CURRENT_TIME - 60 * 5}, # -5 minutes
-    {'name': 'galaxy', 'price': 549.89, 'release': CURRENT_TIME - 60 * 10} # -10 minutes
+    {'name': 'pixel', 'price': 649.89, 'release': CURRENT_TIME - 60 * 5},  # -5 minutes
+    {'name': 'galaxy', 'price': 549.89, 'release': CURRENT_TIME - 60 * 10}  # -10 minutes
 ]
+
 
 def create_hadoop_fs_dest_pipeline(pipeline_builder, pipeline_title, hdfs_directory, hadoop_fs):
     """Helper function to create and return a pipeline with Hadoop FS destination
@@ -295,6 +294,79 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
         assert lines_from_snapshot[0] == f"{hadoop_fs_folder}/{filename}"
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
+
+
+@sdc_min_version('3.8.0')
+@cluster('cdh', 'hdp')
+def test_hadoop_fs_origin_standalone_glob_pattern(sdc_builder, sdc_executor, cluster):
+    """Write two file into two different paths sharing a base root and try to read them using glob pattern.
+     Specifically, this would look like:
+     Hadoop FS pipeline:
+        hadoop_fs_origin >> hadoop_fs_destination
+    """
+    DATA = [
+        {'first_name': 'Alex', 'last_name': 'Sanchez'},
+        {'first_name': 'Danilo', 'last_name': 'Viana'},
+        {'first_name': 'Dima', 'last_name': 'Spivak'}
+    ]
+
+    random_string = get_random_string(string.ascii_letters, 10)
+    hadoop_fs_folder_base = f'/tmp/{random_string}'
+
+    # Build the Hadoop FS pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    hadoop_fs_origin = builder.add_stage('Hadoop FS Standalone', type='origin')
+    hadoop_fs_origin.set_attributes(data_format='JSON', files_directory=f'{hadoop_fs_folder_base}/*/*',
+                                    file_name_pattern='*', read_order='TIMESTAMP')
+
+    hadoop_fs_destination = builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs_destination.set_attributes(data_format='JSON',
+                                         directory_template=f'/tmp/out/{random_string}')
+
+    hadoop_fs_origin >> hadoop_fs_destination
+    hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
+    hadoop_fs_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(hadoop_fs_pipeline)
+
+    try:
+        danilo = f'{{"first_name": "Danilo", "last_name": "Viana"}}'
+        danilo_file = 'danilo.json'
+        alex = f'{{"first_name": "Alex", "last_name": "Sanchez"}}'
+        alex_file = 'alex.json'
+        dima = f'{{"first_name": "Dima", "last_name": "Spivak"}}'
+        dima_file = 'dima.json'
+
+        logger.debug('Writing to directory %s ...', hadoop_fs_folder_base)
+        cluster.hdfs.client.makedirs(hadoop_fs_folder_base)
+        cluster.hdfs.client.makedirs(f'{hadoop_fs_folder_base}/spain')
+        cluster.hdfs.client.makedirs(f'{hadoop_fs_folder_base}/usa')
+        cluster.hdfs.client.makedirs(f'{hadoop_fs_folder_base}/spain/development')
+        cluster.hdfs.client.makedirs(f'{hadoop_fs_folder_base}/spain/support')
+        cluster.hdfs.client.makedirs(f'{hadoop_fs_folder_base}/usa/productivity')
+
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_base, 'spain', 'development', alex_file), data=alex)
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_base, 'spain', 'support', danilo_file), data=danilo)
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_base, 'usa', 'productivity', dima_file), data=dima)
+
+        sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_pipeline_batch_count(3)
+
+        hdfs_fs_files = cluster.hdfs.client.list(f'/tmp/out/{random_string}')
+        assert len(hdfs_fs_files) == 1
+
+        hdfs_fs_filename = hdfs_fs_files[0]
+
+        with cluster.hdfs.client.read(f'/tmp/out/{random_string}/{hdfs_fs_filename}') as reader:
+            file_contents = reader.read()
+
+        assert {tuple(json.loads(line).items()) for line in
+                file_contents.decode().split()} == {tuple(stage.items()) for stage in DATA}
+    finally:
+        sdc_executor.stop_pipeline(hadoop_fs_pipeline)
+        cluster.hdfs.client.delete(hadoop_fs_folder_base, recursive=True)
+        cluster.hdfs.client.delete(f'/tmp/out/{random_string}', recursive=True)
 
 
 # Test developed to avoid multi-threading issues causing duplicated parsing of records, raised in SDC-10704
