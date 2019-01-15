@@ -16,7 +16,7 @@ import copy
 import logging
 
 import pytest
-from streamsets.testframework.markers import salesforce
+from streamsets.testframework.markers import salesforce, sdc_min_version
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +440,7 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
 
 # Test SDC-10694
 @salesforce
+@sdc_min_version('3.8.0')
 def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce):
     """
     Create data using Salesforce client
@@ -488,6 +489,7 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
 
 
 @salesforce
+@sdc_min_version('3.8.0')
 def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
     """
     Create data using Salesforce client
@@ -555,6 +557,7 @@ def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
+@sdc_min_version('3.8.0')
 def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce):
     """Simple Salesforce Lookup processor test.
     Pipeline will enrich records with the number of contacts whose FirstName
@@ -604,6 +607,7 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
 
 
 @salesforce
+@sdc_min_version('3.8.0')
 def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
     """Simple Salesforce Lookup processor test.
     Pipeline will enrich records with the number of contacts whose FirstName
