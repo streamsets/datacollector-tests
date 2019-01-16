@@ -475,6 +475,29 @@ def create_jdbc_producer_pipeline(pipeline_builder, pipeline_title, raw_data, ta
     return pipeline_builder.build(title=pipeline_title)
 
 
+def create_jdbc_producer_pipeline_dev_data_generator(pipeline_builder, pipeline_title, table_name):
+    """Helper function to create and return a pipeline with JDBC Producer
+    The pipeline looks like:
+        dev_data_generator >> jdbc_producer
+    """
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.fields_to_generate = [{'field': 'id', 'type': 'INTEGER'},
+                                             {'field': 'value', 'precision': 50, 'scale': 40, 'type': 'DECIMAL'}]
+    dev_data_generator.batch_size = 1
+
+    FIELD_MAPPINGS = [dict(field='/id', columnName='id'),
+                      dict(field='/value', columnName='value')]
+
+    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+    jdbc_producer.set_attributes(default_operation='INSERT',
+                                 table_name=table_name,
+                                 field_to_column_mapping=FIELD_MAPPINGS,
+                                 stage_on_record_error='STOP_PIPELINE')
+    dev_data_generator >> jdbc_producer
+
+    return pipeline_builder.build(title=pipeline_title)
+
+
 @database
 def test_jdbc_producer_insert(sdc_builder, sdc_executor, database):
     """Simple JDBC Producer test with INSERT operation.
@@ -500,6 +523,44 @@ def test_jdbc_producer_insert(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
+
+
+# SDC-10786: This test intends to cover the case really precise decimals being inserted into a Float column in MSSQL
+@sdc_min_version('3.8.0')
+@database('sqlserver')
+def test_mssql_producer_bigdecimal(sdc_builder, sdc_executor, database):
+    """
+    Insert a Decimal value with up to 38 decimals into a Float column in MSSQL.
+    This will look like:
+    dev_data_generator >> jdbc_producer
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = sqlalchemy.Table(
+        table_name,
+        sqlalchemy.MetaData(),
+        sqlalchemy.Column('value', sqlalchemy.Float()),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, autoincrement=False)
+    )
+    table.create(database.engine)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    pipeline = create_jdbc_producer_pipeline_dev_data_generator(pipeline_builder, 'MSSQL BigDecimal', table_name)
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+
+        assert len(data_from_database) == 1
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
 
 @database
 def test_jdbc_producer_coerced_insert(sdc_builder, sdc_executor, database):
