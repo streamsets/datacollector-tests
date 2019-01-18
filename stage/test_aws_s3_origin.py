@@ -18,7 +18,7 @@ import string
 import time
 
 import pytest
-from streamsets.testframework.markers import aws
+from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ DEFAULT_NUMBER_OF_RECORDS = 5
 
 
 @aws('s3')
+@sdc_min_version('3.7.0')
 def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     """Basic setup for amazon S3Origin tests. It receives different variables indicating the read order, data format...
     In order to parametrize all this configuration properties and make tests simpler.
@@ -135,6 +136,7 @@ def test_s3_origin_read_order(sdc_builder, sdc_executor, aws, read_order):
 
 
 @aws('s3')
+@sdc_min_version('3.7.0')
 def test_s3_origin_multithreaded(sdc_builder, sdc_executor, aws):
     """Tests a specific multithreaded scenario with more threads."""
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, 10, 50)
