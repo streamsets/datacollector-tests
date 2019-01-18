@@ -35,20 +35,23 @@ DEFAULT_NUMBER_OF_RECORDS = 5
 @aws('s3')
 @sdc_min_version('3.7.0')
 def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
-    """Basic setup for amazon S3Origin tests. It receives different variables indicating the read order, data format...
-    In order to parametrize all this configuration properties and make tests simpler.
+    """Test that using multithreaded pipeline we can start our pipeline multiple times adding more objects in between
+    without reading any duplicated record neither missing them.
+
     The pipeline looks like:
 
     S3 Origin pipeline:
         s3_origin >> trash
+        s3_origin >= pipeline_finished_executor
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
 
-    field_val_1 = get_random_string(string.ascii_letters, 10)
-    field_val_2 = get_random_string(string.ascii_letters, 10)
-    json_str = '{"f1":"' + field_val_1 + '", "f2":"' + field_val_2 + '"}'
+    data = dict(f1=get_random_string(), f2=get_random_string())
 
-    s3_obj_count = 50
+    s3_obj_count = 10
+    total_error_count = s3_obj_count
+    input_records = 0
+    output_records = 0
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -57,11 +60,16 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format=DEFAULT_DATA_FORMAT,
-                             prefix_pattern=f'{s3_key}*', number_of_threads=5, read_order=DEFAULT_READ_ORDER)
+                             prefix_pattern=f'{s3_key}/*', number_of_threads=MULTITHREADED,
+                             read_order=DEFAULT_READ_ORDER)
 
     trash = builder.add_stage('Trash')
 
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
     s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
 
     s3_origin_pipeline = builder.build(title='Amazon S3 origin multithreaded pipeline').configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
@@ -69,40 +77,38 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
 
     client = aws.s3
     try:
-        # Insert objects into S3.
-        for i in range(s3_obj_count):
-            client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}{i}', Body=json_str)
 
-        input_records = 0
-        output_records = 0
+        for iteration in range(1, 4):
+            # Insert objects into S3.
+            for i in range(s3_obj_count):
+                client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{iteration}-{i}', Body=json.dumps(data))
 
-        # In case of multithreaded pipeline we want to verify the amount of records.
-        sdc_executor.start_pipeline(s3_origin_pipeline)
-        time.sleep(2)
-        sdc_executor.stop_pipeline(s3_origin_pipeline)
+            # In case of multithreaded pipeline we want to verify the amount of records.
+            snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
 
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+            sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status('FINISHED')
 
-        sdc_executor.start_pipeline(s3_origin_pipeline)
-        time.sleep(5)
-        sdc_executor.stop_pipeline(s3_origin_pipeline)
+            records = [record.field for record in snapshot[s3_origin.instance_name].output]
 
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+            for x in range(0, len(records)):
+                assert records[x]['f1'] == data['f1']
+                assert records[x]['f2'] == data['f2']
 
-        sdc_executor.start_pipeline(s3_origin_pipeline)
-        time.sleep(20)
-        sdc_executor.stop_pipeline(s3_origin_pipeline)
+            history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+            input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+            output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+            assert output_records == total_error_count + iteration  # Adding iteration because of the events
+            assert input_records == total_error_count
+
+            total_error_count += s3_obj_count
 
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
         input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
         output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
-        assert output_records == s3_obj_count
-        assert input_records == s3_obj_count
+        assert output_records == total_error_count + iteration + 1  # Adding +1 because of the last event
+        assert input_records == total_error_count
 
     finally:
         # Clean up S3.
@@ -130,7 +136,7 @@ def test_s3_origin_read_order(sdc_builder, sdc_executor, aws, read_order):
 
 @aws('s3')
 @pytest.mark.parametrize('read_order', ['TIMESTAMP', 'LEXICOGRAPHICAL'])
-def test_s3_origin_read_order(sdc_builder, sdc_executor, aws, read_order):
+def test_s3_origin_read_order_multiple_records(sdc_builder, sdc_executor, aws, read_order):
     """Tests that S3Origin can read information in different reading orders"""
     base_s3_origin(sdc_builder, sdc_executor, aws, read_order, DEFAULT_DATA_FORMAT, SINGLETHREADED, 50)
 
@@ -149,6 +155,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
     S3 Origin pipeline:
         s3_origin >> trash
+        s3_origin >= pipeline_finished_executor
     """
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
@@ -168,12 +175,16 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
-    s3_origin.set_attributes(bucket=s3_bucket, data_format=data_format, prefix_pattern=f'{s3_key}*',
+    s3_origin.set_attributes(bucket=s3_bucket, data_format=data_format, prefix_pattern=f'{s3_key}/*',
                              number_of_threads=number_of_threads, read_order=read_order)
 
     trash = builder.add_stage('Trash')
 
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
     s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
 
     pipeline_name = (
         f'Amazon S3 - number of threads: {number_of_threads} - read order: {read_order} - data_format: {data_format} - '
@@ -188,12 +199,12 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     try:
         # Insert objects into S3.
         for i in range(s3_obj_count):
-            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{i}', Body=json_str)
+            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=json_str)
 
         if number_of_threads == SINGLETHREADED:
             # Snapshot the pipeline and compare the records.
             snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
-            sdc_executor.stop_pipeline(s3_origin_pipeline)
+            sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
 
             output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
 
@@ -202,14 +213,12 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         else:
             # In case of multithreaded pipeline we want to verify the amount of records.
             sdc_executor.start_pipeline(s3_origin_pipeline)
-
-            time.sleep(20)
-
-            sdc_executor.stop_pipeline(s3_origin_pipeline)
+            sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
 
             history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
             assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == s3_obj_count
-            assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == s3_obj_count
+            # We need to add 1 since the event is considered a record
+            assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == s3_obj_count + 1
 
     finally:
         if number_of_records > 0:
