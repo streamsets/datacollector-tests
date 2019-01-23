@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import json
 import logging
 import string
@@ -158,14 +157,9 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         s3_origin >= pipeline_finished_executor
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
 
-    field_val_1 = get_random_string(string.ascii_letters, 10)
-    field_val_2 = get_random_string(string.ascii_letters, 10)
-    json_str = '{"f1":"' + field_val_1 + '", "f2":"' + field_val_2 + '"}'
-
-    if data_format == 'JSON':
-        json_str = json.dumps(json_str)
+    json_data = dict(f1=get_random_string(), f2=get_random_string())
 
     s3_obj_count = number_of_records
 
@@ -199,7 +193,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     try:
         # Insert objects into S3.
         for i in range(s3_obj_count):
-            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=json_str)
+            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=json.dumps(json_data))
 
         if number_of_threads == SINGLETHREADED:
             # Snapshot the pipeline and compare the records.
@@ -208,7 +202,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
             output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
 
-            verify_data_formats(output_records, json_str, data_format)
+            verify_data_formats(output_records, json.dumps(json_data), data_format)
 
         else:
             # In case of multithreaded pipeline we want to verify the amount of records.
@@ -232,7 +226,8 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 def verify_data_formats(output_records, raw_str, data_format):
     # Verify the data from the different records depending on the data format used.
     if data_format == 'JSON':
-        assert str(output_records[0]) in raw_str.replace("\\", "")
+        assert str(output_records[0]['f1']) in raw_str
+        assert str(output_records[0]['f2']) in raw_str
     elif data_format == 'WHOLE_FILE':
         assert output_records[0]['fileInfo']['size'] == len(raw_str)
     elif data_format == 'TEXT':
@@ -248,7 +243,7 @@ def test_s3_origin_empty_bucket(sdc_builder, sdc_executor, aws):
         s3_origin >> trash
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
     s3_obj_count = 0
 
     # Build pipeline.
@@ -286,7 +281,7 @@ def test_invalid_configs_same_bucket_same_prefix(sdc_builder, sdc_executor, aws)
     S3 Origin pipeline:
         s3_origin >> trash
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
     prefix = 'myprefix'
 
     # Build pipeline.
@@ -330,7 +325,7 @@ def test_invalid_configs_diff_bucket_same_prefix(sdc_builder, sdc_executor, aws)
     S3 Origin pipeline:
         s3_origin >> trash
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
     prefix = 'myprefix'
 
     # Build pipeline.
@@ -368,7 +363,6 @@ def test_invalid_configs_diff_bucket_same_prefix(sdc_builder, sdc_executor, aws)
 
 
 @aws('s3')
-@sdc_min_version('3.8.0')
 def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     """
     Test that event pipeline finisher is being sent when no more data is available in S3
@@ -377,12 +371,9 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
         s3_origin >> trash
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
 
-    field_val_1 = get_random_string(string.ascii_letters, 10)
-    field_val_2 = get_random_string(string.ascii_letters, 10)
-
-    json_str = f'{{"f1":"{field_val_1}","f2":"{field_val_2}"}}'
+    json_data = dict(f1=get_random_string(), f2=get_random_string())
 
     s3_obj_count = 5
 
@@ -413,18 +404,90 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     try:
         # Insert objects into S3.
         for i in range(s3_obj_count):
-            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{i}', Body=json_str)
+            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{i}', Body=json.dumps(json_data))
 
         sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=60)
-
-        # We need to check that the pipeline is finished
-        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
 
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
 
         output_records_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
         assert output_records_count == s3_obj_count + 1  # Adding +1 since event also count as record
+
+    finally:
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
+    """
+    Tests that verifies that all the records are properly read when the batch size is the same as the number of records
+    per object.
+
+    Using the snapshot we will verify the content of the records and using the pipeline history the amount of records
+    processed.
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+    """
+    S3_OBJ_COUNT = 5
+
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+
+    data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(50)]
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket,
+                             data_format='JSON',
+                             json_content='ARRAY_OBJECTS',
+                             prefix_pattern=f'{s3_key}*',
+                             max_batch_size_in_records=50)
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
+
+    pipeline_name = f'Amazon S3 - ReadAllRecordsFromS3toFS'
+
+    s3_origin_pipeline = builder.build(title=pipeline_name).configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        for i in range(S3_OBJ_COUNT):
+            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{i}', Body=json.dumps(data))
+
+        # Snapshot the pipeline and compare the records.
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+
+        output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
+
+        for i in range(0, len(output_records)):
+            assert output_records[i]['f1'] == data[i]['f1']
+            assert output_records[i]['f2'] == data[i]['f2']
+
+        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        output_records_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+        assert output_records_count == S3_OBJ_COUNT * 50 + 1  # Adding +1 since event also count as record
 
     finally:
         # Clean up S3.
