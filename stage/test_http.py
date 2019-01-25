@@ -204,14 +204,20 @@ def test_http_processor_get(sdc_builder, sdc_executor, http_client):
         record = snapshot[http_client_processor.instance_name].output[0].value2
         assert record[record_output_field]['latitude'] == expected_dict['latitude']
         assert record[record_output_field]['longitude'] == expected_dict['longitude']
-    except:
+    finally:
         http_mock.delete_mock()
 
 
 @http
-def test_http_processor_post(sdc_builder, sdc_executor, http_client):
-    """Test HTTP Lookup Processor for HTTP POST method. We do so by posting to a pre-defined
-    HTTP server endpoint (testPostJsonEndpoint) and get expected data. The pipeline looks like:
+@pytest.mark.parametrize(('method'), [
+    'POST',
+    # Testing of SDC-10809
+    'PATCH'
+])
+def test_http_processor(sdc_builder, sdc_executor, http_client, method):
+    """Test HTTP Lookup Processor for various HTTP methods. We do so by
+    sending a request to a pre-defined HTTP server endpoint
+    (testPostJsonEndpoint) and getting expected data. The pipeline looks like:
 
         dev_raw_data_source >> http_client_processor >> trash
     """
@@ -224,34 +230,92 @@ def test_http_processor_post(sdc_builder, sdc_executor, http_client):
     http_mock = http_client.mock()
 
     try:
-        http_mock.when(f'POST /{mock_path}', body=raw_data).reply(expected_data, times=FOREVER)
+        http_mock.when(f'{method} /{mock_path}', body=raw_data).reply(expected_data, times=FOREVER)
         mock_uri = f'{http_mock.pretend_url}/{mock_path}'
 
         builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
         dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
-        # for POST, we post 'raw_data' and expect 'expected_dict' as response data
+        # for POST/PATCH, we post 'raw_data' and expect 'expected_dict' as response data
         http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
-                                             http_method='POST', request_data="${record:value('/text')}",
+                                             http_method=method, request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}')
         trash = builder.add_stage('Trash')
 
         dev_raw_data_source >> http_client_processor >> trash
-        pipeline = builder.build(title='HTTP Lookup POST Processor pipeline')
+        pipeline = builder.build(title=f'HTTP Lookup {method} Processor pipeline')
         sdc_executor.add_pipeline(pipeline)
 
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        # ensure HTTP POST result is only stored to one record and assert the data
+        # ensure HTTP POST/PATCH result is only stored to one record and assert the data
         assert len(snapshot[http_client_processor.instance_name].output) == 1
         record = snapshot[http_client_processor.instance_name].output[0].value2
         assert record[record_output_field]['latitude'] == expected_dict['latitude']
         assert record[record_output_field]['longitude'] == expected_dict['longitude']
-    except:
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@pytest.mark.parametrize(('method'), [
+    'POST',
+    # Testing of SDC-10809
+    'PATCH'
+])
+@pytest.mark.parametrize(('request_option'), [
+    'one_request_per_batch',
+    # Testing of SDC-10809
+    'one_request_per_record'
+])
+def test_http_destination(sdc_builder, sdc_executor, http_client, method, request_option):
+    """Test HTTP Client Destination for HTTP POST/PATCH method. We do so by posting to a pre-defined
+    HTTP server endpoint (testPostJsonEndpoint) and get expected data. The pipeline looks like:
+
+        dev_raw_data_source >> http_client_destination
+    """
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
+    expected_data = json.dumps(expected_dict)
+    record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'{method} /{mock_path}', body=raw_data).reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+        http_client_destination = builder.add_stage('HTTP Client', type='destination')
+        # for POST/PATCH, we post 'raw_data' and expect 'expected_dict' as response data
+        http_client_destination.set_attributes(data_format='JSON', default_request_content_type='application/json',
+                                               headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                               http_method=method,
+                                               resource_url=mock_uri,
+                                               one_request_per_batch=(request_option=='one_request_per_batch'))
+
+        dev_raw_data_source >> http_client_destination
+        pipeline = builder.build(title=f'HTTP {method} Destination pipeline')
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Check that the HTTP server got the expected data
+        r = http_mock.get_request(0)
+        assert r
+        assert r.method == method
+        assert r.url == f'/{mock_path}'
+        assert r.body
+        assert json.loads(r.body.decode("utf-8")) == raw_dict
+    finally:
         http_mock.delete_mock()
 
 
