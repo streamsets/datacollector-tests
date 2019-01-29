@@ -60,6 +60,10 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
                  dict(_id='3', operation='delete')]
     raw_data = ''.join(json.dumps(record) for record in test_data)
 
+    # Expected final data, field remover stage will have the operation field removed
+    final_data = [dict(_id='1', name='Sachin', average=53.79, is_alive=True, runs_bf=1592129437, innings=329),
+                  dict(_id='2', name='Don', average=53.79, is_alive=False, runs_bf=69969798, innings=80)]
+
     # Build the MapR JSON DB pipeline.
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
@@ -75,11 +79,11 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
     ])
     field_remover = pipeline_builder.add_stage('Field Remover')
     field_remover.set_attributes(fields=['/operation'])
-    mapr_db_json = pipeline_builder.add_stage('MapR DB JSON', type='destination')
-    mapr_db_json.set_attributes(table_name=table_path, row_key='/_id')
+    mapr_db_json_destination = pipeline_builder.add_stage('MapR DB JSON', type='destination')
+    mapr_db_json_destination.set_attributes(table_name=table_path, row_key='/_id')
 
-    dev_raw_data_source >> expression_evaluator >> field_remover >> mapr_db_json
-    json_db_pipeline = pipeline_builder.build('MapR Json DB').configure_for_environment(cluster)
+    dev_raw_data_source >> expression_evaluator >> field_remover >> mapr_db_json_destination
+    json_db_destination_pipeline = pipeline_builder.build('MapR Json DB Destination').configure_for_environment(cluster)
 
     # Build the MapR DB CDC Consumer pipeline.
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -93,6 +97,14 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
     trash = pipeline_builder.add_stage('Trash')
     mapr_db_cdc_consumer >> trash
     cdc_pipeline = pipeline_builder.build('MapR DB CDC Consumer').configure_for_environment(cluster)
+
+    # Build the MapR DB JSON Consumer pipeline.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    mapr_db_json_origin = pipeline_builder.add_stage('MapR DB JSON Origin')
+    mapr_db_json_origin.set_attributes(table_name=table_path, row_key='/_id')
+    trash = pipeline_builder.add_stage('Trash')
+    mapr_db_json_origin >> trash
+    json_db_origin_pipeline = pipeline_builder.build('MapR Json DB Origin').configure_for_environment(cluster)
 
     try:
         logger.info('Creating MapR-DB table %s ...', table_path)
@@ -115,26 +127,33 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
                                 data={'path': table_path,
                                       'changelog': changelog})
 
-        sdc_executor.add_pipeline(json_db_pipeline, cdc_pipeline)
+        sdc_executor.add_pipeline(json_db_destination_pipeline, cdc_pipeline, json_db_origin_pipeline)
+        sdc_executor.start_pipeline(json_db_destination_pipeline)
+
         cdc_pipeline_command = sdc_executor.capture_snapshot(cdc_pipeline, start_pipeline=True, wait=False)
-        sdc_executor.start_pipeline(json_db_pipeline)
+        json_origin_pipeline_command = sdc_executor.capture_snapshot(json_db_origin_pipeline, start_pipeline=True,
+                                                                     wait=False)
 
         # Verify with a snapshot.
-        snapshot = cdc_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        cdc_snapshot = cdc_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        json_snapshot = json_origin_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
         sdc_executor.stop_pipeline(cdc_pipeline)
+        sdc_executor.stop_pipeline(json_db_origin_pipeline)
 
-        actual = [record.value2 for record in snapshot[mapr_db_cdc_consumer].output]
+        actual_cdc = [record.value2 for record in cdc_snapshot[mapr_db_cdc_consumer].output]
         for record in test_data:
             # In the pipeline, Field Remover stage removed field 'operation' and so it will not be present in actual.
             # Remove it from test_data, for verification with assert.
             record.pop('operation')
-        assert actual == test_data
 
+        actual_json = [record.value2 for record in json_snapshot[mapr_db_json_origin].output]
+
+        assert actual_cdc == test_data
+        assert actual_json == final_data
     finally:
         logger.info('Deleting MapR-DB table changelog %s ...', f'{stream_name}:{topic_name}')
         cluster.execute_command('table', 'changelog', 'remove', http_request_method='POST',
-                                data={'path': table_path,
-                                      'changelog': f'{stream_name}:{topic_name}'})
+                                data={'path': table_path, 'changelog': f'{stream_name}:{topic_name}'})
         logger.info('Deleting MapR stream %s ...', stream_name)
         cluster.execute_command('stream', 'delete', http_request_method='POST', data={'path': stream_name})
         logger.info('Deleting MapR-DB table %s ...', table_path)
@@ -243,7 +262,7 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
     # getting an empty batch in the snapshot.
     sdc_rpc_origin.batch_wait_time_in_secs = 300
 
-    trash = builder.add_stage(label='Trash')
+    trash = builder.add_stage('Trash')
 
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Snapshot pipeline')
@@ -278,6 +297,63 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
         cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
         # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
         sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True)
+
+
+@cluster('mapr')
+def test_mapr_fs_standalone_origin(sdc_builder, sdc_executor, cluster):
+    """Write a simple file into a MapR FS folder with a randomly-generated name and confirm that the MapR FS origin
+    successfully reads it. Because cluster mode pipelines don't support snapshots, we do this verification using a
+    second standalone pipeline whose origin is an SDC RPC written to by the MapR FS pipeline. Specifically, this would
+    look like:
+
+    MapR FS pipeline:
+        mapr_fs_standalone_origin >> trash
+    """
+    mapr_fs_folder = os.path.join(os.sep, get_random_string(string.ascii_letters, 10))
+
+    # Build the MapR FS Standalone pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    mapr_fs_standalone_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_maprfs_MapRFSDSource')
+    mapr_fs_standalone_origin.data_format = 'TEXT'
+    mapr_fs_standalone_origin.files_directory = mapr_fs_folder
+    mapr_fs_standalone_origin.file_name_pattern = '*'
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    mapr_fs_standalone_origin >> trash
+    mapr_fs_standalone_origin >= pipeline_finished_executor
+
+    mapr_fs_pipeline = builder.build(title='MapR FS Standalone Snapshot pipeline')
+    sdc_executor.add_pipeline(mapr_fs_pipeline)
+
+    try:
+        lines_in_file = ['hello', 'hi', 'how are you?']
+
+        logger.debug('Writing file %s/file.txt to MapR FS ...', mapr_fs_folder)
+        cluster.mapr_fs.client.makedirs(mapr_fs_folder)
+        cluster.mapr_fs.client.write(os.path.join(mapr_fs_folder, 'file.txt'), data='\n'.join(lines_in_file))
+
+        # Start Pipeline.
+        logger.debug('Starting MapR FS pipeline and waiting for it to finish ...')
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(mapr_fs_pipeline, start_pipeline=True,
+                                                                  wait=False)
+
+        logger.debug('Finish the snapshot and verify')
+        snapshot_command = snapshot_pipeline_command.wait_for_finished()
+        snapshot = snapshot_command.snapshot
+
+        # Verify snapshot data.
+        record_field = [record.field['text'] for record in snapshot[mapr_fs_pipeline[0].instance_name].output]
+        assert lines_in_file == record_field
+
+    finally:
+        cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
+        # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
 
 
 @cluster('mapr')
@@ -387,7 +463,7 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     mapr_streams_consumer.topic = stream_topic_name
     mapr_streams_consumer.data_format = 'TEXT'
 
-    trash = builder.add_stage(label='Trash')
+    trash = builder.add_stage('Trash')
 
     mapr_streams_consumer >> trash
     consumer_pipeline = builder.build('MapR Streams consumer pipeline - standalone').configure_for_environment(cluster)
@@ -410,6 +486,96 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     finally:
         sdc_executor.stop_pipeline(consumer_pipeline)
         sdc_executor.stop_pipeline(producer_pipeline)
+
+
+@cluster('mapr')
+def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
+    """This test will start MapR Streams producer and consumer pipelines which check for integrity of data
+    from a MapR Streams producer to MapR Streams consumer. Both the pipelines run as standalone. Specifically, this
+    would look like:
+
+    MapR Streams producer pipeline:
+        dev_raw_data_source >> mapr_streams_producer
+
+    MapR Streams consumer pipeline:
+        mapr_streams_consumer >> trash
+    """
+    # MapR Stream name has to be pre-created in MapR cluster. Clusterdock MapR image has this already.
+    stream_name = '/sample-stream'
+    stream_topic_name = stream_name + ':' + get_random_string(string.ascii_letters, 10)
+    stream_topic_name_2 = stream_name + ':' + get_random_string(string.ascii_letters, 10)
+    wait_batches = 5
+    stream_producer_values = ['Hello World!', 'Goodbye World!']
+
+    # Build the MapR Stream producer pipeline.
+    producer_pipeline = generate_streams_producer(sdc_builder, stream_topic_name, stream_producer_values[0], cluster)
+
+    # Build the MapR Stream producer pipeline.
+    producer_pipeline_2 = generate_streams_producer(sdc_builder, stream_topic_name_2, stream_producer_values[1], cluster)
+
+    # Build the MapR Stream consumer pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    mapr_streams_consumer = builder.add_stage('MapR Multitopic Streams Consumer')
+    mapr_streams_consumer.set_attributes(data_format='TEXT',
+                                         topic_list=[stream_topic_name, stream_topic_name_2],
+                                         auto_offset_reset='EARLIEST',
+                                         consumer_group=get_random_string(string.ascii_letters, 10),
+                                         number_of_threads=10)
+    trash = builder.add_stage('Trash')
+    mapr_streams_consumer >> trash
+    consumer_pipeline = builder.build('MapR Multitopic Consumer Pipeline').configure_for_environment(cluster)
+    consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+    consumer_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(producer_pipeline, producer_pipeline_2, consumer_pipeline)
+
+    # Run pipelines and assert the data flow. To do that, the sequence of steps is as follows:
+    # 1. Start MapR Stream producer and make sure to wait till some batches generate
+    # 2. Start MapR Stream consumer via capture snapshot feature to make sure data flow can be captured
+    # 3. Capture snapshot on the MapR Stream consumer
+    # 4. Compare and assert snapshot result to the data injected at the producer
+    try:
+        sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_batch_count(wait_batches)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, start_pipeline=True,
+                                                                  wait=False)
+        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        snapshot_data = [record.value['value']['text']['value'] for record in
+                         snapshot[consumer_pipeline[0].instance_name].output]
+        sdc_executor.stop_pipeline(producer_pipeline)
+        assert len(snapshot_data) > 0
+        assert all(record == stream_producer_values[0] for record in snapshot_data)
+
+        sdc_executor.start_pipeline(producer_pipeline_2).wait_for_pipeline_batch_count(wait_batches)
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, wait=False)
+        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        snapshot_data = [record.value['value']['text']['value'] for record in
+                         snapshot[consumer_pipeline[0].instance_name].output]
+        sdc_executor.stop_pipeline(producer_pipeline_2)
+        assert len(snapshot_data) > 0
+        assert all(record == stream_producer_values[1] for record in snapshot_data)
+    finally:
+        sdc_executor.stop_pipeline(consumer_pipeline)
+
+
+def generate_streams_producer(sdc_builder, topic_name, value, cluster):
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'TEXT'
+    dev_raw_data_source.raw_data = value
+    mapr_streams_producer = builder.add_stage('MapR Streams Producer')
+    mapr_streams_producer.data_format = 'TEXT'
+    mapr_streams_producer.runtime_topic_resolution = True
+    mapr_streams_producer.topic_expression = topic_name
+    dev_raw_data_source >> mapr_streams_producer
+    producer_pipeline = builder.build('Second MapR Streams producer pipeline - standalone').configure_for_environment(
+        cluster)
+    producer_pipeline.rate_limit = 1
+    producer_pipeline.configuration['executionMode'] = 'STANDALONE'
+    producer_pipeline.configuration['shouldRetry'] = False
+    return producer_pipeline
 
 
 @cluster('mapr')
@@ -479,7 +645,7 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
     # getting an empty batch in the snapshot.
     sdc_rpc_origin.batch_wait_time_in_secs = 300
 
-    trash = builder.add_stage(label='Trash')
+    trash = builder.add_stage('Trash')
 
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build('Snapshot pipeline - cluster')
@@ -511,3 +677,5 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True)
         sdc_executor.stop_pipeline(producer_pipeline)
         sdc_executor.stop_pipeline(consumer_pipeline)
+
+
