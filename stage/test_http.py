@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 # pylint: disable=pointless-statement, redefined-outer-name, too-many-locals
 
+#
+# To start the mock HTTP server, run
+#
+#    ste start HTTP
+#
+# or, without ste
+#
+#    docker run -d --name myhttpmockserver --net=cluster pretenders/pretenders:1.4
+#
 
 @pytest.fixture(scope='module')
 def http_server_pipeline(sdc_builder, sdc_executor):
@@ -224,13 +233,26 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
     raw_dict = dict(city='San Francisco')
     raw_data = json.dumps(raw_dict)
     expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
-    expected_data = json.dumps(expected_dict)
+    # PATCH requests typically receive a 204 response with no body
+    if method == 'POST':
+        expected_data = json.dumps(expected_dict)
+        expected_status = 200
+    elif method == 'PATCH':
+        expected_data = ''
+        expected_status = 204
     record_output_field = 'result'
     mock_path = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
 
     try:
-        http_mock.when(f'{method} /{mock_path}', body=raw_data).reply(expected_data, times=FOREVER)
+        http_mock.when(
+            rule=f'{method} /{mock_path}', 
+            body=raw_data
+        ).reply(
+            body=expected_data, 
+            status=expected_status, 
+            times=FOREVER
+        )
         mock_uri = f'{http_mock.pretend_url}/{mock_path}'
 
         builder = sdc_builder.get_pipeline_builder()
@@ -255,8 +277,9 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
         # ensure HTTP POST/PATCH result is only stored to one record and assert the data
         assert len(snapshot[http_client_processor.instance_name].output) == 1
         record = snapshot[http_client_processor.instance_name].output[0].value2
-        assert record[record_output_field]['latitude'] == expected_dict['latitude']
-        assert record[record_output_field]['longitude'] == expected_dict['longitude']
+        if expected_data:
+            assert record[record_output_field]['latitude'] == expected_dict['latitude']
+            assert record[record_output_field]['longitude'] == expected_dict['longitude']
     finally:
         http_mock.delete_mock()
 
