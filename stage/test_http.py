@@ -246,11 +246,11 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
 
     try:
         http_mock.when(
-            rule=f'{method} /{mock_path}', 
+            rule=f'{method} /{mock_path}',
             body=raw_data
         ).reply(
-            body=expected_data, 
-            status=expected_status, 
+            body=expected_data,
+            status=expected_status,
             times=FOREVER
         )
         mock_uri = f'{http_mock.pretend_url}/{mock_path}'
