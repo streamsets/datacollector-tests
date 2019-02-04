@@ -127,6 +127,179 @@ def test_stop_tcp_with_delay(sdc_builder, sdc_executor):
         assert history.latest.metrics.timer('pipeline.batchProcessing.timer')._data.get('mean') >= 5
 
 
+@sdc_min_version('3.7.0')
+def test_tcp_server_read_timeout(sdc_builder, sdc_executor):
+    """Runs a test using TCP Server Origin and setting Read Timeout to 20 seconds.
+    Then checks connection is automatically closed after 20 seconds as the timeout is triggered.
+
+    As the destination is not relevant for this stage the pipeline looks like:
+
+    TCP Server >> trash
+    """
+    expected_message = 'testMessage\n'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    tcp_server_stage = pipeline_builder.add_stage('TCP Server').set_attributes(port=[str(TCP_PORT)],
+                                                                               tcp_mode='DELIMITED_RECORDS',
+                                                                               data_format='TEXT',
+                                                                               read_timeout_in_seconds=20)
+    trash_stage = pipeline_builder.add_stage('Trash')
+
+    tcp_server_stage >> trash_stage
+
+    tcp_server_pipeline = pipeline_builder.build(title=f'TCP Server Origin Read Timeout')
+    sdc_executor.add_pipeline(tcp_server_pipeline)
+
+    try:
+        snapshot_cmd = sdc_executor.capture_snapshot(tcp_server_pipeline, start_pipeline=True, wait=False,
+                                                     batch_size=1000, batches=1)
+
+        # Send message to test connection is open.
+        tcp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_client_socket.connect((sdc_executor.server_host, TCP_PORT))
+        messages_sent = 0
+        while messages_sent < 1:
+            messages_sent = tcp_client_socket.send(bytes(expected_message, 'utf-8'))
+
+        # Trying to send read a message should return no data (== an empty bytes object) if socket is closed.
+        data = tcp_client_socket.recv(1024)
+        if data:
+            pytest.fail('Could send message when timeout should have triggered and closed the connection')
+
+        tcp_client_socket.close()
+        snapshot = snapshot_cmd.wait_for_finished().snapshot
+        output_records = [record.field['text'] for record in snapshot[tcp_server_stage.instance_name].output]
+        assert len(output_records) == 1
+        assert expected_message.rstrip('\n') == output_records[0]
+    finally:
+        sdc_executor.stop_pipeline(tcp_server_pipeline, wait=True, force=True)
+
+
+def test_tcp_server_multiple_messages(sdc_builder, sdc_executor):
+    """Runs a test using 4 pipelines with the TCP Server Origin writing to trash and checking all records sent by the
+    client are correctly received by the TCP Server Origin. Pipeline configurations are:
+
+    1) No record_processed_ack_message and No batch_completed_ack_message
+    2) record_processed_ack_message and No batch_completed_ack_message
+    3) No record_processed_ack_message and batch_completed_ack_message
+    4)record_processed_ack_message and batch_completed_ack_message
+
+    All pipelines look like below but with different configuration as explained above:
+        TCP Server >> trash
+    """
+
+    expected_message = ' hello_world\n'
+
+    # Build and test pipeline number 1.
+    tcp_server_pipeline_1, tcp_server_stage_1 = add_tcp_pipeline_multiple_messages(sdc_builder, sdc_executor,
+                                                                                   record_ack=False, batch_ack=False,
+                                                                                   batch_timeout=1000, batch_size=10)
+    run_pipeline_send_tcp_messages(sdc_executor, tcp_server_pipeline_1, tcp_server_stage_1, expected_message, 3,
+                                   [26, 25, 5], [0, 0, 5])
+
+    # Build and test pipeline number 2.
+    tcp_server_pipeline_2, tcp_server_stage_2 = add_tcp_pipeline_multiple_messages(sdc_builder, sdc_executor,
+                                                                                   record_ack=True, batch_ack=False,
+                                                                                   batch_timeout=1000, batch_size=10)
+    run_pipeline_send_tcp_messages(sdc_executor, tcp_server_pipeline_2, tcp_server_stage_2, expected_message, 3,
+                                   [26, 25, 5], [0, 0, 5])
+
+    # Build and test pipeline number 3.
+    tcp_server_pipeline_3, tcp_server_stage_3 = add_tcp_pipeline_multiple_messages(sdc_builder, sdc_executor,
+                                                                                   record_ack=False, batch_ack=True,
+                                                                                   batch_timeout=1000, batch_size=10)
+    run_pipeline_send_tcp_messages(sdc_executor, tcp_server_pipeline_3, tcp_server_stage_3, expected_message, 3,
+                                   [26, 25, 5], [0, 0, 5])
+
+    # Build and test pipeline number 4.
+    tcp_server_pipeline_4, tcp_server_stage_4 = add_tcp_pipeline_multiple_messages(sdc_builder, sdc_executor,
+                                                                                   record_ack=True, batch_ack=True,
+                                                                                   batch_timeout=1000, batch_size=10)
+    run_pipeline_send_tcp_messages(sdc_executor, tcp_server_pipeline_4, tcp_server_stage_4, expected_message, 3,
+                                   [26, 25, 5], [0, 0, 5])
+
+
+def add_tcp_pipeline_multiple_messages(sdc_builder, sdc_executor, record_ack, batch_ack, batch_timeout, batch_size):
+    """Add a TCP Server to Trash pipeline to the given sdc_executor setting a record ack if record_ack is true or
+    setting a batch ack batch_ack is true.
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    tcp_server_stage = pipeline_builder.add_stage('TCP Server').set_attributes(port=[str(TCP_PORT)],
+                                                                               tcp_mode='DELIMITED_RECORDS',
+                                                                               data_format='TEXT',
+                                                                               batch_wait_time_in_ms=batch_timeout,
+                                                                               max_batch_size_in_messages=batch_size)
+    if record_ack:
+        tcp_server_stage.set_attributes(record_processed_ack_message='Record Processed')
+
+    if batch_ack:
+        tcp_server_stage.set_attributes(batch_completed_ack_message='Batch Completed')
+
+    trash_stage = pipeline_builder.add_stage('Trash')
+
+    tcp_server_stage >> trash_stage
+
+    tcp_server_pipeline = pipeline_builder.build(
+        title=f'TCP Server Origin {"with record ack" if record_ack else "no record ack"} '
+        f'{"and batch ack" if batch_ack else "and no batch ack"}')
+
+    sdc_executor.add_pipeline(tcp_server_pipeline)
+
+    return [tcp_server_pipeline, tcp_server_stage]
+
+
+def run_pipeline_send_tcp_messages(sdc_executor, tcp_server_pipeline, tcp_server_stage, expected_message, num_clients,
+                                   num_messages_by_client, seconds_to_wait_before_close):
+    """ Runs the given tcp_server_pipeline and sends num_messages_by_client messages for each client where each
+    position in num_messages_by_client indicates the number of messages to send for the next client, for example: first
+    client will send num_messages_by_client[0] messages and so on. The number of clients is num_clients, therefore
+    num_clients must be equal to len(num_messages_by_client). After that it stops the  pipeline and checks that the
+    number of messages received by the pipeline is the same as the sum of number of messages sent by each the client.
+    seconds_to_wait_before_close indicates the number of seconds to wait before closing for each client. If
+    seconds_to_wait_before_close is zero then there is no wait for that client. seconds_to_wait_before_close[0]
+    indicates the time to wait for first client and so on.
+    """
+    # First assert lists sizes are correct, this is checking their size is equal to num_clients.
+    assert len(num_messages_by_client) == len(seconds_to_wait_before_close) == num_clients
+
+    try:
+        # Run pipeline.
+        snapshot_cmd = sdc_executor.capture_snapshot(tcp_server_pipeline, start_pipeline=True, wait=False,
+                                                     batch_size=10, batches=7)
+        total_num_messages = 0
+        expected_messages_list = []
+        # Process each client.
+        for i in range(0, num_clients):
+            # Create tcp client.
+            tcp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tcp_client_socket.connect((sdc_executor.server_host, TCP_PORT))
+
+            # Send messages for this tcp client.
+            for j in range(0, num_messages_by_client[i]):
+                expected_message_bytes = bytes(f'{str(total_num_messages)}{expected_message}', 'utf-8')
+                tcp_client_socket.sendall(expected_message_bytes)
+                new_line_char = '\n'
+                expected_messages_list.append(f'{str(total_num_messages)}{expected_message.rstrip(new_line_char)}')
+                total_num_messages += 1
+
+            # Sleep if necessary after sending messages so TCP Server Origin may send a batch due to timeout.
+            if seconds_to_wait_before_close[i] > 0:
+                time.sleep(seconds_to_wait_before_close[i])
+
+            tcp_client_socket.close()
+
+        snapshot = snapshot_cmd.wait_for_finished().snapshot
+        output_records_values = [str(record.field['text'])
+                                 for batch in snapshot.snapshot_batches
+                                 for record in batch.stage_outputs[tcp_server_stage.instance_name].output]
+        assert len(output_records_values) == total_num_messages
+        assert sorted(output_records_values) == sorted(expected_messages_list)
+    finally:
+        sdc_executor.stop_pipeline(tcp_server_pipeline, wait=True, force=True)
+
+
 @sdc_min_version('3.4.2')
 def test_tcp_server_ssl(sdc_builder, sdc_executor):
     """Runs a test using the TCP server origin pipeline with Enable TLS set and asserts that the file is received"""
