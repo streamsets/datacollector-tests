@@ -605,3 +605,72 @@ def test_hbase_lookup_processor_get_row(sdc_builder, sdc_executor, cluster):
         # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
+
+@cluster('cdh', 'hdp')
+def test_hbase_lookup_processor_row_key_lookup(sdc_builder, sdc_executor, cluster):
+    """HBase Lookup processor test.
+    This is a simple test of a row-key only look-up.
+    For a single row key, we expect all column families (in this case 2)
+    to be returned.
+    """
+    # Generate some silly data.
+    bike_races = [{'name': 'Tour de France', 'location:country': 'France', 'date:month': 'July'},
+                  {'name': "Giro d'Italia", 'location:country': 'Italy', 'date:month': 'May-June'},
+                  {'name': 'Vuelta a Espana', 'location:country': 'Spain', 'date:month': 'Aug-Sept'}]
+
+    # Convert to raw data for the Dev Raw Data Source.
+    raw_data = '\n'.join(bike_race['name'] for bike_race in bike_races)
+
+    # Generate HBase Lookup's attributes.
+    lookup_parameters = [dict(rowExpr="${record:value('/text')}",
+                              outputFieldPath='/data',
+                              timestampExpr='')]
+
+    # Get random table name to avoid collisions.
+    table_name = get_random_string(string.ascii_letters, 10)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Create Dev Raw Data Source stage.
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+
+    # Create HBase Lookup processor.
+    hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
+    hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name)
+
+    # Create trash destination.
+    trash = pipeline_builder.add_stage('Trash')
+
+    # Build pipeline.
+    dev_raw_data_source >> hbase_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating HBase table %s ...', table_name)
+        cluster.hbase.client.create_table(name=table_name, families={'location': {}, 'date': {}})
+
+        # Use HappyBase's `Batch` instance to avoid unnecessary calls to HBase.
+        batch = cluster.hbase.client.table(table_name).batch()
+        for bike_race in bike_races:
+            # Use of str.encode() below is because HBase (and HappyBase) speaks in byte arrays.
+            batch.put(bike_race['name'].encode(), {b'location:country': bike_race['location:country'].encode(),
+                                                   b'date:month': bike_race['date:month'].encode()})
+        batch.send()
+
+        # Take a pipeline snapshot.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Validate output.
+        assert [dict(dict(name=record.value2['text']),
+                     **record.value2['data'])
+                for record in snapshot[hbase_lookup.instance_name].output] == bike_races
+
+    finally:
+        # Delete HBase table.
+        logger.info('Deleting HBase table %s ...', table_name)
+        cluster.hbase.client.delete_table(name=table_name, disable=True)
+
