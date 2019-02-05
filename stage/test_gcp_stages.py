@@ -14,6 +14,7 @@
 
 import base64
 import logging
+import math
 import time
 import uuid
 from datetime import datetime
@@ -200,6 +201,68 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
         assert rows_from_snapshot == ROWS_TO_INSERT
     finally:
         bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
+
+
+# SDC-10836. Google BigQuery is not respecting batchSize and at the same time is duplicating records
+@gcp
+@sdc_min_version('2.7.0.0')
+def test_google_bigquery_origin_batch_handling(sdc_builder, sdc_executor, gcp):
+    """Verify proper batch handling by the BigQuery origin.
+
+    In this test, we write 8 records to BigQuery with a batch size of 3, verifying that each batch is of
+    size 3 and that 8 total records are captured. The small numbers are used because of the limitations
+    described in SDC-8765.
+    """
+    MAX_BATCH_SIZE = 3
+    TOTAL_RECORDS = 8
+
+    dataset_name = get_random_string(ascii_letters, 5)
+    table_name = get_random_string(ascii_letters, 5)
+    query_str = f'SELECT * FROM {dataset_name}.{table_name} ORDER BY number'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='origin')
+    google_bigquery.set_attributes(query=query_str, max_batch_size_in_records=MAX_BATCH_SIZE)
+    trash = pipeline_builder.add_stage('Trash')
+    google_bigquery >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    bigquery_client = gcp.bigquery_client
+    schema = [SchemaField('number', 'STRING', mode='required'),
+              SchemaField('value', 'STRING', mode='required')]
+
+    data = [dict(number=str(i), value=get_random_string()) for i in range(TOTAL_RECORDS)]
+    dataset = Dataset(bigquery_client.dataset(dataset_name))
+
+    try:
+        # Using Google bigquery client, create dataset, table and data inside table.
+        logger.info('Creating dataset %s using Google bigquery client ...', dataset_name)
+        bigquery_client.create_dataset(dataset)
+        table = bigquery_client.create_table(Table(dataset.table(table_name), schema=schema))
+        errors = bigquery_client.insert_rows(table, data)
+        assert not errors
+
+        # Ceiling division is needed to capture all the complete batches along with the last partial one.
+        snapshot = sdc_executor.capture_snapshot(pipeline,
+                                                 start_pipeline=True,
+                                                 batches=math.ceil(TOTAL_RECORDS / MAX_BATCH_SIZE)).snapshot
+
+        # Assert that the batch size is being respected in each batch (including the last). In this case,
+        # we'd expect batch sizes of 3, 3, and 2.
+        for i, batch in enumerate(snapshot.snapshot_batches, start=1):
+            #  for 8 records, we'd expect batch sizes of 3, 3, and 2.
+            assert (len(batch.stage_outputs[google_bigquery.instance_name].output) == MAX_BATCH_SIZE
+                    if i * MAX_BATCH_SIZE <= TOTAL_RECORDS
+                    else TOTAL_RECORDS % MAX_BATCH_SIZE)
+
+        all_records = [record.field
+                       for batch in snapshot.snapshot_batches
+                       for record in batch.stage_outputs[google_bigquery.instance_name].output]
+        assert all_records == data
+    finally:
+        bigquery_client.delete_dataset(dataset, delete_contents=True)
 
 
 @gcp
