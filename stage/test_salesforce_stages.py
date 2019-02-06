@@ -20,15 +20,19 @@ from streamsets.testframework.markers import salesforce, sdc_min_version
 
 logger = logging.getLogger(__name__)
 
-DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName': 'User1', 'Email': 'xtest1@example.com', 'LeadSource': 'Advertisement'},
+DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName': 'User1',
+                   'Email': 'xtest1@example.com', 'LeadSource': 'Advertisement'},
                   {'FirstName': 'Test2', 'LastName': 'User2', 'Email': 'xtest2@example.com', 'LeadSource': 'Partner'},
                   {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtest3@example.com', 'LeadSource': 'Web'}]
 # For testing of SDC-7548
 # Since email is used in WHERE clause in lookup processory query,
 # create data containing 'from' word in emails to verify the bug is fixed.
-DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': 'User1', 'Email': 'FROMxtest1@example.com'},
-                           {'FirstName': 'Test2', 'LastName': 'User2', 'Email': 'xtefromst2@example.com'},
-                           {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtes3@example.comFROM'}]
+DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': 'User1',
+                            'Email': 'FROMxtest1@example.com', 'LeadSource': 'Advertisement'},
+                           {'FirstName': 'Test2', 'LastName': 'User2',
+                            'Email': 'xtefromst2@example.com', 'LeadSource': 'Partner'},
+                           {'FirstName': 'Test3', 'LastName': 'User3',
+                            'Email': 'xtes3@example.comFROM', 'LeadSource': 'Web'}]
 CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
 
 ACCOUNTS_FOR_SUBQUERY = 5
@@ -50,7 +54,8 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
     salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
     field_mapping = [{'sdcField': '/FirstName', 'salesforceField': 'FirstName'},
                      {'sdcField': '/LastName', 'salesforceField': 'LastName'},
-                     {'sdcField': '/Email', 'salesforceField': 'Email'}]
+                     {'sdcField': '/Email', 'salesforceField': 'Email'},
+                     {'sdcField': '/LeadSource', 'salesforceField': 'LeadSource'}]
     salesforce_destination.set_attributes(default_operation='INSERT',
                                           field_mapping=field_mapping,
                                           sobject_type='Contact')
@@ -70,10 +75,11 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
 
         # Using Salesforce connection, read the contents in the Salesforce destination.
         # Changing " with ' and vice versa in following string makes the query execution fail.
-        query_str = "SELECT Id, FirstName, LastName, Email FROM Contact WHERE Email LIKE 'xtest%' ORDER BY Id"
+        query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
+                     "FROM Contact WHERE Email LIKE 'xtest%' ORDER BY Id")
         result = client.query(query_str)
 
-        read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]}'
+        read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]},{item["LeadSource"]}'
                      for item in result['records']]
         # Following is used later to delete these records.
         read_ids = [{'Id': item['Id']} for item in result['records']]
@@ -103,7 +109,8 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
     salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
     field_mapping = [{'sdcField': '/FirstName', 'salesforceField': 'FirstName'},
                      {'sdcField': '/LastName', 'salesforceField': 'LastName'},
-                     {'sdcField': '/Email', 'salesforceField': 'Email'}]
+                     {'sdcField': '/Email', 'salesforceField': 'Email'},
+                     {'sdcField': '/LeadSource', 'salesforceField': 'LeadSource'}]
     salesforce_destination.set_attributes(default_operation='INSERT',
                                           field_mapping=field_mapping,
                                           sobject_type='Contact')
@@ -121,10 +128,11 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
 
         # Using Salesforce connection, read the contents in the Salesforce destination.
         # Changing " with ' and vice versa in following string makes the query execution fail.
-        query_str = "SELECT Id, FirstName, LastName, Email FROM Contact WHERE Email LIKE 'xtest%' ORDER BY Id"
+        query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
+                     "FROM Contact WHERE Email LIKE 'xtest%' ORDER BY Id")
         result = client.query(query_str)
 
-        read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]}'
+        read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]},{item["LeadSource"]}'
                      for item in result['records']]
         # Following is used later to delete these records.
         read_ids = [{'Id': item['Id']} for item in result['records']]
@@ -162,16 +170,14 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, condition):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     if condition == 'query_without_prefix':
-        query = ("SELECT Id, FirstName, LastName, Email FROM Contact "
+        query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
                  "WHERE Id > '000000000000000' AND "
                  "Email LIKE 'xtest%' "
                  "ORDER BY Id")
     else:
         # SDC-9067 - redundant object name prefix caused NPE
-        query = ("SELECT Contact.Id, Contact.FirstName, Contact.LastName, Contact.Email FROM Contact "
-                 "WHERE Id > '000000000000000' AND "
-                 "Email LIKE 'xtest%' "
-                 "ORDER BY Id")
+        query = ("SELECT Contact.Id, Contact.FirstName, Contact.LastName, Contact.Email, Contact.LeadSource "
+                 "FROM Contact WHERE Id > '000000000000000' AND Email LIKE 'xtest%' ORDER BY Id")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     # Changing " with ' and vice versa in following string makes the query execution fail.
@@ -243,9 +249,8 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    query = (
-        "SELECT Id, FirstName, LastName, Email, SystemModstamp FROM Contact WHERE SystemModstamp > ${OFFSET} "
-        "ORDER BY SystemModstamp")
+    query = ("SELECT Id, FirstName, LastName, Email, LeadSource, SystemModstamp "
+             "FROM Contact WHERE SystemModstamp > ${OFFSET} ORDER BY SystemModstamp")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     # Changing " with ' and vice versa in following string makes the query execution fail.
@@ -331,7 +336,7 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data
 
     salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
     # Changing " with ' and vice versa in following string makes the query execution fail.
-    query_str = ("SELECT Id, FirstName, LastName FROM Contact "
+    query_str = ("SELECT Id, FirstName, LastName, LeadSource FROM Contact "
                  "WHERE Email = '${record:value(\"/Email\")}'")
 
     if query_with_time:
