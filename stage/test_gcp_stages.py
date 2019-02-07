@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import logging
 import time
 import uuid
+from datetime import datetime
 from string import ascii_letters, ascii_lowercase
-
-from google.cloud.bigquery import Dataset, SchemaField, Table
 from time import sleep
 
+from google.cloud.bigquery import Dataset, SchemaField, Table
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -30,17 +31,42 @@ DEFAULT_COLUMN_FAMILY_NAME = 'cf'  # for Google Bigtable
 MSG_DATA = 'Hello World from SDC and DPM!'
 SNAPSHOT_TIMEOUT_SEC = 120
 # For Google BigQuery, data to insert- needs to be in the sorted order by name.
-ROWS_TO_INSERT = [('Cristiano Ronaldo', 32),
-                  ('David Beckham', 32),
-                  ('Gerard Pique', 30),
-                  ('Lionel Messi', 30),
-                  ('Mario Gotze', 25),
-                  ('Neymar', 25),
-                  ('Pele', 76),
-                  ('Ronaldinho', 40),
-                  ('Ronaldo', 40),
-                  ('Zinedine Zidane', 42)]
-CSV_DATA_TO_INSERT = ['full_name,age'] + [','.join(str(element) for element in row) for row in ROWS_TO_INSERT]
+
+bytes_column = base64.b64encode("dataAsBytes".encode('utf-8'))
+
+ROWS_TO_INSERT = [(None, 'null ID', 12.3456, '99999999999999999999999999999.999999999', True,
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                  (1, 'full record', 12.3456, '99999999999999999999999999999.999999999', True,
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                  (2, 'null float', None, '99999999999999999999999999999.999999999', True,
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                  (3, 'null numeric', 12.3456, None, True,
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                  (4, 'null boolean', 12.3456, '99999999999999999999999999999.999999999', None,
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                  (5, 'null date', 12.3456, '99999999999999999999999999999.999999999', True,
+                   None, '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                  (6, 'null datetime', 12.3456, '99999999999999999999999999999.999999999', True,
+                   '2019-02-05', None, '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                  (7, 'null timestamp', 12.3456, '99999999999999999999999999999.999999999', True,
+                   '2019-02-05', '2019-02-05 23:59:59.999', None,'08:39:01.123', bytes_column),
+                  (8, 'null time', 12.3456, '99999999999999999999999999999.999999999', True,
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', None, bytes_column),
+                  (9, 'null bytes', 12.3456, '99999999999999999999999999999.999999999', True,
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', None)]
+
+ROWS_EXPECTED = [('Cristiano Ronaldo', 32),
+                 ('David Beckham', 32),
+                 ('Gerard Pique', 30),
+                 ('Lionel Messi', 30),
+                 ('Mario Gotze', 25),
+                 ('Neymar', 25),
+                 ('Pele', 76),
+                 ('Ronaldinho', 40),
+                 ('Ronaldo', 40),
+                 ('Zinedine Zidane', 42)]
+
+CSV_DATA_TO_INSERT = ['full_name,age'] + [','.join(str(element) for element in row) for row in ROWS_EXPECTED]
 
 
 @gcp
@@ -97,7 +123,7 @@ def test_google_bigquery_destination(sdc_builder, sdc_executor, gcp):
         data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
         data_from_bigquery.sort()
         logger.debug('read_data = {}'.format(data_from_bigquery))
-        assert ROWS_TO_INSERT == data_from_bigquery
+        assert ROWS_EXPECTED == data_from_bigquery
     finally:
         bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
 
@@ -117,8 +143,9 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
     dataset_name = get_random_string(ascii_letters, 5)
     table_name = get_random_string(ascii_letters, 5)
     google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='origin')
-    query_str = f'SELECT * FROM {dataset_name}.{table_name} ORDER BY full_name'
+    query_str = f'SELECT * FROM {dataset_name}.{table_name} ORDER BY id'
     google_bigquery.set_attributes(query=query_str)
+
 
     trash = pipeline_builder.add_stage('Trash')
     google_bigquery >> trash
@@ -126,28 +153,54 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
     sdc_executor.add_pipeline(pipeline)
 
     bigquery_client = gcp.bigquery_client
-    schema = [SchemaField('full_name', 'STRING', mode='required'),
-              SchemaField('age', 'INTEGER', mode='required')]
+    schema = [SchemaField('id', 'INTEGER', mode='NULLABLE'),
+              SchemaField('name', 'STRING', mode='NULLABLE'),
+              SchemaField('floatVal', 'FLOAT', mode='NULLABLE'),
+              SchemaField('numericVal', 'NUMERIC', mode='NULLABLE'),
+              SchemaField('booleanVal', 'BOOLEAN', mode='NULLABLE'),
+              SchemaField('dateVal', 'DATE', mode='NULLABLE'),
+              SchemaField('datetimeVal', 'DATETIME', mode='NULLABLE'),
+              SchemaField('timestampVal', 'TIMESTAMP', mode='NULLABLE'),
+              SchemaField('timeVal', 'TIME', mode='NULLABLE'),
+              SchemaField('bytesVal', 'BYTES', mode='NULLABLE')]
+
     dataset_ref = Dataset(bigquery_client.dataset(dataset_name))
+
     try:
         # Using Google bigquery client, create dataset, table and data inside table
         logger.info('Creating dataset %s using Google bigquery client ...', dataset_name)
         dataset = bigquery_client.create_dataset(dataset_ref)
         table = bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=schema))
         errors = bigquery_client.insert_rows(table, ROWS_TO_INSERT)
-        assert errors == []
+        assert not errors
 
         # Start pipeline and verify correct rows are received using snaphot.
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [(record.value['value'][0]['value'], int(record.value['value'][1]['value']))
+        rows_from_snapshot = [(int(record.value['value'][0]['value'])
+                                   if record.value['value'][0]['value'] is not None else None,
+                               record.value['value'][1]['value'],
+                               float(record.value['value'][2]['value'])
+                                   if record.value['value'][2]['value'] is not None else None,
+                               record.value['value'][3]['value'],
+                               record.value['value'][4]['value'],
+                               time.strftime('%Y-%m-%d', time.localtime(record.value['value'][5]['value']/1000))
+                                   if record.value['value'][5]['value'] is not None else None,
+                               datetime.fromtimestamp(record.value['value'][6]['value']/1000).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                                   if record.value['value'][6]['value'] is not None else None,
+                               '{} UTC'.format(datetime.utcfromtimestamp(record.value['value'][7]['value']/1000).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                                   if record.value['value'][7]['value'] is not None else None,
+                               datetime.fromtimestamp(record.value['value'][8]['value']/1000).strftime('%H:%M:%S.%f')[:-3]
+                                   if record.value['value'][8]['value'] is not None else None,
+                               base64.b64decode(record.value['value'][9]['value']) if record.value['value'][9]['value'] is not None else None)
                               for record in snapshot[google_bigquery].output]
 
         assert rows_from_snapshot == ROWS_TO_INSERT
     finally:
         bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
+
 
 @gcp
 @sdc_min_version('2.7.0.0')
