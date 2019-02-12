@@ -4,9 +4,10 @@ import pytest
 from streamsets.sdk.models import Configuration
 
 FILE_WRITER_SCRIPT = """
+    file_contents = '''{file_contents}'''
     for record in records:
         with open('{filepath}', 'w') as f:
-            f.write('{file_contents}'.decode('utf8').encode('{encoding}'))
+            f.write(file_contents.decode('utf8').encode('{encoding}'))
 """
 
 
@@ -37,10 +38,9 @@ def file_writer(sdc_executor):
         trash = builder.add_stage('Trash')
         dev_raw_data_source >> jython_evaluator >> trash
         pipeline = builder.build('File writer pipeline')
-        pipeline.configuration['shouldRetry'] = False
 
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         sdc_executor.remove_pipeline(pipeline)
     return file_writer_
 

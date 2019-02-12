@@ -21,11 +21,63 @@ from streamsets.testframework.utils import get_random_string
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('header_line', ['WITH_HEADER'])
+@pytest.mark.parametrize('extra_columns_present', [False, True])
 @pytest.mark.parametrize('allow_extra_columns', [False, True])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_allow_extra_columns(sdc_builder, sdc_executor,
-                                                            data_format, header_line, allow_extra_columns):
-    pass
+                                                            shell_executor, file_writer,
+                                                            data_format, header_line,
+                                                            extra_columns_present, allow_extra_columns):
+    """Test for Allow Extra Columns configuration covering the following scenarios:
+
+    Extra Columns Present | Allow Extra Columns | Expected outcome
+    --------------------------------------------------------------
+    True                  | True                | File processed
+    True                  | False               | Records to error
+    False                 | True                | File processed
+    False                 | False               | File processed
+    """
+    FILES_DIRECTORY = '/tmp'
+    HEADER = ['columnA', 'columnB', 'columnC']
+    EXTRA_COLUMNS_PRESENT_DATA = [dict(columnA='1', columnB='2', columnC='3'),
+                                  dict(columnA='4', columnB='5', columnC='6', _extra_01='7'),
+                                  dict(columnA='8', columnB='9', columnC='10', _extra_01='11', _extra_02='12')]
+    EXTRA_COLUMNS_NOT_PRESENT_DATA = [dict(columnA='1', columnB='2', columnC='3'),
+                                      dict(columnA='4', columnB='5', columnC='6'),
+                                      dict(columnA='7', columnB='8', columnC='9')]
+    file_name = f'{get_random_string()}.txt'
+    file_path = os.path.join(FILES_DIRECTORY, file_name)
+
+    try:
+        data = EXTRA_COLUMNS_PRESENT_DATA if extra_columns_present else EXTRA_COLUMNS_NOT_PRESENT_DATA
+        file_contents = '\n'.join([','.join(HEADER)] + [','.join(record.values()) for record in data])
+        file_writer(file_path, file_contents)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(allow_extra_columns=allow_extra_columns,
+                                 data_format=data_format,
+                                 header_line=header_line,
+                                 files_directory=FILES_DIRECTORY,
+                                 file_name_pattern=file_name)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[directory].output]
+        error_records = [error_record.field['columns'] for error_record in snapshot[directory].error_records]
+        sdc_executor.stop_pipeline(pipeline)
+        if extra_columns_present and not allow_extra_columns:
+            # The first record should show up in the snapshot, but the rest should go to error.
+            assert records == data[0:1]
+            assert error_records == [list(record.values()) for record in data[1:]]
+        else:
+            assert records == data
+    finally:
+        shell_executor(f'rm file_path')
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('create_directory_first', [True, False])
