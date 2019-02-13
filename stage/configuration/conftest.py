@@ -59,10 +59,9 @@ def shell_executor(sdc_executor):
         trash = builder.add_stage('Trash')
         dev_raw_data_source >> [trash, shell]
         pipeline = builder.build('Shell executor pipeline')
-        pipeline.configuration['shouldRetry'] = False
 
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         sdc_executor.remove_pipeline(pipeline)
     return shell_executor_
 
