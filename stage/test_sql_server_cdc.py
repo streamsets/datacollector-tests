@@ -564,3 +564,86 @@ def test_sql_server_cdc_insert_update_delete(sdc_builder, sdc_executor, database
 
         if connection is not None:
             connection.close()
+
+
+@database('sqlserver')
+@sdc_min_version('3.6.0')
+@pytest.mark.parametrize('use_table', [True, False])
+@pytest.mark.timeout(180)
+def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use_table):
+    """Test for SQL Server CDC origin stage with multiple transactions on multiple CDC tables (SDC-10926)
+
+    The pipeline looks like:
+        sql_server_cdc_origin >> jdbc_producer
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    try:
+        connection = database.engine.connect()
+        no_of_tables = 3
+        table_configs = []
+        tables = []
+
+        rows_in_database = setup_sample_data(3)
+
+        for index in range(0, no_of_tables):
+            # create the table and insert 1 row and update the row
+            table_name = get_random_string(string.ascii_lowercase, 20)
+            table = setup_table(connection, DEFAULT_SCHEMA_NAME, table_name, rows_in_database[index:index+1])
+
+            updated_name = 'jisun'
+            connection.execute(table.update()
+                 .values(name=updated_name))
+
+            table_configs.append({'capture_instance':f'{DEFAULT_SCHEMA_NAME}_{table_name}'})
+            tables.append(table)
+
+        # update the row from the first table
+        connection.execute(tables[0].update().values(name='sdc'))
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(fetch_size=1,
+            max_batch_size=1,
+            table_configs=table_configs,
+            use_direct_table_query = use_table
+        )
+
+        # create the destination table
+        dest_table_name = get_random_string(string.ascii_uppercase, 9)
+        dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
+
+        jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+
+        jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
+                                     table_name=dest_table_name,
+                                     default_operation='INSERT',
+                                     field_to_column_mapping=[])
+
+        sql_server_cdc >> jdbc_producer
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        total_no_of_records = 11
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_no_of_records)
+        sdc_executor.stop_pipeline(pipeline)
+        expected_rows_in_database = [{'id':0, 'name':'sdc', 'dt': '2017-05-03'},
+                                     {'id':1, 'name':'jisun', 'dt': '2017-05-03'},
+                                     {'id':2, 'name':'jisun', 'dt': '2017-05-03'}]
+        assert_table_replicated(database, expected_rows_in_database, DEFAULT_SCHEMA_NAME, dest_table_name)
+
+        sqlserver_cdc_pipeline_history = sdc_executor.get_pipeline_history(pipeline)
+        msgs_sent_count = sqlserver_cdc_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+        assert msgs_sent_count == total_no_of_records
+    finally:
+        for index in range(0, no_of_tables):
+            logger.info('Dropping table %s in %s database...', tables[index], database.type)
+            tables[index].drop(database.engine)
+
+        logger.info('Dropping table %s in %s database...', dest_table, database.type)
+        dest_table.drop(database.engine)
+
+        if connection is not None:
+            connection.close()
