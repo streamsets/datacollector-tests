@@ -17,6 +17,7 @@ import json
 import logging
 import re
 from datetime import datetime
+from decimal import Decimal
 
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
@@ -748,6 +749,51 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     assert utc_datetime_in_int == int(type_output[4].value['value']['amDateTime']['value'])
     assert raw_str_value == type_output[5].value['value']['amString2']['value']
 
+def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
+    """
+    This is a test for SDC-10949.
+
+    This test creates a raw data -> converter -> trash pipeline.  The raw data will contain a decimal (in STRING form) with a high
+    precision.  The converter will convert this to DECIMAL type, and we assert that all digits were preserved in the process.
+    """
+
+    decimal_str_val = '11235813213455.55342113853211';
+    raw_data = json.dumps([{'largeDecimal': decimal_str_val}])
+    field_type_converter_configs = [
+        {
+            'fields': ['/largeDecimal'],
+            'targetType': 'DECIMAL',
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'
+        }
+    ]
+    whole_type_converter_configs = []
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
+                                               field_type_converter_configs=field_type_converter_configs)
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_type_converter_fields >> trash
+    pipeline = pipeline_builder.build('Field Type Converter large decimal pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    # assert field coming out of origin is STRING (sanity check)
+    raw_output = snapshot[dev_raw_data_source.instance_name].output
+    assert raw_output[0].value['value']['largeDecimal']['type'] == 'STRING'
+    # assertions on field coming out of field type converter
+    field_output = snapshot[field_type_converter_fields.instance_name].output
+    # assert the type
+    assert field_output[0].value['value']['largeDecimal']['type'] == 'DECIMAL'
+    # and value
+    assert field_output[0].field['largeDecimal'].value == Decimal(decimal_str_val)
 
 def test_field_zip(sdc_builder, sdc_executor):
     """Test field zip processor. The pipeline would look like:
