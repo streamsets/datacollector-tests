@@ -621,6 +621,9 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
                                      default_operation='INSERT',
                                      field_to_column_mapping=[])
 
+        trash_events = pipeline_builder.add_stage('Trash')
+
+        sql_server_cdc >= trash_events
         sql_server_cdc >> jdbc_producer
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
@@ -644,6 +647,86 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
 
         logger.info('Dropping table %s in %s database...', dest_table, database.type)
         dest_table.drop(database.engine)
+
+        if connection is not None:
+            connection.close()
+
+
+@database('sqlserver')
+@pytest.mark.timeout(180)
+def test_sql_server_cdc_no_more_events(sdc_builder, sdc_executor, database):
+    """Test for SQL Server CDC origin stage on producing no-more-data events.
+    insert 1 record to the table and running the pipeline should produce 1 no-more-data event
+    insert 1 more record to the table should produce 1 no-more-data event
+    stop the pipeline and should get the total of 2 no-more-data events
+
+    The pipeline looks like:
+        sql_server_cdc_origin >> trash
+                              >= trash
+    """
+    table = None
+    connection = None
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    try:
+        connection = database.engine.connect()
+        # total_no_of_records should be less than the batch size
+        total_no_of_records = 2
+
+        rows_in_database = setup_sample_data(total_no_of_records)
+
+        logger.info("****")
+        logger.info(rows_in_database)
+
+        table_name = get_random_string(string.ascii_lowercase, 20)
+        table = setup_table(connection, DEFAULT_SCHEMA_NAME, table_name, rows_in_database[0:1])
+
+        # get the capture_instance_name
+        capture_instance_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}'
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(fetch_size=1,
+            max_batch_size_in_records=1,
+            table_configs=[{'capture_instance': capture_instance_name}]
+        )
+
+        # create the destination table
+        dest_table_name = get_random_string(string.ascii_uppercase, 9)
+        dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
+
+        trash = pipeline_builder.add_stage('Trash')
+        trash_events = pipeline_builder.add_stage('Trash')
+
+        sql_server_cdc >= trash_events
+        sql_server_cdc >> trash
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # wait for data captured by cdc jobs in sql server before capturing the pipeline
+        ct_table_name = f'{capture_instance_name}_CT'
+        wait_for_data_in_ct_table(ct_table_name, total_no_of_records/2, database)
+
+        # run the pipeline. after 10 batches, insert one more data to the table
+        start_pipeline = sdc_executor.start_pipeline(pipeline)
+        start_pipeline.wait_for_pipeline_batch_count(2)
+
+        connection2 = database.engine.connect()
+        add_data_to_table(connection2, table, rows_in_database[1:2])
+        wait_for_data_in_ct_table(ct_table_name, total_no_of_records, database)
+        start_pipeline.wait_for_pipeline_batch_count(2)
+
+        sdc_executor.stop_pipeline(pipeline)
+
+        # in total, expect 2 no-more-data event records
+        history = sdc_executor.get_pipeline_history(pipeline)
+        msgs_sent_count = history.latest.metrics.counter('stage.Trash_02.outputRecords.counter').count
+        assert msgs_sent_count == 2
+    finally:
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table, database.type)
+            table.drop(database.engine)
 
         if connection is not None:
             connection.close()
