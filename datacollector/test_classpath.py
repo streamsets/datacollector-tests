@@ -40,8 +40,10 @@ EXCLUDE_LIBS = {
     'streamsets-datacollector-mapr_5_1-lib',
     'streamsets-datacollector-mapr_5_2-lib',
     'streamsets-datacollector-mapr_6_0-lib',
+    'streamsets-datacollector-mapr_6_1-lib',
     'streamsets-datacollector-mapr_6_0-mep4-lib',
     'streamsets-datacollector-mapr_6_0-mep5-lib',
+    'streamsets-datacollector-mapr_6_1-mep6-lib',
     'streamsets-datacollector-mapr_spark_2_1_mep_3_0-lib'
 }
 
