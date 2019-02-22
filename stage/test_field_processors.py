@@ -920,3 +920,265 @@ def test_value_replacer(sdc_builder, sdc_executor):
     # assert conditionally replace values
     assert expected_state_value == new_value['state']['value']
     assert expected_state_value == new_value['address']['value']['home']['value']['state']['value']
+
+@sdc_min_version('3.8.0')
+def test_field_mapper_min_max(sdc_builder, sdc_executor):
+    """
+    Test the Field Mapper processor, by path, with an aggregate expression and preserving original paths.
+
+    This pipeline calculates the minimum and maximum value of integer fields whose name contains the word "value".
+
+    The pipeline that will be constructed is:
+
+        dev_raw_data_source (JSON data) >> field_mapper (max value) >> field_mapper (min value) >> trash
+    """
+    raw_data = """{
+      "sensor_id": "abc123",
+      "sensor_readings": [
+        {
+          "reading_id": "def456",
+          "value": 87
+        },{
+          "reading_id": "ghi789",
+          "values": [-5, 17, 19]
+        },{
+          "reading_id": "jkl012",
+          "values": [99, -107, 50]
+        }
+      ],
+      "outputs": {}
+    }"""
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    field_mapper_max = pipeline_builder.add_stage('Field Mapper', type='processor')
+    field_mapper_max.set_attributes(
+      operate_on = 'FIELD_PATHS',
+      conditional_expression = '${f:type() == \'INTEGER\' and str:startsWith(f:name(), \'value\')}',
+      mapping_expression = '/outputs/max',
+      aggregation_expression = '${max(fields)}',
+      maintain_original_paths = True
+    )
+    field_mapper_min = pipeline_builder.add_stage('Field Mapper', type='processor')
+    field_mapper_min.set_attributes(
+      operate_on = 'FIELD_PATHS',
+      conditional_expression = '${f:type() == \'INTEGER\' and str:startsWith(f:name(), \'value\')}',
+      mapping_expression = '/outputs/min',
+      aggregation_expression = '${min(fields)}',
+      maintain_original_paths = True
+    )
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_mapper_max >> field_mapper_min >> trash
+    pipeline = pipeline_builder.build('Field mapper - sensor reading value min and max pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.remove_pipeline(pipeline)
+
+    max_processor_output = snapshot[field_mapper_max.instance_name].output
+    assert max_processor_output[0].get_field_data('/outputs/max').type == 'LONG'
+    assert max_processor_output[0].get_field_data('/outputs/max').value == 99
+    # ensure original field was left in place
+    assert max_processor_output[0].get_field_data('/sensor_readings[2]/values[0]').value == 99
+
+    min_processor_output = snapshot[field_mapper_min.instance_name].output
+    assert min_processor_output[0].get_field_data('/outputs/min').type == 'LONG'
+    assert min_processor_output[0].get_field_data('/outputs/min').value == -107
+    # ensure original field was left in place
+    assert min_processor_output[0].get_field_data('/sensor_readings[2]/values[1]').value == -107
+
+@sdc_min_version('3.8.0')
+def test_field_mapper_gather_paths_with_predicate(sdc_builder, sdc_executor):
+    """
+    Test the Field Mapper processor, by path, with an aggregate expression (using previousPath and value to construct a
+    new map), and preserving original paths.
+
+    This pipeline attempts to find all occurences of String field values, or field names, containing "dave" and captures
+    their original path in the record along with the original field value
+
+    The pipeline that will be constructed is:
+
+        dev_raw_data_source (JSON data) >> field_mapper (find Daves) >> trash
+    """
+    raw_data = """{
+      "first": {
+        "firstSub1": {
+          "foo": 1,
+          "bar": 2,
+          "baz": ["John", "Mike", "Mary", "Dave Smith"]
+        },
+        "firstSub2": {
+          "one": 14,
+          "two": {
+            "name": "Joe",
+            "name2": "Dave Johnson"
+          }
+        }
+      },
+      "second": {
+        "karen": 18,
+        "secondSub": {
+          "Dave": "Richardson"
+        }
+      },
+      "outputs": {
+        "daves": []
+      }
+    }"""
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
+    field_mapper.set_attributes(
+      operate_on = 'FIELD_PATHS',
+      conditional_expression = '${str:contains(str:toLower(f:name()), \'dave\') or' +
+        '(f:type() == \'STRING\' and str:contains(str:toLower(f:value()), \'dave\'))}',
+      mapping_expression = '/outputs/daves',
+      aggregation_expression = '${map(fields, fieldByPreviousPath())}',
+      maintain_original_paths = True
+    )
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_mapper >> trash
+    pipeline = pipeline_builder.build('Field mapper - The Daves I Know')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.remove_pipeline(pipeline)
+
+    field_mapper_output = snapshot[field_mapper.instance_name].output
+    daves = field_mapper_output[0].get_field_data('/outputs/daves')
+    assert len(daves) == 3
+    assert daves[0]['/first/firstSub1/baz[3]'] == 'Dave Smith'
+    assert daves[1]['/first/firstSub2/two/name2'] == 'Dave Johnson'
+    assert daves[2]['/second/secondSub/Dave'] == 'Richardson'
+
+@sdc_min_version('3.8.0')
+def test_field_mapper_sanitize_names(sdc_builder, sdc_executor):
+    """
+    Test the Field Mapper processor, by name.  For purposes of this test, sanitizing means replacing all "z"s in field
+    names with "2".
+
+    The pipeline that will be constructed is:
+
+        dev_raw_data_source (JSON data) >> field_mapper (sanitize names) >> trash
+    """
+    raw_data = """{
+      "first": {
+        "firstSub1": {
+          "zug": 1,
+          "barz": 2,
+          "baz": ["blah", "blech", "blargh"]
+        },
+        "firstSub2": {
+          "one": 14,
+          "twoz": {
+            "name": "Joe",
+            "name2": "Dave Johnson"
+          }
+        }
+      },
+      "second": {
+        "karen": 18,
+        "secondSubz": {
+          "Dave": "Richardson"
+        }
+      }
+    }"""
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
+    field_mapper.set_attributes(
+      operate_on = 'FIELD_NAMES',
+      mapping_expression = '${str:replaceAll(f:name(), \'z\', \'2\')}',
+      maintain_original_paths = False
+    )
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_mapper >> trash
+    pipeline = pipeline_builder.build('Field mapper - The Daves I Know')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.remove_pipeline(pipeline)
+
+    field_mapper_output = snapshot[field_mapper.instance_name].output
+    output_record = field_mapper_output[0];
+    first_sub_1 = output_record.get_field_data('/first/firstSub1')
+    assert first_sub_1.get('zug') == None
+    assert first_sub_1.get('2ug') == 1
+    assert first_sub_1.get('barz') == None
+    assert first_sub_1.get('bar2') == 2
+    assert first_sub_1.get('baz') == None
+    assert first_sub_1.get('ba2')[0] == "blah"
+    assert first_sub_1.get('ba2')[1] == "blech"
+    assert first_sub_1.get('ba2')[2] == "blargh"
+
+    first_sub_2 = output_record.get_field_data('/first/firstSub2')
+    assert first_sub_2.get('twoz') == None
+    assert first_sub_2.get('two2').get('name') == 'Joe'
+
+    second = output_record.get_field_data('second')
+    assert second.get('secondSubz') == None
+    assert second.get('secondSub2').get('Dave') == 'Richardson'
+
+@sdc_min_version('3.8.0')
+def test_field_mapper_operate_on_values(sdc_builder, sdc_executor):
+    """
+    Test the Field Mapper processor, by value.  Rounds double fields up to the nearest integer (ceiling).
+
+    The pipeline that will be constructed is:
+
+        dev_raw_data_source (JSON data) >> field_mapper (ceiling) >> trash
+    """
+    raw_data = """{
+      "someData": {
+        "value1": 19.2,
+        "value2": -16.5,
+        "value3": 1987.44,
+        "subData": {
+          "value4": 0.45
+        }
+      },
+      "moreData": {
+        "value5": 19884.5,
+        "value6": -0.25
+      }
+    }"""
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
+    field_mapper.set_attributes(
+      operate_on = 'FIELD_VALUES',
+      conditional_expression = '${f:type() == \'DOUBLE\'}',
+      mapping_expression = '${math:ceil(f:value())}',
+      maintain_original_paths = False
+    )
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_mapper >> trash
+    pipeline = pipeline_builder.build('Field mapper - The Daves I Know')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.remove_pipeline(pipeline)
+
+    field_mapper_output = snapshot[field_mapper.instance_name].output
+    output_record = field_mapper_output[0];
+    assert output_record.get_field_data('/someData/value1') == 20
+    assert output_record.get_field_data('/someData/value2') == -16
+    assert output_record.get_field_data('/someData/value3') == 1988
+    assert output_record.get_field_data('/someData/subData/value4') == 1
+    assert output_record.get_field_data('/moreData/value5') == 19885
+    assert output_record.get_field_data('/moreData/value6') == 0
