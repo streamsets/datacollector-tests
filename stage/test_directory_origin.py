@@ -550,8 +550,59 @@ def test_directory_origin_csv_custom_file(sdc_builder, sdc_executor):
     output_records = snapshot[directory.instance_name].output
 
     assert 1 == len(output_records)
-    output_records[0].get_field_data('/0') == csv_records
+    assert output_records[0].get_field_data('/0') == ' '.join(csv_records)
 
+@sdc_min_version('3.8.0')
+def test_directory_origin_multi_char_delimited(sdc_builder, sdc_executor):
+    """
+    Test Directory Origin with multi-character delimited format. This will generate a sample file with the custom
+    multi-char delimiter then read it with the test pipeline.
+
+    The pipeline looks like:
+
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    # crazy delimiter
+    delim = '_/-\\_'
+    custom_delimited_lines = [
+      f"first{delim}second{delim}third",
+      f"1{delim}11{delim}111",
+      f"2{delim}22{delim}222",
+      f"31{delim}3,3{delim}3,_/-_3,3"
+    ]
+    setup_dilimited_file(sdc_executor, tmp_directory, custom_delimited_lines)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED', delimiter_format_type='MULTI_CHARACTER',
+                             multi_character_field_delimiter=delim,
+                             header_line='WITH_HEADER',
+                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             process_subdirectories=True, read_order='TIMESTAMP')
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build('Multi Char Delimited Directory')
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=3).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    output_records = snapshot[directory.instance_name].output
+
+    assert 3 == len(output_records)
+    assert output_records[0].get_field_data('/first') == '1'
+    assert output_records[0].get_field_data('/second') == '11'
+    assert output_records[0].get_field_data('/third') == '111'
+    assert output_records[1].get_field_data('/first') == '2'
+    assert output_records[1].get_field_data('/second') == '22'
+    assert output_records[1].get_field_data('/third') == '222'
+    assert output_records[2].get_field_data('/first') == '31'
+    assert output_records[2].get_field_data('/second') == '3,3'
+    assert output_records[2].get_field_data('/third') == '3,_/-_3,3'
 
 @sdc_min_version('3.0.0.0')
 def test_directory_origin_csv_custom_comment_file(sdc_builder, sdc_executor):

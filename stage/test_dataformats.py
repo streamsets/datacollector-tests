@@ -16,6 +16,8 @@ import logging
 from decimal import Decimal
 from streamsets.testframework.markers import sdc_min_version
 
+from streamsets.testframework.markers import sdc_min_version
+
 logger = logging.getLogger(__name__)
 
 #
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 #
 
 
-def create_text_pipeline(sdc_builder, data_format, content):
+def create_text_pipeline(sdc_builder, data_format, content, **parser_configs):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
@@ -35,6 +37,9 @@ def create_text_pipeline(sdc_builder, data_format, content):
     parser.field_to_parse = '/text'
     parser.target_field = '/'
     parser.data_format = data_format
+
+    if (parser_configs):
+      parser.set_attributes(**parser_configs)
 
     trash = builder.add_stage('Trash')
 
@@ -68,6 +73,23 @@ def test_parse_delimited(sdc_builder, sdc_executor):
     assert snapshot['DataParser_01'].output[0].get_field_data('[1]') == '2'
     assert snapshot['DataParser_01'].output[0].get_field_data('[2]') == '3'
 
+
+@sdc_min_version('3.8.0')
+def test_parse_multichar_delimited(sdc_builder, sdc_executor):
+    """Validate parsing of delimited content via the Data Parser processor."""
+    pipeline = create_text_pipeline(sdc_builder, 'DELIMITED', 'abcd||efgh||ijkl', delimiter_format_type='MULTI_CHARACTER',
+                                    multi_character_field_delimiter='||', header_line='NO_HEADER')
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    outputs = snapshot['DataParser_01'].output
+    assert len(outputs) == 1
+    output_record = outputs[0]
+    assert output_record.get_field_data('[0]') == 'abcd'
+    assert output_record.get_field_data('[1]') == 'efgh'
+    assert output_record.get_field_data('[2]') == 'ijkl'
 
 def test_parse_log(sdc_builder, sdc_executor):
     """Validate parsing of log content via the Data Parser processor."""
