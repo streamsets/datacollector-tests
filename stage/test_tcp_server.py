@@ -15,6 +15,7 @@
 import logging
 import socket
 import ssl
+import time
 from collections import namedtuple
 
 import pytest
@@ -75,6 +76,55 @@ def test_tcp_server_simple(sdc_executor, tcp_server_pipeline):
 
     # Stop the pipelines.
     sdc_executor.stop_pipeline(tcp_server_pipeline.pipeline)
+
+
+# SDC-10425
+def test_stop_tcp_with_delay(sdc_builder, sdc_executor):
+    """Make sure that the origin can properly be started after stopping it with long batch times."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    tcp_server = builder.add_stage('TCP Server')
+    tcp_server.configuration.update({'conf.dataFormat': 'TEXT',
+                                     'conf.ports': [str(TCP_PORT)],
+                                     'conf.tcpMode': 'DELIMITED_RECORDS',
+                                     'conf.recordProcessedAckMessage': 'record_${record:value(\'/text\')}'})
+
+    # Make sure that each batch takes at least 5 seconds
+    delay = builder.add_stage('Delay')
+    delay.delay_between_batches = 5 * 1000
+
+    trash = builder.add_stage('Trash')
+
+    tcp_server >> delay >> trash
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+
+    # Let's start/stop the pipeline few times, it should always properly wait for graceful shutdown and subsequent
+    # start of pipeline should be immediate.
+    for _ in range(3):
+        # Start the pipeline
+        sdc_executor.start_pipeline(pipeline)
+
+        # Send exactly one record
+        tcp_client = TCPClient(sdc_executor.server_host, TCP_PORT)
+        tcp_client.send_str_and_ack('Something not important\n')
+
+        # Wait one second to make sure that the batch is 'processing' (it should take ~5 seconds to process that batch)
+        time.sleep(1)
+
+        # Stop the pipeline, the pipeline stop command should take time to finish. In 'zero' operation cost world that
+        # would be around 4 seconds, but we don't want to let the test fail for random race conditions and thus we
+        # verify at least 2 seconds.
+        start = time.time()
+        sdc_executor.stop_pipeline(pipeline)
+        assert time.time() - start > 2
+
+        # There should be exactly one record and batch processing time should be more than 5 seconds
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+        #TODO: TLKT-167: Add access methods to metric objects
+        assert history.latest.metrics.timer('pipeline.batchProcessing.timer')._data.get('mean') >= 5
 
 
 @sdc_min_version('3.4.2')
