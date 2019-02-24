@@ -14,6 +14,7 @@
 
 import logging
 from decimal import Decimal
+from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
 
@@ -107,10 +108,11 @@ def test_parse_xml(sdc_builder, sdc_executor):
 
 
 # SDC-11018: Re-scale data when writing Decimal into Avro
+@sdc_min_version('3.0.0.0')
 def test_avro_decimal_incorrect_scale(sdc_builder, sdc_executor):
     """Make sure that we auto-rescale decimal as needed when writing to Avro.
 
-       raw data >> type converter >> generator >> parser >> trash
+       raw data source >> type converter >> generator >> parser >> trash
     """
     builder = sdc_builder.get_pipeline_builder()
 
@@ -164,3 +166,53 @@ def test_avro_decimal_incorrect_scale(sdc_builder, sdc_executor):
     assert len(snapshot[parser].output) == 2
     assert snapshot[parser].output[0].get_field_data('/a') == Decimal('1.10000')
     assert snapshot[parser].output[1].get_field_data('/a') == None
+
+# SDC-11022: Do not use avro union index when writing avro data
+@sdc_min_version('3.0.0.0')
+def test_avro_decimal_union_index_on_write(sdc_builder, sdc_executor):
+    """Make sure that avro union index is not used when writing data out to Avro file format.
+
+       raw data source >> expression >> generator >> parser >> trash
+    """
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = '{"a": "b"}'
+
+    # Use clearly non-existing typeIndex
+    expression = builder.add_stage('Expression Evaluator')
+    expression.header_attribute_expressions = [
+        {'attributeToSet': 'avro.union.typeIndex./a', 'headerAttributeExpression': '666'}
+    ]
+
+    generator = builder.add_stage('Data Generator')
+    generator.data_format = 'AVRO'
+    generator.avro_schema_location = 'INLINE'
+    generator.avro_schema = """{
+      "type" : "record",
+      "name" : "TestDecimal",
+      "fields" : [ {
+        "name" : "a",
+        "type" : [ "null", "int", "string"],
+        "default" : null
+      }]
+    }"""
+
+    parser = builder.add_stage('Data Parser')
+    parser.field_to_parse = '/'
+    parser.target_field = '/'
+    parser.data_format = 'AVRO'
+    parser.avro_schema_location = 'SOURCE'
+
+    trash = builder.add_stage('Trash')
+
+    source >> expression >> generator >> parser >> trash
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    assert len(snapshot[parser].output) == 1
+    assert snapshot[parser].output[0].get_field_data('/a') == 'b'
