@@ -18,6 +18,7 @@ import logging
 import math
 import random
 import string
+import time
 
 import pytest
 import sqlalchemy
@@ -670,4 +671,63 @@ def test_jdbc_producer_update(sdc_builder, sdc_executor, database):
         assert data_from_database == [(updated_names[record['id']], record['id']) for record in ROWS_IN_DATABASE]
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
+# SDC-10987: JDBC Multitable Consumer multiple offset columns with initial offset
+@database
+def test_jdbc_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_executor, database):
+    """
+    Set initial offset at the end of the table and verify that no records were read.
+    """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.table_configs=[{
+        "tablePattern": table_name,
+        "overrideDefaultOffsetColumns": True,
+        "offsetColumns": ["id"],
+        "offsetColumnToInitialOffsetValue": [{
+            "key": "id",
+            "value": "5"
+        }]
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32))
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        # Since the pipeline is not meant to read anything, we 'simply' wait
+        time.sleep(5)
+
+        sdc_executor.stop_pipeline(pipeline)
+
+        # There must be no records read
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 0
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 0
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
