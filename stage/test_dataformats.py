@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -103,3 +104,63 @@ def test_parse_xml(sdc_builder, sdc_executor):
 
     assert len(snapshot['DataParser_01'].output) == 1
     assert snapshot['DataParser_01'].output[0].get_field_data('/key[0]/value') == 'value'
+
+
+# SDC-11018: Re-scale data when writing Decimal into Avro
+def test_avro_decimal_incorrect_scale(sdc_builder, sdc_executor):
+    """Make sure that we auto-rescale decimal as needed when writing to Avro.
+
+       raw data >> type converter >> generator >> parser >> trash
+    """
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = """{"a": "1.10"}
+                         {"a": null}"""
+
+    type_converter = builder.add_stage('Field Type Converter')
+    type_converter.conversion_method = 'BY_FIELD'
+    type_converter.field_type_converter_configs = [{
+        "fields" : [ "/a" ],
+        "targetType" : "DECIMAL",
+        "scale" : 2,
+        "decimalScaleRoundingStrategy" : "ROUND_HALF_EVEN"
+      }]
+
+    generator = builder.add_stage('Data Generator')
+    generator.data_format = 'AVRO'
+    generator.avro_schema_location = 'INLINE'
+    generator.avro_schema = """{
+      "type" : "record",
+      "name" : "TestDecimal",
+      "fields" : [ {
+        "name" : "a",
+        "type" : [ "null", {
+          "type" : "bytes",
+          "logicalType" : "decimal",
+          "precision" : 7,
+          "scale" : 5
+        } ],
+        "default" : null
+      }]
+    }"""
+
+    parser = builder.add_stage('Data Parser')
+    parser.field_to_parse = '/'
+    parser.target_field = '/'
+    parser.data_format = 'AVRO'
+    parser.avro_schema_location = 'SOURCE'
+
+    trash = builder.add_stage('Trash')
+
+    source >> type_converter >> generator >> parser >> trash
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    assert len(snapshot[parser].output) == 2
+    assert snapshot[parser].output[0].get_field_data('/a') == Decimal('1.10000')
+    assert snapshot[parser].output[1].get_field_data('/a') == None
