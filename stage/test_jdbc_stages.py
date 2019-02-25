@@ -192,6 +192,61 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
             table.drop(database.engine)
 
 
+@database
+@sdc_min_version('3.2.0')
+def test_jdbc_multitable_consumer_with_no_more_data_event_generation_delay(sdc_builder, sdc_executor, database):
+    """
+    Test reading Multi-table JDBC produced event to trash and output to trash.
+    Test when the no more data event generation delay is configured,
+    check if there is a run away thread while finishing the pipeline (SDC-11009)
+    """
+    src_table = get_random_string(string.ascii_lowercase, 6)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(no_more_data_event_generation_delay_in_seconds=10,
+        table_configs=[{"tablePattern": f'%{src_table}%'}])
+
+    trash = pipeline_builder.add_stage('Trash')
+    trash_event = pipeline_builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >= trash
+    jdbc_multitable_consumer >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    random.seed()
+
+    metadata = sqlalchemy.MetaData()
+    try:
+        connection = database.engine.connect()
+
+        table = sqlalchemy.Table(
+                src_table,
+                metadata,
+                sqlalchemy.Column('serial', sqlalchemy.Integer, primary_key=True),
+                sqlalchemy.Column('data', sqlalchemy.Integer)
+            )
+        table.create(database.engine)
+
+        rows = [{'serial': 1, 'data': random.randint(0, 2100000000)}]
+        connection.execute(table.insert(), rows)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        current_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        assert current_status == 'STOPPED'
+
+        event_record = snapshot[jdbc_multitable_consumer.instance_name].event_records
+        assert len[event_record] == 1
+    finally:
+        if table is not None:
+            table.drop(database.engine)
+
+
 def create_table_in_database(table_name, database):
     metadata = sqlalchemy.MetaData()
 
