@@ -17,7 +17,7 @@ import logging
 import string
 
 from streamsets.testframework.utils import get_random_string
-from streamsets.testframework.markers import solr
+from streamsets.testframework.markers import solr, sdc_min_version
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -75,3 +75,48 @@ def test_solr_write_records_apache(sdc_builder, sdc_executor, solr):
         # cleanup the fields created by the test.
         client.delete(id=field_name_1)
         client.delete(id=field_name_2)
+
+
+@solr
+@sdc_min_version('3.8.0')
+def test_solr_write_fields_automatically_mapped_apache(sdc_builder, sdc_executor, solr):
+    """Test documents are correctly stored in Solr when mappings to solr schema fields are directly taken from the
+    record. Pipeline looks like:
+
+    dev_raw_data_source >> solr_target
+    """
+    client = solr.client
+
+    field_val_1 = get_random_string(string.ascii_letters, 10)
+    field_val_2 = get_random_string(string.ascii_letters, 10)
+    json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
+
+    # Build Solr target pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=json_str)
+    solr_target = builder.add_stage('Solr', type='destination')
+    solr_target.set_attributes(instance_type='SINGLE_NODE',
+                               record_indexing_mode='RECORD',
+                               map_fields_automatically=True,
+                               field_path_for_data='/')
+
+    dev_raw_data_source >> solr_target
+
+    solr_dest_pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(solr)
+    solr_dest_pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(solr_dest_pipeline)
+
+    # Assert data ingested into Solr.
+    try:
+        sdc_executor.start_pipeline(solr_dest_pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(solr_dest_pipeline)
+
+        query = f'{{!term f=id}}{field_val_1}'
+        results = client.search(q=query)
+        assert len(results) > 0
+        assert results.docs[0]['title'][0] == field_val_2
+    finally:
+        # Cleanup fields created by the test.
+        client.delete(id=field_val_1)

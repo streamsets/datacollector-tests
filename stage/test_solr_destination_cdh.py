@@ -16,7 +16,7 @@ import logging
 import string
 
 import pytest
-from streamsets.testframework.markers import cluster
+from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,48 @@ def test_solr_write_records_cdh(sdc_builder, sdc_executor, cluster):
         results = solr_client.search(q=query)
         assert len(results) > 0
         assert results.docs[0][field_name_2][0] == field_val_2
+    finally:
+        # Delete Solr document created in the test.
+        solr_client.delete(id=field_val_1)
+
+
+@sdc_min_version('3.8.0')
+def test_solr_write_records_fields_automatically_mapped_cdh(sdc_builder, sdc_executor, cluster):
+    """Solr basic write records test case.
+    dev_raw_data_source >> solr_target
+    """
+
+    # Mandatory to have an id of the document for CDH Solr as it is a schema required field.
+    field_val_1 = get_random_string(string.ascii_letters, 10)
+    field_val_2 = get_random_string(string.ascii_letters, 10)
+
+    json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
+
+    # Build Solr target pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
+
+    solr_target = builder.add_stage('Solr', type='destination')
+    solr_target.set_attributes(map_fields_automatically=True,
+                               field_path_for_data='/')
+
+    dev_raw_data_source >> solr_target
+
+    pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    # Assert data ingested into Solr.
+    solr_client = cluster.solr.client
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        query = f'{{!term f=id}}{field_val_1}'
+        results = solr_client.search(q=query)
+        assert len(results) > 0
+        assert results.docs[0]['title'][0] == field_val_2
     finally:
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
