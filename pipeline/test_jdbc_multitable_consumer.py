@@ -41,7 +41,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
 
     jdbc_query_consumer >> trash
     jdbc_query_consumer >= pipeline_finished_executor
-    pipeline = pipeline_builder.build('JDBC no more data pipeline').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -54,7 +54,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
         connection = database.engine.connect()
         connection.execute(table.insert(), [{'col': 1}, {'col': 2}, {'col': 3}])
 
-        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
 
         metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
         assert metrics.counter("pipeline.batchCount.counter").count == 1
