@@ -23,6 +23,14 @@ from streamsets.testframework.utils import get_random_string
 S3_SANDBOX_PREFIX = 'sandbox'
 
 
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-wholefile-transformer-lib')
+
+    return hook
+
+
 @sdc_min_version('3.0.0.0')
 @aws('s3')
 def test_parquet_to_s3(sdc_builder, sdc_executor, aws):
