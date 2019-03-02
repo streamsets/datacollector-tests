@@ -1137,3 +1137,85 @@ def test_jdbc_producer_multischema_multitable(sdc_builder, sdc_executor, databas
         _drop_schema(schema1_name, database)
         _drop_schema(schema2_name, database)
         _drop_schema(schema3_name, database)
+
+
+# SDC-11063: Do not reoder update statements in JDBC destination
+@sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('multi_row', [True, False])
+@database
+def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
+    """Ensure that variously intertwined operations won't be executed out of order in harmful way."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('a', sqlalchemy.Integer),
+        sqlalchemy.Column('b', sqlalchemy.Integer)
+    )
+
+    RAW_DATA = [
+        # Insert id=1
+        {"op": 1, "id": 1, "a": 1, "b": 1},
+        # Update id=1
+        {"op": 3, "id": 1, "a": 2},
+        # Insert id=2
+        {"op": 1, "id": 2, "a": 1, "b": 1},
+        # Delete id=2
+        {"op": 2, "id": 2},
+        # Update id=1
+        {"op": 3, "id": 1, "a": 2, "b": 2},
+        # Insert id=3
+        {"op": 1, "id": 3, "a": 1, "b": 1},
+        # Update id=1
+        {"op": 3, "id": 1, "a": 3},
+        # Update id=3
+        {"op": 3, "id": 3, "a": 5},
+        # Delete id=3
+        {"op": 2, "id": 3}
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = '\n'.join(json.dumps(rec) for rec in RAW_DATA)
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.header_attribute_expressions = [
+        {'attributeToSet': 'sdc.operation.type', 'headerAttributeExpression': '${record:value("/op")}'}
+    ]
+
+    remover = builder.add_stage('Field Remover')
+    remover.set_attributes(fields=['/op'], action='REMOVE')
+
+    producer = builder.add_stage('JDBC Producer')
+    producer.field_to_column_mapping = []
+    producer.default_operation = 'UPDATE'
+    producer.table_name = table_name
+    producer.use_multi_row_operation = multi_row
+
+    source >> expression >> remover >> producer
+
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        result = database.engine.execute(table.select())
+        db = sorted(result.fetchall(), key=lambda row: row[0]) # order by id
+        result.close()
+
+        assert len(db) == 1
+        assert 1 == db[0][0]
+        assert 3 == db[0][1]
+        assert 2 == db[0][2]
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
