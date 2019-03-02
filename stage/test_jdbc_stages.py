@@ -571,7 +571,8 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-def _create_jdbc_producer_pipeline(pipeline_builder, pipeline_title, raw_data, table_name, operation):
+def create_jdbc_producer_pipeline(pipeline_builder, pipeline_title, raw_data, table_name, operation,
+                                  max_cache_size_per_batch_in_entries=-1):
     """Helper function to create and return a pipeline with JDBC Producer
     The Deduplicator assures there is only one ingest to database. The pipeline looks like:
     The pipeline looks like:
@@ -589,7 +590,8 @@ def _create_jdbc_producer_pipeline(pipeline_builder, pipeline_title, raw_data, t
     jdbc_producer.set_attributes(default_operation=operation,
                                  table_name=table_name,
                                  field_to_column_mapping=FIELD_MAPPINGS,
-                                 stage_on_record_error='STOP_PIPELINE')
+                                 stage_on_record_error='STOP_PIPELINE',
+                                 max_cache_size_per_batch_in_entries=max_cache_size_per_batch_in_entries)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> record_deduplicator >> jdbc_producer
@@ -795,6 +797,55 @@ def test_jdbc_producer_update(sdc_builder, sdc_executor, database):
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+@pytest.mark.parametrize('cache_size', [-1, 1])
+@database
+def test_jdbc_producer_cache_size(sdc_builder, sdc_executor, cache_size, database):
+    """Try various cache sizes on update (that leads to a different queries)."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = sqlalchemy.Table(
+        table_name,
+        sqlalchemy.MetaData(),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32)),
+        sqlalchemy.Column('nickname', sqlalchemy.String(32))
+    )
+    table.create(database.engine)
+
+    INITIAL = [
+        {'id': 1, 'name': 'Dima', 'nickname': 'scholar'},
+        {'id': 2, 'name': 'Jarcec', 'nickname': 'troll'},
+        {'id': 3, 'name': 'Arvind', 'nickname': 'boss'}
+    ]
+
+    logger.info('Adding %s rows into %s database ...', len(INITIAL), database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), INITIAL)
+
+    UPDATE = [
+        {'id': 2, 'name': 'Eddie'},
+        {'id': 3, 'nickname': 'dictator'}
+    ]
+    DATA = '\n'.join(json.dumps(rec) for rec in UPDATE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    pipeline = create_jdbc_producer_pipeline(pipeline_builder, 'JDBC Producer Update', DATA, table_name, 'UPDATE',
+                                             max_cache_size_per_batch_in_entries=cache_size)
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(UPDATE))
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data = sorted(result.fetchall(), key=lambda row: row[0]) # order by id
+        result.close()
+
+        assert data[1][1] == 'Eddie'
+        assert data[2][2] == 'dictator'
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
 
 # SDC-10987: JDBC Multitable Consumer multiple offset columns with initial offset
 @database
