@@ -1270,3 +1270,144 @@ def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
+
+
+@sdc_min_version('3.0.0.0')
+@database
+def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
+    """
+    Validate that we properly generate events
+    """
+    table_prefix = get_random_string(string.ascii_lowercase, 20)
+    table_a = '{}_a'.format(table_prefix)
+    table_b = '{}_b'.format(table_prefix)
+    table_events = '{}_events'.format(table_prefix)
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('JDBC Multitable Consumer')
+    source.transaction_isolation = 'TRANSACTION_READ_COMMITTED'
+    source.table_configs=[{
+        'tablePattern': f'{table_prefix}%',
+        'tableExclusionPattern': table_events
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [ {
+        'fieldToSet' : '/tbl',
+        'expression' : '${record:value("/table")}${record:value("/tables[0]")}'
+      }, {
+        'fieldToSet' : '/tbls',
+        'expression' : '${record:value("/tables[0]")},${record:value("/tables[1]")}'
+      }, {
+        'fieldToSet' : '/event',
+        'expression' : '${record:eventType()}'
+      }
+    ]
+
+    producer = builder.add_stage('JDBC Producer')
+    producer.table_name = table_events
+    producer.default_operation = 'INSERT'
+    producer.field_to_column_mapping = [
+        dict(field='/event', columnName='event'),
+        dict(field='/tbl', columnName='tbl'),
+        dict(field='/tbls', columnName='tbls')
+    ]
+
+    source >> trash
+    source >= expression
+    expression >> producer
+
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    #  We need three tables for this test
+    metadata = sqlalchemy.MetaData()
+    a = sqlalchemy.Table(
+        table_a,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)
+    )
+    b = sqlalchemy.Table(
+        table_b,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)
+    )
+    events = sqlalchemy.Table(
+        table_events,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('event', sqlalchemy.String(50)),
+        sqlalchemy.Column('tbl', sqlalchemy.String(150)),
+        sqlalchemy.Column('tbls', sqlalchemy.String(150))
+    )
+    try:
+        logger.info('Creating tables %s, %s and %s in %s database ...', table_a, table_b, table_events, database.type)
+        a.create(database.engine)
+        b.create(database.engine)
+        events.create(database.engine)
+
+        logger.info('Inserting rows into %s and %s', table_a, table_b)
+        connection = database.engine.connect()
+        connection.execute(a.insert(), {'id': 1})
+        connection.execute(b.insert(), {'id': 1})
+
+        # Start the pipeline
+        status = sdc_executor.start_pipeline(pipeline)
+
+        # Read two records, generate 4 events, 6 records
+        status.wait_for_pipeline_output_records_count(6)
+
+        result = database.engine.execute(events.select())
+        db = sorted(result.fetchall(), key=lambda row: row[0]) # order by stamp
+        result.close()
+        assert len(db) == 4
+
+        tbls = set()
+        assert 'table-finished' == db[0][1]
+        tbls.add(db[0][2])
+        assert 'table-finished' == db[1][1]
+        tbls.add(db[1][2])
+        assert table_a in tbls
+        assert table_b in tbls
+
+        assert 'schema-finished' == db[2][1]
+        tbls = set(db[2][3].split(","))
+        assert table_a in tbls
+        assert table_b in tbls
+
+        assert 'no-more-data' == db[3][1]
+
+        # Portable truncate
+        events.drop(database.engine)
+        events.create(database.engine)
+
+        # Second iteration - insert one new row
+        logger.info('Inserting rows into %s', table_a)
+        connection = database.engine.connect()
+        connection.execute(a.insert(), {'id': 2})
+
+        # 1 record, 3 events more
+        status.wait_for_pipeline_output_records_count(10)
+
+        result = database.engine.execute(events.select())
+        db = sorted(result.fetchall(), key=lambda row: row[0]) # order by stamp
+        result.close()
+        assert len(db) == 3
+
+        assert 'table-finished' == db[0][1]
+        assert table_a == db[0][2]
+
+        assert 'schema-finished' == db[1][1]
+        tbls = set(db[1][3].split(","))
+        assert table_a in tbls
+        assert table_b in tbls
+
+        assert 'no-more-data' == db[2][1]
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping tables %s, %s and %s in %s database...', table_a, table_b, table_events, database.type)
+        a.drop(database.engine)
+        b.drop(database.engine)
+        events.drop(database.engine)
