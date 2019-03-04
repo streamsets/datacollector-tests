@@ -16,6 +16,8 @@ import os
 import string
 import tempfile
 
+import pytest
+
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
