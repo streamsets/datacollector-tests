@@ -227,8 +227,7 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
     # Note: Test will fail till SDC-7627 is addressed/fixed
     # Note: Cannot use Azure SDK https://github.com/Azure/azure-event-hubs-python as it requires native build,
     # specific for a platform.
-    raw_list = [dict(contact=dict(name='Jane Smith', phone=2124050000, zip_code=27023)),
-                dict(contact=dict(name='San', phone=2120998998, zip_code=14305))]
+    raw_list = [dict(name='Jane Smith', phone=2124050000, zip_code=27023)]
     raw_data = json.dumps(raw_list)
 
     # Azure container names are lowercased. Ref. http://tinyurl.com/ya9y9mm6
@@ -282,10 +281,11 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
         sdc_executor.stop_pipeline(producer_dest_pipeline)
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
 
-        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].value['value']
-
-        results = [{key: value['value'] for key, value in record['value'].items()} for record in result_record]
-        assert results == raw_data
+        result_records = snapshot[azure_iot_event_hub_consumer.instance_name].output
+        assert len(result_records) == 1
+        assert result_records[0].get_field_data('[0]/name') == 'Jane Smith'
+        assert result_records[0].get_field_data('[0]/phone') == 2124050000
+        assert result_records[0].get_field_data('[0]/zip_code') == 27023
     finally:
         logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         eh_service_bus.delete_event_hub(event_hub_name)
