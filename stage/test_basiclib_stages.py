@@ -19,6 +19,7 @@ import string
 import pytest
 
 from streamsets.sdk.models import Configuration
+from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -157,3 +158,138 @@ def test_stream_selector_processor(sdc_builder, sdc_executor):
                                         for field, value in record.value['value'].items()}
                                        for record in not_multi_winners_records]
     assert not_multi_winners == not_multi_winners_from_snapshot
+
+
+# Log Parser tests
+
+
+@sdc_min_version('3.9.0')
+def test_log_parser_processor_multiple_grok_patterns(sdc_builder, sdc_executor):
+    """
+    Test that logs matching different grok patterns are correctly parsed when all corresponding grok patterns are
+    present in the grok patterns list configuration variable of log_parser stage. Pipeline looks like:
+
+    dev_raw_data_source >> log_parser >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    json_fields_map = [
+        {
+            'log': '111.222.333.123 HOME - [01/Feb/1998:01:08:46 -0800] "GET /dummy/dummy.htm HTTP/1.0" 200 28083 '
+                   '"http://www.streamsets.com/dummy/dummy_intro.htm" "Mozilla/4.01 (Macintosh; I; PPC)"'
+        },
+        {
+            'log': 'DEBUG'
+        }
+    ]
+    json_str = '\n'.join(json.dumps(record) for record in json_fields_map)
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=json_str,
+                                                                                           stop_after_first_batch=True)
+
+    log_parser_processor = pipeline_builder.add_stage('Log Parser').set_attributes(field_to_parse='/log',
+                                                                                   new_parsed_field='/parsed_log',
+                                                                                   log_format="GROK",
+                                                                                   grok_patterns=[
+                                                                                       '',
+                                                                                       '%{COMBINEDAPACHELOG}',
+                                                                                       '%{LOGLEVEL}'
+                                                                                   ])
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> log_parser_processor >> trash
+
+    log_parser_pipeline = pipeline_builder.build(
+        title='Log Parser pipeline multiple grok patterns success')
+
+    sdc_executor.add_pipeline(log_parser_pipeline)
+
+    snapshot_cmd = sdc_executor.capture_snapshot(log_parser_pipeline, start_pipeline=True, wait=False)
+    snapshot = snapshot_cmd.wait_for_finished().snapshot
+    records = [record.field for record in snapshot[log_parser_processor.instance_name].output]
+
+    assert 2 == len(records)
+
+    assert records[0]['parsed_log']['request'] == '/dummy/dummy.htm'
+    assert records[0]['parsed_log']['agent'] == '"Mozilla/4.01 (Macintosh; I; PPC)"'
+    assert records[0]['parsed_log']['auth'] == '-'
+    assert records[0]['parsed_log']['ident'] == 'HOME'
+    assert records[0]['parsed_log']['verb'] == 'GET'
+    assert records[0]['parsed_log']['referrer'] == '"http://www.streamsets.com/dummy/dummy_intro.htm"'
+    assert records[0]['parsed_log']['response'] == '200'
+    assert records[0]['parsed_log']['bytes'] == '28083'
+    assert records[0]['parsed_log']['clientip'] == '111.222.333.123'
+    assert records[0]['parsed_log']['httpversion'] == '1.0'
+    assert records[0]['parsed_log']['timestamp'] == '01/Feb/1998:01:08:46 -0800'
+
+    assert records[1]['parsed_log']['parsedLine'] == 'DEBUG'
+
+
+@sdc_min_version('3.9.0')
+def test_log_parser_processor_multiple_grok_patterns_not_all_present(sdc_builder, sdc_executor):
+    """
+    Test that logs matching different grok patterns are correctly parsed when corresponding grok patterns are
+    present in the grok patterns list configuration variable of log_parser stage and logs without a pattern that
+    matches them are sent to error. Pipeline looks like:
+
+    dev_raw_data_source >> log_parser >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    json_fields_map = [
+        {
+            'log': '111.222.333.123 HOME - [01/Feb/1998:01:08:46 -0800] "GET /dummy/dummy.htm HTTP/1.0" 200 28083 '
+                   '"http://www.streamsets.com/dummy/dummy_intro.htm" "Mozilla/4.01 (Macintosh; I; PPC)"'
+        },
+        {
+            'log': 'DEBUG'
+        }
+    ]
+    json_str = '\n'.join(json.dumps(record) for record in json_fields_map)
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=json_str,
+                                                                                           stop_after_first_batch=True)
+
+    log_parser_processor = pipeline_builder.add_stage('Log Parser').set_attributes(field_to_parse='/log',
+                                                                                   new_parsed_field='/parsed_log',
+                                                                                   log_format="GROK",
+                                                                                   grok_patterns=[
+                                                                                       '',
+                                                                                       '%{COMBINEDAPACHELOG}'
+                                                                                   ])
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> log_parser_processor >> trash
+
+    log_parser_pipeline = pipeline_builder.build(
+        title='Log Parser pipeline multiple grok patterns success')
+
+    sdc_executor.add_pipeline(log_parser_pipeline)
+
+    snapshot_cmd = sdc_executor.capture_snapshot(log_parser_pipeline, start_pipeline=True, wait=False)
+    snapshot = snapshot_cmd.wait_for_finished().snapshot
+    correct_records = [record.field for record in snapshot[log_parser_processor.instance_name].output]
+
+    assert 1 == len(correct_records)
+
+    assert correct_records[0]['parsed_log']['request'] == '/dummy/dummy.htm'
+    assert correct_records[0]['parsed_log']['agent'] == '"Mozilla/4.01 (Macintosh; I; PPC)"'
+    assert correct_records[0]['parsed_log']['auth'] == '-'
+    assert correct_records[0]['parsed_log']['ident'] == 'HOME'
+    assert correct_records[0]['parsed_log']['verb'] == 'GET'
+    assert correct_records[0]['parsed_log']['referrer'] == '"http://www.streamsets.com/dummy/dummy_intro.htm"'
+    assert correct_records[0]['parsed_log']['response'] == '200'
+    assert correct_records[0]['parsed_log']['bytes'] == '28083'
+    assert correct_records[0]['parsed_log']['clientip'] == '111.222.333.123'
+    assert correct_records[0]['parsed_log']['httpversion'] == '1.0'
+    assert correct_records[0]['parsed_log']['timestamp'] == '01/Feb/1998:01:08:46 -0800'
+
+    bad_records = [record.field for record in snapshot[log_parser_processor.instance_name].error_records]
+
+    assert 1 == len(bad_records)
+
+    assert 'DEBUG' == bad_records[0]['log']
