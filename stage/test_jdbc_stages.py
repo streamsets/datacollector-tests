@@ -1411,3 +1411,57 @@ def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
         a.drop(database.engine)
         b.drop(database.engine)
         events.drop(database.engine)
+
+
+# SDC-11092: Improve the ability of JDBC Destination to cover non-standard Data related SQL Error codes
+@sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('multi_row', [True, False])
+@database('oracle')
+def test_jdbc_producer_oracle_data_errors(sdc_builder, sdc_executor, multi_row, database):
+    """Ensure that data related error in Oracle will be sent to eror stream rather then shutting the pipeline down."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('ID', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('STR', sqlalchemy.String(2)),
+    )
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = '{"ID" : 1, "STR": "Longer then 2 characters"}'
+
+    producer = builder.add_stage('JDBC Producer')
+    producer.field_to_column_mapping = []
+    producer.default_operation = 'INSERT'
+    producer.table_name = table_name
+    producer.use_multi_row_operation = multi_row
+
+    source >> producer
+
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # The table in database needs to be empty
+        result = database.engine.execute(table.select())
+        db = sorted(result.fetchall(), key=lambda row: row[0]) # order by id
+        result.close()
+        assert len(db) == 0
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+        assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 1
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 0
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
