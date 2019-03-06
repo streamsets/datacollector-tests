@@ -571,7 +571,7 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-def create_jdbc_producer_pipeline(pipeline_builder, pipeline_title, raw_data, table_name, operation,
+def _create_jdbc_producer_pipeline(pipeline_builder, pipeline_title, raw_data, table_name, operation,
                                   max_cache_size_per_batch_in_entries=-1):
     """Helper function to create and return a pipeline with JDBC Producer
     The Deduplicator assures there is only one ingest to database. The pipeline looks like:
@@ -828,7 +828,7 @@ def test_jdbc_producer_cache_size(sdc_builder, sdc_executor, cache_size, databas
     DATA = '\n'.join(json.dumps(rec) for rec in UPDATE)
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    pipeline = create_jdbc_producer_pipeline(pipeline_builder, 'JDBC Producer Update', DATA, table_name, 'UPDATE',
+    pipeline = _create_jdbc_producer_pipeline(pipeline_builder, 'JDBC Producer Update', DATA, table_name, 'UPDATE',
                                              max_cache_size_per_batch_in_entries=cache_size)
     sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
 
