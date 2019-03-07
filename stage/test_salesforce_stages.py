@@ -192,6 +192,45 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, condition):
     verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, DATA_TO_INSERT, salesforce)
 
 
+# Test of SDC-11086
+@salesforce
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_origin_nulls(sdc_builder, sdc_executor, salesforce, api):
+    """
+    Create data using Salesforce client
+    and then check if Salesforce origin receives them using snapshot.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Specify some fields that we haven't set
+    query = ("SELECT Id, FirstName, LastName, Description, HomePhone FROM Contact "
+             "WHERE Id > '000000000000000' AND "
+             "Email LIKE 'xtest%' "
+             "ORDER BY Id")
+
+    expected_data = [{'FirstName': 'Test1', 'LastName': 'User1', 'Description': None, 'HomePhone': None},
+                     {'FirstName': 'Test2', 'LastName': 'User2', 'Description': None, 'HomePhone': None},
+                     {'FirstName': 'Test3', 'LastName': 'User3', 'Description': None, 'HomePhone': None}]
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    salesforce_origin.set_attributes(soql_query=query,
+                                     use_bulk_api=(api == 'bulk'),
+                                     subscribe_for_notifications=False)
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    pipeline = pipeline_builder.build(title='Salesforce Origin').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, expected_data, salesforce)
+
+
 def get_dev_raw_data_source(pipeline_builder, raw_data):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='DELIMITED',
