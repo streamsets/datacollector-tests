@@ -18,3 +18,7 @@
 _build
 .idea
 .gitreview
+.python-version
+maintain-boss.pid
+pretenders-boss.pid
+pretenders.log
