@@ -23,7 +23,7 @@ import time
 import pytest
 import sqlalchemy
 from streamsets.testframework.environments.databases import Oracle, SQLServerDatabase
-from streamsets.testframework.markers import database, sdc_min_version
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -357,6 +357,7 @@ def _drop_schema(schema_name, database):
         sqlalchemy.schema.DropSchema(schema_name)
 
 
+@credentialstore
 @database
 def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database):
     """Simple JDBC Lookup processor test.
