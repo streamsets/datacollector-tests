@@ -79,6 +79,7 @@ def test_tcp_server_simple(sdc_executor, tcp_server_pipeline):
 
 
 # SDC-10425
+@sdc_min_version('3.0.0.0') # Need the delay processor
 def test_stop_tcp_with_delay(sdc_builder, sdc_executor):
     """Make sure that the origin can properly be started after stopping it with long batch times."""
     builder = sdc_builder.get_pipeline_builder()
