@@ -15,11 +15,12 @@
 import json
 import logging
 import string
+import http.client as httpclient
 from collections import namedtuple
 
 import pytest
 from pretenders.common.constants import FOREVER
-from streamsets.testframework.markers import http
+from streamsets.testframework.markers import http, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -377,3 +378,31 @@ def test_http_client_source_simple(sdc_builder, sdc_executor, http_client):
         assert json.dumps(origin_stage_output.output[0].value2) == raw_data
     finally:
         http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("3.8.0")
+def test_http_server_method_restriction(sdc_executor, http_server_pipeline):
+    """HTTP Server Origin should actively disallow TRACE and TRACK HTTP request methods"""
+    server_runtime_parameters = {'HTTP_PORT': 9999,
+                                 'APPLICATION_ID': 'HTTP_APPLICATION_ID',
+                                 'NEW_FIELD_NAME': 'javscriptField',
+                                 'NEW_FIELD_VALUE': 5000}
+
+    sdc_executor.start_pipeline(http_server_pipeline.pipeline, server_runtime_parameters)
+    pipeline_status = sdc_executor.get_pipeline_status(http_server_pipeline.pipeline).response.json()
+    attributes = pipeline_status.get('attributes')
+    assert attributes.get('RUNTIME_PARAMETERS').get('APPLICATION_ID') == 'HTTP_APPLICATION_ID'
+
+    # Try to push records using prohibited HTTP methods. Expecting HTTP status: 405 Method Not Allowed
+    h1 = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
+    h1.request('TRACE', '/', '{"f1": "abc"}{"f1": "xyz"}', {'X-SDC-APPLICATION-ID': 'HTTP_APPLICATION_ID'})
+    resp = h1.getresponse()
+    assert resp.status == 405
+
+    h2 = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
+    h2.request('TRACK', '/', '{"f1": "abc"}{"f1": "xyz"}', {'X-SDC-APPLICATION-ID': 'HTTP_APPLICATION_ID'})
+    resp = h2.getresponse()
+    assert resp.status == 405
+
+    sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
