@@ -89,6 +89,65 @@ def test_jms_consumer_origin(sdc_builder, sdc_executor, jms):
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
         connection.disconnect()
 
+@min_sdc_version("3.9.0")
+@jms('activemq')
+def test_jms_consumer_origin_durable_topic_sub(sdc_builder, sdc_executor, jms):
+    """
+    Send simple text messages to JMS using ActiveMQ python client that uses STOMP
+    and confirm that JMS origin, configured with a durable topic subscription, reads them.
+
+    The pipeline looks like:
+        jms_consumer >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Configure the jms_consumer stage
+    jms_consumer = pipeline_builder.add_stage('JMS Consumer')
+    destination_name = get_random_string(ascii_letters, 5)
+    jms_consumer.set_attributes(data_format='TEXT',
+                                jms_destination_name=destination_name,
+                                jms_destination_type='TOPIC',
+                                jms_initial_context_factory=JMS_INITIAL_CONTEXT_FACTORY,
+                                jndi_connection_factory=JNDI_CONNECTION_FACTORY,
+                                password=DEFAULT_PASSWORD,
+                                username=DEFAULT_USERNAME,
+                                client_id='client' + destination_name,
+                                durable_subscription=True,
+                                durable_subscription_name='sub' + destination_name)
+
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_builder.add_error_stage('Discard')
+    jms_consumer >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(jms)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = jms.client_connection
+
+    try:
+        """ 
+        pipeline is started to create the topic and durable subscription
+        before the STOMP publisher sends messages 
+        """
+        sdc_executor.start_pipeline(pipeline)
+        """ and then stopped so we test the durable aspect of this subscription """
+        sdc_executor.stop_pipeline(pipeline)
+        logger.info('Sending messages to JMS using ActiveMQ client ...')
+        connection.start()
+        connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
+        message_data = 'Hello World from SDC & DPM!'
+        for _ in range(10):
+            connection.send('/topic/' + destination_name, message_data, persistent='false')
+
+        # Verify the messages are received correctly.
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        lines_from_snapshot = [record.value['value']['text']['value']
+                               for record in snapshot[pipeline[0].instance_name].output]
+
+        assert lines_from_snapshot == [message_data] * 10
+
+    finally:
+        connection.disconnect()
 
 def get_dev_raw_data_source_stage_text_input(pipeline_builder):
     """Create Dev Raw Data Source stage with TEXT as input."""
