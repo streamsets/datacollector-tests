@@ -33,7 +33,7 @@ def sdc_common_hook():
     return hook
 
 
-@sdc_min_version('3.0.0.0')
+@sdc_min_version('3.5.0')
 @aws('s3')
 def test_parquet_to_s3(sdc_builder, sdc_executor, aws):
     """Test whole use case - writing records to local filesystem as avro file format and then uploading them to
@@ -74,7 +74,6 @@ def test_parquet_to_s3(sdc_builder, sdc_executor, aws):
     # Finish building the pipeline
     dev_raw_data_source >> schema_generator >> local_fs
     write_avro = builder.build('Write Avro File')
-
 
     # Second pipeline uploads the generated file to S3
     builder = sdc_builder.get_pipeline_builder()
