@@ -251,7 +251,7 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
 
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
         sdc_executor.stop_pipeline(snapshot_pipeline, force=True)
-        lines_from_snapshot = [record.value['value']['text']['value']
+        lines_from_snapshot = [record.field['text'].value
                                for record in snapshot[snapshot_pipeline[0].instance_name].output]
 
         assert lines_from_snapshot == lines_in_file

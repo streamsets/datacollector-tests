@@ -111,7 +111,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     output_records = snapshot[groovy_evaluator.instance_name].output  # is a list of output records
     # search for a record whose 'name' is raw_company_1['name'] and assert new attribute ('officeSpace') is created
     # with expected boolean value (where 'floors' > 2)
-    record_1 = list(filter(lambda x: x.value['value']['name']['value'] == raw_company_1['name'], output_records))[0]
-    assert record_1.value['value']['officeSpace']['value'] == (raw_company_1['floors'] > 2)
-    record_2 = list(filter(lambda x: x.value['value']['name']['value'] == raw_company_2['name'], output_records))[0]
-    assert record_2.value['value']['officeSpace']['value'] == (raw_company_2['floors'] > 2)
+    record_1 = next(record for record in output_records if record.field['name'] == raw_company_1['name'])
+    assert record_1.field['officeSpace'] == (raw_company_1['floors'] > 2)
+    record_2 = next(record for record in output_records if record.field['name'] == raw_company_2['name'])
+    assert record_2.field['officeSpace'] == (raw_company_2['floors'] > 2)

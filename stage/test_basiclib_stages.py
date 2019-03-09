@@ -100,7 +100,7 @@ def test_shell_executor_impersonation(sdc_executor, pipeline_shell_generator, pi
     records = snapshot[pipeline_shell_read.origin_stage].output_lanes[pipeline_shell_read.origin_stage.output_lanes[0]]
     assert len(records) == 1
     # Blocked by TEST-128, should be different user
-    assert records[0].value['value']['text']['value'] == 'sdc'
+    assert records[0].field['text'].value == 'sdc'
 
 
 def test_stream_selector_processor(sdc_builder, sdc_executor):
@@ -148,14 +148,14 @@ def test_stream_selector_processor(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[0]]
-    multi_winners_from_snapshot = [{field: value['value']
-                                    for field, value in record.value['value'].items()}
+    multi_winners_from_snapshot = [{key: value
+                                    for key, value in record.field.items()}
                                    for record in multi_winners_records]
     assert multi_winners == multi_winners_from_snapshot
 
     not_multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[1]]
-    not_multi_winners_from_snapshot = [{field: value['value']
-                                        for field, value in record.value['value'].items()}
+    not_multi_winners_from_snapshot = [{field: value
+                                        for field, value in record.field.items()}
                                        for record in not_multi_winners_records]
     assert not_multi_winners == not_multi_winners_from_snapshot
 

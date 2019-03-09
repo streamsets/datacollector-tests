@@ -58,11 +58,11 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
         # Run pipeline and assert
         snapshot = sdc_executor.capture_snapshot(es_origin_pipeline, start_pipeline=True).snapshot
         # no need to stop pipeline - as ES origin shuts off once data is read from Elasticsearch
-        snapshot_data = snapshot[es_origin.instance_name].output[0].value['value']
+        snapshot_data = snapshot[es_origin.instance_name].output[0].field
         # assert ES meta
-        assert snapshot_data['_index']['value'] == es_index and snapshot_data['_id']['value'] == es_doc_id
+        assert snapshot_data['_index'].value == es_index and snapshot_data['_id'].value == es_doc_id
         # assert ES data
-        assert snapshot_data['_source']['value']['body']['value'] == raw_str
+        assert snapshot_data['_source']['body'].value == raw_str
     finally:
         # Clean up test data in ES
         idx = Index(es_index)
@@ -207,11 +207,11 @@ def test_offset_upgrade(sdc_builder, sdc_executor, elasticsearch):
         # Run pipeline and assert
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         # no need to stop pipeline - as ES origin shuts off once data is read from Elasticsearch
-        snapshot_data = snapshot[es_origin.instance_name].output[0].value['value']
+        snapshot_data = snapshot[es_origin.instance_name].output[0].field
         # assert ES meta
-        assert snapshot_data['_index']['value'] == es_index and snapshot_data['_id']['value'] == es_doc_id
+        assert snapshot_data['_index'] == es_index and snapshot_data['_id'] == es_doc_id
         # assert ES data
-        assert snapshot_data['_source']['value']['body']['value'] == raw_str
+        assert snapshot_data['_source']['body'] == raw_str
 
         # Now let's validate that the offset doesn't have the poll key any more
         offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()

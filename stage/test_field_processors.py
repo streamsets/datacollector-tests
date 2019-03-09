@@ -71,12 +71,12 @@ def test_field_flattener(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[field_flattener.instance_name].output[0].value['value']
+    new_value = snapshot[field_flattener.instance_name].output[0].field
     # assert remove_flatten_field
-    assert 'address' not in new_value['contact']['value']
+    assert 'address' not in new_value['contact']
     # assert flatten_target_field with name_seperator
-    assert f'home{name_separator}state' in new_value['newcontact']['value']['address']['value']
-    assert f'home{name_separator}zipcode' in new_value['newcontact']['value']['address']['value']
+    assert f'home{name_separator}state' in new_value['newcontact']['address']
+    assert f'home{name_separator}zipcode' in new_value['newcontact']['address']
 
 
 def test_field_hasher(sdc_builder, sdc_executor):
@@ -157,40 +157,40 @@ def test_field_hasher(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     new_header = snapshot[field_hasher.instance_name].output[0].header
-    new_value = snapshot[field_hasher.instance_name].output[0].value['value']
+    new_value = snapshot[field_hasher.instance_name].output[0].field
     # assert new header fields are created same as generated value fields
-    assert new_header['values']['sha1passcode'] == new_value['sha1passcode']['value']
-    assert new_header['values']['myrecord'] == new_value['myrecord']['value']
-    assert new_header['values']['md5passcode'] == new_value['md5passcode']['value']
+    assert new_header['values']['sha1passcode'] == new_value['sha1passcode'].value
+    assert new_header['values']['myrecord'] == new_value['myrecord'].value
+    assert new_header['values']['md5passcode'] == new_value['md5passcode'].value
     if Version(sdc_builder.version) < Version('3.7.0'):
-        assert new_header['values']['sha2passcode'] == new_value['sha2passcode']['value']
+        assert new_header['values']['sha2passcode'] == new_value['sha2passcode'].value
     if Version(sdc_executor.version) >= Version('3.7.0'):
-        assert new_header['values']['sha256passcode'] == new_value['sha256passcode']['value']
-        assert new_header['values']['sha512passcode'] == new_value['sha512passcode']['value']
+        assert new_header['values']['sha256passcode'] == new_value['sha256passcode'].value
+        assert new_header['values']['sha512passcode'] == new_value['sha512passcode'].value
     # assert in place record field being hashed as expected
     id_hash = hashlib.md5()
     id_hash.update(raw_id.encode())
-    assert new_value['contact']['value']['id']['value'] == id_hash.hexdigest()
+    assert new_value['contact']['id'].value == id_hash.hexdigest()
     # assert new record field has an expected hash of MD5
     passcode_md5hash = hashlib.md5()
     passcode_md5hash.update(raw_passcode.encode())
-    assert new_value['md5passcode']['value'] == passcode_md5hash.hexdigest()
+    assert new_value['md5passcode'].value == passcode_md5hash.hexdigest()
     # assert new record field has an expected hash of SHA1
     passcode_sha1hash = hashlib.sha1()
     passcode_sha1hash.update(raw_passcode.encode())
-    assert new_value['sha1passcode']['value'] == passcode_sha1hash.hexdigest()
+    assert new_value['sha1passcode'].value == passcode_sha1hash.hexdigest()
     # assert new record field has an expected hash of SHA2
     passcode_sha2hash = hashlib.sha256()
     passcode_sha2hash.update(raw_passcode.encode())
     if Version(sdc_builder.version) < Version('3.7.0'):
-        assert new_value['sha2passcode']['value'] == passcode_sha2hash.hexdigest()
+        assert new_value['sha2passcode'].value == passcode_sha2hash.hexdigest()
     if Version(sdc_executor.version) >= Version('3.7.0'):
         # assert new record field has an expected hash of SHA256
-        assert new_value['sha256passcode']['value'] == passcode_sha2hash.hexdigest()
+        assert new_value['sha256passcode'].value == passcode_sha2hash.hexdigest()
         # assert new record field has an expected hash of SHA512
         passcode_sha512hash = hashlib.sha512()
         passcode_sha512hash.update(raw_passcode.encode())
-        assert new_value['sha512passcode']['value'] == passcode_sha512hash.hexdigest()
+        assert new_value['sha512passcode'].value == passcode_sha512hash.hexdigest()
 
 
 def test_field_masker(sdc_builder, sdc_executor):
@@ -250,21 +250,21 @@ def test_field_masker(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[field_masker.instance_name].output[0].value['value']
+    new_value = snapshot[field_masker.instance_name].output[0].field
     # assert fixed length mask always have the same masked characters
-    fixed_value = new_value['fixed_passwd']['value']
+    fixed_value = new_value['fixed_passwd'].value
     assert fixed_value == len(fixed_value) * fixed_value[0]
     # assert variable length mask always have the same masked characters with original length of the value
-    variable_value = new_value['variable_passwd']['value']
+    variable_value = new_value['variable_passwd'].value
     assert variable_value == len(raw_dict['variable_passwd']) * variable_value[0]
     # assert custom mask works
-    assert new_value['custom_ph']['value'] == '{}-xxx-xxxx'.format(raw_dict['custom_ph'][0:3])
+    assert new_value['custom_ph'].value == '{}-xxx-xxxx'.format(raw_dict['custom_ph'][0:3])
     # assert length of custom mask is the mask pattern length. Mask here is '###xx' and hence length of 5
-    custom_zip = new_value['custom_zip']['value']
+    custom_zip = new_value['custom_zip'].value
     assert len(custom_zip) == 5 and custom_zip == '{}xx'.format(raw_dict['custom_zip'][0:3])
     # assert regular expression mask
     match = re.search('([0-9]{5}) - ([0-9]{3})-([0-9]{2})-([0-9]{4})', raw_dict['social'])
-    assert new_value['social']['value'] == '{}xxx{}xxxxxxxx'.format(match.group(1), match.group(2))
+    assert new_value['social'].value == '{}xxx{}xxxxxxxx'.format(match.group(1), match.group(2))
 
 
 def test_field_merger(sdc_builder, sdc_executor):
@@ -313,14 +313,14 @@ def test_field_merger(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[field_merger.instance_name].output[0].value['value']
+    new_value = snapshot[field_merger.instance_name].output[0].field
     # assert overwrite existing works
-    assert len(new_value['dupecontact']['value']) > 0
+    assert len(new_value['dupecontact']) > 0
     # assert merge works by comparing `identity` to new `uniqueid` dict
     dict1 = raw_dict['identity']
-    dict2 = new_value['uniqueid']['value']
+    dict2 = new_value['uniqueid']
     assert len(dict1) == len(dict2)
-    assert all(source_value == dict2[source_key]['value'] for source_key, source_value in dict1.items())
+    assert all(source_value == dict2[source_key].value for source_key, source_value in dict1.items())
 
 
 def test_field_order(sdc_builder, sdc_executor):
@@ -363,12 +363,12 @@ def test_field_order(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[field_order.instance_name].output[0].value['value']
+    new_value = snapshot[field_order.instance_name].output[0].field
     # assert we got ordered fields and we don't have discarded fields
-    assert fields_to_order == [i['sqpath'].replace("'", '').replace('.', '/') for i in new_value]
+    assert fields_to_order == ['/{}'.format(i.replace('"', '').replace('.', '/')) for i in new_value]
     # assert we got extra field value as expected
-    extra_fields = [i['value'] for i in new_value if i['sqpath'].replace("'", '').replace('.', '/') == extra_field]
-    assert extra_fields[0] == default_value
+    extra_fields = [i for i in new_value if '/{}'.format(i.replace('"', '').replace('.', '/')) == extra_field]
+    assert new_value[extra_fields[0]] == default_value
 
 
 def test_field_pivoter(sdc_builder, sdc_executor):
@@ -401,13 +401,11 @@ def test_field_pivoter(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[field_pivoter.instance_name].output[0].value['value']
+    new_value = snapshot[field_pivoter.instance_name].output[0].field
     # assert our record got pivoted into expected length
     assert len(raw_dict['ballpoint']['color_list']) == len(snapshot[field_pivoter.instance_name].output)
     # assert pivoted field name is stored in the expected path
-    assert new_value['ballpoint']['value']['color_list_path']['value'] == field_to_pivot
-    # assert pivoted item path
-    assert new_value['ballpoint']['value']['color']['sqpath'] == pivoted_item_path
+    assert new_value['ballpoint']['color_list_path'].value == field_to_pivot
 
 
 def test_field_remover(sdc_builder, sdc_executor):
@@ -452,16 +450,16 @@ def test_field_remover(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    remover1_value = snapshot[field_remover1.instance_name].output[0].value['value']
-    remover2_value = snapshot[field_remover2.instance_name].output[0].value['value']
-    remover3_value = snapshot[field_remover3.instance_name].output[0].value['value']
+    remover1_value = snapshot[field_remover1.instance_name].output[0].field
+    remover2_value = snapshot[field_remover2.instance_name].output[0].field
+    remover3_value = snapshot[field_remover3.instance_name].output[0].field
 
     # assert remove listed fields action
     assert 'name' not in remover1_value and 'id' not in remover1_value
     # assert remove listed fields if their values are null action
     assert 'checknull1' not in remover2_value and 'checknull2' not in remover2_value
     # assert keep only the listed fields action
-    assert len(remover3_value) == 1 and 'state' not in remover3_value['address']['value']['home']['value']
+    assert len(remover3_value) == 1 and 'state' not in remover3_value['address']['home']
 
 
 def test_field_renamer(sdc_builder, sdc_executor):
@@ -491,7 +489,7 @@ def test_field_renamer(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[field_renamer.instance_name].output[0].value['value']
+    new_value = snapshot[field_renamer.instance_name].output[0].field
     for key in raw_dict:
         assert key not in new_value and key.strip(strip_word) in new_value
 
@@ -518,8 +516,8 @@ def test_field_renamer_uppercasing(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     record = snapshot[field_renamer.instance_name].output[0]
-    assert record.value2['FIRST_KEY'] == "IPO"
-    assert record.value2['SECOND_KEY'] == "StreamSets"
+    assert record.field['FIRST_KEY'] == "IPO"
+    assert record.field['SECOND_KEY'] == "StreamSets"
 
 
 @sdc_min_version('3.1.0.0')
@@ -560,7 +558,7 @@ def test_field_replacer(sdc_builder, sdc_executor):
         rec['ranking'] = None
         if rec['statistics'] == 'NA' or rec['statistics'] == 'not_available':
             rec['statistics'] = None
-    actual_data = [rec.value2 for rec in snapshot[field_replacer.instance_name].output]
+    actual_data = [rec.field for rec in snapshot[field_replacer.instance_name].output]
     assert actual_data == winners
 
 
@@ -607,20 +605,20 @@ def test_field_splitter(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    record_1 = snapshot[field_splitter.instance_name].output[0].value['value']['error']['value']
-    record_2 = snapshot[field_splitter.instance_name].output[1].value['value']['error']['value']
+    record_1 = snapshot[field_splitter.instance_name].output[0].field['error']
+    record_2 = snapshot[field_splitter.instance_name].output[1].field['error']
     # assert we got expected number of splits
     assert len(raw_list[0]['error']['text'].split(separator)) == len(record_1)
     # assert record data
     raw_record_data = raw_list[0]['error']['text'].split(separator)
     for value in record_1.values():
-        assert value['value'] in raw_record_data
+        assert value.value in raw_record_data
     # assert field_for_remaining_splits
     raw_record_data = raw_list[1]['error']['text'].split(separator)
     # etc_sub_field will only have a subset of splits and hence need to take out (subtract) the remaining
-    assert len(record_2[etc_sub_field]['value']) == len(raw_record_data) - len(split_fields)
-    for data in record_2[etc_sub_field]['value']:
-        assert data['value'] in raw_record_data
+    assert len(record_2[etc_sub_field]) == len(raw_record_data) - len(split_fields)
+    for data in record_2[etc_sub_field]:
+        assert data.value in raw_record_data
     # assert original_field being removed
     assert source_sub_field not in record_1 and source_sub_field not in record_2
 
@@ -729,25 +727,25 @@ def test_field_type_converter(sdc_builder, sdc_executor):
 
     # assert field by field type conversion
     field_output = snapshot[field_type_converter_fields.instance_name].output
-    assert field_output[0].value['value']['amInteger']['type'] == 'BYTE'
-    assert field_output[1].value['value']['amDouble']['type'] == 'INTEGER'
-    assert field_output[2].value['value']['amString']['type'] == 'CHAR'
-    assert field_output[3].value['value']['amBool']['type'] == 'BOOLEAN'
-    assert field_output[4].value['value']['amDateTime']['type'] == 'DATETIME'
-    assert field_output[5].value['value']['amString2']['type'] == 'BYTE_ARRAY'
-    assert field_output[6].value['value']['amZonedDateTime']['type'] == 'ZONED_DATETIME'
+    assert field_output[0].field['amInteger'].type == 'BYTE'
+    assert field_output[1].field['amDouble'].type == 'INTEGER'
+    assert field_output[2].field['amString'].type == 'CHAR'
+    assert field_output[3].field['amBool'].type == 'BOOLEAN'
+    assert field_output[4].field['amDateTime'].type == 'DATETIME'
+    assert field_output[5].field['amString2'].type == 'BYTE_ARRAY'
+    assert field_output[6].field['amZonedDateTime'].type == 'ZONED_DATETIME'
     # assert data type conversion
     type_output = snapshot[field_type_converter_types.instance_name].output
-    assert type_output[0].value['value']['amInteger']['type'] == 'DECIMAL'
-    assert type_output[1].value['value']['amDouble']['type'] == 'SHORT'
-    assert type_output[2].value['value']['amString']['type'] == 'STRING'
-    assert type_output[3].value['value']['amBool']['type'] == 'STRING'
-    assert type_output[4].value['value']['amDateTime']['type'] == 'LONG'
-    assert type_output[5].value['value']['amString2']['type'] == 'STRING'
-    assert type_output[6].value['value']['amZonedDateTime']['type'] == 'STRING'
+    assert type_output[0].field['amInteger'].type == 'DECIMAL'
+    assert type_output[1].field['amDouble'].type == 'SHORT'
+    assert type_output[2].field['amString'].type == 'STRING'
+    assert type_output[3].field['amBool'].type == 'STRING'
+    assert type_output[4].field['amDateTime'].type == 'LONG'
+    assert type_output[5].field['amString2'].type == 'STRING'
+    assert type_output[6].field['amZonedDateTime'].type == 'STRING'
     # assert values which can be compared
-    assert utc_datetime_in_int == int(type_output[4].value['value']['amDateTime']['value'])
-    assert raw_str_value == type_output[5].value['value']['amString2']['value']
+    assert utc_datetime_in_int == int(type_output[4].field['amDateTime'].value)
+    assert raw_str_value == type_output[5].field['amString2'].value
 
 def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     """
@@ -787,11 +785,11 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
 
     # assert field coming out of origin is STRING (sanity check)
     raw_output = snapshot[dev_raw_data_source.instance_name].output
-    assert raw_output[0].value['value']['largeDecimal']['type'] == 'STRING'
+    assert raw_output[0].field['largeDecimal'].type == 'STRING'
     # assertions on field coming out of field type converter
     field_output = snapshot[field_type_converter_fields.instance_name].output
     # assert the type
-    assert field_output[0].value['value']['largeDecimal']['type'] == 'DECIMAL'
+    assert field_output[0].field['largeDecimal'].type == 'DECIMAL'
     # and value
     assert field_output[0].field['largeDecimal'].value == Decimal(decimal_str_val)
 
@@ -849,17 +847,17 @@ def test_field_zip(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    record_result = snapshot[field_zip.instance_name].output[0].value['value']
+    record_result = snapshot[field_zip.instance_name].output[0].field
     # assert we got expected number of merge fields
     assert len(raw_list[0]) + len(fields_to_zip_configs) == len(record_result)
     # assert data is merged as expected
     raw_merge = list(zip(raw_list[0]['itemID'], raw_list[0]['cost']))
-    record_field_result = record_result[result_key_1]['value']
-    record_field_merge = [tuple(float(b['value']) for b in a['value'].values()) for a in record_field_result]
+    record_field_result = record_result[result_key_1]
+    record_field_merge = [tuple(float(b.value) for b in a.values()) for a in record_field_result]
     assert raw_merge == record_field_merge
     # assert the missing record fields do not merge anything
-    assert result_key_1 not in snapshot[field_zip.instance_name].output[1].value['value']
-    assert result_key_2 not in snapshot[field_zip.instance_name].output[1].value['value']
+    assert result_key_1 not in snapshot[field_zip.instance_name].output[1].field
+    assert result_key_2 not in snapshot[field_zip.instance_name].output[1].field
 
 
 def test_value_replacer(sdc_builder, sdc_executor):
@@ -912,14 +910,14 @@ def test_value_replacer(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[value_replacer.instance_name].output[0].value['value']['contact']['value']
+    new_value = snapshot[value_replacer.instance_name].output[0].field['contact']
     # assert fields to null
-    assert new_value['fname']['value'] is new_value['lname']['value'] is None
+    assert new_value['fname'].value is new_value['lname'].value is None
     # assert replace null values
-    assert expected_password_value == new_value['password']['value']
+    assert expected_password_value == new_value['password'].value
     # assert conditionally replace values
-    assert expected_state_value == new_value['state']['value']
-    assert expected_state_value == new_value['address']['value']['home']['value']['state']['value']
+    assert expected_state_value == new_value['state'].value
+    assert expected_state_value == new_value['address']['home']['state'].value
 
 @sdc_min_version('3.8.0')
 def test_field_mapper_min_max(sdc_builder, sdc_executor):

@@ -90,11 +90,11 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
         sdc_executor.stop_pipeline(pipeline)
 
         assert len(snapshot[mongodb_oplog].output) == input_rec_count
-        for record in list(enumerate(snapshot[mongodb_oplog].output)):
-            assert record[1].value['value']['o']['value']['x']['value'] == str(record[0])
+        for i, record in enumerate(snapshot[mongodb_oplog].output):
+            assert record.field['o']['x'].value == i
             # Verify the operation type is 'i' which is for 'insert' since we inserted the records earlier.
-            assert record[1].value['value']['op']['value'] == 'i'
-            assert record[1].value['value']['ts']['value']['timestamp']['value'] > time_now
+            assert record.field['op'].value == 'i'
+            assert record.field['ts']['timestamp'].value.timestamp() >= time_now
 
     finally:
         logger.info('Dropping %s database...', database_name)
@@ -139,8 +139,8 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{record.value['value']['name']['sqpath'].lstrip('/'):
-                               record.value['value']['name']['value']}
+        rows_from_snapshot = [{'name':
+                               record.field['name'].value}
                               for record in snapshot[mongodb_origin].output]
 
         assert rows_from_snapshot == ORIG_DOCS
@@ -255,7 +255,7 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'data': str(record.value2['data'])} for record in snapshot[mongodb_origin].output]
+        rows_from_snapshot = [{'data': str(record.field['data'])} for record in snapshot[mongodb_origin].output]
 
         assert rows_from_snapshot == [{'data': str(record.get('data'))} for record in ORIG_BINARY_DOCS]
 

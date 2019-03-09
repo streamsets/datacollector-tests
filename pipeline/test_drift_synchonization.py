@@ -116,7 +116,7 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
         assert len(snapshot[mapreduce.instance_name].event_records) == len(rows_in_database)
         # make sure MapReduce job is done and is successful
         for event in snapshot[mapreduce.instance_name].event_records:
-            job_id = event.value['value']['job-id']['value']
+            job_id = event.field['job-id'].value
             assert cluster.yarn.wait_for_job_to_end(job_id) == 'SUCCEEDED'
         # assert data
         hive_cursor.execute(f'RELOAD `{table_name}`')
