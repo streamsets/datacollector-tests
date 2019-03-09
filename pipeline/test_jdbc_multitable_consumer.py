@@ -54,7 +54,7 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
         connection = database.engine.connect()
         connection.execute(table.insert(), [{'col': 1}, {'col': 2}, {'col': 3}])
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
         assert metrics.counter("pipeline.batchCount.counter").count == 1
