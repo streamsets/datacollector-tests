@@ -192,56 +192,77 @@ def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, datab
             table.drop(database.engine)
 
 
+# SDC-11009: Run away pipeline runners in JDBC Multithread origins when no-more-data generation delay is configured
 @database
 @sdc_min_version('3.2.0')
 def test_jdbc_multitable_consumer_with_no_more_data_event_generation_delay(sdc_builder, sdc_executor, database):
     """
-    Test reading Multi-table JDBC produced event to trash and output to trash.
-    Test when the no more data event generation delay is configured,
-    check if there is a run away thread while finishing the pipeline (SDC-11009)
+    Make sure that when a delayed no-more-data is being processed, the pipeline properly waits on the processing to
+    finish before stopping.
+
+    source >> trash
+           >= delay (only for no-more-data) >> trash
     """
     src_table = get_random_string(string.ascii_lowercase, 6)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(no_more_data_event_generation_delay_in_seconds=10,
-        table_configs=[{"tablePattern": f'%{src_table}%'}])
+    jdbc_multitable_consumer.no_more_data_event_generation_delay_in_seconds = 1
+    jdbc_multitable_consumer.table_configs=[{"tablePattern": f'%{src_table}%'}]
 
     trash = pipeline_builder.add_stage('Trash')
+
+    delay = pipeline_builder.add_stage('Delay')
+    delay.delay_between_batches = 10*1000
+    delay.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
     trash_event = pipeline_builder.add_stage('Trash')
 
-    jdbc_multitable_consumer >= trash
     jdbc_multitable_consumer >> trash
+    jdbc_multitable_consumer >= delay
+    delay >> trash_event
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
-
-    random.seed()
 
     metadata = sqlalchemy.MetaData()
     try:
         connection = database.engine.connect()
 
         table = sqlalchemy.Table(
-                src_table,
-                metadata,
-                sqlalchemy.Column('serial', sqlalchemy.Integer, primary_key=True),
-                sqlalchemy.Column('data', sqlalchemy.Integer)
-            )
+            src_table,
+            metadata,
+            sqlalchemy.Column('serial', sqlalchemy.Integer, primary_key=True)
+        )
         table.create(database.engine)
 
-        rows = [{'serial': 1, 'data': random.randint(0, 2100000000)}]
+        rows = [{'serial': 1}]
         connection.execute(table.insert(), rows)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        # We start the pipeline
+        sdc_executor.start_pipeline(pipeline)
 
+        # We wait three seconds - one second for the no-more-data to be generated and then some buffer time
+        time.sleep(3)
+
+        # Then we try to stop the pipeline, now the pipeline should not stop immediately and should in-fact wait
+        sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
         current_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         assert current_status == 'STOPPED'
 
-        event_record = snapshot[jdbc_multitable_consumer.instance_name].event_records
-        assert len[event_record] == 1
+        # Validate expected metrics
+        history = sdc_executor.get_pipeline_history(pipeline)
+        # Total number of input records
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+        # 1 record, 1 no-more-data (rest of events is discarded)
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 2
+        # The table itself contained only one record
+        assert history.latest.metrics.counter('stage.Trash_01.inputRecords.counter').count == 1
+        # Only no-more-data event should reach the destination
+        assert history.latest.metrics.counter('stage.Trash_02.inputRecords.counter').count == 1
+        # The max batch time should be slightly more then 10 (the delayed batch that we have caused)
+        #TODO: TLKT-167: Add access methods to metric objects
+        assert history.latest.metrics.timer('pipeline.batchProcessing.timer')._data.get('max') >= 10
     finally:
         if table is not None:
             table.drop(database.engine)
