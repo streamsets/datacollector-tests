@@ -128,7 +128,7 @@ def test_redis_lookup_processor(sdc_builder, sdc_executor, redis):
         dev_raw_data_source >> redis_lookup_processor >> trash
     """
     redis_key = get_random_string(string.ascii_letters, 10)
-    redis_data = ('37.7576948', '-122.4726194')
+    redis_data = "('37.7576948', '-122.4726194')"
     raw_data = f'{{"city": "{redis_key}"}}'
     record_output_field = 'latitude_longitude'
 
@@ -155,7 +155,7 @@ def test_redis_lookup_processor(sdc_builder, sdc_executor, redis):
 
         record = snapshot[redis_lookup_processor.instance_name].output[0].value['value']
         expected_value = record[record_output_field]['value'][0]['value']
-        assert redis_data == ast.literal_eval(expected_value)
+        assert redis_data == expected_value
     finally:
         # delete our key from Redis
         redis.client.delete(redis_key)
