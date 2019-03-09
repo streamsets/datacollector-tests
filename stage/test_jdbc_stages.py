@@ -818,6 +818,8 @@ def test_jdbc_producer_update(sdc_builder, sdc_executor, database):
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+
+@sdc_min_version('3.0.0.0')
 @pytest.mark.parametrize('cache_size', [-1, 1])
 @database
 def test_jdbc_producer_cache_size(sdc_builder, sdc_executor, cache_size, database):
@@ -826,9 +828,9 @@ def test_jdbc_producer_cache_size(sdc_builder, sdc_executor, cache_size, databas
     table = sqlalchemy.Table(
         table_name,
         sqlalchemy.MetaData(),
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-        sqlalchemy.Column('name', sqlalchemy.String(32)),
-        sqlalchemy.Column('nickname', sqlalchemy.String(32))
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+        sqlalchemy.Column('nickname', sqlalchemy.String(32), quote=True)
     )
     table.create(database.engine)
 
@@ -847,15 +849,28 @@ def test_jdbc_producer_cache_size(sdc_builder, sdc_executor, cache_size, databas
         {'id': 3, 'nickname': 'dictator'}
     ]
     DATA = '\n'.join(json.dumps(rec) for rec in UPDATE)
-    pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    pipeline = _create_jdbc_producer_pipeline(pipeline_builder, 'JDBC Producer Update', DATA, table_name, 'UPDATE',
-                                             max_cache_size_per_batch_in_entries=cache_size)
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.set_attributes(data_format='JSON', raw_data=DATA)
+
+    producer = builder.add_stage('JDBC Producer')
+    producer.set_attributes(default_operation='UPDATE',
+                            table_name=table_name,
+                            field_to_column_mapping=[],
+                            stage_on_record_error='STOP_PIPELINE',
+                            max_cache_size_per_batch_in_entries=cache_size)
+    if database.type == 'Oracle':
+        producer.enclose_object_names = True
+
+    source >> producer
+
+    pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(UPDATE))
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         result = database.engine.execute(table.select())
         data = sorted(result.fetchall(), key=lambda row: row[0]) # order by id
@@ -899,8 +914,8 @@ def test_jdbc_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_exe
     table = sqlalchemy.Table(
         table_name,
         metadata,
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-        sqlalchemy.Column('name', sqlalchemy.String(32))
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True)
     )
     try:
         logger.info('Creating table %s in %s database ...', table_name, database.type)
@@ -949,6 +964,8 @@ def test_jdbc_producer_multirow_with_duplicates(sdc_builder, sdc_executor, datab
     producer.field_to_column_mapping = []
     producer.default_operation = 'INSERT'
     producer.use_multi_row_operation = True
+    if database.type == 'Oracle':
+        producer.enclose_object_names = True
 
     source >> producer
 
@@ -958,7 +975,7 @@ def test_jdbc_producer_multirow_with_duplicates(sdc_builder, sdc_executor, datab
     table = sqlalchemy.Table(
         table_name,
         metadata,
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True)
     )
     try:
         logger.info('Creating table %s in %s database ...', table_name, database.type)
@@ -1222,9 +1239,9 @@ def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
     table = sqlalchemy.Table(
         table_name,
         metadata,
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-        sqlalchemy.Column('a', sqlalchemy.Integer),
-        sqlalchemy.Column('b', sqlalchemy.Integer)
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+        sqlalchemy.Column('a', sqlalchemy.Integer, quote=True),
+        sqlalchemy.Column('b', sqlalchemy.Integer, quote=True)
     )
 
     RAW_DATA = [
@@ -1268,6 +1285,8 @@ def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
     producer.default_operation = 'UPDATE'
     producer.table_name = table_name
     producer.use_multi_row_operation = multi_row
+    if database.type == 'Oracle':
+        producer.enclose_object_names = True
 
     source >> expression >> remover >> producer
 
@@ -1299,6 +1318,9 @@ def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
     """
     Validate that we properly generate events
     """
+    if database.type == 'Oracle':
+        pytest.skip("This test depends on auto-created ID that doesn't work properly on Oracle")
+
     table_prefix = get_random_string(string.ascii_lowercase, 20)
     table_a = '{}_a'.format(table_prefix)
     table_b = '{}_b'.format(table_prefix)
