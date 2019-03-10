@@ -697,10 +697,18 @@ def test_sql_server_cdc_no_more_events(sdc_builder, sdc_executor, database):
         dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
 
         trash = pipeline_builder.add_stage('Trash')
+
+        # The origin can generally produce different events, so we calculate only no-more-data
+        expression = pipeline_builder.add_stage('Expression Evaluator')
+        expression.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
         trash_events = pipeline_builder.add_stage('Trash')
 
-        sql_server_cdc >= trash_events
         sql_server_cdc >> trash
+        sql_server_cdc >= expression
+
+        expression >> trash_events
+
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
