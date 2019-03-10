@@ -129,9 +129,9 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
     assert 10 == record.value2['int']
     assert record.value2['boolean'] is True
     assert Decimal('10.50') == record.value2['decimal']
-    assert datetime(2017, 1, 1, 8, 0) == record.value2['date']
-    assert datetime(1970, 1, 1, 18, 9, 8) == record.value2['time']
-    assert datetime(2017, 1, 1, 18, 9, 8) == record.value2['datetime']
+    assert datetime(2017, 1, 1, 0, 0) == record.value2['date']
+    assert datetime(1970, 1, 1, 10, 9, 8) == record.value2['time']
+    assert datetime(2017, 1, 1, 10, 9, 8) == record.value2['datetime']
     assert 'a' == record.value2['list'][0]
     assert 'b' == record.value2['list'][1]
     assert 'value' == record.value2['map']['first-key']
