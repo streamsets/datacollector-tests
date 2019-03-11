@@ -20,7 +20,7 @@ import pytest
 # Import TestListener with a leading underscore to prevent pytest from
 # thinking that it's a test class.
 from stomp.listener import TestListener as _TestListener
-from streamsets.testframework.markers import jms, min_sdc_version
+from streamsets.testframework.markers import jms, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ def test_jms_consumer_origin(sdc_builder, sdc_executor, jms):
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
         connection.disconnect()
 
-@min_sdc_version("3.9.0")
+@sdc_min_version("3.9.0")
 @jms('activemq')
 def test_jms_consumer_origin_durable_topic_sub(sdc_builder, sdc_executor, jms):
     """
