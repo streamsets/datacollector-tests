@@ -533,9 +533,13 @@ def test_hbase_lookup_processor_invalid_column_family(sdc_builder, sdc_executor,
 
 @cluster('cdh', 'hdp')
 def test_hbase_lookup_processor_get_row(sdc_builder, sdc_executor, cluster):
-    """HBase Lookup processor test.
-    pipeline will be poroperly configured, will get the expected rows
-    dev_raw_data_source >> hbase_lookup >> trash
+    """Test a HBase processor using row id and column as lookup keys.
+
+    It is expected the 'info:first_edition' be added as a new '/founded' record field.
+
+    Pipeline:
+        dev_raw_data_source >> hbase_lookup >> trash
+
     """
     # Generate some silly data.
     bike_races = [dict(name='Tour de France', first_edition='1903'),
@@ -606,12 +610,16 @@ def test_hbase_lookup_processor_get_row(sdc_builder, sdc_executor, cluster):
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
+
 @cluster('cdh', 'hdp')
 def test_hbase_lookup_processor_row_key_lookup(sdc_builder, sdc_executor, cluster):
-    """HBase Lookup processor test.
-    This is a simple test of a row-key only look-up.
-    For a single row key, we expect all column families (in this case 2)
-    to be returned.
+    """Test a HBase processor using only a row id as lookup key.
+
+    For a single row key, we expect all column families (in this case 2) to be returned.
+
+    Pipeline:
+        dev_raw_data_source >> hbase_lookup >> trash
+
     """
     # Generate some silly data.
     bike_races = [{'name': 'Tour de France', 'location:country': 'France', 'date:month': 'July'},
@@ -674,3 +682,168 @@ def test_hbase_lookup_processor_row_key_lookup(sdc_builder, sdc_executor, cluste
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
 
+
+# Test SDC-10865
+@cluster('cdh', 'hdp')
+def test_hbase_lookup_processor_row_timestamp_keys_lookup(sdc_builder, sdc_executor, cluster):
+    """Test a HBase processor using row id and timestamp as lookup keys.
+
+    We insert into HBase 3 different value versions for each column of the same row. Then we retrieve each of these
+    versions employing the timestamp key.
+
+    Pipeline:
+        dev_raw_data_source >> field_type_converter >> hbase_lookup >> trash
+
+    """
+    # Generate some silly data.
+    data = [{'name': 'John', 'location:country': 'UK', 'location:city': 'London',
+             'timestamp': '1978-01-05 19:00:00'},
+            {'name': 'John', 'location:country': 'USA', 'location:city': 'Detroit',
+             'timestamp': '1980-06-05 20:00:00'},
+            {'name': 'John', 'location:country': 'Australia', 'location:city': 'Sidney',
+             'timestamp': '1982-12-05 19:00:00'}]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Create Dev Raw Data Source stage.
+    raw_data = '\n'.join(json.dumps(rec) for rec in data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+
+    # Create Field Type Converter
+    conversions = [{'fields': ['/timestamp'],
+                    'targetType': 'DATETIME',
+                    'dateFormat': 'YYYY_MM_DD_HH_MM_SS'}]
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter.set_attributes(conversion_method='BY_FIELD',
+                                        field_type_converter_configs=conversions)
+
+    # Create HBase Lookup processor.
+    table_name = get_random_string(string.ascii_letters, 10)
+    lookup_parameters = [dict(rowExpr="${record:value('/name')}",
+                              outputFieldPath='/hbase',
+                              timestampExpr="${record:value('/timestamp')}")]
+    hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
+    hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name)
+
+    # Create trash destination.
+    trash = pipeline_builder.add_stage('Trash')
+
+    # Build pipeline.
+    dev_raw_data_source >> field_type_converter >> hbase_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating HBase table %s ...', table_name)
+        cluster.hbase.client.create_table(name=table_name, families={'location': {}})
+
+        # Use HappyBase's `Table` instance to insert different timestamp per record.
+        table = cluster.hbase.client.table(table_name)
+        for record in data:
+            # Python timestamp is expressed in seconds as a float, while HBase use milliseconds
+            # from epoch as a integer
+            ts = int(datetime.datetime.strptime(record['timestamp'], '%Y-%m-%d %H:%M:%S').timestamp() * 1000)
+            # Use of str.encode() below is because HBase (and HappyBase) speaks in byte arrays.
+            table.put(record['name'].encode(),
+                      {b'location:country': record['location:country'].encode(),
+                       b'location:city': record['location:city'].encode()},
+                      timestamp=ts)
+
+        # Take a pipeline snapshot.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Validate output.
+        for rec in snapshot[hbase_lookup.instance_name].output:
+            assert rec.field['location:country'] == rec.field['hbase']['location:country']
+            assert rec.field['location:city'] == rec.field['hbase']['location:city']
+
+    finally:
+        # Delete HBase table.
+        logger.info('Deleting HBase table %s ...', table_name)
+        cluster.hbase.client.delete_table(name=table_name, disable=True)
+
+
+# Test SDC-10865
+@cluster('cdh', 'hdp')
+def test_hbase_lookup_processor_row_column_timestamp_keys_lookup(sdc_builder, sdc_executor, cluster):
+    """Test a HBase processor using row id, column name and timestamp as lookup keys.
+
+    We insert into a HBase table 3 different value versions for each column of a row. Then we retrieve each of these
+    versions for a given column employing the column and timestamp keys.
+
+    Pipeline:
+        dev_raw_data_source >> field_type_converter >> hbase_lookup >> trash
+
+    """
+    # Generate some silly data.
+    data = [{'name': 'John', 'location:country': 'UK', 'location:city': 'London',
+             'timestamp': '1978-01-05 19:00:00'},
+            {'name': 'John', 'location:country': 'USA', 'location:city': 'Detroit',
+             'timestamp': '1980-06-05 20:00:00'},
+            {'name': 'John', 'location:country': 'Australia', 'location:city': 'Sidney',
+             'timestamp': '1982-12-05 19:00:00'}]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Create Dev Raw Data Source stage.
+    raw_data = '\n'.join(json.dumps(rec) for rec in data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+
+    # Create Field Type Converter
+    conversions = [{'fields': ['/timestamp'],
+                    'targetType': 'DATETIME',
+                    'dateFormat': 'YYYY_MM_DD_HH_MM_SS'}]
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter.set_attributes(conversion_method='BY_FIELD',
+                                        field_type_converter_configs=conversions)
+
+    # Create HBase Lookup processor.
+    table_name = get_random_string(string.ascii_letters, 10)
+    lookup_parameters = [dict(rowExpr="${record:value('/name')}",
+                              columnExpr="location:country",
+                              timestampExpr="${record:value('/timestamp')}",
+                              outputFieldPath='/hbase')]
+    hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
+    hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name)
+
+    # Create trash destination.
+    trash = pipeline_builder.add_stage('Trash')
+
+    # Build pipeline.
+    dev_raw_data_source >> field_type_converter >> hbase_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating HBase table %s ...', table_name)
+        cluster.hbase.client.create_table(name=table_name, families={'location': {}})
+
+        # Use HappyBase's `Table` instance to insert different timestamp per record.
+        table = cluster.hbase.client.table(table_name)
+        for record in data:
+            # Python timestamp is expressed in seconds as a float, while HBase use milliseconds
+            # from epoch as a integer
+            ts = int(datetime.datetime.strptime(record['timestamp'], '%Y-%m-%d %H:%M:%S').timestamp() * 1000)
+            # Use of str.encode() below is because HBase (and HappyBase) speaks in byte arrays.
+            table.put(record['name'].encode(),
+                      {b'location:country': record['location:country'].encode(),
+                       b'location:city': record['location:city'].encode()},
+                      timestamp=ts)
+
+        # Take a pipeline snapshot.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Validate output.
+        for rec in snapshot[hbase_lookup.instance_name].output:
+            assert rec.field['location:country'] == rec.field['hbase']
+
+    finally:
+        # Delete HBase table.
+        logger.info('Deleting HBase table %s ...', table_name)
+        cluster.hbase.client.delete_table(name=table_name, disable=True)
