@@ -370,6 +370,7 @@ def test_hadoop_fs_origin_standalone_glob_pattern(sdc_builder, sdc_executor, clu
 
 
 # Test developed to avoid multi-threading issues causing duplicated parsing of records, raised in SDC-10704
+@sdc_min_version('3.2.0.0')
 @cluster('cdh', 'hdp')
 def test_hadoop_fs_origin_standalone_multi_thread(sdc_builder, sdc_executor, cluster):
     """
