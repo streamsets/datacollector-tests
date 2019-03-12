@@ -130,7 +130,7 @@ def test_parse_xml(sdc_builder, sdc_executor):
 
 
 # SDC-11018: Re-scale data when writing Decimal into Avro
-@sdc_min_version('3.0.0.0')
+@sdc_min_version('3.2.0.0') # Data Generator
 def test_avro_decimal_incorrect_scale(sdc_builder, sdc_executor):
     """Make sure that we auto-rescale decimal as needed when writing to Avro.
 
@@ -190,7 +190,7 @@ def test_avro_decimal_incorrect_scale(sdc_builder, sdc_executor):
     assert snapshot[parser].output[1].get_field_data('/a') == None
 
 # SDC-11022: Do not use avro union index when writing avro data
-@sdc_min_version('3.0.0.0')
+@sdc_min_version('3.2.0.0') # Data Generator
 def test_avro_decimal_union_index_on_write(sdc_builder, sdc_executor):
     """Make sure that avro union index is not used when writing data out to Avro file format.
 
