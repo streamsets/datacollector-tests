@@ -1509,3 +1509,79 @@ def test_jdbc_producer_oracle_data_errors(sdc_builder, sdc_executor, multi_row, 
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
+
+
+# SDC-11082: Extend support for TIMESTAMP WITH TIMEZONE Datatypes
+@sdc_min_version('3.0.0.0')
+@database('oracle')
+# https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm#CNCPT1821
+# We don't support UriType (requires difficult workaround in JDBC)
+@pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
+    ('number','1', 'DECIMAL', '1'),
+    ('char(2)', "'AB'", 'STRING', 'AB'),
+    ('varchar(4)', "'ABCD'", 'STRING', 'ABCD'),
+    ('varchar2(4)', "'NVAR'", 'STRING', 'NVAR'),
+    ('nchar(3)',"'NCH'", 'STRING', 'NCH'),
+    ('nvarchar2(4)', "'NVAR'", 'STRING', 'NVAR'),
+    ('binary_float', '1.0', 'FLOAT', '1.0'),
+    ('binary_double', '2.0', 'DOUBLE', '2.0'),
+    ('date', "TO_DATE('1998-1-1 6:22:33', 'YYYY-MM-DD HH24:MI:SS')", 'DATETIME', 883664553000),
+    ('timestamp', "TIMESTAMP'1998-1-2 6:00:00'", 'DATETIME', 883749600000),
+    ('timestamp with time zone', "TIMESTAMP'1998-1-3 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-03T06:00:00-05:00'),
+    ('timestamp with local time zone', "TIMESTAMP'1998-1-4 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-04T07:00:00Z'),
+    ('long', "'LONG'", 'STRING', 'LONG'),
+    ('blob', "utl_raw.cast_to_raw('BLOB')", 'BYTE_ARRAY', 'QkxPQg=='),
+    ('clob', "'CLOB'", 'STRING', 'CLOB'),
+    ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
+    ('XMLType', "xmltype('<a></a>')", 'STRING', '<a></a>')
+])
+def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value):
+    """Test all feasible Oracle types."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                id number primary key,
+                data_column {sql_type}
+            )
+        """)
+
+        # And insert the working row
+        connection.execute(f"""
+            INSERT INTO {table_name} VALUES(
+                1,
+                {insert_fragment}
+            )
+        """)
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('JDBC Multitable Consumer')
+        origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+        origin.on_unknown_type = 'CONVERT_TO_STRING'
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot[origin].output) == 1
+        record = snapshot[origin].output[0]
+
+        # Since we are controlling types, we want to check explicit values inside the record rather the the python
+        # wrappers.
+
+        assert record.field['DATA_COLUMN'].type == expected_type
+        # TLKT-177: Add ability for field to return raw value
+        assert record.field['DATA_COLUMN']._data['value'] == expected_value
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
+
