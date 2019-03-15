@@ -265,7 +265,7 @@ def test_directory_origin_configuration_charset(sdc_builder, sdc_executor, file_
                              file_name_pattern=file_name)
     trash = pipeline_builder.add_stage('Trash')
     directory >> trash
-    pipeline = pipeline_builder.build('test_directory_origin_configuration_charset')
+    pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -457,9 +457,42 @@ def test_directory_origin_configuration_files_directory(sdc_builder, sdc_executo
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_first_file_to_process(sdc_builder, sdc_executor):
-    pass
+def test_directory_origin_configuration_first_file_to_process(sdc_builder, sdc_executor,
+                                                              file_writer, shell_executor):
+    files_directory = os.path.join('/tmp', get_random_string())
+    FIRST_FILE_NAME = 'b.txt'
+    FIRST_FILE_CONTENTS = 'This is file b'
+    EARLIER_FILE_NAME = 'a.txt'
+    EARLIER_FILE_CONTENTS = 'This is file a'
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FIRST_FILE_NAME), FIRST_FILE_CONTENTS)
+        file_writer(os.path.join(files_directory, EARLIER_FILE_NAME), EARLIER_FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.txt',
+                                 first_file_to_process=FIRST_FILE_NAME)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
+        records = [record.field
+                   for batch in snapshot.snapshot_batches
+                   for record in batch.stage_outputs[directory.instance_name].output]
+        assert len(records) == 1
+        assert records[0] == {'text': FIRST_FILE_CONTENTS}
+        sdc_executor.stop_pipeline(pipeline)
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
@@ -575,13 +608,7 @@ def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, 
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, sdc_executor, data_format):
-    pass
-
-
-@pytest.mark.parametrize('data_format', ['XML'])
+@pytest.mark.parametrize('data_format', ['DELIMITED', 'XML'])
 @pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, sdc_executor, data_format):
     pass
