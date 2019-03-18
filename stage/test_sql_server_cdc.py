@@ -621,9 +621,6 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
                                      default_operation='INSERT',
                                      field_to_column_mapping=[])
 
-        trash_events = pipeline_builder.add_stage('Trash')
-
-        sql_server_cdc >= trash_events
         sql_server_cdc >> jdbc_producer
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
