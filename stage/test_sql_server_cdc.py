@@ -277,15 +277,15 @@ def test_sql_server_cdc_with_nonempty_initial_offset(sdc_builder, sdc_executor, 
         ct_table_name = f'{capture_instance_name}_CT'
         wait_for_data_in_ct_table(ct_table_name, first_no_of_records, database)
 
-        # get the current LSN
-        currentLSN = binascii.hexlify(connection.execute('SELECT sys.fn_cdc_get_max_lsn() as currentLSN').scalar())
-
         # insert the last half of the sample data
         add_data_to_table(connection, table, rows_in_database[first_no_of_records:total_no_of_records])
         wait_for_data_in_ct_table(ct_table_name, total_no_of_records, database)
 
         # get the capture_instance_name
         capture_instance_name = f'{schema_name}_{table_name}'
+
+        # get the current LSN
+        currentLSN = binascii.hexlify(connection.execute('SELECT sys.fn_cdc_get_max_lsn() as currentLSN').scalar())
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
