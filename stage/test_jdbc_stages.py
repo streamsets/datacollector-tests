@@ -1246,6 +1246,15 @@ def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
     )
 
     RAW_DATA = [
+        # Update id=5
+        {"op": 3, "id": 5, "a": 2, "b": 2},
+        # Insert id=4
+        {"op": 1, "id": 4, "a": 1, "b": 1},
+        # Update id=4
+        {"op": 3, "id": 4, "a": 2, "b": 2},
+        # Delete id=5
+        {"op": 2, "id": 5},
+
         # Insert id=1
         {"op": 1, "id": 1, "a": 1, "b": 1},
         # Update id=1
@@ -1298,16 +1307,29 @@ def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
         logger.info('Creating table %s in %s database ...', table_name, database.type)
         table.create(database.engine)
 
+        # The table will start with single row (id=5)
+        logger.info('Inserting rows into %s in %s database', table_name, database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), {'id': 5, 'a': 1, 'b': 1})
+
+        # Finally run the pipeline and verify it's outcome
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         result = database.engine.execute(table.select())
         db = sorted(result.fetchall(), key=lambda row: row[0]) # order by id
         result.close()
 
-        assert len(db) == 1
+        assert len(db) == 2
+
+        # id=1
         assert 1 == db[0][0]
         assert 3 == db[0][1]
         assert 2 == db[0][2]
+
+        # id=5
+        assert 4 == db[1][0]
+        assert 2 == db[1][1]
+        assert 2 == db[1][2]
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
