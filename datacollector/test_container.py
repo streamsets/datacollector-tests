@@ -25,8 +25,7 @@ pytestmark = sdc_min_version('3.8.0')
     'TRACE'
 ])
 def test_restricted_http_methods(sdc_executor, method):
-    port = sdc_executor.server_url.split(':')[-1]
-    h1 = http.client.HTTPConnection(sdc_executor.server_host, port)
+    h1 = http.client.HTTPConnection(sdc_executor.api_client.server_url.split('://')[-1])
     h1.request(method, '/')
 
     resp = h1.getresponse()
