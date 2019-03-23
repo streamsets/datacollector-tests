@@ -323,7 +323,7 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
         record_deduplicator = builder.add_stage('Record Deduplicator')
         trash = builder.add_stage('Trash')
         azure_iot_hub_producer = builder.add_stage('Azure IoT Hub Producer')
-        azure_iot_hub_producer.set_attributes(data_format='JSON', device_id=device_id, json_content='ARRAY_OBJECTS',
+        azure_iot_hub_producer.set_attributes(data_format='JSON', device_id=device_id, json_content='MULTIPLE_OBJECTS',
                                               shared_access_key=device_access_key)
 
         dev_raw_data_source >> record_deduplicator >> azure_iot_hub_producer
