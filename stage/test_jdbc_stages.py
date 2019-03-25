@@ -22,7 +22,7 @@ import time
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.environments.databases import Oracle, SQLServerDatabase
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
 from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -280,7 +280,7 @@ def _get_random_name(database, prefix='', length=5):
         length: (:obj:`int`) number of characters of the generated name (without counting ``prefix``).
 
     """
-    if type(database) == Oracle:
+    if isinstance(database, OracleDatabase):
         name = '{}{}'.format(prefix.upper(), get_random_string(string.ascii_uppercase))
     else:
         name = '{}{}'.format(prefix.lower(), get_random_string(string.ascii_lowercase))
@@ -335,7 +335,7 @@ def _create_schema(schema_name, database):
         database: a :obj:`streamsets.testframework.environment.Database` object.
 
     """
-    if type(database) == Oracle:
+    if isinstance(database, OracleDatabase):
         database.engine.execute('CREATE USER {user} IDENTIFIED BY {pwd}'.format(user=schema_name, pwd=schema_name))
         database.engine.execute('GRANT UNLIMITED TABLESPACE TO {user}'.format(user=schema_name))
     else:
@@ -351,7 +351,7 @@ def _drop_schema(schema_name, database):
         database: a :obj:`streamsets.testframework.environment.Database` object.
 
     """
-    if type(database) == Oracle:
+    if isinstance(database, OracleDatabase):
         database.engine.execute('DROP USER {user}'.format(user=schema_name))
     else:
         sqlalchemy.schema.DropSchema(schema_name)
@@ -414,7 +414,7 @@ def test_jdbc_tee_processor(sdc_builder, sdc_executor, database):
     The pipeline looks like:
         dev_raw_data_source >> jdbc_tee >> trash
     """
-    if type(database) == Oracle:
+    if isinstance(database, OracleDatabase):
         pytest.skip('JDBC Tee Processor does not support Oracle')
     elif type(database) == SQLServerDatabase:
         pytest.skip('JDBC Tee Processor does not support multi row op on SQL Server')
@@ -472,7 +472,7 @@ def test_jdbc_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_m
     which defines the CRUD operation (1: Insert, 2: Delete, 3: Update). The pipeline looks like:
         dev_raw_data_source >> expression evaluator >> jdbc_tee >> trash
     """
-    if type(database) == Oracle:
+    if isinstance(database, OracleDatabase):
         pytest.skip('JDBC Tee Processor does not support Oracle')
 
     if use_multi_row == True and type(database) == SQLServerDatabase:
@@ -1037,7 +1037,7 @@ def test_jdbc_producer_multitable(sdc_builder, sdc_executor, database):
 
     # For Oracle, the default value of JDBC Producer's "Schema Name" property in the database environment is the
     # database name, but it should be the username instead.
-    if type(database) == Oracle:
+    if isinstance(database, OracleDatabase):
         pipeline[2].set_attributes(schema_name=database.username.upper())
 
     sdc_executor.add_pipeline(pipeline)
