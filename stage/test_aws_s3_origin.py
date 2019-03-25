@@ -373,9 +373,9 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
 
-    json_data = dict(f1=get_random_string(), f2=get_random_string())
+    data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
 
-    s3_obj_count = 5
+    s3_obj_count = 1
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -383,7 +383,8 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
-    s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern=f'{s3_key}*')
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON',
+                             json_content='ARRAY_OBJECTS', prefix_pattern=f'{s3_key}*')
 
     trash = builder.add_stage('Trash')
 
@@ -393,7 +394,7 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     s3_origin >> trash
     s3_origin >= pipeline_finished_executor
 
-    pipeline_name = f'Amazon S3 - No more data event'
+    pipeline_name = 'Amazon S3 - No more data event'
 
     s3_origin_pipeline = builder.build(title=pipeline_name).configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
@@ -403,22 +404,122 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        for i in range(s3_obj_count):
-            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{i}', Body=json.dumps(json_data))
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Body=json.dumps(data))
 
-        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=60)
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+
+        output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
+
+        assert len(output_records_values) == s3_obj_count * 10
+        assert output_records_values == data
+
+        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=60)
 
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-
-        output_records_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
-        assert output_records_count == s3_obj_count + 1  # Adding +1 since event also count as record
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 10
+        # We need to add 1 since the event is considered a record
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 10 + 1
 
     finally:
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
         # Clean up S3.
         delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+# SDC-11176 S3 Origin is only sending one no-more-data event, it should send one if there is some refill of data
+@aws('s3')
+def test_s3_event_finisher_multiple_events(sdc_builder, sdc_executor, aws):
+    """
+    Test that no-more-data event is being sent when no more data is available in S3, then refill, then sent it again.
+
+    We insert objects in the bucket, then read them, then insert again. after the second no-more-data event the jython
+    evaluator produces a new event that stop the pipeline.
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+        s3_origin >= jython_evaluator
+        jython_evaluator >> trash2
+        jython_evaluator >= pipeline_finished_executor
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
+    data2 = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
+
+    s3_obj_count = 1
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON',
+                             json_content='ARRAY_OBJECTS', prefix_pattern=f'{s3_key}*')
+
+    trash = builder.add_stage('Trash')
+    trash2 = builder.add_stage('Trash')
+
+    jython_evaluator = builder.add_stage('Jython Evaluator')
+    jython_evaluator.set_attributes(init_script="state['record-count'] = 0", script="""
+for record in records:
+    output.write(record)
+    state['record-count'] = state['record-count'] + 1
+
+if (state['record-count'] >= 2):
+    event = sdcFunctions.createEvent('stop-pipeline', 1)
+    sdcFunctions.toEvent(event)
+    """)
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'stop-pipeline'}"])
+
+    s3_origin >> trash
+    s3_origin >= jython_evaluator
+    jython_evaluator >> trash2
+    jython_evaluator >= pipeline_finished_executor
+
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}-1', Body=json.dumps(data))
+
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_output_records_count(10, timeout_sec=300)
+
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}-2', Body=json.dumps(data2))
+
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline).snapshot
+
+        output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
+
+        assert len(output_records_values) == s3_obj_count * 10
+        assert output_records_values == data2
+
+        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=300)
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 2 * 10
+        # We have 2 events and we are generating a third one to effectively stop the pipeline
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 2 * (10 + 1) + 1
+
+    finally:
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
 
 
