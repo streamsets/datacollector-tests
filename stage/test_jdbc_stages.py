@@ -1557,7 +1557,8 @@ def test_jdbc_producer_oracle_data_errors(sdc_builder, sdc_executor, multi_row, 
     ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
     ('XMLType', "xmltype('<a></a>')", 'STRING', '<a></a>')
 ])
-def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value):
+@pytest.mark.parametrize('use_table_origin', [True, False])
+def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, use_table_origin, sql_type, insert_fragment, expected_type, expected_value):
     """Test all feasible Oracle types."""
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
@@ -1580,9 +1581,15 @@ def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, sql_t
 
         builder = sdc_builder.get_pipeline_builder()
 
-        origin = builder.add_stage('JDBC Multitable Consumer')
-        origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
-        origin.on_unknown_type = 'CONVERT_TO_STRING'
+        if use_table_origin:
+            origin = builder.add_stage('JDBC Multitable Consumer')
+            origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+            origin.on_unknown_type = 'CONVERT_TO_STRING'
+        else:
+            origin = builder.add_stage('JDBC Query Consumer')
+            origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
+            origin.incremental_mode = False
+            origin.on_unknown_type = 'CONVERT_TO_STRING'
 
         trash = builder.add_stage('Trash')
 
