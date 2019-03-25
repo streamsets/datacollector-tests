@@ -28,6 +28,12 @@ logger.setLevel(logging.DEBUG)
 # Specify a port for SDC RPC stages to use.
 SNAPSHOT_TIMEOUT_SEC = 120
 
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
+
+    return hook
 
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
@@ -153,3 +159,69 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
         verify_kafka_origin_results_timestamp(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+
+
+# SDC-10501: Option to enable/disable Kafka auto commit Offsets
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.6.0')
+def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
+    """Ensure that we read all the data, even when a pipeline fails - thus no records are "auto committed". The test
+       runs the same pipeline twice - once with failure and second time with success and ensures that the second run
+       see all the records.
+
+       The pipeline reads from Kafka and uses delay processor to model longer processing time (so that Kafka's auto
+       commit takes place) and then jython processor to generate pipeline failure (1/0).
+    """
+    topic = get_random_string(string.ascii_letters, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = get_kafka_multitopic_consumer_stage(builder, cluster)
+    origin.topic_list = [topic]
+    origin.auto_offset_reset = 'EARLIEST'
+    origin.consumer_group = get_random_string(string.ascii_letters, 10)
+    origin.batch_wait_time_in_ms = 100
+
+    delay = builder.add_stage('Delay')
+    delay.delay_between_batches = 5*1000
+
+    script = builder.add_stage('Jython Evaluator', type='processor')
+    script.script = '1/${DIVISOR}'
+
+    trash = builder.add_stage(label='Trash')
+
+    origin >> delay >> script >> trash
+
+    pipeline = builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    pipeline.configuration['executionMode'] = 'STANDALONE'
+    pipeline.add_parameters(DIVISOR='0')
+
+    sdc_executor.add_pipeline(pipeline)
+
+    # Produce one message
+    producer = cluster.kafka.producer()
+    producer.send(topic, 'Super Secret Message'.encode())
+    producer.flush()
+
+    try:
+        # Start our pipeline - it should fail
+        sdc_executor.start_pipeline(pipeline, runtime_parameters={'DIVISOR': 0}).wait_for_status('RUN_ERROR', ignore_errors=True)
+
+        # Adding second message so that the topic have at least one new message, so that getting snapshot on older
+        # versions wont't time out but returns immediately.
+        producer = cluster.kafka.producer()
+        producer.send(topic, 'Not So Super Secret Message'.encode())
+        producer.flush()
+
+        # Now run the pipeline second time and it should succeed
+        snapshot = sdc_executor.capture_snapshot(pipeline, runtime_parameters={'DIVISOR': 1}, start_pipeline=True).snapshot
+
+        # Now this should still read both records
+        records = snapshot[origin].output
+        assert len(records) == 2
+        assert records[0].field['text'] == 'Super Secret Message'
+        assert records[1].field['text'] == 'Not So Super Secret Message'
+
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
