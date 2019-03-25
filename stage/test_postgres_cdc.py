@@ -112,7 +112,6 @@ def _delete(connection, table):
                                               Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
     return operations_data
 
-
 @database('postgresql')
 @sdc_min_version('3.4.0')
 def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
@@ -131,7 +130,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
-    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
                                        replication_slot=get_random_string(string.ascii_lowercase, 10))
     trash = pipeline_builder.add_stage('Trash')
     postgres_cdc_client >> trash
@@ -180,3 +179,93 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
+
+@database('postgresql')
+@sdc_min_version('3.8.1')
+def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database):
+    """
+        Test filtering for inserts/updates/deletes to a Postgres table
+
+        1. Random table names for "table_allow", "table_deny"
+        2. Filter OUT anything for "table_deny"
+        3. Insert/update/delete for both tables
+        4. Should see updates for "table_allow" only
+
+        The pipeline looks like:
+        postgres_cdc_client >> trash
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    table_name_allow = get_random_string(string.ascii_lowercase, 20)
+    table_name_deny = get_random_string(string.ascii_lowercase, 20)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
+                                       replication_slot=get_random_string(string.ascii_lowercase, 10),
+                                       schema_table_configs=[{'schema': 'public'},
+                                                             {'exclude_pattern': table_name_deny},
+                                                             {'table': table_name_allow}])
+    trash = pipeline_builder.add_stage('Trash')
+    postgres_cdc_client >> trash
+
+    pipeline = pipeline_builder.build(title='PostgreSQL CDC Filtering').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Database operations done after pipeline start will be captured by CDC.
+        # Hence start the pipeline but do not wait for the capture to be finished.
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
+        # Create table and then perform insert, update and delete operations.
+        table_allow = _create_table_in_database(table_name_allow, database)
+        table_deny = _create_table_in_database(table_name_deny, database)
+        connection = database.engine.connect()
+
+        expected_operations_data = _insert(connection=connection, table=table_allow)
+        expected_operations_data += _update(connection=connection, table=table_allow)
+        expected_operations_data += _delete(connection=connection, table=table_allow)
+
+        actual_operations_data = expected_operations_data.copy()
+
+        actual_operations_data += _insert(connection=connection, table=table_deny)
+        actual_operations_data += _update(connection=connection, table=table_deny)
+        actual_operations_data += _delete(connection=connection, table=table_deny)
+
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        # Verify snapshot data is received in exact order as expected.
+        operation_index = 0
+
+        for record in snapshot[postgres_cdc_client.instance_name].output:
+            # No need to worry about DDL related CDC records. e.g. table creation etc.
+            if record.get_field_data('/change'):
+                # Since we performed each operation (insert, update and delete) on 3 rows,
+                # each CDC  record change contains a list of 3 elements.
+                for i in range(3):
+                    if operation_index >= len(expected_operations_data):
+                        break
+                    expected = expected_operations_data[operation_index]
+                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                    # For delete operation there are no columnnames and columnvalues fields.
+                    if expected.kind != KIND_FOR_DELETE:
+                        assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                        assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+                    if expected.kind != KIND_FOR_INSERT:
+                        # For update and delete operations verify extra information about old keys.
+                        assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
+                    operation_index += 1
+
+    finally:
+        if pipeline:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        if table_allow is not None:
+            table_allow.drop(database.engine)
+            logger.info('Table: %s dropped.', table_name_allow)
+        if table_deny is not None:
+            table_deny.drop(database.engine)
+            logger.info('Table: %s dropped.', table_name_deny)
