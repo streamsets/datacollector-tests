@@ -129,7 +129,9 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
     stage_libs = cluster.sdc_stage_libs
 
     if ('streamsets-datacollector-apache-kafka_0_9-lib' in stage_libs or
-            'streamsets-datacollector-apache-kafka_0_8-lib' in stage_libs):
+            'streamsets-datacollector-apache-kafka_0_8-lib' in stage_libs or
+            'streamsets-datacollector-cdh_kafka_2_1-lib' in stage_libs or
+            'streamsets-datacollector-apache-kafka_0_10-lib' in stage_libs):
         pytest.skip('Test only designed to run on Kafka version >= 0.10.1')
 
     messages = [f'message{i}' for i in range(1, 5)]

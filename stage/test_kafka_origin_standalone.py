@@ -165,6 +165,7 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
 
     if ('streamsets-datacollector-apache-kafka_0_9-lib' in stage_libs or
             'streamsets-datacollector-apache-kafka_0_8-lib' in stage_libs or
+            'streamsets-datacollector-cdh_kafka_2_1-lib' in stage_libs or
             'streamsets-datacollector-apache-kafka_0_10-lib' in stage_libs):
         with pytest.raises(Exception) as e:
             sdc_executor.start_pipeline(kafka_consumer_pipeline)
