@@ -85,6 +85,69 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 
 
 @aws('kinesis')
+def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
+    """Test for Kinesis consumer origin stage, with AT_TIMESTAMP option. We do so by:
+        - 1. Publishing data to a test stream
+        - 2. Wait some time and store current timestamp
+        - 3. Publishing new data
+        - 4. Using Kinesis client to attempt reading from stored timestamp, passing it to the AT_TIMESTAMP option
+        - 5. Assert that only the newest data has been read
+
+     The pipelines look like:
+
+     Kinesis Consumer pipeline: kinesis_consumer >> trash
+    """
+
+    # build stream
+    application_name = get_random_string()
+    stream_name = f'{aws.kinesis_stream_prefix}_{get_random_string()}'
+
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        # 1. Publish data to the stream
+        put_records = [{'Data': f'First Message {i}', 'PartitionKey': '111'} for i in range(10)]
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # 2. Wait and store timestamp
+        time.sleep(10)
+        timestamp = int(time.time())*1000
+
+        # 3. Publish new data
+        put_records = [{'Data': f'Second Message {i}', 'PartitionKey': '111'} for i in range(10)]
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # 4. Build consumer pipeline using timestamp
+        builder = sdc_builder.get_pipeline_builder()
+        builder.add_error_stage('Discard')
+        kinesis_consumer = builder.add_stage('Kinesis Consumer')
+        kinesis_consumer.set_attributes(application_name=application_name, data_format='TEXT',
+                                        initial_position='AT_TIMESTAMP',
+                                        initial_timestamp=timestamp,
+                                        stream_name=stream_name)
+        trash = builder.add_stage('Trash')
+        kinesis_consumer >> trash
+
+        consumer_origin_pipeline = builder.build(title='Kinesis Consumer pipeline').configure_for_environment(aws)
+        sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+        # 5. messages are published, read through the pipeline and assert
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        output_records = [record.field for record in snapshot[kinesis_consumer.instance_name].output]
+
+        assert all('Second' in str(output_record) for output_record in output_records)
+    finally:
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
+
+
+@aws('kinesis')
 def test_kinesis_producer(sdc_builder, sdc_executor, aws):
     """Test for Kinesis producer target stage. We do so by publishing data to a test stream using Kinesis producer
     stage and then read the data from that stream using Kinesis client. We assert the data from the client to what has
@@ -106,17 +169,7 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
         desc_response = client.describe_stream(StreamName=stream_name)
         shard_id = desc_response['StreamDescription']['Shards'][0]['ShardId']
 
-        # Build the pipeline
-        builder = sdc_builder.get_pipeline_builder()
-        builder.add_error_stage('Discard')
-
-        dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
-                                                                                      raw_data=raw_str)
-        kinesis_producer = builder.add_stage('Kinesis Producer')
-        kinesis_producer.set_attributes(data_format='TEXT', stream_name=stream_name)
-
-        dev_raw_data_source >> kinesis_producer
-        producer_dest_pipeline = builder.build(title='Kinesis Producer pipeline').configure_for_environment(aws)
+        producer_dest_pipeline = get_kinesis_producer_pipeline(sdc_builder, aws, stream_name, raw_str)
 
         # add pipeline and capture pipeline messages to assert
         sdc_executor.add_pipeline(producer_dest_pipeline)
@@ -140,6 +193,22 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
     finally:
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)
+
+
+def get_kinesis_producer_pipeline(sdc_builder, aws, stream_name, message, pipeline_suffix=''):
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  raw_data=message)
+    kinesis_producer = builder.add_stage('Kinesis Producer')
+    kinesis_producer.set_attributes(data_format='TEXT', stream_name=stream_name)
+
+    dev_raw_data_source >> kinesis_producer
+    producer_dest_pipeline = builder.build(title=f'Kinesis Producer Pipeline {pipeline_suffix}').configure_for_environment(aws)
+
+    return producer_dest_pipeline
 
 
 @aws('s3')
