@@ -31,6 +31,14 @@ MULTITHREADED = 5
 DEFAULT_NUMBER_OF_RECORDS = 5
 
 
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
+
+    return hook
+
+
 @aws('s3')
 @sdc_min_version('3.7.0')
 def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
