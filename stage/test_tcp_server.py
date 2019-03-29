@@ -16,6 +16,7 @@ import logging
 import socket
 import ssl
 import time
+from threading import Thread
 from collections import namedtuple
 
 import pytest
@@ -374,3 +375,98 @@ def get_expected_message(file_path):
     message = file_to_read.readline()
     file_to_read.close()
     return message
+
+
+def test_tcp_multiple_ports(sdc_builder, sdc_executor):
+    """ Runs a test using TCP Server as Origin and Trash as destination. TCP Server will be listening to ports 55555 and
+    44444. Two clients will be writing in parallel to one of these ports (each client to a different port). While
+    clients are writing it will be checked no exception is thrown due to TCP Server pool exhausted.
+
+    Pipeline looks like:
+
+    TCP Server >> trash
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    tcp_server_stage = pipeline_builder.add_stage('TCP Server').set_attributes(port=[str(55555), str(44444)],
+                                                                               number_of_receiver_threads=5,
+                                                                               tcp_mode='DELIMITED_RECORDS',
+                                                                               max_batch_size_in_messages=10000,
+                                                                               batch_wait_time_in_ms=60000,
+                                                                               max_message_size_in_bytes=40960,
+                                                                               read_timeout_in_seconds=600,
+                                                                               data_format='TEXT',
+                                                                               max_line_length=10240)
+    trash_stage = pipeline_builder.add_stage('Trash')
+
+    tcp_server_stage >> trash_stage
+
+    tcp_server_pipeline = pipeline_builder.build(title='TCP Server Origin 20 threads 2 ports')
+    sdc_executor.add_pipeline(tcp_server_pipeline)
+
+    try:
+        # Run pipeline.
+        snapshot_cmd = sdc_executor.capture_snapshot(tcp_server_pipeline, start_pipeline=True, wait=False,
+                                                     batch_size=10000, batches=20)
+
+        expected_message = ' hello_world\n'
+        total_num_messages = 0
+        message_counter = 0
+        expected_messages_list = []
+
+        # Create tcp client listening to port 55555.
+        tcp_client_socket_port_55555 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_client_socket_port_55555.connect((sdc_executor.server_host, 55555))
+
+        # Create tcp client listening to port 44444.
+        tcp_client_socket_port_44444 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_client_socket_port_44444.connect((sdc_executor.server_host, 44444))
+
+        # Send messages for both tcp clients.
+        for i in range(0, 100000):
+            expected_message_bytes = bytes(f'{message_counter}{expected_message}', 'utf-8')
+            send_asynchronous_message_multiple_clients([tcp_client_socket_port_55555, tcp_client_socket_port_44444],
+                                                       expected_message_bytes)
+            new_line_char = '\n'
+            # Append twice the message to the list as two clients sending send message.
+            expected_messages_list.append(f'{message_counter}{expected_message.rstrip(new_line_char)}')
+            expected_messages_list.append(f'{message_counter}{expected_message.rstrip(new_line_char)}')
+            message_counter += 1
+            total_num_messages += 2
+
+        # Close clients.
+        tcp_client_socket_port_55555.close()
+        tcp_client_socket_port_44444.close()
+
+        snapshot = snapshot_cmd.wait_for_finished().snapshot
+        output_records_values = [str(record.field['text'])
+                                 for batch in snapshot.snapshot_batches
+                                 for record in batch.stage_outputs[tcp_server_stage.instance_name].output]
+        assert len(output_records_values) == total_num_messages
+        assert sorted(output_records_values) == sorted(expected_messages_list)
+
+    finally:
+        sdc_executor.stop_pipeline(tcp_server_pipeline, wait=True, force=True)
+
+
+def send_asynchronous_message_multiple_clients(client_socket_list, message_bytes):
+    """ Sends message_bytes for each client in client_socket_list
+
+    :param client_socket_list: The list of TCP client sockets
+    :param message_bytes: the bytes of the message to send
+
+    """
+    threads_list = []
+    for client_socket in client_socket_list:
+        thread = Thread(target=send_synchronous_message, args=(client_socket, message_bytes))
+        threads_list.append(thread)
+        thread.start()
+    for thread in threads_list:
+        thread.join()
+
+
+def send_synchronous_message(client_socket, message_bytes):
+    client_socket.sendall(message_bytes)
+
+
