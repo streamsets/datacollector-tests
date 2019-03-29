@@ -65,10 +65,10 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @database
 # lowercase for db compatibility (e.g. PostgreSQL)
-@pytest.mark.parametrize('table_name_characters', [string.ascii_lowercase, string.digits])
+@pytest.mark.parametrize('table_name_characters', [string.ascii_lowercase])
 @pytest.mark.parametrize('table_name_length', [8, 20])
 @pytest.mark.timeout(180)
 def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, cluster,
@@ -93,13 +93,14 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
     jdbc_multitable_consumer.set_attributes(table_configuration=[{'tablePattern': f'%{src_table_suffix}'}])
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
-    expression_evaluator.set_attributes(
-        header_expressions=[{'attributeToSet': 'database',
-                             'headerAttributeExpression': f'{database.database}'},
-                            {'attributeToSet': 'dt',
-                             'headerAttributeExpression': "${record:value('/dt')}"},
-                            {'attributeToSet': 'table_name',
-                             'headerAttributeExpression': "${record:attribute('jdbc.tables')}"}])
+    expression_evaluator.header_attribute_expressions = [
+        {'attributeToSet': 'database',
+          'headerAttributeExpression': f'{database.database}'},
+        {'attributeToSet': 'dt',
+          'headerAttributeExpression': "${record:value('/dt')}"},
+        {'attributeToSet': 'table_name',
+         'headerAttributeExpression': "${record:attribute('jdbc.tables')}"}
+    ]
     field_remover = pipeline_builder.add_stage('Field Remover')
     field_remover.fields = ["/dt"]
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')

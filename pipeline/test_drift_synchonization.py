@@ -48,22 +48,6 @@ def sdc_common_hook():
     return hook
 
 
-def get_qualified_table_name(db, table_name):
-    return f'`{db}`.`{table_name}`' if db else f'`{table_name}`'
-
-
-def get_table_location(hive_cursor, db, table_name):
-    hive_cursor.execute('DESC FORMATTED {0}'.format(get_qualified_table_name(db, table_name)))
-    rows = [row for row in hive_cursor.fetchall()]
-    url_result = urlparse([r[1] for r in rows if 'Location:' in r[0]][0])
-    return url_result.path
-
-
-def get_table_columns_and_type(hive_cursor, db, table_name):
-    hive_cursor.execute('DESC {0}'.format(get_qualified_table_name(db, table_name)))
-    return OrderedDict({col_name: col_type for col_name, col_type, comment in hive_cursor.fetchall()})
-
-
 @cluster('cdh')
 @database
 def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
@@ -146,7 +130,7 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
         hive_cursor.execute(f'DROP TABLE `{table_name}`')
 
 
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_null_fields(sdc_builder, sdc_executor, cluster):
     """Validate Null fields of different data type and see hive store and returns NULL. The pipeline looks like:
 
@@ -155,7 +139,7 @@ def test_null_fields(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hive_metastore
         dev_data_generator >= pipeline_finisher
     """
-    if 'hive' in cluster.kerberized_services:
+    if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -208,8 +192,9 @@ def test_null_fields(sdc_builder, sdc_executor, cluster):
         logger.info('Dropping table %s in Hive...', table_name)
         hive_cursor.execute(f'DROP TABLE `{table_name}`')
 
+
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('db', ['', 'default', 'custom'])
 @pytest.mark.parametrize('stored_as_avro', [True, False])
 @pytest.mark.parametrize('external_table', [True, False])
@@ -222,7 +207,7 @@ def test_cold_start(sdc_builder, sdc_executor, cluster, db, stored_as_avro, exte
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
-    if 'hive' in cluster.kerberized_services:
+    if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -284,8 +269,8 @@ def test_cold_start(sdc_builder, sdc_executor, cluster, db, stored_as_avro, exte
         hive_cursor.execute(f'CREATE DATABASE IF NOT EXISTS`{db}`')
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(db, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(db, table_name)))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(db, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(db, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         raw_values = [list(row.values()) for row in raw_data]
         if partitioned:
@@ -294,8 +279,8 @@ def test_cold_start(sdc_builder, sdc_executor, cluster, db, stored_as_avro, exte
         assert sorted(hive_values) == sorted(raw_values)
 
     finally:
-        logger.info('Dropping table %s in Hive...', get_qualified_table_name(db, table_name))
-        hive_cursor.execute('DROP TABLE {0}'.format(get_qualified_table_name(db, table_name)))
+        logger.info('Dropping table %s in Hive...', _get_qualified_table_name(db, table_name))
+        hive_cursor.execute('DROP TABLE {0}'.format(_get_qualified_table_name(db, table_name)))
         if db and db != 'default':
             logger.info('Dropping Database %s in Hive...', db)
             hive_cursor.execute('DROP DATABASE IF EXISTS`{0}`'.format(db))
@@ -305,7 +290,7 @@ def test_cold_start(sdc_builder, sdc_executor, cluster, db, stored_as_avro, exte
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('db', ['custom'])
 @pytest.mark.parametrize('external_table', [True, False])
 @pytest.mark.parametrize('custom_database_location', ['/tmp/sdc/hive/warehouse/custom', ''])
@@ -319,7 +304,7 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
-    if 'hive' in cluster.kerberized_services:
+    if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -380,30 +365,36 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
     # internal table_with_custom_location
     if not external_table and custom_table_location:
         create_table_command_template_prefix = ('CREATE TABLE IF NOT EXISTS {0} (id int, name string)'
-                                                ' STORED AS AVRO').format(get_qualified_table_name(db, table_name))
+                                                ' STORED AS AVRO').format(_get_qualified_table_name(db, table_name))
         create_table_command = create_table_command_template_prefix + f' LOCATION "{custom_table_location}"'
         hive_cursor.execute(create_table_command)
 
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=10)
 
-        location_of_table = get_table_location(hive_cursor, db, table_name)
+        location_of_table = _get_table_location(hive_cursor, db, table_name)
 
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(db, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(db, table_name)))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(db, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(db, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         raw_values = [list(row.values()) for row in raw_data]
         assert sorted(hive_values) == sorted(raw_values)
+
         # check location of the table
-        expected_location_of_table = (custom_table_location or
-                                      (f'{custom_database_location}/{table_name}' if custom_database_location
-                                       else (table_path if external_table
-                                             else f'/user/hive/warehouse/{db}.db/{table_name}')))
+        if custom_table_location:
+            expected_location_of_table = custom_table_location
+        elif custom_database_location:
+            expected_location_of_table = f'{custom_database_location}/{table_name}'
+        elif external_table:
+            expected_location_of_table = table_path
+        else:
+            expected_location_of_table = f'{_get_hive_warehouse_dir(hive_cursor)}/{db}.db/{table_name}'
 
         assert expected_location_of_table == location_of_table
+
     finally:
-        logger.info('Dropping table %s in Hive...', get_qualified_table_name(db, table_name))
-        hive_cursor.execute('DROP TABLE {0}'.format(get_qualified_table_name(db, table_name)))
+        logger.info('Dropping table %s in Hive...', _get_qualified_table_name(db, table_name))
+        hive_cursor.execute('DROP TABLE {0}'.format(_get_qualified_table_name(db, table_name)))
         logger.info('Dropping Database %s in Hive...', db)
         hive_cursor.execute('DROP DATABASE IF EXISTS`{0}`'.format(db))
 
@@ -417,7 +408,107 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
             cluster.hdfs.client.delete(db_location_to_delete, recursive=True)
 
 
-@cluster('cdh')
+@sdc_min_version('3.0.0.0')
+@cluster('cdh', 'hdp')
+def test_partition_locations(sdc_builder, sdc_executor, cluster):
+    """Store data into a Hive managed table with multicolumn partitioning, and then check that the partition locations
+    specified by Hive Metadata is actually where Hive Metastore have created them.
+
+    Pipeline configuration:
+        dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
+        hive_metadata >> hadoop_fs
+        hive_metadata >> hive_metastore
+
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    raw_data = [dict(id=1, name='abc', part1=get_random_string(), part2=get_random_string(), part3=get_random_string()),
+                dict(id=2, name='def', part1=get_random_string(), part2=get_random_string(), part3=get_random_string()),
+                dict(id=3, name='ghi', part1=get_random_string(), part2=get_random_string(), part3=get_random_string())]
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=''.join(json.dumps(d) for d in raw_data),
+                                       stop_after_first_batch=True)
+
+    # Expression evaluator
+    database = get_random_string(string.ascii_lowercase, 20)
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    header_attributes = [{'attributeToSet': 'database', 'headerAttributeExpression': database},
+                         {'attributeToSet': 'table_name', 'headerAttributeExpression': table_name},
+                         {'attributeToSet': 'part1', 'headerAttributeExpression': "${record:value('/part1')}"},
+                         {'attributeToSet': 'part2', 'headerAttributeExpression': "${record:value('/part2')}"},
+                         {'attributeToSet': 'part3', 'headerAttributeExpression': "${record:value('/part3')}"}]
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=header_attributes)
+
+    # Field Remover
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.set_attributes(fields=['/part1', '/part2', '/part3'])
+
+    # Hive Metadata
+    part1_name = 'part_' + get_random_string()
+    part2_name = 'part_' + get_random_string()
+    part3_name = 'part_' + get_random_string()
+    partition_configuration = [{'name': part1_name, 'valueType': 'STRING', 'valueEL': "${record:attribute('part1')}"},
+                               {'name': part2_name, 'valueType': 'STRING', 'valueEL': "${record:attribute('part2')}"},
+                               {'name': part3_name, 'valueType': 'STRING', 'valueEL': "${record:attribute('part3')}"}]
+    hive_metadata = pipeline_builder.add_stage('Hive Metadata')
+    hive_metadata.set_attributes(data_format='AVRO',
+                                 database_expression="${record:attribute('database')}",
+                                 table_name="${record:attribute('table_name')}",
+                                 external_table=False,
+                                 partition_configuration=partition_configuration)
+
+    # Hadoop FS
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(avro_schema_location='HEADER',
+                             data_format='AVRO',
+                             directory_in_header=True,
+                             use_roll_attribute=True)
+
+    # Hive Metastore
+    hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
+
+    # Build pipeline
+    dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
+    hive_metadata >> hadoop_fs
+    hive_metadata >> hive_metastore
+
+    pipeline = pipeline_builder.build(title='Hive drift - Test Partition Locations').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    qualified_table_name = _get_qualified_table_name(database, table_name)
+    hive_cursor = cluster.hive.client.cursor()
+    hive_cursor.execute(f'CREATE DATABASE IF NOT EXISTS {database}')
+    hive_cursor.execute(f'USE {database}')
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
+        all_metadata = snapshot[hive_metadata.instance_name].output_lanes[hive_metadata.output_lanes[1]]
+        partition_metadata = [rec for rec in all_metadata if rec.field['type'] == 'PARTITION']
+
+        # Query the partition locations to the Hive database and compare them against the location generated by Hive
+        # Metadata. Also, we are using the default location and therefore 'customLocation' must be always False.
+        for raw, rec in zip(raw_data, partition_metadata):
+            hive_cursor.execute("SHOW TABLE EXTENDED LIKE '{}' PARTITION ({}='{}', {}='{}', {}='{}')"
+                                .format(table_name, part1_name, raw['part1'], part2_name, raw['part2'],
+                                        part3_name, raw['part3']))
+
+            real_location = [row[0] for row in hive_cursor.fetchall() if row[0].startswith('location:')][0]
+            assert 'customLocation' in rec.field and rec.field['customLocation'] == False
+            assert real_location.endswith(str(rec.field['location']))
+
+    finally:
+        logger.info('Dropping table %s in Hive...', qualified_table_name)
+        hive_cursor.execute(f'DROP TABLE IF EXISTS {qualified_table_name}')
+
+        logger.info('Dropping database %s in Hive...', database)
+        hive_cursor.execute(f'DROP DATABASE IF EXISTS {database}')
+
+
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('sdc_type, hive_type, supported',
                          [('BOOLEAN', 'BOOLEAN', True), ('STRING', 'STRING', True), ('INTEGER', 'INT', True),
                           ('SHORT', 'INT', True), ('LONG', 'BIGINT', True), ('FLOAT', 'FLOAT', True),
@@ -433,8 +524,7 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supp
         hive_metadata >> hive_metastore
         dev_data_generator >= pipeline_finisher
     """
-
-    if 'hive' in cluster.kerberized_services:
+    if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -547,13 +637,13 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supp
             assert len(stage.error_records) == 0
             assert len(list_of_record_output_from_hive_metastore) == 1
 
-            column_and_types_from_hive = get_table_columns_and_type(hive_cursor, None, table_name)
+            column_and_types_from_hive = _get_table_columns_and_type(hive_cursor, None, table_name)
             assert column_and_types_from_hive['custom'].upper() == hive_type
 
             record_output_from_hive_metastore = list_of_record_output_from_hive_metastore[0]
 
-            hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-            hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+            hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+            hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
             hive_values = [list(row) for row in hive_cursor.fetchall()]
             assert len(hive_values) == 1
 
@@ -569,7 +659,7 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supp
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('partition_type, partition_value', [('INT', 1), ('BIGINT', 1), ('STRING', 'abc')])
 def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type, partition_value):
     """Validate different supported partition types and assert data is read properly. The pipeline looks like:
@@ -578,7 +668,7 @@ def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type, par
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
-    if 'hive' in cluster.kerberized_services:
+    if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -620,8 +710,8 @@ def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type, par
     hive_cursor = cluster.hive.client.cursor()
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         raw_values = [list(row.values()) for row in raw_data]
         assert len(hive_values) == 1
@@ -632,7 +722,7 @@ def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type, par
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_multiplexing(sdc_builder, sdc_executor, cluster):
     """Validate multiplexing tables and assert data is right. The pipeline looks like:
 
@@ -702,8 +792,8 @@ def test_multiplexing(sdc_builder, sdc_executor, cluster):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         for table_name, expected_rows in table_to_rows.items():
             logger.info('Validating table %s in Hive...', table_name)
-            hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-            hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+            hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+            hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
             hive_values = [list(row) for row in hive_cursor.fetchall()]
             assert sorted(hive_values, key=itemgetter(0)) == expected_rows
     finally:
@@ -713,7 +803,7 @@ def test_multiplexing(sdc_builder, sdc_executor, cluster):
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluster):
     """Validate special characters for partition value . The pipeline looks like:
 
@@ -789,8 +879,8 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
             assert error_record.header['values']['part'] in unsupported_partition_values
 
         logger.info('Validating Supported Partition Characters for Table %s in Hive...', table_name)
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         hive_values = sorted(hive_values, key=itemgetter(1))
         expected_values = sorted([list(row.values()) for row in raw_data
@@ -802,7 +892,7 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('table_or_column', [True, False])
 @pytest.mark.parametrize('special_character', ['#', '-', '$', '.'])
 def test_special_characters_in_table_and_columns(sdc_builder, sdc_executor, cluster,
@@ -877,7 +967,7 @@ def test_special_characters_in_table_and_columns(sdc_builder, sdc_executor, clus
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('keyword', ["table", "create", "date", "as", "year", "string", "default"])
 def test_keywords_in_object_names(sdc_builder, sdc_executor, cluster, keyword):
     """Validate different keywords in table/database name. The pipeline looks like:
@@ -937,22 +1027,22 @@ def test_keywords_in_object_names(sdc_builder, sdc_executor, cluster, keyword):
     hive_cursor.execute(f'CREATE DATABASE IF NOT EXISTS `{db}`')
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        logger.info('Validating table %s in Hive...', get_qualified_table_name(db, table_name))
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(db, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(db, table_name)))
+        logger.info('Validating table %s in Hive...', _get_qualified_table_name(db, table_name))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(db, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(db, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         assert 1 == len(hive_values)
         assert hive_values[0] == list([v for v in raw_data.values()])
     finally:
-        logger.info('Dropping table %s in Hive...', get_qualified_table_name(db, table_name))
-        hive_cursor.execute('DROP TABLE {0}'.format(get_qualified_table_name(db, table_name)))
+        logger.info('Dropping table %s in Hive...', _get_qualified_table_name(db, table_name))
+        hive_cursor.execute('DROP TABLE {0}'.format(_get_qualified_table_name(db, table_name)))
         if db != 'default':
             logger.info('Dropping Database %s in Hive...', db)
             hive_cursor.execute('DROP DATABASE IF EXISTS`{0}`'.format(db))
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('location', ['', 'schemaFolder', '/tmp/absoluteLocation', "${str:concat('a', 'b')}"])
 def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location):
     """Validate schema location exists when STORED_AS_AVRO is unchecked. The pipeline looks like:
@@ -993,11 +1083,6 @@ def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location)
     if location:
         hive_metastore.schema_folder_location = location
 
-    expected_location = (location if str.startswith(location, '/')
-                         else (f'/user/hive/warehouse/{table_name}/ab' if location == "${str:concat('a', 'b')}"
-                               else (f'/user/hive/warehouse/{table_name}/{location}' if location
-                                     else f'/user/hive/warehouse/{table_name}/.schemas')))
-
     dev_raw_data_source >> hive_metadata
     hive_metadata >> hadoop_fs
     hive_metadata >> hive_metastore
@@ -1006,6 +1091,16 @@ def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location)
                 .configure_for_environment(cluster))
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
+
+    if str.startswith(location, '/'):
+        expected_location = location
+    elif location == "${str:concat('a', 'b')}":
+        expected_location = f'{_get_hive_warehouse_dir(hive_cursor)}/{table_name}/ab'
+    elif location:
+        expected_location = f'{_get_hive_warehouse_dir(hive_cursor)}/{table_name}/{location}'
+    else:
+        expected_location = f'{_get_hive_warehouse_dir(hive_cursor)}/{table_name}/.schemas'
+
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         status = cluster.hdfs.client.status(expected_location)
@@ -1019,7 +1114,7 @@ def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location)
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_decimal_values(sdc_builder, sdc_executor, cluster):
     """Validate different decimal values. The pipeline looks like:
 
@@ -1073,16 +1168,16 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
     create_table_command = ('CREATE TABLE IF NOT EXISTS {0} (id int, number decimal(4, 2))'
-                            ' STORED AS AVRO').format(get_qualified_table_name(None, table_name))
+                            ' STORED AS AVRO').format(_get_qualified_table_name(None, table_name))
     hive_cursor.execute(create_table_command)
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         stage = snapshot[hive_metadata.instance_name]
         sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
 
-        logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+        logger.info('Validating table %s in Hive...', _get_qualified_table_name(None, table_name))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         assert hive_values == [[Decimal(str(v)) if k == 'number' else v for k, v in row.items()]
                                for row in valid_rows]
@@ -1095,7 +1190,7 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_partial_input(sdc_builder, sdc_executor, cluster):
     """Validate partial inputs. The pipeline looks like:
 
@@ -1146,9 +1241,9 @@ def test_partial_input(sdc_builder, sdc_executor, cluster):
     hive_cursor = cluster.hive.client.cursor()
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+        logger.info('Validating table %s in Hive...', _get_qualified_table_name(None, table_name))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         expected_data = [[r[col] if col in r else None for col in cols] for r in raw_data]
         assert sorted(hive_values) == sorted(expected_data)
@@ -1158,7 +1253,7 @@ def test_partial_input(sdc_builder, sdc_executor, cluster):
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('external_table', [True, False])
 def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
     """Validate Column Drift in inputs. The pipeline looks like:
@@ -1248,13 +1343,13 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
         sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
         assert len(stage.error_records) == 1  # column_type_change
         for table_name in table_to_raw_data.keys():
-            logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
-            hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-            table_columns_and_type = get_table_columns_and_type(hive_cursor, None, table_name)
+            logger.info('Validating table %s in Hive...', _get_qualified_table_name(None, table_name))
+            hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+            table_columns_and_type = _get_table_columns_and_type(hive_cursor, None, table_name)
             hive_table_columns = list(table_columns_and_type.keys())
             data_table_cols = table_to_cols[table_name]
             assert hive_table_columns == list(data_table_cols.keys())
-            hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+            hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
             hive_values = sorted([list(row) for row in hive_cursor.fetchall()], key=itemgetter(0))
             invalid_rows = ([[v for k, v in row.items() if k != 'table'] for row in table_to_invalid_rows[table_name]]
                             if table_name in table_to_invalid_rows else [])
@@ -1278,7 +1373,7 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('data_format', ['AVRO', 'PARQUET'])
 def test_unsupported_table_data_formats(sdc_builder, sdc_executor, cluster, data_format):
     """Validate Unsupported Data Formats. The pipeline looks like:
@@ -1333,9 +1428,9 @@ def test_unsupported_table_data_formats(sdc_builder, sdc_executor, cluster, data
         sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
         assert len(stage.error_records) == 1
 
-        logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+        logger.info('Validating table %s in Hive...', _get_qualified_table_name(None, table_name))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
         assert len([list(row) for row in hive_cursor.fetchall()]) == 0
     finally:
         logger.info('Dropping table %s in Hive...', table_name)
@@ -1343,7 +1438,7 @@ def test_unsupported_table_data_formats(sdc_builder, sdc_executor, cluster, data
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_drift_multiple_open_partitions(sdc_builder, sdc_executor, cluster):
     """Validate Multiple open partitions for the table. The pipeline looks like:
 
@@ -1421,7 +1516,7 @@ def test_drift_multiple_open_partitions(sdc_builder, sdc_executor, cluster):
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_sub_partitions(sdc_builder, sdc_executor, cluster):
     """Validate Sub partitions. The pipeline looks like:
 
@@ -1488,8 +1583,8 @@ def test_sub_partitions(sdc_builder, sdc_executor, cluster):
     hive_cursor = cluster.hive.client.cursor()
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
 
         def split_date_time_string(datetime_str):
@@ -1502,12 +1597,12 @@ def test_sub_partitions(sdc_builder, sdc_executor, cluster):
                                                 for k, v in row.items()])) for row in raw_data]
         assert sorted(hive_values) == sorted(raw_values)
     finally:
-        logger.info('Dropping table %s in Hive...', get_qualified_table_name(None, table_name))
-        hive_cursor.execute('DROP TABLE {0}'.format(get_qualified_table_name(None, table_name)))
+        logger.info('Dropping table %s in Hive...', _get_qualified_table_name(None, table_name))
+        hive_cursor.execute('DROP TABLE {0}'.format(_get_qualified_table_name(None, table_name)))
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_events(sdc_builder, sdc_executor, cluster):
     """Validate Events from hive_metadata. The pipeline looks like:
 
@@ -1567,18 +1662,18 @@ def test_events(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
 
-    expected_event_type_values = [('new-table', dict(table=get_qualified_table_name('default', table_name),
+    expected_event_type_values = [('new-table', dict(table=_get_qualified_table_name('default', table_name),
                                                      columns=OrderedDict(id='STRING', name='STRING'),
                                                      partitions=OrderedDict(part='STRING'))),
-                                  ('new-partition', dict(table=get_qualified_table_name('default', table_name),
+                                  ('new-partition', dict(table=_get_qualified_table_name('default', table_name),
                                                          partition=OrderedDict(part='part1'))),
-                                  ('new-columns', dict(table=get_qualified_table_name('default', table_name),
+                                  ('new-columns', dict(table=_get_qualified_table_name('default', table_name),
                                                        columns=OrderedDict(col1='STRING'))),
-                                  ('new-partition', dict(table=get_qualified_table_name('default', table_name),
+                                  ('new-partition', dict(table=_get_qualified_table_name('default', table_name),
                                                          partition=OrderedDict(part='part2'))),
-                                  ('new-columns', dict(table=get_qualified_table_name('default', table_name),
+                                  ('new-columns', dict(table=_get_qualified_table_name('default', table_name),
                                                        columns=OrderedDict(col2='STRING'))),
-                                  ('new-partition', dict(table=get_qualified_table_name('default', table_name),
+                                  ('new-partition', dict(table=_get_qualified_table_name('default', table_name),
                                                          partition=OrderedDict(part='part3')))]
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -1591,9 +1686,9 @@ def test_events(sdc_builder, sdc_executor, cluster):
             assert event_type == event_record.header['values']['sdc.event.type']
             assert expected_event_values == event_record.field
 
-        logger.info('Validating table %s in Hive...', get_qualified_table_name(None, table_name))
-        hive_cursor.execute('RELOAD {0}'.format(get_qualified_table_name(None, table_name)))
-        hive_cursor.execute('SELECT * from {0}'.format(get_qualified_table_name(None, table_name)))
+        logger.info('Validating table %s in Hive...', _get_qualified_table_name(None, table_name))
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
         hive_values = sorted([list(row) for row in hive_cursor.fetchall()], key=itemgetter(0))
         expected_values = sorted([[row[col] if col in row else None for col in cols] for row in raw_data],
                                  key=itemgetter(0))
@@ -1604,7 +1699,7 @@ def test_events(sdc_builder, sdc_executor, cluster):
 
 
 @sdc_min_version('3.0.0.0')
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('stop_on_query_failure', [True, False])
 def test_hive_query_executor(sdc_builder, sdc_executor, cluster, stop_on_query_failure):
     """Validate Hive Query Executor. The pipeline looks like:
@@ -1660,3 +1755,25 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster, stop_on_query_f
         expected_event_type, expected_event_values = event_type_expected_query_values[event_idx]
         assert expected_event_type == event_record.header['values']["sdc.event.type"]
         assert expected_event_values == stage.event_records[event_idx].field
+
+
+def _get_qualified_table_name(db, table_name):
+    return f'`{db}`.`{table_name}`' if db else f'`{table_name}`'
+
+
+def _get_table_location(hive_cursor, db, table_name):
+    hive_cursor.execute('DESC FORMATTED {0}'.format(_get_qualified_table_name(db, table_name)))
+    rows = [row for row in hive_cursor.fetchall()]
+    url_result = urlparse([r[1] for r in rows if 'Location:' in r[0]][0])
+    return url_result.path
+
+
+def _get_table_columns_and_type(hive_cursor, db, table_name):
+    hive_cursor.execute('DESC {0}'.format(_get_qualified_table_name(db, table_name)))
+    return OrderedDict({col_name: col_type for col_name, col_type, comment in hive_cursor.fetchall()})
+
+
+def _get_hive_warehouse_dir(hive_cursor):
+    """Return the directory path used by default to store databases in Hive."""
+    hive_cursor.execute("SET hive.metastore.warehouse.dir")
+    return hive_cursor.fetchone()[0].split('=')[1]
