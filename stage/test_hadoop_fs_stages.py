@@ -19,6 +19,7 @@ import string
 import time
 
 import pytest
+from hadoop.io import SequenceFile
 from streamsets.testframework.markers import cluster, large, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -42,6 +43,12 @@ PRODUCT_DATA = [
     {'name': 'iphone', 'price': 649.99, 'release': CURRENT_TIME},
     {'name': 'pixel', 'price': 649.89, 'release': CURRENT_TIME - 60 * 5},  # -5 minutes
     {'name': 'galaxy', 'price': 549.89, 'release': CURRENT_TIME - 60 * 10}  # -10 minutes
+]
+
+PRODUCT_DATA_FIX = [
+    {'name': 'iphone', 'price': 649.99, 'release': 1.5535},
+    {'name': 'pixel', 'price': 649.89, 'release': 1.5545},
+    {'name': 'galaxy', 'price': 549.89, 'release': 1.5565}
 ]
 
 
@@ -500,7 +507,7 @@ def test_kerberos_ticket_expiration_hadoop_fs_destination(sdc_builder, sdc_execu
         scheduler = sched.scheduler(time.time, time.sleep)
         sdc_executor.start_pipeline(pipeline)
         # Keep checking the status by scheduling the verify task.
-        for i in range(0, LARGE_TEST_DURATION_IN_SECS-10, LARGE_TEST_STATUS_CHECK_DURATION_IN_SECS):
+        for i in range(0, LARGE_TEST_DURATION_IN_SECS - 10, LARGE_TEST_STATUS_CHECK_DURATION_IN_SECS):
             scheduler.enter(i, 1, _check_pipeline_status, argument=(pipeline, sdc_executor, False))
         # Schedule to stop the pipeline after LARGE_TEST_DURATION_IN_SECS.
         logger.debug('LARGE_TEST_DURATION_IN_SECS = %d', LARGE_TEST_DURATION_IN_SECS)
@@ -511,5 +518,84 @@ def test_kerberos_ticket_expiration_hadoop_fs_destination(sdc_builder, sdc_execu
 
     finally:
         # remove HDFS files
+        logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
+        cluster.hdfs.client.delete(hdfs_directory, recursive=True)
+
+@sdc_min_version('3.0.0')
+@cluster('cdh', 'hdp')
+def test_hadoop_fs_destination_sequence_files(sdc_builder, sdc_executor, cluster):
+    """Test Hadoop FS destination configuring File Type to Sequence File.
+    We use sequence files with a EL expression in the sequence key file.
+    We use SequenceFile module to read the generated file.
+    Hadoop File is copied to local file system.
+    """
+
+    # Configure Prefix and Sufix and Directory
+    FILES_PREFIX, FILES_SUFFIX = 'tst', 'seq'
+    hdfs_directory = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
+
+    # Get Pipeline Builder
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Create Dev Raw Data Stage
+    raw_data = '\n'.join(json.dumps(product) for product in PRODUCT_DATA_FIX)
+    logger.info('Pipeline will write to HDFS directory %s ...', hdfs_directory)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    # Create Hadoop FS Destination
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(data_format='JSON',
+                             directory_template=hdfs_directory,
+                             files_prefix=FILES_PREFIX,
+                             files_suffix=FILES_SUFFIX,
+                             file_type='SEQUENCE_FILE',
+                             compression_type='RECORD',
+                             sequence_file_key='${record:value(\'/sequenceKey\')}'
+                             )
+
+    # triggered the destination file to be closed after writing all data.
+    hadoop_fs.set_attributes(max_records_in_file=len(PRODUCT_DATA_FIX))
+
+    dev_raw_data_source >> hadoop_fs
+
+    # Build and Start Pipeline. After first batch it finishes.
+    pipeline = pipeline_builder.build('Hadoop FS Destination Sequence Key').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=10)
+
+    try:
+
+        # Check that just one file is in the directory
+        hdfs_fs_files = cluster.hdfs.client.list(hdfs_directory)
+        assert len(hdfs_fs_files) == 1
+        # Check the prefix and suffix
+        hdfs_fs_filename = hdfs_fs_files[0]
+        assert hdfs_fs_filename.startswith(FILES_PREFIX)
+        assert hdfs_fs_filename.endswith(FILES_SUFFIX)
+
+        # Download the file from HDFS to Local File System
+        cluster.hdfs.client.download(f'{hdfs_directory}/{hdfs_fs_filename}', f'/tmp/{hdfs_fs_filename}')
+
+        # Read the sequence file
+        reader = SequenceFile.Reader(f'/tmp/{hdfs_fs_filename}')
+        key_class = reader.getKeyClass()
+        value_class = reader.getValueClass()
+        key = key_class()
+        value = value_class()
+
+        # Convert list of dict to list of bytes
+        product_data_expected = [json.dumps(row, separators=(',', ':')).encode() for row in PRODUCT_DATA_FIX]
+
+        for i in range(2):
+            # Read the information
+            reader.next(key, value)
+
+            # Check if name, price and release are in value
+            assert product_data_expected[i] == value.toString()
+
+        reader.close()
+
+    finally:
         logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
         cluster.hdfs.client.delete(hdfs_directory, recursive=True)
