@@ -1240,7 +1240,7 @@ def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
     table = sqlalchemy.Table(
         table_name,
         metadata,
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True, autoincrement=False),
         sqlalchemy.Column('a', sqlalchemy.Integer, quote=True),
         sqlalchemy.Column('b', sqlalchemy.Integer, quote=True)
     )
