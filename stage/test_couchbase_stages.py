@@ -48,7 +48,7 @@ def test_couchbase_destination(sdc_builder, sdc_executor, couchbase):
                                              bucket=bucket_name, couchbase_user_name=couchbase.username,
                                              couchbase_user_password=couchbase.password, url=couchbase_host)
     else:
-        couchbase_destination.set_attributes(authentication_mode='USER', document_key="${record.value('/" + document_key_field + "')}",
+        couchbase_destination.set_attributes(authentication_mode='USER', document_key="${record:value('/" + document_key_field + "')}",
                                              bucket=bucket_name, user_name=couchbase.username,
                                              password=couchbase.password, node_list=couchbase_host)
 
