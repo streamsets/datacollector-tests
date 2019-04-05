@@ -127,7 +127,10 @@ def test_hadoop_fs_destination_user(sdc_builder, sdc_executor, cluster):
                                               'Hadoop FS Destination User',
                                               hdfs_directory,
                                               hadoop_fs)
-    sdc_executor.add_pipeline(pipeline.configure_for_environment(cluster))
+
+    pipeline.configure_for_environment(cluster)
+    hadoop_fs.hdfs_user = HDFS_USER  # Some cluster environments overwrite this property
+    sdc_executor.add_pipeline(pipeline)
 
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(PRODUCT_DATA))
