@@ -667,3 +667,47 @@ def _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs):
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_output_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+@aws('sqs')
+@sdc_min_version('3.0.0.0')
+def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
+    """Test for SQS consumer origin stage. We do so by publishing data to a test queue using SQS client and
+    having a pipeline which reads that data using SQS consumer origin stage. Data is then asserted for what is
+    published at SQS client and what we read in the pipeline snapshot. The pipeline looks like:
+
+    Amazon SQS Consumer pipeline:
+        amazon_sqs_consumer >> trash
+    """
+    queue_name = '{}_{}'.format(aws.sqs_queue_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+    amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
+    amazon_sqs_consumer.set_attributes(data_format='TEXT',
+                                       queue_name_prefixes=[queue_name])
+    trash = builder.add_stage('Trash')
+    amazon_sqs_consumer >> trash
+
+    consumer_origin_pipeline = builder.build(title='Amazon SQS Consumer pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.sqs
+    logger.info('Creating %s SQS queue on AWS ...', queue_name)
+    queue_url = client.create_queue(QueueName=queue_name)['QueueUrl']
+    try:
+        # note there is a limit of 10 messages only for sending in a batch
+        number_of_messages = 10
+        message_entries = [{'Id': str(i), 'MessageBody': 'Message {0}'.format(i)} for i in range(number_of_messages)]
+        sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
+        if len(sent_response.get('Successful', [])) != number_of_messages:
+            raise Exception('Test messages not successfully sent to the queue %s', queue_name)
+
+        # messages are published, read through the pipeline and assert
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        result_data = [str(record.field['text']) for record in snapshot[amazon_sqs_consumer.instance_name].output]
+        assert sorted(result_data) == sorted([message['MessageBody'] for message in message_entries])
+    finally:
+        if queue_url:
+            logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
+            client.delete_queue(QueueUrl=queue_url)
