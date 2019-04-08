@@ -15,7 +15,7 @@
 import copy
 import logging
 import time
-from bson import binary, DBRef
+from bson import binary, DBRef, decimal128
 from string import ascii_letters
 
 from streamsets.sdk.utils import Version
@@ -261,6 +261,57 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
         logger.info('Dropping %s database...', mongodb_origin.database)
         mongodb.engine.drop_database(mongodb_origin.database)
 
+@mongodb
+@sdc_min_version('3.8.2')
+def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
+    """
+    Validate that we properly process decimal type.
+
+    The pipeline looks like:
+        mongodb_origin >> trash
+    """
+    ORIG_BINARY_DOCS = [{'data': decimal128.Decimal128("0.5")}]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_origin = pipeline_builder.add_stage('MongoDB', type='origin')
+    mongodb_origin.set_attributes(capped_collection=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10))
+
+    trash = pipeline_builder.add_stage('Trash')
+    mongodb_origin >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(ORIG_BINARY_DOCS)
+
+        # Create documents in MongoDB using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_origin.collection)
+        mongodb_database = mongodb.engine[mongodb_origin.database]
+        mongodb_collection = mongodb_database[mongodb_origin.collection]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Verify that insert was in-fact successful
+        assert docs_in_database == [item for item in mongodb.engine[mongodb_origin.database][mongodb_origin.collection].find()]
+
+        # Start pipeline and verify the documents using snapshot.
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        rows_from_snapshot = [{'data': decimal128.Decimal128(record.value2['data'])} for record in snapshot[mongodb_origin].output]
+
+        assert rows_from_snapshot == ORIG_BINARY_DOCS
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_origin.database)
+#        mongodb.engine.drop_database(mongodb_origin.database)
 
 @mongodb
 @sdc_min_version('3.5.0')
