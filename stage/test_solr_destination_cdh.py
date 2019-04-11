@@ -89,7 +89,8 @@ def test_solr_write_records_fields_automatically_mapped_cdh(sdc_builder, sdc_exe
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(map_fields_automatically=True,
-                               field_path_for_data='/')
+                               field_path_for_data='/',
+                               ignore_optional_fields=True)
 
     dev_raw_data_source >> solr_target
 
