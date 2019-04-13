@@ -16,7 +16,8 @@ import logging
 from collections import namedtuple
 
 import pytest
-from streamsets.sdk.sdc_models import DataDriftRule, DataRule
+import time
+from streamsets.sdk.sdc_models import DataDriftRule, DataRule, MetricRule
 
 logger = logging.getLogger(__name__)
 
@@ -115,4 +116,37 @@ def test_basic_drift_rules(basic_rules_pipeline_builder, sdc_executor):
     assert event_alert.label == 'drift-rule-event-lane'
 
     assert event_alert.alert_texts == ['drift-rule-event-lane']
+    sdc_executor.stop_pipeline(pipeline)
+
+
+# SDC-11271: MetricRuleEvaluatorHelper.getTimeFromRunner does not deal with non-running runner properly
+def test_metric_rule_with_idle_pipeline(basic_rules_pipeline_builder, sdc_executor):
+    """Validate that current batch age metric alert won't hit on idle pipeline runner."""
+    builder = basic_rules_pipeline_builder.pipeline_builder
+    origin = basic_rules_pipeline_builder.dev_data_generator
+
+    # The origin will wait ~5 seconds between batches and batch processing will be almost zero-zero-nothing
+    origin.number_of_threads = 1
+    origin.delay_between_batches = 5000
+
+    builder.add_metric_rule(MetricRule(
+        alert_text="Batch taking more time to process",
+        metric_type="GAUGE",
+        metric_id="RuntimeStatsGauge.gauge",
+        metric_element="CURRENT_BATCH_AGE",
+        condition="${value() > 200}",
+        send_email=False,
+        active=True
+    ))
+
+    pipeline = builder.build()
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline)
+
+    # Sample with 1 second interval the alerts, there should not be one
+    for _ in range(5):
+        time.sleep(1)
+        assert 0 == len(sdc_executor.get_alerts().for_pipeline(pipeline))
+
     sdc_executor.stop_pipeline(pipeline)
