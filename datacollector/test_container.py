@@ -30,3 +30,14 @@ def test_restricted_http_methods(sdc_executor, method):
 
     resp = h1.getresponse()
     assert resp.status == 405
+
+@pytest.mark.parametrize('endpoint', [
+    '/',
+    '/collector/assets/assets/assets/favicon.png'
+])
+def test_frame_options(sdc_executor, endpoint):
+    h1 = http.client.HTTPConnection(sdc_executor.api_client.server_url.split('://')[-1])
+    h1.request('GET', endpoint)
+
+    resp = h1.getresponse()
+    assert 'DENY' == resp.getheader('X-Frame-Options')
