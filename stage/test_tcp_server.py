@@ -470,3 +470,61 @@ def send_synchronous_message(client_socket, message_bytes):
     client_socket.sendall(message_bytes)
 
 
+def test_tcp_epoll_enabled(sdc_builder, sdc_executor):
+    """ Run a pipeline with TCP Server Origin having Epoll Enabled as well as setting number of threads to 5 and
+    validate it correctly starts and receives data from a client.
+
+    Pipeline looks like:
+
+    TCP Server >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    tcp_server_stage = pipeline_builder.add_stage('TCP Server').set_attributes(port=[str(TCP_PORT)],
+                                                                               number_of_receiver_threads=5,
+                                                                               enable_native_transports_in_epoll=True,
+                                                                               tcp_mode='DELIMITED_RECORDS',
+                                                                               max_batch_size_in_messages=10000,
+                                                                               batch_wait_time_in_ms=60000,
+                                                                               max_message_size_in_bytes=40960,
+                                                                               read_timeout_in_seconds=600,
+                                                                               data_format='TEXT',
+                                                                               max_line_length=10240)
+    trash_stage = pipeline_builder.add_stage('Trash')
+
+    tcp_server_stage >> trash_stage
+
+    tcp_server_pipeline = pipeline_builder.build(title='TCP Server Origin 5 threads 1 port Epoll Enabled')
+    sdc_executor.add_pipeline(tcp_server_pipeline)
+
+    try:
+        # Run pipeline.
+        snapshot_cmd = sdc_executor.capture_snapshot(tcp_server_pipeline, start_pipeline=True, wait=False,
+                                                     batch_size=10000, batches=5)
+
+        expected_message = ' hello_world\n'
+        total_num_messages = 0
+        expected_messages_list = []
+
+        # Create tcp client.
+        tcp_client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_client_socket.connect((sdc_executor.server_host, TCP_PORT))
+
+        # Send messages for this tcp client.
+        for j in range(0, 50000):
+            expected_message_bytes = bytes(f'{str(total_num_messages)}{expected_message}', 'utf-8')
+            tcp_client_socket.sendall(expected_message_bytes)
+            new_line_char = '\n'
+            expected_messages_list.append(f'{str(total_num_messages)}{expected_message.rstrip(new_line_char)}')
+            total_num_messages += 1
+
+        tcp_client_socket.close()
+
+        snapshot = snapshot_cmd.wait_for_finished(timeout_sec=60).snapshot
+        output_records_values = [str(record.field['text'])
+                                 for batch in snapshot.snapshot_batches
+                                 for record in batch.stage_outputs[tcp_server_stage.instance_name].output]
+        assert len(output_records_values) == total_num_messages
+        assert sorted(output_records_values) == sorted(expected_messages_list)
+    finally:
+        sdc_executor.stop_pipeline(tcp_server_pipeline, wait=True, force=True)
