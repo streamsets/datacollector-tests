@@ -188,11 +188,11 @@ def test_solr_required_fields(sdc_builder, sdc_executor, solr, map_fields_automa
         assert len(res) == 1
         assert res.docs[0]['title'] == [title1]
 
-        # Solr stage must produce a SOLR_7 error for the second record.
+        # Solr stage must produce a SOLR_06 or SOLR_07 error for the second record.
         stage = snapshot[solr_target.instance_name]
         assert len(stage.error_records) == 1
         assert stage.error_records[0].field['title'] == title2
-        assert stage.error_records[0].header['errorCode'] == 'SOLR_07'
+        assert stage.error_records[0].header['errorCode'] == 'SOLR_07' if map_fields_automatically else 'SOLR_06'
 
         # Check also that missing fields are listed in the error message.
         assert 'id' in stage.error_records[0].header['errorMessage']
@@ -269,11 +269,11 @@ def test_solr_optional_fields(sdc_builder, sdc_executor, solr, map_fields_automa
             assert 'title' not in res.docs[0]
             assert '_root_' not in res.docs[0]
         else:
-            # Otherwise, Solr stage must produce a SOLR_8 error for that record.
+            # Otherwise, Solr stage must produce a SOLR_06 or SOLR_8 error for that record.
             stage = snapshot[solr_target.instance_name]
             assert len(stage.error_records) == 1
             assert stage.error_records[0].field['id'] == id2
-            assert stage.error_records[0].header['errorCode'] == 'SOLR_08'
+            assert stage.error_records[0].header['errorCode'] == 'SOLR_08' if map_fields_automatically else 'SOLR_06'
 
             # Check also that missing fields are listed in the error message.
             assert 'title' in stage.error_records[0].header['errorMessage']
