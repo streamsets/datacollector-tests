@@ -1501,17 +1501,14 @@ def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, use_t
         connection.execute(f"""
             CREATE TABLE {table_name}(
                 id number primary key,
-                data_column {sql_type}
+                data_column {sql_type} NULL
             )
         """)
 
-        # And insert the working row
-        connection.execute(f"""
-            INSERT INTO {table_name} VALUES(
-                1,
-                {insert_fragment}
-            )
-        """)
+        # And insert a row with actual value
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+        # And a null
+        connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
 
         builder = sdc_builder.get_pipeline_builder()
 
@@ -1535,15 +1532,19 @@ def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, use_t
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 1
+        assert len(snapshot[origin].output) == 2
         record = snapshot[origin].output[0]
+        null_record = snapshot[origin].output[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
+        # TLKT-177: Add ability for field to return raw value
 
         assert record.field['DATA_COLUMN'].type == expected_type
-        # TLKT-177: Add ability for field to return raw value
+        assert null_record.field['DATA_COLUMN'].type == expected_type
+
         assert record.field['DATA_COLUMN']._data['value'] == expected_value
+        assert null_record.field['DATA_COLUMN'] == None
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
