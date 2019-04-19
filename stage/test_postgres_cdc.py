@@ -43,6 +43,7 @@ KIND_FOR_INSERT = 'insert'
 KIND_FOR_UPDATE = 'update'
 KIND_FOR_DELETE = 'delete'
 
+CHECK_REP_SLOT_QUERY = 'select slot_name from pg_replication_slots;'
 
 def _create_table_in_database(table_name, database):
     metadata = sqlalchemy.MetaData()
@@ -269,3 +270,60 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
         if table_deny is not None:
             table_deny.drop(database.engine)
             logger.info('Table: %s dropped.', table_name_deny)
+
+@database('postgresql')
+@sdc_min_version('3.4.0')
+def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, database):
+    """
+        Test the 'Remove replication slot on close' functionality
+
+        1.  Initialize and start pipeline with specified replication slot
+        2.  Pass some data
+        3.  Stop the pipeline
+        4.  Query postgres database for replication slots, checking removal
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    replication_slot = get_random_string(string.ascii_lowercase, 10)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+                                       replication_slot=replication_slot)
+    trash = pipeline_builder.add_stage('Trash')
+    postgres_cdc_client >> trash
+
+    pipeline = pipeline_builder.build(title='PostgreSQL CDC Close Replication Slot').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Database operations done after pipeline start will be captured by CDC.
+        # Hence start the pipeline but do not wait for the capture to be finished.
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
+        # Create table and then perform some operations to simulate activity
+        table = _create_table_in_database(table_name, database)
+        connection = database.engine.connect()
+        expected_operations_data = _insert(connection=connection, table=table)
+        expected_operations_data += _update(connection=connection, table=table)
+        expected_operations_data += _delete(connection=connection, table=table)
+
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        # Timeout is set as without SDC-11252, pipeline will get stuck in 'STOPPING' state forever
+        sdc_executor.stop_pipeline(pipeline=pipeline).wait_for_stopped(timeout_sec=60)
+
+        # After pipeline stoppage, check on the replication slots remaining
+        listed_slots = connection.execute(CHECK_REP_SLOT_QUERY).fetchall()
+
+        # Check that replication_slot is not in listed_slots
+        logger.info('Replication slot:  ' + replication_slot)
+        logger.info('List of current slots: ' + str(listed_slots))
+        assert (replication_slot,) not in listed_slots
+
+    finally:
+        if table is not None:
+            table.drop(database.engine)
+            logger.info('Table: %s dropped.', table_name)
