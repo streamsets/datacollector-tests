@@ -16,6 +16,7 @@ import copy
 import logging
 
 import pytest
+import requests
 from streamsets.testframework.markers import salesforce, sdc_min_version
 
 logger = logging.getLogger(__name__)
@@ -238,8 +239,30 @@ def get_dev_raw_data_source(pipeline_builder, raw_data):
                                        raw_data='\n'.join(raw_data))
     return dev_raw_data_source
 
+
+def verify_snapshot(snapshot, stage_name, expected_data):
+    rows_from_snapshot = [record.value['value']
+                          for record in snapshot[stage_name].output]
+
+    inserted_ids = [dict([(rec['sqpath'].strip('/'), rec['value'])
+                          for rec in item if rec['sqpath'] == '/Id'])
+                    for item in rows_from_snapshot]
+
+    # Verify correct rows are received using snaphot.
+    data_from_snapshot = [dict([(rec['sqpath'].strip('/'), rec['value'])
+                                for rec in item if rec['sqpath'] != '/Id' and rec['sqpath'] != '/SystemModstamp'])
+                          for item in rows_from_snapshot]
+
+    data_from_snapshot = sorted(data_from_snapshot, key=lambda k: k['FirstName'])
+
+    assert data_from_snapshot == expected_data
+
+    return inserted_ids
+
+
 def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesforce, data_to_insert=DATA_TO_INSERT):
     client = salesforce.client
+    inserted_ids = None
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
@@ -248,28 +271,15 @@ def verify_by_snapshot(sdc_executor, pipeline, stage_name, expected_data, salesf
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
 
-        rows_from_snapshot = [record.value['value']
-                              for record in snapshot[stage_name].output]
-
-        inserted_ids = [dict([(rec['sqpath'].strip('/'), rec['value'])
-                              for rec in item if rec['sqpath'] == '/Id'])
-                        for item in rows_from_snapshot]
-
-        # Verify correct rows are received using snaphot.
-        data_from_snapshot = [dict([(rec['sqpath'].strip('/'), rec['value'])
-                                    for rec in item if rec['sqpath'] != '/Id' and rec['sqpath'] != '/SystemModstamp'])
-                              for item in rows_from_snapshot]
-
-        data_from_snapshot = sorted(data_from_snapshot, key=lambda k: k['FirstName'])
-
-        assert data_from_snapshot == expected_data
+        inserted_ids = verify_snapshot(snapshot, stage_name, expected_data)
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting records ...')
-        client.bulk.Contact.delete(inserted_ids)
+        if (inserted_ids):
+            client.bulk.Contact.delete(inserted_ids)
 
 
 # Test of SDC-10352
@@ -307,6 +317,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
     sdc_executor.add_pipeline(pipeline)
 
     client = salesforce.client
+    inserted_ids = None
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
@@ -348,7 +359,8 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting records ...')
-        client.bulk.Contact.delete(inserted_ids)
+        if (inserted_ids):
+            client.bulk.Contact.delete(inserted_ids)
 
 
 @salesforce
@@ -705,3 +717,59 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
         if contact_ids:
             logger.info('Deleting records ...')
             client.bulk.Contact.delete(contact_ids)
+
+@salesforce
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce, api):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
+             "WHERE Id > '000000000000000' AND "
+             "Email LIKE 'xtest%' "
+             "ORDER BY Id")
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    salesforce_origin.set_attributes(soql_query=query,
+                                     subscribe_for_notifications=False,
+                                     use_bulk_api=(api == 'bulk'),
+                                     repeat_query='FULL',
+                                     query_interval=60)
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    pipeline = pipeline_builder.build(title='Salesforce Origin').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    inserted_ids = None
+    try:
+        logger.info('Creating rows using Salesforce client ...')
+        client.bulk.Contact.insert(DATA_TO_INSERT)
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
+
+        logger.info('Revoking Salesforce session')
+        r = requests.get(f'https://{client.sf_instance}/services/oauth2/revoke',
+                         params={'token': client.session_id})
+        assert r.status_code == 200
+
+        # We killed the client's session, so we need to make a new one to be
+        # able to delete the data in the finally block
+        client = salesforce.client
+
+        logger.info('Capturing another snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, timeout_sec=120).snapshot
+        inserted_ids = verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if (inserted_ids):
+            client.bulk.Contact.delete(inserted_ids)
