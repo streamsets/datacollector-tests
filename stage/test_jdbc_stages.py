@@ -1627,3 +1627,78 @@ def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
+
+
+# SDC-11326: JDBC MultiTable origin forgets offset of non-incremental table on consecutive execution
+@database
+def test_jdbc_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, database):
+    """Validate the origin does not loose non-incremental offset on various runs."""
+    table_name = get_random_string(string.ascii_lowercase, 10)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    origin = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs=[{"tablePattern": table_name, "enableNonIncremental": True}]
+    origin.max_batch_size_in_records = 1
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    origin >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False),
+        sqlalchemy.Column('name', sqlalchemy.String(32))
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_IN_DATABASE))
+        sdc_executor.stop_pipeline(pipeline)
+
+        # We should have read all the records
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == len(ROWS_IN_DATABASE)
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == len(ROWS_IN_DATABASE)
+
+        # And most importantly, validate offset
+        offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()
+        assert offset is not None
+        assert offset['offsets'] is not None
+        expected_offset = {
+            f"tableName={table_name};;;partitioned=false;;;partitionSequence=-1;;;partitionStartOffsets=;;;partitionMaxOffsets=;;;usingNonIncrementalLoad=true": "completed=true",
+            "$com.streamsets.pipeline.stage.origin.jdbc.table.TableJdbcSource.offset.version$": "2"
+        }
+        assert offset['offsets'] == expected_offset
+
+        for _ in range(5):
+            sdc_executor.start_pipeline(pipeline)
+
+            # Since the pipeline won't read anything, give it few seconds to "idle"
+            time.sleep(2)
+            sdc_executor.stop_pipeline(pipeline)
+
+            # And it really should not have read anything!
+            history = sdc_executor.get_pipeline_history(pipeline)
+            assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 0
+            assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 0
+
+            # And offset should not have changed
+            offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()
+            assert offset is not None
+            assert offset['offsets'] is not None
+            assert offset['offsets'] == expected_offset
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
