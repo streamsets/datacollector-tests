@@ -1288,6 +1288,7 @@ def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
     source.transaction_isolation = 'TRANSACTION_READ_COMMITTED'
     source.table_configs=[{
         'tablePattern': f'{table_prefix}%',
+        "enableNonIncremental": True,
         'tableExclusionPattern': table_events
     }]
 
@@ -1332,7 +1333,7 @@ def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
     b = sqlalchemy.Table(
         table_b,
         metadata,
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False)
     )
     events = sqlalchemy.Table(
         table_events,
@@ -1405,6 +1406,28 @@ def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
         assert table_b in tbls
 
         assert 'no-more-data' == db[2][1]
+
+        # Now let's stop the pipeline and start it again
+        # SDC-10022: Multitable JDBC Origin with non-incremental table does not properly trigger 'no-more-data' event
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Portable truncate
+        events.drop(database.engine)
+        events.create(database.engine)
+
+        # Start the pipeline and wait for it to read three records (3 events)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3)
+
+        assert 'table-finished' == db[0][1]
+        assert table_a == db[0][2]
+
+        assert 'schema-finished' == db[1][1]
+        tbls = set(db[1][3].split(","))
+        assert table_a in tbls
+        assert table_b in tbls
+
+        assert 'no-more-data' == db[2][1]
+
     finally:
         sdc_executor.stop_pipeline(pipeline)
         logger.info('Dropping tables %s, %s and %s in %s database...', table_a, table_b, table_events, database.type)
