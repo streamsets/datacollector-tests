@@ -14,6 +14,7 @@
 #
 import logging
 import os
+import math
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -217,10 +218,54 @@ def test_directory_origin_configuration_auth_file(sdc_builder, sdc_executor, dat
 def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, data_format):
     pass
 
+@pytest.mark.parametrize('batch_size_in_recs', [2, 3, 4])
+def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor, shell_executor, file_writer, batch_size_in_recs):
+    """
+        Verify batch size in records (batch_size_in_recs) configuration for various values.
+        e.g. For 2 files with each containing 3 records. Verify with batch_size_in_recs = 2 (less than records per file), 3 (equal to number of records per file), 4 (greater than number of records per file)
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME1 = 'streamsets_temp1.txt'
+    FILE_NAME2 = 'streamsets_temp2.txt'
+    FILE_CONTENTS1 = """This is line11
+This is line12
+This is line13"""
+    FILE_CONTENTS2 = """This is line21
+This is line22
+This is line23"""
+    no_of_batches = math.ceil(6/batch_size_in_recs)
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor):
-    pass
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME1), FILE_CONTENTS1)
+        file_writer(os.path.join(files_directory, FILE_NAME2), FILE_CONTENTS2)
+
+
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern="*.txt",
+                                 batch_size_in_recs=batch_size_in_recs)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=no_of_batches, batch_size=10).snapshot
+        raw_data = FILE_CONTENTS1 + "\n" + FILE_CONTENTS2
+        stage_output = ""
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[directory.instance_name].output_lanes.values():
+                for record in value:
+                    if 'text' in record.value['value']:
+                        rec = record.value['value']['text']['value']
+                        stage_output +=  "\n" + rec if stage_output != "" else rec
+        assert raw_data == stage_output
+        sdc_executor.stop_pipeline(pipeline)
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -281,10 +326,50 @@ def test_directory_origin_configuration_charset(sdc_builder, sdc_executor, file_
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('enable_comments', [True])
-@pytest.mark.skip('Not yet implemented')
+@pytest.mark.parametrize('comment_marker', ['#'])
 def test_directory_origin_configuration_comment_marker(sdc_builder, sdc_executor,
-                                                       delimiter_format_type, data_format, enable_comments):
-    pass
+                                                       delimiter_format_type, data_format,
+                                                       enable_comments, comment_marker, shell_executor, file_writer):
+    """ Verify if DC can read the delimited file with comments"""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'delimited_file.csv'
+    FILE_CONTENTS = """Field11,Field12,Field13
+{comment_marker} This is comment
+Field21,Field22,Field23""".format(comment_marker=comment_marker)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="*.csv",
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 enable_comments=enable_comments,
+                                 comment_marker=comment_marker,
+                                 delimiter_character=","
+                                 )
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        assert 2 == len(output_records)
+        assert output_records[0].get_field_data('/0') == 'Field11'
+        assert output_records[0].get_field_data('/1') == 'Field12'
+        assert output_records[0].get_field_data('/2') == 'Field13'
+        assert output_records[1].get_field_data('/0') == 'Field21'
+        assert output_records[1].get_field_data('/1') == 'Field22'
+        assert output_records[1].get_field_data('/2') == 'Field23'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['BINARY', 'DELIMITED', 'JSON', 'LOG', 'PROTOBUF', 'SDC_JSON', 'TEXT', 'XML'])
@@ -304,11 +389,53 @@ def test_directory_origin_configuration_convert_hi_res_time_and_interval(sdc_bui
     pass
 
 
-@pytest.mark.parametrize('use_custom_delimiter', [True])
-@pytest.mark.parametrize('data_format', ['TEXT'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_custom_delimiter(sdc_builder, sdc_executor, use_custom_delimiter, data_format):
-    pass
+@pytest.mark.parametrize('use_custom_delimiter', [True, False])
+@pytest.mark.parametrize('data_format', ['DELIMITED']) #, 'TEXT'
+@pytest.mark.parametrize('delimiter_character', ['^', '@'])
+def test_directory_origin_configuration_custom_delimiter(sdc_builder, sdc_executor,
+                                                         use_custom_delimiter, data_format,
+                                                         delimiter_character, shell_executor, file_writer):
+    """ Verify if DC can read the custom delimited file"""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'delimited_file'
+    FILE_CONTENTS = """Field11{delimiter_character}Field12{delimiter_character}Field13
+Field21{delimiter_character}Field22{delimiter_character}Field23""".format(delimiter_character=delimiter_character)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="delimited_*",
+                                 file_name_pattern_mode='GLOB',
+                                 use_custom_delimiter=use_custom_delimiter,
+                                 delimiter_character=delimiter_character,
+                                 delimiter_format_type='CUSTOM'
+                                 )
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        assert 2 == len(output_records)
+        if use_custom_delimiter:
+            assert output_records[0].get_field_data('/0') == 'Field11'
+            assert output_records[0].get_field_data('/1') == 'Field12'
+            assert output_records[0].get_field_data('/2') == 'Field13'
+            assert output_records[1].get_field_data('/0') == 'Field21'
+            assert output_records[1].get_field_data('/1') == 'Field22'
+            assert output_records[1].get_field_data('/2') == 'Field23'
+        else:
+            assert output_records[0].get_field_data('/0') != 'Field11'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
