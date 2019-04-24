@@ -50,7 +50,9 @@ def test_solr_write_records_cdh(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
 
     solr_target = builder.add_stage('Solr', type='destination')
-    solr_target.set_attributes(fields=json_fields_map)
+    solr_target.set_attributes(map_fields_automatically=False,
+                               fields=json_fields_map,
+                               ignore_optional_fields=False)
 
     dev_raw_data_source >> solr_target
 
@@ -140,7 +142,9 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
 
     solr_target = builder.add_stage('Solr', type='destination')
-    solr_target.set_attributes(fields=json_fields_map,
+    solr_target.set_attributes(map_fields_automatically=False,
+                               fields=json_fields_map,
+                               ignore_optional_fields=False,
                                on_record_error='DISCARD')
 
     dev_raw_data_source >> solr_target
@@ -191,7 +195,9 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='TO_ERROR',
-                               fields=json_fields_map)
+                               map_fields_automatically=False,
+                               fields=json_fields_map,
+                               ignore_optional_fields=False)
 
     dev_raw_data_source >> solr_target
 
@@ -246,7 +252,9 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='TO_ERROR',
-                               fields=json_fields_map)
+                               map_fields_automatically=False,
+                               fields=json_fields_map,
+                               ignore_optional_fields=False)
 
     dev_raw_data_source >> solr_target
 
@@ -299,7 +307,9 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, clust
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='STOP_PIPELINE',
-                               fields=json_fields_map)
+                               map_fields_automatically=False,
+                               fields=json_fields_map,
+                               ignore_optional_fields=False)
 
     dev_raw_data_source >> solr_target
 
@@ -347,7 +357,9 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluste
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='STOP_PIPELINE',
-                               fields=json_fields_map)
+                               map_fields_automatically=False,
+                               fields=json_fields_map,
+                               ignore_optional_fields=False)
 
     dev_raw_data_source >> solr_target
 
@@ -395,7 +407,9 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='TO_ERROR',
-                               fields=json_fields_map)
+                               map_fields_automatically=False,
+                               fields=json_fields_map,
+                               ignore_optional_fields=False)
 
     dev_raw_data_source >> solr_target
 
@@ -448,7 +462,9 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='DISCARD',
-                               fields=json_fields_map)
+                               map_fields_automatically=False,
+                               fields=json_fields_map,
+                               ignore_optional_fields=False)
 
     dev_raw_data_source >> solr_target
 
@@ -498,6 +514,7 @@ def test_solr_test_validations_null_url(sdc_builder, sdc_executor, cluster):
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(solr_uri=None,
+                               map_fields_automatically=False,
                                fields=json_fields_map)
 
     dev_raw_data_source >> solr_target
@@ -539,7 +556,8 @@ def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
 
     solr_target = builder.add_stage('Solr', type='destination')
-    solr_target.set_attributes(fields=json_fields_map)
+    solr_target.set_attributes(map_fields_automatically=False,
+                               fields=json_fields_map)
 
     dev_raw_data_source >> solr_target
 
