@@ -32,16 +32,19 @@ def test_solr_write_records_cdh(sdc_builder, sdc_executor, cluster):
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
     field_name_1 = cluster.solr.default_field_name
-    field_name_2 = get_random_string(string.ascii_letters, 10)
+    field_name_2 = 'title'
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
-    json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
+    json_str = json.dumps({'id': field_val_1, 'title': field_val_2, '_root_': None, '_version_': 0, '_text_': ''})
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
-                       {'field': '/title', 'solrFieldName': field_name_2}]
+                       {'field': '/title', 'solrFieldName': field_name_2},
+                       {'field': '/_root_', 'solrFieldName': '_root_'},
+                       {'field': '/_version_', 'solrFieldName': '_version_'},
+                       {'field': '/_text_', 'solrFieldName': '_text_'}]
 
-    # build Solr target pipeline.
+    # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
@@ -55,7 +58,7 @@ def test_solr_write_records_cdh(sdc_builder, sdc_executor, cluster):
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
 
-    # assert data ingested into Solr.
+    # Assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
@@ -120,16 +123,18 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
     field_name_1 = cluster.solr.default_field_name
-    field_name_2 = get_random_string(string.ascii_letters, 10)
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
 
     json_fields_map = [{'field': '/not_id', 'solrFieldName': field_name_1},
-                       {'field': '/title', 'solrFieldName': field_name_2}]
+                       {'field': '/title', 'solrFieldName': 'title'},
+                       {'field': '/_root_', 'solrFieldName': '_root_'},
+                       {'field': '/_version_', 'solrFieldName': '_version_'},
+                       {'field': '/_text_', 'solrFieldName': '_text_'}]
 
-    # build Solr target pipeline.
+    # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
@@ -144,7 +149,7 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
 
-    # assert data ingested into Solr.
+    # Assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -168,16 +173,18 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
     field_name_1 = cluster.solr.default_field_name
-    field_name_2 = get_random_string(string.ascii_letters, 10)
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
     json_str = json.dumps(dict(id=field_val_1, title=field_val_2))
 
     json_fields_map = [{'field': '/not_id', 'solrFieldName': field_name_1},
-                       {'field': '/title', 'solrFieldName': field_name_2}]
+                       {'field': '/title', 'solrFieldName': 'title'},
+                       {'field': '/_root_', 'solrFieldName': '_root_'},
+                       {'field': '/_version_', 'solrFieldName': '_version_'},
+                       {'field': '/_text_', 'solrFieldName': '_text_'}]
 
-    # build Solr target pipeline.
+    # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
@@ -192,7 +199,7 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
 
-    # assert data ingested into Solr.
+    # Assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -209,6 +216,7 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
 
+
 def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, cluster):
     """Solr write records indexing error to error test case.
     dev_raw_data_source >> solr_target
@@ -216,16 +224,20 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
     field_name_1 = cluster.solr.default_field_name
-    field_name_2 = get_random_string(string.ascii_letters, 10)
+    field_name_2 = 'title'
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
-    data = [{'id': field_val_1, "name": field_val_2}, {'not_id': field_val_1, "name": field_val_2}]
+    data = [{'id': field_val_1, "name": field_val_2},
+            {'not_id': field_val_1, "name": field_val_2}]
 
     json_str = json.dumps(data)
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
-                       {'field': '/title', 'solrFieldName': field_name_2}]
+                       {'field': '/title', 'solrFieldName': field_name_2},
+                       {'field': '/_root_', 'solrFieldName': '_root_'},
+                       {'field': '/_version_', 'solrFieldName': '_version_'},
+                       {'field': '/_text_', 'solrFieldName': '_text_'}]
 
     # build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -259,6 +271,7 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
 
+
 def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, cluster):
     """Solr write records error stop pipeline test case.
     dev_raw_data_source >> solr_target
@@ -266,18 +279,20 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, clust
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
     field_name_1 = cluster.solr.default_field_name
-    field_name_2 = get_random_string(string.ascii_letters, 10)
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
-    data = {'not_id': field_name_1, "name": field_val_2}
+    data = {'not_id': field_val_1, "name": field_val_2}
 
     json_str = json.dumps(data)
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
-                       {'field': '/title', 'solrFieldName': field_name_2}]
+                       {'field': '/title', 'solrFieldName': 'title'},
+                       {'field': '/_root_', 'solrFieldName': '_root_'},
+                       {'field': '/_version_', 'solrFieldName': '_version_'},
+                       {'field': '/_text_', 'solrFieldName': '_text_'}]
 
-    # build Solr target pipeline.
+    # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
@@ -292,7 +307,7 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, clust
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
 
-    # assert data ingested into Solr.
+    # Assert data ingested into Solr.
     try:
         with pytest.raises(Exception):
             sdc_executor.start_pipeline(pipeline)
@@ -303,6 +318,7 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, clust
     finally:
         # Delete Solr document created in the test.
         cluster.solr.client.delete(id=field_val_1)
+
 
 def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluster):
     """Solr write record empty stop pipeline test case.
@@ -311,7 +327,6 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluste
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
     field_name_1 = None
-    field_name_2 = get_random_string(string.ascii_letters, 10)
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
@@ -319,10 +334,13 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluste
 
     json_str = json.dumps(data)
 
-    json_fields_map = [{'field': '/id', 'solrFieldName': field_val_1},
-                       {'field': '/title', 'solrFieldName': field_name_2}]
+    json_fields_map = [{'field': '/id', 'solrFieldName': 'id'},
+                       {'field': '/title', 'solrFieldName': 'title'},
+                       {'field': '/_root_', 'solrFieldName': '_root_'},
+                       {'field': '/_version_', 'solrFieldName': '_version_'},
+                       {'field': '/_text_', 'solrFieldName': '_text_'}]
 
-    # build Solr target pipeline.
+    # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
@@ -337,7 +355,7 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluste
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
 
-    # assert data ingested into Solr.
+    # Assert data ingested into Solr.
     try:
         with pytest.raises(Exception):
             sdc_executor.start_pipeline(pipeline)
@@ -349,6 +367,7 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluste
         # Delete Solr document created in the test.
         cluster.solr.client.delete(id=field_val_1)
 
+
 def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
     """Solr write record empty to error test case.
     dev_raw_data_source >> solr_target
@@ -356,7 +375,6 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
     field_name_1 = None
-    field_name_2 = get_random_string(string.ascii_letters, 10)
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
@@ -364,10 +382,13 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
 
     json_str = json.dumps(data)
 
-    json_fields_map = [{'field': '/id', 'solrFieldName': field_val_1},
-                       {'field': '/title', 'solrFieldName': field_name_2}]
+    json_fields_map = [{'field': '/id', 'solrFieldName': 'id'},
+                       {'field': '/title', 'solrFieldName': 'title'},
+                       {'field': '/_root_', 'solrFieldName': '_root_'},
+                       {'field': '/_version_', 'solrFieldName': '_version_'},
+                       {'field': '/_text_', 'solrFieldName': '_text_'}]
 
-    # build Solr target pipeline.
+    # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
@@ -382,7 +403,7 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
 
-    # assert data ingested into Solr.
+    # Assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -399,6 +420,7 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
 
+
 def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
     """Solr write record empty dicard test case.
     dev_raw_data_source >> solr_target
@@ -406,7 +428,6 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
     field_name_1 = None
-    field_name_2 = get_random_string(string.ascii_letters, 10)
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
@@ -414,8 +435,11 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
 
     json_str = json.dumps(data)
 
-    json_fields_map = [{'field': '/id', 'solrFieldName': field_val_1},
-                       {'field': '/title', 'solrFieldName': field_name_2}]
+    json_fields_map = [{'field': '/id', 'solrFieldName': 'id'},
+                       {'field': '/title', 'solrFieldName': 'title'},
+                       {'field': '/_root_', 'solrFieldName': '_root_'},
+                       {'field': '/_version_', 'solrFieldName': '_version_'},
+                       {'field': '/_text_', 'solrFieldName': '_text_'}]
 
     # build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -447,6 +471,7 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
     finally:
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
+
 
 def test_solr_test_validations_null_url(sdc_builder, sdc_executor, cluster):
     """Solr basic validations null url.
@@ -494,6 +519,7 @@ def test_solr_test_validations_null_url(sdc_builder, sdc_executor, cluster):
         # Delete Solr document created in the test.
         cluster.solr.client.delete(id=field_val_1)
 
+
 def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, cluster):
     """Solr basic validations empty fields.
     dev_raw_data_source >> solr_target
@@ -532,6 +558,7 @@ def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, cluster):
     finally:
         # Delete Solr document created in the test.
         cluster.solr.client.delete(id=field_val_1)
+
 
 def test_solr_test_validations_invalid_url(sdc_builder, sdc_executor, cluster):
     """Solr basic validations invalid url.

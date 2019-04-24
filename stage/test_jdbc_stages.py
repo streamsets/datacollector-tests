@@ -1288,6 +1288,7 @@ def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
     source.transaction_isolation = 'TRANSACTION_READ_COMMITTED'
     source.table_configs=[{
         'tablePattern': f'{table_prefix}%',
+        "enableNonIncremental": True,
         'tableExclusionPattern': table_events
     }]
 
@@ -1332,7 +1333,7 @@ def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
     b = sqlalchemy.Table(
         table_b,
         metadata,
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False)
     )
     events = sqlalchemy.Table(
         table_events,
@@ -1405,6 +1406,28 @@ def test_jdbc_multitable_events(sdc_builder, sdc_executor, database):
         assert table_b in tbls
 
         assert 'no-more-data' == db[2][1]
+
+        # Now let's stop the pipeline and start it again
+        # SDC-10022: Multitable JDBC Origin with non-incremental table does not properly trigger 'no-more-data' event
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Portable truncate
+        events.drop(database.engine)
+        events.create(database.engine)
+
+        # Start the pipeline and wait for it to read three records (3 events)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3)
+
+        assert 'table-finished' == db[0][1]
+        assert table_a == db[0][2]
+
+        assert 'schema-finished' == db[1][1]
+        tbls = set(db[1][3].split(","))
+        assert table_a in tbls
+        assert table_b in tbls
+
+        assert 'no-more-data' == db[2][1]
+
     finally:
         sdc_executor.stop_pipeline(pipeline)
         logger.info('Dropping tables %s, %s and %s in %s database...', table_a, table_b, table_events, database.type)
@@ -1501,17 +1524,14 @@ def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, use_t
         connection.execute(f"""
             CREATE TABLE {table_name}(
                 id number primary key,
-                data_column {sql_type}
+                data_column {sql_type} NULL
             )
         """)
 
-        # And insert the working row
-        connection.execute(f"""
-            INSERT INTO {table_name} VALUES(
-                1,
-                {insert_fragment}
-            )
-        """)
+        # And insert a row with actual value
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+        # And a null
+        connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
 
         builder = sdc_builder.get_pipeline_builder()
 
@@ -1535,16 +1555,150 @@ def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, use_t
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 1
+        assert len(snapshot[origin].output) == 2
         record = snapshot[origin].output[0]
+        null_record = snapshot[origin].output[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
+        # TLKT-177: Add ability for field to return raw value
 
         assert record.field['DATA_COLUMN'].type == expected_type
-        # TLKT-177: Add ability for field to return raw value
+        assert null_record.field['DATA_COLUMN'].type == expected_type
+
         assert record.field['DATA_COLUMN']._data['value'] == expected_value
+        assert null_record.field['DATA_COLUMN'] == None
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
 
+
+# SDC-11324: JDBC MultiTable origin can create duplicate offsets
+@database
+def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
+    """Validate that we will not create duplicate offsets. """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    origin = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs=[{"tablePattern": table_name}]
+    origin.max_batch_size_in_records = 1
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    origin >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32))
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_IN_DATABASE))
+        sdc_executor.stop_pipeline(pipeline)
+
+        # We should have transition 4 records
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == len(ROWS_IN_DATABASE)
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == len(ROWS_IN_DATABASE)
+
+        # And most importantly, validate offset
+        offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()
+        assert offset is not None
+        assert offset['offsets'] is not None
+        expected_offset = {
+            f"tableName={table_name};;;partitioned=false;;;partitionSequence=-1;;;partitionStartOffsets=;;;partitionMaxOffsets=;;;usingNonIncrementalLoad=false": "id=3",
+            "$com.streamsets.pipeline.stage.origin.jdbc.table.TableJdbcSource.offset.version$": "2"
+        }
+        assert offset['offsets'] == expected_offset
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
+# SDC-11326: JDBC MultiTable origin forgets offset of non-incremental table on consecutive execution
+@database
+def test_jdbc_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, database):
+    """Validate the origin does not loose non-incremental offset on various runs."""
+    table_name = get_random_string(string.ascii_lowercase, 10)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    origin = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs=[{"tablePattern": table_name, "enableNonIncremental": True}]
+    origin.max_batch_size_in_records = 1
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    origin >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False),
+        sqlalchemy.Column('name', sqlalchemy.String(32))
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_IN_DATABASE))
+        sdc_executor.stop_pipeline(pipeline)
+
+        # We should have read all the records
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == len(ROWS_IN_DATABASE)
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == len(ROWS_IN_DATABASE)
+
+        # And most importantly, validate offset
+        offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()
+        assert offset is not None
+        assert offset['offsets'] is not None
+        expected_offset = {
+            f"tableName={table_name};;;partitioned=false;;;partitionSequence=-1;;;partitionStartOffsets=;;;partitionMaxOffsets=;;;usingNonIncrementalLoad=true": "completed=true",
+            "$com.streamsets.pipeline.stage.origin.jdbc.table.TableJdbcSource.offset.version$": "2"
+        }
+        assert offset['offsets'] == expected_offset
+
+        for _ in range(5):
+            sdc_executor.start_pipeline(pipeline)
+
+            # Since the pipeline won't read anything, give it few seconds to "idle"
+            time.sleep(2)
+            sdc_executor.stop_pipeline(pipeline)
+
+            # And it really should not have read anything!
+            history = sdc_executor.get_pipeline_history(pipeline)
+            assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 0
+            assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 0
+
+            # And offset should not have changed
+            offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()
+            assert offset is not None
+            assert offset['offsets'] is not None
+            assert offset['offsets'] == expected_offset
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
