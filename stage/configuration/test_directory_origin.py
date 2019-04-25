@@ -502,10 +502,60 @@ def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_e
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('enable_comments', [False, True])
-@pytest.mark.skip('Not yet implemented')
+@pytest.mark.parametrize('comment_marker', ['#'])
 def test_directory_origin_configuration_enable_comments(sdc_builder, sdc_executor,
-                                                        delimiter_format_type, data_format, enable_comments):
-    pass
+                                                        shell_executor, file_writer, delimiter_format_type, data_format, enable_comments, 
+                                                        comment_marker):
+    """ Verify if DC can skip comments or read comments as texts"""    
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'delimited_file.csv'
+    FILE_CONTENTS = """Field11,Field12,Field13
+{comment_marker} This is comment
+Field21,Field22,Field23""".format(comment_marker=comment_marker)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="*.csv",
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 enable_comments=enable_comments,
+                                 comment_marker=comment_marker,
+                                 delimiter_character=","
+                                 )
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        if enable_comments :
+            assert 2 == len(output_records)
+            assert output_records[0].get_field_data('/0') == 'Field11'
+            assert output_records[0].get_field_data('/1') == 'Field12'
+            assert output_records[0].get_field_data('/2') == 'Field13'
+            assert output_records[1].get_field_data('/0') == 'Field21'
+            assert output_records[1].get_field_data('/1') == 'Field22'
+            assert output_records[1].get_field_data('/2') == 'Field23'
+        else :
+            assert 3 == len(output_records)
+            assert output_records[0].get_field_data('/0') == 'Field11'
+            assert output_records[0].get_field_data('/1') == 'Field12'
+            assert output_records[0].get_field_data('/2') == 'Field13'
+            assert output_records[1].get_field_data('/0') == '# This is comment'
+            assert output_records[2].get_field_data('/0') == 'Field21'
+            assert output_records[2].get_field_data('/1') == 'Field22'
+            assert output_records[2].get_field_data('/2') == 'Field23'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -926,4 +976,3 @@ def test_directory_origin_configuration_use_custom_delimiter(sdc_builder, sdc_ex
 def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_executor,
                                                               data_format, log_format, use_custom_log_format):
     pass
-
