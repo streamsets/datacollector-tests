@@ -1574,7 +1574,7 @@ def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, use_t
 
 
 # SDC-11324: JDBC MultiTable origin can create duplicate offsets
-@database
+@database('mysql')
 def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
     """Validate that we will not create duplicate offsets. """
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -1630,7 +1630,7 @@ def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
 
 
 # SDC-11326: JDBC MultiTable origin forgets offset of non-incremental table on consecutive execution
-@database
+@database('mysql')
 def test_jdbc_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, database):
     """Validate the origin does not loose non-incremental offset on various runs."""
     table_name = get_random_string(string.ascii_lowercase, 10)
