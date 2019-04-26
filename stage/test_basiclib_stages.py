@@ -293,3 +293,38 @@ def test_log_parser_processor_multiple_grok_patterns_not_all_present(sdc_builder
     assert 1 == len(bad_records)
 
     assert 'DEBUG' == bad_records[0]['log']
+
+
+@sdc_min_version('3.9.0')
+@pytest.mark.parametrize('reset_offset', [True, False])
+def test_pipeline_finisher(reset_offset, sdc_builder, sdc_executor):
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.raw_data = '{}'
+
+    executor = builder.add_stage('Pipeline Finisher Executor')
+    executor.reset_offset = reset_offset
+
+    origin >> executor
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # The pipeline should read/write exactly one record
+    history = sdc_executor.get_pipeline_history(pipeline)
+    assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+    assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+
+    # Let's validate offset
+    offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()
+    assert offset is not None
+    assert offset['offsets'] is not None
+
+    if reset_offset:
+        assert len(offset['offsets']) == 0
+    else:
+        assert len(offset['offsets']) == 1
+
