@@ -131,12 +131,13 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
-                                       replication_slot=get_random_string(string.ascii_lowercase, 10))
+                                       replication_slot=replication_slot_name)
     trash = pipeline_builder.add_stage('Trash')
     postgres_cdc_client >> trash
 
-    pipeline = pipeline_builder.build(title='PostgreSQL CDC Basic').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -177,6 +178,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     finally:
         if pipeline:
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
@@ -203,16 +205,17 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
 
     postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
-                                       replication_slot=get_random_string(string.ascii_lowercase, 10),
+                                       replication_slot=replication_slot_name,
                                        schema_table_configs=[{'schema': 'public'},
                                                              {'exclude_pattern': table_name_deny},
                                                              {'table': table_name_allow}])
     trash = pipeline_builder.add_stage('Trash')
     postgres_cdc_client >> trash
 
-    pipeline = pipeline_builder.build(title='PostgreSQL CDC Filtering').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -264,6 +267,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
     finally:
         if pipeline:
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table_allow is not None:
             table_allow.drop(database.engine)
             logger.info('Table: %s dropped.', table_name_allow)
@@ -295,7 +299,7 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
     trash = pipeline_builder.add_stage('Trash')
     postgres_cdc_client >> trash
 
-    pipeline = pipeline_builder.build(title='PostgreSQL CDC Close Replication Slot').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     try:
