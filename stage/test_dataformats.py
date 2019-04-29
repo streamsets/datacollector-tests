@@ -47,7 +47,7 @@ def create_text_pipeline(sdc_builder, data_format, content, **parser_configs):
 
     return builder.build('Parse {}'.format(data_format))
 
-
+@sdc_min_version('3.0.0.0')
 def test_parse_json(sdc_builder, sdc_executor):
     """Validate parsing of JSON content via the Data Parser processor."""
     pipeline = create_text_pipeline(sdc_builder, 'JSON', '{"key" : "value"}')
@@ -59,7 +59,7 @@ def test_parse_json(sdc_builder, sdc_executor):
     assert len(snapshot['DataParser_01'].output) == 1
     assert snapshot['DataParser_01'].output[0].get_field_data('/key') == 'value'
 
-
+@sdc_min_version('3.0.0.0')
 def test_parse_delimited(sdc_builder, sdc_executor):
     """Validate parsing of delimited content via the Data Parser processor."""
     pipeline = create_text_pipeline(sdc_builder, 'DELIMITED', '1,2,3')
@@ -91,6 +91,7 @@ def test_parse_multichar_delimited(sdc_builder, sdc_executor):
     assert output_record.get_field_data('[1]') == 'efgh'
     assert output_record.get_field_data('[2]') == 'ijkl'
 
+@sdc_min_version('3.0.0.0')
 def test_parse_log(sdc_builder, sdc_executor):
     """Validate parsing of log content via the Data Parser processor."""
     pipeline = create_text_pipeline(sdc_builder, 'LOG', '127.0.0.1 ss h [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326')
@@ -116,7 +117,7 @@ def test_parse_syslog(sdc_builder, sdc_executor):
     assert snapshot['DataParser_01'].output[0].get_field_data('/severity') == 2
     assert snapshot['DataParser_01'].output[0].get_field_data('/host') == 'mymachine'
 
-
+@sdc_min_version('3.0.0.0')
 def test_parse_xml(sdc_builder, sdc_executor):
     """Validate parsing of xml content via the Data Parser processor."""
     pipeline = create_text_pipeline(sdc_builder, 'XML', "<root><key>value</key></root>")
