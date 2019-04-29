@@ -18,6 +18,7 @@ import math
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
+from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__file__)
@@ -701,9 +702,71 @@ def test_directory_origin_configuration_file_name_pattern_within_compressed_dire
 
 
 @pytest.mark.parametrize('file_post_processing', ['ARCHIVE', 'DELETE', 'NONE'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_file_post_processing(sdc_builder, sdc_executor, file_post_processing):
-    pass
+@sdc_min_version('3.4.1')
+def test_directory_origin_configuration_file_post_processing(sdc_builder, sdc_executor, file_post_processing, shell_executor, file_writer):
+    """Verify that the File post processing configuration is used as part of post-processing activities archive, delete and no operaration."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    archive_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'streamsets_test.txt'
+    FILE_CONTENTS = "File content for testing purpose."
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        logger.debug('Creating archive directory %s ...', archive_directory)
+        shell_executor(f'mkdir {archive_directory}')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(archive_directory=archive_directory,
+                                 data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern=FILE_NAME,
+                                 file_post_processing=file_post_processing)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[directory].output[0]
+        assert record.field['text'] == FILE_CONTENTS
+        sdc_executor.stop_pipeline(pipeline)
+
+        if file_post_processing == 'NONE':
+            #Check if the file is in tact by rerunning the pipeline
+            sdc_executor.reset_origin(pipeline)
+            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            record = snapshot[directory].output[0]
+            assert record.field['text'] == FILE_CONTENTS
+            sdc_executor.stop_pipeline(pipeline)
+        elif file_post_processing in ['ARCHIVE', 'DELETE']:
+            # Confirm that the file has been archived by taking another snapshot and asserting to its emptiness.
+            sdc_executor.reset_origin(pipeline)
+            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            assert not snapshot[directory].output
+
+        if file_post_processing == 'ARCHIVE':
+            logger.info('Verifying that file %s was moved as part of post-processing ...', FILE_NAME)
+            pipeline_builder = sdc_builder.get_pipeline_builder()
+            directory = pipeline_builder.add_stage('Directory')
+            directory.set_attributes(data_format='TEXT',
+                                     files_directory=archive_directory,
+                                     file_name_pattern=FILE_NAME)
+            trash = pipeline_builder.add_stage('Trash')
+            directory >> trash
+            pipeline = pipeline_builder.build()
+
+            sdc_executor.add_pipeline(pipeline)
+            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            record = snapshot[directory].output[0]
+            assert record.field['text'] == FILE_CONTENTS
+    finally:
+        shell_executor(f'rm -r {files_directory} {archive_directory}')
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.skip('Not yet implemented')
