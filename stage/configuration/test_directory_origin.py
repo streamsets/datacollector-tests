@@ -19,6 +19,7 @@ import math
 import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__file__)
 
@@ -681,9 +682,51 @@ def test_directory_origin_configuration_field_path_to_regex_group_mapping(sdc_bu
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_executor):
-    pass
+@pytest.mark.parametrize('file_name_pattern', ['pattern_check_processing_1.txt', '*.txt', 'pattern_*', '*_check_*'])
+@sdc_min_version('3.4.1')
+def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_executor, shell_executor,
+                                                          file_writer, file_name_pattern):
+    """Check how DC process different forms of the file name patterns. """
+    files_directory = os.path.join('/tmp', get_random_string())
+    files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
+    files_content = ["This is sample file111", "This is sample file222"]
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, files_name[0]), files_content[0])
+        file_writer(os.path.join(files_directory, files_name[1]), files_content[1])
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                file_name_pattern=file_name_pattern,
+                                file_name_pattern_mode='GLOB',
+                                files_directory=files_directory,
+                                )
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_file_name_pattern')
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2, batch_size=10).snapshot
+        raw_data = "\n".join(files_content)
+        processed_data=""
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[directory.instance_name].output_lanes.values():
+                for record in value:
+                    if 'text' in record.value['value']:
+                        rec = record.value['value']['text']['value']
+                        processed_data +=  "\n" + rec if processed_data != "" else rec
+
+        sdc_executor.stop_pipeline(pipeline)
+        if file_name_pattern == 'pattern_check_processing_1.txt':
+            assert files_content[0] == processed_data
+        else:
+            assert raw_data == processed_data
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+
 
 
 @pytest.mark.parametrize('file_name_pattern_mode', ['GLOB', 'REGEX'])
