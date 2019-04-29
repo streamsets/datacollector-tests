@@ -706,9 +706,44 @@ def test_directory_origin_configuration_file_post_processing(sdc_builder, sdc_ex
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_files_directory(sdc_builder, sdc_executor):
-    pass
+def test_directory_origin_configuration_files_directory(sdc_builder, sdc_executor, shell_executor,
+                                                        file_writer):
+    """Check if the file directory configuration works properly """
+    files_directory = os.path.join('/tmp', get_random_string())
+    files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_22.txt']
+    files_content = ["This is sample file111", "This is sample file222"]
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, files_name[0]), files_content[0])
+        file_writer(os.path.join(files_directory, files_name[1]), files_content[1])
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern_mode='GLOB',
+                                 file_name_pattern='*.txt')
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_files_directory')
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2, batch_size=10).snapshot
+        raw_data = "\n".join(files_content)
+        processed_data = ""
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[directory.instance_name].output_lanes.values():
+                for record in value:
+                    if 'text' in record.value['value']:
+                        rec = record.value['value']['text']['value']
+                        processed_data += "\n" + rec if processed_data != "" else rec
+
+        sdc_executor.stop_pipeline(pipeline)
+        assert raw_data == processed_data
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.skip('Not yet implemented')
