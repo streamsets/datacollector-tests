@@ -14,10 +14,12 @@
 
 import copy
 import logging
+import pytest
 import time
 from bson import binary, DBRef, decimal128
 from string import ascii_letters
 
+from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import mongodb, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -365,6 +367,55 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
         for record, actual in zip(snapshot[mongodb_lookup].output, NESTED_DOCS):
             assert record.get_field_data('/result/location/city') == actual['location']['city']
             assert record.get_field_data('/result/location/state') == actual['location']['state']
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_lookup.database)
+        mongodb.engine.drop_database(mongodb_lookup.database)
+
+
+@mongodb
+# SDC-11416
+@sdc_min_version('3.5.0')
+def test_mongodb_lookup_processor_simple_invalid_url(sdc_builder, sdc_executor, mongodb):
+    """
+    Just set up the origin and processor; don't need any data in
+    MongoDB.
+
+    The pipeline looks like:
+        dev_raw_data_source >> MongoDB Lookup Processor >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    lookup_data = ['name'] + [row['name'] for row in NESTED_DOCS]
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(lookup_data),
+                                       stop_after_first_batch=True)
+
+    mapping = [dict(keyName='name', sdcField='/name')]
+    mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
+    mongodb_lookup.set_attributes(capped_collection=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10),
+                                  result_field='/result',
+                                  document_to_sdc_field_mappings=mapping)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> mongodb_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    # configure_for_environment will set the connection string, so we
+    # need to override it here with an invalid one
+    mongodb_lookup.set_attributes(connection_string='mongodb://bogus-hostname:27101')
+
+    try:
+        # Start pipeline and verify that the exception is raised
+        sdc_executor.add_pipeline(pipeline)
+        with pytest.raises(StartError) as start_error:
+            sdc_executor.start_pipeline(pipeline)
+        assert 'MONGODB_09' in start_error.value.message
 
     finally:
         logger.info('Dropping %s database...', mongodb_lookup.database)
