@@ -478,10 +478,48 @@ def test_directory_origin_configuration_delimited_messages(sdc_builder, sdc_exec
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.skip('Not yet implemented')
+@pytest.mark.parametrize('delimiter_character', ['\t', ';', ',', ' '])
 def test_directory_origin_configuration_delimiter_character(sdc_builder, sdc_executor,
-                                                            delimiter_format_type, data_format):
-    pass
+                                                            delimiter_format_type, data_format,
+							    delimiter_character, shell_executor, file_writer):
+    """ Verify if DC can read the delimited file with custom delimiter character"""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'custom_delimited_file.csv'
+    FILE_CONTENTS = """Field11{delimiter_character}Field12{delimiter_character}Field13
+Field21{delimiter_character}Field22{delimiter_character}Field23""".format(delimiter_character=delimiter_character)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="custom_delimited_*",
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 delimiter_character=delimiter_character
+                                 )
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        assert 2 == len(output_records)
+        assert output_records[0].get_field_data('/0') == 'Field11'
+        assert output_records[0].get_field_data('/1') == 'Field12'
+        assert output_records[0].get_field_data('/2') == 'Field13'
+        assert output_records[1].get_field_data('/0') == 'Field21'
+        assert output_records[1].get_field_data('/1') == 'Field22'
+        assert output_records[1].get_field_data('/2') == 'Field23'
+
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
@@ -565,9 +603,48 @@ def test_directory_origin_configuration_error_directory(sdc_builder, sdc_executo
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_escape_character(sdc_builder, sdc_executor, delimiter_format_type, data_format):
-    pass
+@pytest.mark.parametrize('escape_character', ['\t', ';' , ' '])
+def test_directory_origin_configuration_escape_character(sdc_builder, sdc_executor, delimiter_format_type, data_format,
+							 escape_character, shell_executor, file_writer):
+    """ Verify if DC can read the delimited file with custom escape character"""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'custom_delimited_file.csv'
+    FILE_CONTENTS = """Field11{escape_character},,Field12,{escape_character},Field13
+Field{escape_character},21,Field22,Field23""".format(escape_character=escape_character)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="custom_delimited_*",
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 delimiter_character=",",
+				 escape_character=escape_character
+                                 )
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        assert 2 == len(output_records)
+        assert output_records[0].get_field_data('/0') == 'Field11,'
+        assert output_records[0].get_field_data('/1') == 'Field12'
+        assert output_records[0].get_field_data('/2') == ',Field13'
+        assert output_records[1].get_field_data('/0') == 'Field,21'
+        assert output_records[1].get_field_data('/1') == 'Field22'
+        assert output_records[1].get_field_data('/2') == 'Field23'
+
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['EXCEL'])
@@ -848,9 +925,49 @@ def test_directory_origin_configuration_protobuf_descriptor_file(sdc_builder, sd
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executor, delimiter_format_type, data_format):
-    pass
+@pytest.mark.parametrize('quote_character', ['\t', ';' , ' '])
+def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executor, delimiter_format_type, data_format,
+							 quote_character, shell_executor, file_writer):
+    """ Verify if DC can read the delimited file with custom quote character"""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'custom_delimited_file.csv'
+    FILE_CONTENTS = """{quote_character}Field11,{quote_character},Field12,{quote_character},Field13{quote_character}
+{quote_character}Field,21{quote_character},Field22,Field23""".format(quote_character=quote_character)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="custom_delimited_*",
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 delimiter_character=",",
+				  quote_character=quote_character
+                                 )
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        assert 2 == len(output_records)
+        assert output_records[0].get_field_data('/0') == 'Field11,'
+        assert output_records[0].get_field_data('/1') == 'Field12'
+        assert output_records[0].get_field_data('/2') == ',Field13'
+        assert output_records[1].get_field_data('/0') == 'Field,21'
+        assert output_records[1].get_field_data('/1') == 'Field22'
+        assert output_records[1].get_field_data('/2') == 'Field23'
+
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+
 
 
 @pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
