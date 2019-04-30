@@ -762,7 +762,7 @@ def test_directory_origin_configuration_field_path_to_regex_group_mapping(sdc_bu
                                  )
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
-        pipeline = pipeline_builder.build('test_directory_origin_configuration_files_directory')
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_field_path_to_regex_group_mapping')
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1, batch_size=10).snapshot
@@ -1329,7 +1329,7 @@ def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor, sh
                                  read_order=read_order)
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
-        pipeline = pipeline_builder.build('test_directory_origin_configuration_charset')
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_read_order')
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2, batch_size=10).snapshot
@@ -1407,7 +1407,7 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
                                  )
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
-        pipeline = pipeline_builder.build('test_directory_origin_configuration_files_directory')
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_regular_expression')
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1, batch_size=10).snapshot
