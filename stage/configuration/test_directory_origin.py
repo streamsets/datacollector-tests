@@ -599,9 +599,59 @@ Field21,Field22,Field23""".format(comment_marker=comment_marker)
         shell_executor(f'rm -r {files_directory}')
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_error_directory(sdc_builder, sdc_executor):
-    pass
+def test_directory_origin_configuration_error_directory(sdc_builder, sdc_executor,
+                                                        shell_executor, file_writer):
+    """Check if the error directory configuration works properly. Here we create
+        text file and make directory origin read it as XML file to produce error.
+        Initially error direcotry is empty. Error in processing should move file to error direcotry.
+        Then we process error directory and check its content"""
+    files_directory = os.path.join('/tmp', get_random_string())
+    error_directory = os.path.join('/tmp', 'error_' + get_random_string())
+    file_name = 'check_error_dir.txt'
+    file_content = ["This is line 1", "This is line 2"]
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, file_name), "\n".join(file_content))
+
+        logger.debug('Creating error directory %s ...', error_directory)
+        shell_executor(f'mkdir {error_directory}')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format="XML",
+                                 files_directory=files_directory,
+                                 error_directory=error_directory,
+                                 file_name_pattern_mode='GLOB',
+                                 buffer_size_in_bytes=1,
+                                 file_name_pattern='*.txt')
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_error_directory')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        ## Check the error directory output
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=error_directory,
+                                 file_name_pattern_mode='GLOB',
+                                 file_name_pattern='*.*')
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_error_directory_op')
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1, batch_size=10).snapshot
+        record = snapshot[directory].output[0]
+        sdc_executor.stop_pipeline(pipeline)
+        print ("record :: " + str(record.field['text']))
+        assert record.field['text'] == file_content[0]
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
