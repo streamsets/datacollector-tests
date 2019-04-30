@@ -15,6 +15,7 @@
 import logging
 import os
 import math
+import time
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -1216,9 +1217,53 @@ def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executo
 
 
 @pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor, read_order):
-    pass
+def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor, shell_executor,
+                                                   file_writer, read_order):
+    """Check how DC process different file pattern mode. Here we will be creating 2 files.
+            pattern_check_processing_0.txt and pattern_check_processing_01.txt.
+            with regex we match only 1st file and with glob both files. """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME1= 'b_read_order_check.txt'
+    FILE_CONTENTS1 = "This is B file content"
+    FILE_NAME2 = 'a_read_order_check.txt'
+    FILE_CONTENTS2 = "This is A file content"
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME1), FILE_CONTENTS1)
+        time.sleep(5)
+        file_writer(os.path.join(files_directory, FILE_NAME2), FILE_CONTENTS2)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern_mode="GLOB",
+                                 file_name_pattern="*.txt",
+                                 read_order=read_order)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_charset')
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2, batch_size=10).snapshot
+        processed_data = ""
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[directory.instance_name].output_lanes.values():
+                for record in value:
+                    if 'text' in record.value['value']:
+                        rec = record.value['value']['text']['value']
+                        processed_data += "\n" + rec if processed_data != "" else rec
+
+        sdc_executor.stop_pipeline(pipeline)
+        if read_order == "LEXICOGRAPHICAL":
+            raw_data = FILE_CONTENTS2 + "\n" + FILE_CONTENTS1
+        else:
+            raw_data = FILE_CONTENTS1 + "\n" + FILE_CONTENTS2
+        assert raw_data == processed_data
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['NETFLOW'])
