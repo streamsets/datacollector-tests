@@ -23,6 +23,7 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID = (9, 5, 0)
 PRIMARY_KEY = 'id'
 NAME_COLUMN = 'name'
 OperationsData = namedtuple('OperationsData', ['kind', 'table', 'columnnames', 'columnvalues', 'oldkeys'])
@@ -178,7 +179,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     finally:
         if pipeline:
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
-        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        database.drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
@@ -267,7 +268,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
     finally:
         if pipeline:
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
-        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        database.drop_replication_slot(replication_slot_name)
         if table_allow is not None:
             table_allow.drop(database.engine)
             logger.info('Table: %s dropped.', table_name_allow)
@@ -288,6 +289,11 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+    server_version_tuple = database.get_database_server_version()
+    if server_version_tuple < EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID:
+        # Test only runs against PostgreSQL version with active_pid column in pg_replication_slots.
+        pytest.skip('Test only runs against PostgreSQL version >= '
+                    f"{'.'.join(str(item) for item in EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID)}")
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     replication_slot = get_random_string(string.ascii_lowercase, 10)
