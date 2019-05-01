@@ -1702,3 +1702,93 @@ def test_jdbc_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, d
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
+
+
+@sdc_min_version('3.9.0')
+@database('oracle')
+def test_jdbc_multitable_oracle_split_by_timestamp_with_timezone(sdc_builder, sdc_executor, database):
+    """Make sure that we can properly partition TIMESTAMP WITH TIMEZONE type."""
+    table_name = get_random_string(string.ascii_uppercase, 20)
+    table_name_dest = get_random_string(string.ascii_uppercase, 20)
+
+    connection = database.engine.connect()
+
+    comparing_query = f"""(
+        select * from {table_name}
+        minus
+        select * from {table_name_dest}
+    ) union (
+        select * from {table_name_dest}
+        minus
+        select * from {table_name}
+    )"""
+
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                ID number primary key,
+                TZ timestamp(6) with time zone 
+            )
+        """)
+        # Create destination table
+        connection.execute(f"""CREATE TABLE {table_name_dest} AS SELECT * FROM {table_name} WHERE 1=0""")
+
+        # Insert a few rows
+        for m in range(0, 5):
+            for s in range(0, 59):
+                connection.execute(f"INSERT INTO {table_name} VALUES({m*100+s}, TIMESTAMP'2019-01-01 10:{m}:{s}-5:00')")
+        connection.execute("commit")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('JDBC Multitable Consumer')
+        origin.table_configs = [{
+            "tablePattern": f'%{table_name}%',
+            "overrideDefaultOffsetColumns": True,
+            "offsetColumns": ["TZ"],
+            "enableNonIncremental": False,
+            "partitioningMode": "REQUIRED",
+            "partitionSize": "30",
+            "maxNumActivePartitions": -1
+        }]
+        origin.number_of_threads = 2
+        origin.maximum_pool_size = 2
+        origin.max_batch_size_records = 30
+
+        finisher = builder.add_stage('Pipeline Finisher Executor')
+        finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+        FIELD_MAPPINGS = [dict(field='/ID', columnName='ID'),
+                          dict(field='/TZ', columnName='TZ')]
+        destination = builder.add_stage('JDBC Producer')
+        destination.set_attributes(default_operation='INSERT',
+                                   table_name=table_name_dest,
+                                   field_to_column_mapping=FIELD_MAPPINGS,
+                                   stage_on_record_error='STOP_PIPELINE')
+
+        origin >> destination
+        origin >= finisher
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        result = [row.items() for row in connection.execute(comparing_query)]
+        assert len(result) == 0
+
+        # Insert few more rows and validate the outcome again
+        for m in range(6, 8):
+            for s in range(0, 59):
+                connection.execute(f"INSERT INTO {table_name} VALUES({m*100+s}, TIMESTAMP'2019-01-01 10:{m}:{s}-5:00')")
+        connection.execute("commit")
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        result = [row.items() for row in connection.execute(comparing_query)]
+        assert len(result) == 0
+
+    finally:
+        logger.info('Dropping table %s and %s in %s database ...', table_name, table_name_dest, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
+        connection.execute(f"DROP TABLE {table_name_dest}")
