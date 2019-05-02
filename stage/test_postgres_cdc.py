@@ -18,6 +18,7 @@ from collections import namedtuple
 
 import pytest
 import sqlalchemy
+from streamsets.testframework.environments import databases
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -113,6 +114,7 @@ def _delete(connection, table):
                                               Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
     return operations_data
 
+
 @database('postgresql')
 @sdc_min_version('3.4.0')
 def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
@@ -182,6 +184,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
+
 
 @database('postgresql')
 @sdc_min_version('3.8.1')
@@ -275,6 +278,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
             table_deny.drop(database.engine)
             logger.info('Table: %s dropped.', table_name_deny)
 
+
 @database('postgresql')
 @sdc_min_version('3.4.0')
 def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, database):
@@ -286,6 +290,10 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
         3.  Stop the pipeline
         4.  Query postgres database for replication slots, checking removal
     """
+    if database.database_server_version < databases.EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID:
+        # Test only runs against PostgreSQL version with active_pid column in pg_replication_slots.
+        pytest.skip('Test only runs against PostgreSQL version >= '
+                    f"{'.'.join(str(item) for item in databases.EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID)}")
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
 
