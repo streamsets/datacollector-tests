@@ -393,16 +393,18 @@ def test_directory_origin_configuration_convert_hi_res_time_and_interval(sdc_bui
 
 
 @pytest.mark.parametrize('use_custom_delimiter', [True, False])
-@pytest.mark.parametrize('data_format', ['DELIMITED']) #, 'TEXT'
-@pytest.mark.parametrize('delimiter_character', ['^', '@'])
+@pytest.mark.parametrize('data_format', ['TEXT'])
+@pytest.mark.parametrize('include_custom_delimiter', [False])
+@pytest.mark.parametrize('custom_delimiter', ['@', '^'])
 def test_directory_origin_configuration_custom_delimiter(sdc_builder, sdc_executor,
                                                          use_custom_delimiter, data_format,
-                                                         delimiter_character, shell_executor, file_writer):
+                                                         custom_delimiter, shell_executor, file_writer,
+                                                         include_custom_delimiter):
     """ Verify if DC can read the custom delimited file"""
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'delimited_file'
-    FILE_CONTENTS = """Field11{delimiter_character}Field12{delimiter_character}Field13
-Field21{delimiter_character}Field22{delimiter_character}Field23""".format(delimiter_character=delimiter_character)
+    FILE_CONTENTS = """Field11{custom_delimiter}Field12{custom_delimiter}Field13
+Field21{custom_delimiter}Field22{custom_delimiter}Field23""".format(custom_delimiter=custom_delimiter)
 
     try:
         logger.debug('Creating files directory %s ...', files_directory)
@@ -416,27 +418,28 @@ Field21{delimiter_character}Field22{delimiter_character}Field23""".format(delimi
                                  file_name_pattern="delimited_*",
                                  file_name_pattern_mode='GLOB',
                                  use_custom_delimiter=use_custom_delimiter,
-                                 delimiter_character=delimiter_character,
-                                 delimiter_format_type='CUSTOM'
+                                 custom_delimiter=custom_delimiter,
+                                 include_custom_delimiter=include_custom_delimiter
                                  )
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
+        suffix = custom_delimiter if include_custom_delimiter else ''
 
-        assert 2 == len(output_records)
         if use_custom_delimiter:
-            assert output_records[0].get_field_data('/0') == 'Field11'
-            assert output_records[0].get_field_data('/1') == 'Field12'
-            assert output_records[0].get_field_data('/2') == 'Field13'
-            assert output_records[1].get_field_data('/0') == 'Field21'
-            assert output_records[1].get_field_data('/1') == 'Field22'
-            assert output_records[1].get_field_data('/2') == 'Field23'
+            assert 5 == len(output_records)
+            assert output_records[0].get_field_data('/text') == 'Field11' + suffix
+            assert output_records[1].get_field_data('/text') == 'Field12' + suffix
+            assert output_records[2].get_field_data('/text') == 'Field13\nField21' + suffix
+            assert output_records[3].get_field_data('/text') == 'Field22' + suffix
+            assert output_records[4].get_field_data('/text') == 'Field23'
         else:
-            assert output_records[0].get_field_data('/0') != 'Field11'
+            assert 2 == len(output_records)
+            assert output_records[0].get_field_data('/text') == FILE_CONTENTS.split("\n")[0]
     finally:
         shell_executor(f'rm -r {files_directory}')
 
@@ -512,7 +515,8 @@ Field21{delimiter_character}Field22{delimiter_character}Field23""".format(delimi
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
         sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
-
+        print("Output records are")
+        print(str(output_records))
         assert 2 == len(output_records)
         assert output_records[0].get_field_data('/0') == 'Field11'
         assert output_records[0].get_field_data('/1') == 'Field12'
@@ -1041,11 +1045,13 @@ def test_directory_origin_configuration_ignore_empty_lines(sdc_builder, sdc_exec
 @pytest.mark.parametrize('use_custom_delimiter', [True])
 @pytest.mark.parametrize('data_format', ['TEXT'])
 @pytest.mark.parametrize('include_custom_delimiter', [False, True])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_include_custom_delimiter(sdc_builder, sdc_executor,
                                                                  use_custom_delimiter, data_format,
-                                                                 include_custom_delimiter):
-    pass
+                                                                 include_custom_delimiter,
+                                                                 shell_executor, file_writer):
+    test_directory_origin_configuration_custom_delimiter(sdc_builder, sdc_executor,
+                                                         use_custom_delimiter, data_format,
+                                                         '|', shell_executor, file_writer, include_custom_delimiter)
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
@@ -1501,10 +1507,12 @@ def test_directory_origin_configuration_typesdb_file_path(sdc_builder, sdc_execu
 
 @pytest.mark.parametrize('data_format', ['TEXT'])
 @pytest.mark.parametrize('use_custom_delimiter', [False, True])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_use_custom_delimiter(sdc_builder, sdc_executor,
-                                                             data_format, use_custom_delimiter):
-    pass
+                                                             data_format, use_custom_delimiter,
+                                                             shell_executor, file_writer):
+    test_directory_origin_configuration_custom_delimiter(sdc_builder, sdc_executor,
+                                                         use_custom_delimiter, data_format,
+                                                         '|', shell_executor, file_writer, False)
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
