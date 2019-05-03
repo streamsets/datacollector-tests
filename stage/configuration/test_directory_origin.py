@@ -515,8 +515,6 @@ Field21{delimiter_character}Field22{delimiter_character}Field23""".format(delimi
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
         sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
-        print("Output records are")
-        print(str(output_records))
         assert 2 == len(output_records)
         assert output_records[0].get_field_data('/0') == 'Field11'
         assert output_records[0].get_field_data('/1') == 'Field12'
