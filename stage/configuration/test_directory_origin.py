@@ -13,6 +13,7 @@
 # -*- end test template -*-
 #
 import logging
+import math
 import os
 
 import pytest
@@ -218,9 +219,53 @@ def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, d
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor):
-    pass
+@pytest.mark.parametrize('batch_size_in_recs', [2, 3, 4])
+def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor, shell_executor,
+                                                           file_writer, batch_size_in_recs):
+    """Verify batch size in records (batch_size_in_recs) configuration for various values
+        which limits maximum number of records to pass through pipeline at time.
+        e.g. For 2 files with each containing 3 records. Verify with batch_size_in_recs = 2
+        (less than records per file), 3 (equal to number of records per file),
+        4 (greater than number of records per file)."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME_1 = 'streamsets_temp1.txt'
+    FILE_NAME_2 = 'streamsets_temp2.txt'
+    FILE_CONTENTS_1 = get_text_file_content('file_1')
+    FILE_CONTENTS_2 = get_text_file_content('file_2')
+    number_of_batches = math.ceil(6 / batch_size_in_recs)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME_1), FILE_CONTENTS_1)
+        file_writer(os.path.join(files_directory, FILE_NAME_2), FILE_CONTENTS_2)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.txt',
+                                 batch_size_in_recs=batch_size_in_recs)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=number_of_batches).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        raw_data = FILE_CONTENTS_1 + "\n" + FILE_CONTENTS_2
+        stage_output = ""
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[directory.instance_name].output_lanes.values():
+                assert batch_size_in_recs >= len(value)
+                for record in value:
+                    if 'text' in record.value['value']:
+                        rec = record.value['value']['text']['value']
+                        stage_output += "\n" + rec if stage_output != "" else rec
+        assert raw_data == stage_output
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -800,3 +845,11 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
                                                               data_format, log_format, use_custom_log_format):
     pass
 
+
+## Start of general supportive functions
+def get_text_file_content(file_name):
+    if file_name == 'file_1':
+        FILE_CONTENTS = ['This is line11', 'This is line12', 'This is line13']
+    elif file_name == 'file_2':
+        FILE_CONTENTS = ['This is line21', 'This is line22', 'This is line23']
+    return "\n".join(FILE_CONTENTS)
