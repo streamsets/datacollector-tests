@@ -438,12 +438,56 @@ def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_
     pass
 
 
-@pytest.mark.parametrize('data_format', ['BINARY', 'DELIMITED', 'JSON', 'LOG', 'PROTOBUF', 'SDC_JSON', 'TEXT', 'XML'])
+@pytest.mark.parametrize('data_format', ['TEXT'])
+# , 'BINARY', 'DELIMITED', 'JSON', 'LOG', 'PROTOBUF', 'SDC_JSON', 'XML'
+# Other data formats are tested in TC test_directory_origin_configuration_data_format.
 @pytest.mark.parametrize('compression_format', ['ARCHIVE', 'COMPRESSED_ARCHIVE'])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_file_name_pattern_within_compressed_directory(sdc_builder, sdc_executor,
-                                                                                      data_format, compression_format):
-    pass
+                                                                                      data_format, compression_format,
+                                                                                      shell_executor, file_writer):
+    """Verify direcotry origin can read data from compressed files with GLOB pattern. Pattern is inside the compressed file.
+        e.g. test.txt is compressed as test.txt.zip then file_name_pattern_within_compressed_directory = '.txt'
+        Here we are using TEXT data format to check if data can be read from compressed txt files.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'compression_format_test.txt'
+    FILE_CONTENTS = get_text_file_content('file_1')
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+        if compression_format == 'ARCHIVE':
+            shell_executor(f'cd {files_directory} '
+                           f'&& tar -cvf compression_format_test.txt.tar compression_format_test.txt '
+                           f'&& rm compression_format_test.txt')
+            file_name_pattern = '*.tar'
+        else:
+            shell_executor(f'cd {files_directory} '
+                           f'&& tar -czvf compression_format_test.txt.tar.gz compression_format_test.txt '
+                           f'&& rm compression_format_test.txt')
+            file_name_pattern = '*.gz'
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern_within_compressed_directory='*.txt',
+                                 file_name_pattern=file_name_pattern,
+                                 compression_format=compression_format)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = snapshot[directory.instance_name].output
+        stage_output = "\n".join([str(record.field['text']) for record in output_records])
+        assert FILE_CONTENTS == stage_output
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('file_post_processing', ['ARCHIVE', 'DELETE', 'NONE'])
@@ -800,3 +844,11 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
                                                               data_format, log_format, use_custom_log_format):
     pass
 
+
+## Start of general supportive functions
+def get_text_file_content(file_name):
+    if file_name == 'file_1':
+        FILE_CONTENTS = ['This is line11', 'This is line12', 'This is line13']
+    elif file_name == 'file_2':
+        FILE_CONTENTS = ['This is line21', 'This is line22', 'This is line23']
+    return "\n".join(FILE_CONTENTS)
