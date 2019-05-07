@@ -421,10 +421,59 @@ def test_directory_origin_configuration_extra_column_prefix(sdc_builder, sdc_exe
 
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('log_format', ['REGEX'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_field_path_to_regex_group_mapping(sdc_builder, sdc_executor,
-                                                                          data_format, log_format):
-    pass
+def test_directory_origin_configuration_field_path_to_regex_group_mapping(sdc_builder, sdc_executor, data_format,
+                                                                          log_format, shell_executor, file_writer):
+    """Check if the file regex group mapping for the log format works properly. Here we consider logs from DC as our test data.
+        We provide the DC with regex that groups data in date, time, timehalf, info, file and message fields."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = 'custom_log_data.log'
+    file_content = """2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).
+2019-04-30 08:23:57 AM [INFO] [streamsets.sdk.sdc] Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...
+2019-04-30 08:23:59 AM [INFO] [streamsets.sdk.sdc_api] Waiting for status ['RUNNING', 'FINISHED'] ..."""
+
+    field_path_to_regex_group_mapping = [{'fieldPath': '/date', 'group': 1},
+                                         {'fieldPath': '/time', 'group': 2},
+                                         {'fieldPath': '/timehalf', 'group': 3},
+                                         {'fieldPath': '/info', 'group': 4},
+                                         {'fieldPath': '/file', 'group': 5},
+                                         {'fieldPath': '/message', 'group': 6}]
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, file_name), file_content)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 log_format=log_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern_mode='GLOB',
+                                 file_name_pattern='*.log',
+                                 field_path_to_regex_group_mapping=field_path_to_regex_group_mapping,
+                                 regular_expression='(\S+) (\S+) (\S+) (\S+) (\S+) (.*)')
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_field_path_to_regex_group_mapping')
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1, batch_size=10).snapshot
+        output_records = snapshot[directory].output
+        sdc_executor.stop_pipeline(pipeline)
+        assert output_records[0].field['/date'] == '2019-04-30'
+        assert output_records[0].field['/time'] == '08:23:53'
+        assert output_records[0].field['/file'] == '[streamsets.sdk.sdc_api]'
+        assert output_records[0].field['/message'] == 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).'
+        assert output_records[1].field['/date'] == '2019-04-30'
+        assert output_records[1].field['/time'] == '08:23:57'
+        assert output_records[1].field['/file'] == '[streamsets.sdk.sdc]'
+        assert output_records[1].field[ '/message'] == 'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...'
+        assert output_records[2].field['/date'] == '2019-04-30'
+        assert output_records[2].field['/time'] == '08:23:59'
+        assert output_records[2].field['/file'] == '[streamsets.sdk.sdc_api]'
+        assert output_records[2].field['/message'] == 'Waiting for status [\'RUNNING\', \'FINISHED\'] ...'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.skip('Not yet implemented')
