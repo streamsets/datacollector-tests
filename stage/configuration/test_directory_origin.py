@@ -791,9 +791,40 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
 
 
 @pytest.mark.parametrize('file_name_pattern_mode', ['GLOB', 'REGEX'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_executor, file_name_pattern_mode):
-    pass
+def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_executor, shell_executor,
+                                                               file_writer, file_name_pattern_mode):
+    """Check how DC process different file pattern mode. Here we will be creating 2 files:
+    ``pattern_check_processing_1.txt`` and ``pattern_check_processing_2.txt``.
+    with regex we match only 1st file and with glob both files.
+    """
+    files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
+    files_content = [get_text_file_content(1, 1),
+                     get_text_file_content(2, 1)]
+    file_name_pattern = '*.txt' if file_name_pattern_mode == 'GLOB' else r'^p(.*)([0-9]{1})(\.txt)'
+    number_of_batches = 2 if file_name_pattern_mode == 'GLOB' else 1
+
+    try:
+        files_directory = create_file_and_directory(files_name[0], files_content[0], shell_executor, file_writer)
+        file_writer(os.path.join(files_directory, files_name[1]), files_content[1])
+
+        attributes = {'data_format':'TEXT',
+                      'files_directory':files_directory,
+                      'file_name_pattern_mode':file_name_pattern_mode,
+                      'file_name_pattern':file_name_pattern}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=number_of_batches).snapshot
+
+        raw_data = '\n'.join(files_content)
+        processed_data = '\n'.join(snapshot_content(snapshot, directory))
+        if file_name_pattern_mode == 'GLOB':
+            assert raw_data == processed_data
+        else:
+            assert files_content[0] == processed_data
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['TEXT', 'DELIMITED', 'JSON', 'LOG', 'SDC_JSON', 'XML'])
