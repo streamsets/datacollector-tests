@@ -30,7 +30,7 @@ def file_writer(sdc_executor):
         encoding (:obj:`str`, optional): The file encoding. Default: ``'utf8'``
     """
     def file_writer_(filepath, file_contents, encoding='utf8'):
-        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8')
+        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding)
     return file_writer_
 
 
