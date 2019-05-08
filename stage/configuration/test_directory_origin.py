@@ -12,6 +12,7 @@
 #     sdc_executor.add_pipeline(pipeline)
 # -*- end test template -*-
 #
+import json
 import logging
 import math
 import os
@@ -232,8 +233,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = get_text_file_content('1')
-    FILE_CONTENTS_2 = get_text_file_content('2')
+    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
+    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -605,11 +606,113 @@ def test_directory_origin_configuration_header_line(sdc_builder, sdc_executor, d
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DATAGRAM', 'DELIMITED', 'JSON', 'LOG', 'TEXT', 'XML'])
-@pytest.mark.parametrize('ignore_control_characters', [False, True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_ignore_control_characters(sdc_builder, sdc_executor,
-                                                                  data_format, ignore_control_characters):
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_text(sdc_builder, sdc_executor, ignore_control_characters,
+                                                                  shell_executor, file_writer):
+    """Check if directory origin honours ignore_control_characters parameter.
+    When set to true it should ignore all control characters.
+    When False it should maintain these characters.
+    """
+    file_name = 'ignore_ctrl_chars.txt'
+    file_content = 'File \0 with \a control characters with normal \v string to \f check the ignore control characters parameter.'
+    try:
+        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
+                                                                      file_writer)
+
+        attributes = DirectoryOriginCommon.get_control_characters_attributes('TEXT', files_directory,
+                                                                             ignore_control_characters)
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[directory].output[0]
+        if ignore_control_characters:
+            assert record.field['text'] == 'File  with  control characters with normal  string to  check the ignore control characters parameter.'
+        else:
+            assert record.field['text'] == 'File \x00 with \a control characters with normal \v string to \f check the ignore control characters parameter.'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_delimited(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                        delimited_file_writer):
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = 'ignore_ctrl_chars.csv'
+    file_content = [['field1', 'field2', 'field3'], ['Field\0 11', 'Field\v12', 'Fie\fld\a13']]
+
+    try:
+        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
+                                                                      delimited_file_writer, 'CSV')
+
+        attributes = DirectoryOriginCommon.get_control_characters_attributes('DELIMITED', files_directory,
+                                                                             ignore_control_characters)
+        attributes['header_line'] = 'WITH_HEADER'
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        assert 1 == len(output_records)
+        if ignore_control_characters:
+            assert output_records[0].field == OrderedDict([('field1', 'Field 11'), ('field2', 'Field12'),
+                                                           ('field3', 'Field13')])
+        else:
+            assert output_records[0].field == OrderedDict([('field1', 'Field\x00 11'), ('field2', 'Field\v12'),
+                                                           ('field3', 'Fie\fld\a13')])
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_json(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                       file_writer):
+    pass
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_log(sdc_builder, sdc_executor,
+                                                                      ignore_control_characters, shell_executor,
+                                                                      file_writer):
+    file_name = 'ignore_ctrl_chars.log'
+    file_content = '200 [main] DEBUG org.StreamSets.Log4j unknown - Th\fis is sam\aple l\0og message\v'
+    try:
+        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
+                                                                      file_writer)
+
+        attributes = DirectoryOriginCommon.get_control_characters_attributes('DELIMITED', files_directory,
+                                                                             ignore_control_characters)
+        attributes.update({'data_format': 'LOG', 'log_format': 'LOG4J'})
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[directory].output[0]
+        if ignore_control_characters:
+            assert record.field['message'] == 'This is sample log message'
+        else:
+            assert record.field['message'] == 'Th\fis is sam\aple l\x00og message\v'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_xml(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                       file_writer):
+    pass
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_datagram(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                       file_writer):
     pass
 
 
@@ -917,6 +1020,68 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-## Start of general supportive functions
-def get_text_file_content(file_number):
-    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return directory, pipeline
+
+    @staticmethod
+    def create_file_directory(file_name, file_content, shell_executor, file_writer, delimiter_format_type=None,
+                              delimiter_character=None):
+        files_directory = os.path.join('/tmp', get_random_string())
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_path = os.path.join(files_directory, file_name)
+        if delimiter_format_type:
+            file_writer(file_path, file_content, delimiter_format_type, delimiter_character)
+        else:
+            file_writer(file_path, file_content)
+        return files_directory
+
+    @staticmethod
+    def get_log_field_mapping():
+        return [{"fieldPath": "/date", "group": 1},
+                {"fieldPath": "/time", "group": 2},
+                {"fieldPath": "/timehalf", "group": 3},
+                {"fieldPath": "/info", "group": 4},
+                {"fieldPath": "/file", "group": 5},
+                {"fieldPath": "/message", "group": 6}]
+
+    @staticmethod
+    def get_text_file_content(file_number, lines_needed=3):
+        return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
+
+    @staticmethod
+    def verify_delimited_output(output_records, data, header=None):
+        if not header:
+            header = [str(i) for i in range(0, 3)]
+        assert 2 == len(output_records)
+        assert output_records[0].field == OrderedDict(zip(header, data[0]))
+        assert output_records[1].field == OrderedDict(zip(header, data[1]))
+
+    @staticmethod
+    def execute_and_verify(sdc_executor, directory, pipeline, raw_data, snapshot_content, no_of_batches):
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=no_of_batches).snapshot
+        processed_data = snapshot_content(snapshot, directory)
+        assert raw_data == processed_data
+
+    @staticmethod
+    def get_control_characters_attributes(data_format, files_directory, ignore_control_characters):
+        return  {'data_format': data_format,
+                 'file_name_pattern': 'ignore_ctrl_*',
+                 'file_name_pattern_mode': 'GLOB',
+                 'files_directory': files_directory,
+                 'ignore_control_characters': ignore_control_characters}
+
