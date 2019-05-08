@@ -821,9 +821,40 @@ def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executo
 
 
 @pytest.mark.parametrize('data_format', ['JSON'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, sdc_executor, data_format):
-    pass
+def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, sdc_executor, data_format,
+                                                                   shell_executor, file_writer):
+    """Check if direcotory origin honours `maximum object length in character` configuration.
+        """
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = 'max_char_len.json'
+    json_data = get_json_data()
+    file_content = "\n".join([json.dumps(d) for d in json_data])
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, file_name), file_content)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 file_name_pattern='*.json',
+                                 file_name_pattern_mode='GLOB',
+                                 files_directory=files_directory,
+                                 json_content='MULTIPLE_OBJECTS',
+                                 max_object_length_in_chars=100)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_max_object_length_in_chars')
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory].output
+        assert 1 == len(output_records)
+        assert output_records[0].field == json_data[0]
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED', 'XML'])
@@ -1470,3 +1501,4 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
         assert output_records[0].field == json_data[0]
+
