@@ -897,11 +897,127 @@ def test_directory_origin_configuration_header_line(sdc_builder, sdc_executor, d
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DATAGRAM', 'DELIMITED', 'JSON', 'LOG', 'TEXT', 'XML'])
-@pytest.mark.parametrize('ignore_control_characters', [False, True])
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_text(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                       file_writer):
+    """Check if directory origin honours ignore_control_characters parameter.
+    When set to true it should ignore all control characters.
+    When False it should maintain these characters.
+    """
+    file_name = 'ignore_ctrl_chars.txt'
+    file_content = 'File \0 with \a control characters with normal \v string to \f check the ignore control characters parameter.'
+    try:
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
+
+        attributes = get_control_characters_attributes('TEXT', files_directory, ignore_control_characters)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[directory].output[0]
+        if ignore_control_characters:
+            assert record.field['text'] == 'File  with  control characters with normal  string to  check the ignore control characters parameter.'
+        else:
+            assert record.field['text'] == 'File \x00 with \a control characters with normal \v string to \f check the ignore control characters parameter.'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_delimited(sdc_builder, sdc_executor,
+                                                                            ignore_control_characters, shell_executor,
+                                                                            delimited_file_writer):
+    """Check if directory origin honours ignore_control_characters parameter.
+    When set to true it should ignore all control characters.
+    When False it should maintain these characters.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = 'ignore_ctrl_chars.csv'
+    file_content = [['field1', 'field2', 'field3'], ['Field\0 11', 'Field\v12', 'Fie\fld\a13']]
+
+    try:
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, delimited_file_writer,
+                                                    'CSV')
+
+        attributes = get_control_characters_attributes('DELIMITED', files_directory, ignore_control_characters)
+        attributes['header_line'] = 'WITH_HEADER'
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        assert 1 == len(output_records)
+        if ignore_control_characters:
+            assert output_records[0].field == OrderedDict([('field1', 'Field 11'), ('field2', 'Field12'),
+                                                           ('field3', 'Field13')])
+        else:
+            assert output_records[0].field == OrderedDict([('field1', 'Field\x00 11'), ('field2', 'Field\v12'),
+                                                           ('field3', 'Fie\fld\a13')])
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
 @pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_ignore_control_characters(sdc_builder, sdc_executor,
-                                                                  data_format, ignore_control_characters):
+def test_directory_origin_configuration_ignore_control_characters_json(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                       file_writer):
+    """Directory origin not able to read json data with control characters.
+    Filed bug :- https://issues.streamsets.com/browse/SDC-11604.
+    """
+    pass
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+def test_directory_origin_configuration_ignore_control_characters_log(sdc_builder, sdc_executor,
+                                                                      ignore_control_characters, shell_executor,
+                                                                      file_writer):
+    """Check if directory origin honours ignore_control_characters parameter.
+    When set to true it should ignore all control characters.
+    When False it should maintain these characters.
+    """
+    file_name = 'ignore_ctrl_chars.log'
+    file_content = '200 [main] DEBUG org.StreamSets.Log4j unknown - Th\fis is sam\aple l\0og message\v'
+    try:
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
+
+        attributes = get_control_characters_attributes('LOG', files_directory, ignore_control_characters)
+        attributes.update({'log_format': 'LOG4J'})
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[directory].output[0]
+        if ignore_control_characters:
+            assert record.field['message'] == 'This is sample log message'
+        else:
+            assert record.field['message'] == 'Th\fis is sam\aple l\x00og message\v'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+@pytest.mark.skip('Not yet implemented')
+def test_directory_origin_configuration_ignore_control_characters_xml(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                       file_writer):
+    """Directory origin not able to read XML data with control characters.
+    Filed bug :- https://issues.streamsets.com/browse/SDC-11604.
+    """
+    pass
+
+
+@pytest.mark.parametrize('ignore_control_characters', [True, False])
+@pytest.mark.skip('Not yet implemented')
+def test_directory_origin_configuration_ignore_control_characters_datagram(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                       file_writer):
+    """Directory origin does not support Datagram, NetFlow abd Binary data formats."""
     pass
 
 
