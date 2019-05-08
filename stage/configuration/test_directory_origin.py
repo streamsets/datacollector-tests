@@ -484,7 +484,7 @@ def test_directory_origin_configuration_file_name_pattern_within_compressed_dire
         sdc_executor.stop_pipeline(pipeline)
 
         output_records = snapshot[directory.instance_name].output
-        stage_output = "\n".join([str(record.field['text']) for record in output_records])
+        stage_output = '\n'.join([str(record.field['text']) for record in output_records])
         assert FILE_CONTENTS == stage_output
     finally:
         shell_executor(f'rm -r {files_directory}')
