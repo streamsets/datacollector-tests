@@ -96,6 +96,16 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
             assert record.field['op'].value == 'i'
             assert record.field['ts']['timestamp'].value.timestamp() >= time_now
 
+        # Now we want to make sure that the previous offset is respected over the
+        # configured initial timestamp and ordinal
+        input_rec_count2 = 2
+        inserted_list2 = mongodb_collection.insert_many([{'x': i} for i in range(input_rec_count2)])
+        assert len(inserted_list2.inserted_ids) == input_rec_count2
+
+        snapshot2 = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot2[mongodb_oplog].output) == 2
     finally:
         logger.info('Dropping %s database...', database_name)
         mongodb.engine.drop_database(database_name)
