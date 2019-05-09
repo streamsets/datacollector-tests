@@ -411,9 +411,45 @@ def test_directory_origin_configuration_custom_log4j_format(sdc_builder, sdc_exe
 
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('log_format', ['APACHE_CUSTOM_LOG_FORMAT'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_custom_log_format(sdc_builder, sdc_executor, data_format, log_format):
-    pass
+def test_directory_origin_configuration_custom_log_format(sdc_builder, sdc_executor, data_format,
+                                                          log_format, shell_executor, file_writer):
+    """Check if the file custom_log_format for the log format works properly.
+        Here we consider access logs from apache version 2.2
+        as our test data. Check if Directory origin can read this data."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = 'apache_custom_log_data.log'
+    file_content = '127.0.0.1 custom_log test_user [09/May/2019:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326 "http://almhuette-raith.at/administrator/" "Mozilla/5.0 (Windows NT 6.0; rv:34.0) Gecko/20100101 Firefox/34.0" ""'
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, file_name), file_content)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 log_format=log_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern_mode='GLOB',
+                                 file_name_pattern='*.log',
+                                 custom_log_format='%h %l %u %t "%r" %>s %b "%{Referer}i" "%{User-agent}i" %U')
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_custom_log_format')
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory].output
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert output_records[0].field['remoteHost'] == '127.0.0.1'
+        assert output_records[0].field['remoteUser'] == 'test_user'
+        assert output_records[0].field['request'] == 'GET /apache_pb.gif HTTP/1.0'
+        assert output_records[0].field['bytesSent'] == '2326'
+        assert output_records[0].field['userAgent'] == 'Mozilla/5.0 (Windows NT 6.0; rv:34.0) Gecko/20100101 Firefox/34.0'
+        assert output_records[0].field['urlPath'] == ''
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['AVRO', 'DELIMITED', 'EXCEL', 'JSON', 'LOG',
