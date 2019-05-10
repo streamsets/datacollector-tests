@@ -223,15 +223,16 @@ def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, d
 def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor, shell_executor,
                                                            file_writer, batch_size_in_recs):
     """Verify batch size in records (batch_size_in_recs) configuration for various values
-        which limits maximum number of records to pass through pipeline at time.
-        e.g. For 2 files with each containing 3 records. Verify with batch_size_in_recs = 2
-        (less than records per file), 3 (equal to number of records per file),
-        4 (greater than number of records per file)."""
+    which limits maximum number of records to pass through pipeline at time.
+    e.g. For 2 files with each containing 3 records. Verify with batch_size_in_recs = 2
+    (less than records per file), 3 (equal to number of records per file),
+    4 (greater than number of records per file).
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = get_text_file_content('file_1')
-    FILE_CONTENTS_2 = get_text_file_content('file_2')
+    FILE_CONTENTS_1 = get_text_file_content('1')
+    FILE_CONTENTS_2 = get_text_file_content('2')
     number_of_batches = math.ceil(6 / batch_size_in_recs)
 
     try:
@@ -254,15 +255,14 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=number_of_batches).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        raw_data = FILE_CONTENTS_1 + "\n" + FILE_CONTENTS_2
-        stage_output = ""
+        raw_data = '{}\n{}'.format(FILE_CONTENTS_1, FILE_CONTENTS_2)
+        temp = []
         for snapshot_batch in snapshot.snapshot_batches:
             for value in snapshot_batch[directory.instance_name].output_lanes.values():
                 assert batch_size_in_recs >= len(value)
                 for record in value:
-                    if 'text' in record.value['value']:
-                        rec = record.value['value']['text']['value']
-                        stage_output += "\n" + rec if stage_output != "" else rec
+                    temp.append(str(record.field['text']))
+        stage_output = '\n'.join(temp)
         assert raw_data == stage_output
     finally:
         shell_executor(f'rm -r {files_directory}')
@@ -847,9 +847,5 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
 
 
 ## Start of general supportive functions
-def get_text_file_content(file_name):
-    if file_name == 'file_1':
-        FILE_CONTENTS = ['This is line11', 'This is line12', 'This is line13']
-    elif file_name == 'file_2':
-        FILE_CONTENTS = ['This is line21', 'This is line22', 'This is line23']
-    return "\n".join(FILE_CONTENTS)
+def get_text_file_content(file_number):
+    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
