@@ -12,6 +12,7 @@
 #     sdc_executor.add_pipeline(pipeline)
 # -*- end test template -*-
 #
+from collections import OrderedDict
 import logging
 import os
 
@@ -364,22 +365,21 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('delimiter_format_type', ['CSV', 'CUSTOM', 'POSTGRES_CSV', 'TDF', 'RFC4180', 'EXCEL'])
-#  'MYSQL' -> Need to check its working with field having new line character, 'POSTGRES_TEXT' -> Done get
+@pytest.mark.parametrize('delimiter_format_type', ['CSV', 'CUSTOM', 'POSTGRES_CSV', 'TDF', 'RFC4180', 'EXCEL',
+                                                   'POSTGRES_TEXT', 'MYSQL'])
 @pytest.mark.parametrize('root_field_type', ['LIST_MAP'])
 @pytest.mark.parametrize('header_line', ['WITH_HEADER'])
 def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_executor, data_format,
                                                               delimiter_format_type, delimited_file_writer,
                                                               shell_executor, root_field_type, header_line):
-    """Test for Delimiter format type. Here we will be creating delimited files in different formats.
-        e.g. POSTGRES_CSV, TDF, RFC4180, etc.,
-        Note: We will be testing only selective formats here as other formats are tested in other test cases."""
+    """Test for Directory origin can read delimited file with different delimiter format type.
+    Here we will be creating delimited files in different formats for testing. e.g. POSTGRES_CSV, TDF, RFC4180, etc.,
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'delimited_file.csv'
     FILE_CONTENTS = [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'fält13'], ['стол', 'Field22', 'Field23']]
-    delimiter_character_map = {'CUSTOM': '^', 'POSTGRES_TEXT': '|'}
-    delimiter_character = delimiter_character_map[delimiter_format_type] \
-        if delimiter_format_type in delimiter_character_map else None
+    delimiter_character_map = {'CUSTOM': '^'}
+    delimiter_character = '^' if delimiter_format_type == 'CUSTOM' else None
 
     try:
         logger.debug('Creating files directory %s ...', files_directory)
@@ -405,12 +405,13 @@ def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_e
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
         sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
+        new_line_field = 'Field12\nSTR' if delimiter_format_type == 'EXCEL' else 'Field12'
 
         assert 2 == len(output_records)
-        assert output_records[0].get_field_data('/field1') == 'Field11'
-        assert output_records[0].get_field_data('/field3') == 'fält13'
-        assert output_records[1].get_field_data('/field1') == 'стол'
-        assert output_records[1].get_field_data('/field3') == 'Field23'
+        assert output_records[0].field == OrderedDict(
+            [('field1', 'Field11'), ('field2', new_line_field), ('field3', 'fält13')])
+        assert output_records[1].field == OrderedDict(
+            [('field1', 'стол'), ('field2', 'Field22'), ('field3', 'Field23')])
     finally:
         shell_executor(f'rm -r {files_directory}')
 

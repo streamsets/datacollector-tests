@@ -1,8 +1,8 @@
 import csv
 import io
-import pytest
 import textwrap
 
+import pytest
 from streamsets.sdk.models import Configuration
 
 FILE_WRITER_SCRIPT = """
@@ -81,24 +81,24 @@ def delimited_file_writer(sdc_executor):
 
 
 def get_file_content(file_contents, delimiter_format, delimiter_character):
-    if delimiter_format in ['EXCEL', 'MYSQL']:
+    if delimiter_format in ['EXCEL']:
         return get_excel_compatible_csv(file_contents)
     elif delimiter_format in ['POSTGRES_CSV', 'CSV']:
-        return "\n".join([",".join(t1) for t1 in file_contents])
+        return '\n'.join([','.join(t1) for t1 in file_contents])
     elif delimiter_format == 'RFC4180':
         #  As per https://tools.ietf.org/html/rfc4180 last record may or may not have line break.
-        return "\n".join([",".join(t1) for t1 in file_contents]) + "\n"
-    elif delimiter_format == 'TDF':
-        return "\n".join(["\t".join(t1) for t1 in file_contents])
+        return '\n'.join([','.join(t1) for t1 in file_contents]) + '\n'
+    elif delimiter_format in ['TDF', 'POSTGRES_TEXT', 'MYSQL']:
+        return '\n'.join(['\t'.join(t1) for t1 in file_contents])
     elif delimiter_format in ['CUSTOM', 'POSTGRES_TEXT']:
-        return "\n".join([delimiter_character.join(t1) for t1 in file_contents])
+        return '\n'.join([delimiter_character.join(t1) for t1 in file_contents])
 
 
 def get_excel_compatible_csv(data):
     content = None
     queue = io.StringIO()
     try:
-        data[1][1] = data[1][1] + "\nSTR"
+        data[1][1] = data[1][1] + '\nSTR'
         writer = csv.writer(queue, dialect='excel', quotechar='"', quoting=csv.QUOTE_ALL)
         writer.writerows(data)
         content = queue.getvalue()
