@@ -653,7 +653,7 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
 @pytest.mark.parametrize('file_name_pattern_mode', ['GLOB', 'REGEX'])
 def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_executor, shell_executor,
                                                                file_writer, file_name_pattern_mode,
-                                                               snapshop_content):
+                                                               snapshot_content):
     """Check how DC process different file pattern mode. Here we will be creating 2 files.
     pattern_check_processing_1.txt and pattern_check_processing_22.txt.
     with regex we match only 1st file and with glob both files.
@@ -685,7 +685,7 @@ def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_
         sdc_executor.stop_pipeline(pipeline)
 
         raw_data = '\n'.join(files_content)
-        processed_data = snapshop_content(snapshot, directory)
+        processed_data = snapshot_content(snapshot, directory)
         if file_name_pattern_mode == "GLOB":
             assert raw_data == processed_data
         else:
