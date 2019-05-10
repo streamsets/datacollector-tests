@@ -67,8 +67,8 @@ def shell_executor(sdc_executor):
 
 
 @pytest.fixture
-def snapshop_content():
-    def snapshop_content_(snapshot, directory):
+def snapshot_content():
+    def snapshot_content_(snapshot, directory):
         """This is common function can be used at in may TCs to get snapshot content.
         """
         processed_data = []
@@ -77,4 +77,4 @@ def snapshop_content():
                 for record in value:
                     processed_data.append(str(record.field['text']))
         return '\n'.join(processed_data)
-    return snapshop_content_
+    return snapshot_content_
