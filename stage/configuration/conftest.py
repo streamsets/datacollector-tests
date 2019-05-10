@@ -157,3 +157,4 @@ def compressed_file_writer(sdc_executor):
         sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=30)
 
     return compressed_file_writer_
+

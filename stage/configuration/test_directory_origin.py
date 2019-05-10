@@ -647,11 +647,17 @@ def test_directory_origin_configuration_field_path_to_regex_group_mapping(sdc_bu
 
 @pytest.mark.parametrize('file_name_pattern', ['pattern_check_processing_1.txt', '*.txt', 'pattern_*', '*_check_*'])
 def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_executor, shell_executor,
-                                                          file_writer, file_name_pattern):
-    """Check how DC process different forms of the file name patterns. """
+                                                          file_writer, file_name_pattern, snapshot_content):
+    """Check Directory origin can read files with different patterns.
+    Here we have two files pattern_check_processing_1.txt & pattern_check_processing_2.txt.
+    Patterns '*.txt', 'pattern_*', '*_check_*' -> Should match both files and directory origin should
+    read complete data from both files
+    Pattern 'pattern_check_processing_1.txt' -> Should match first file and directory origin should
+    read complete data from first files
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
-    files_content = ["This is sample file111", "This is sample file222"]
+    files_content = ['This is sample file111', 'This is sample file222']
 
     try:
         logger.debug('Creating files directory %s ...', files_directory)
@@ -667,20 +673,14 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
                                  files_directory=files_directory)
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
-        pipeline = pipeline_builder.build('test_directory_origin_configuration_file_name_pattern')
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2, batch_size=10).snapshot
-        raw_data = "\n".join(files_content)
-        processed_data = ""
-        for snapshot_batch in snapshot.snapshot_batches:
-            for value in snapshot_batch[directory.instance_name].output_lanes.values():
-                for record in value:
-                    if 'text' in record.value['value']:
-                        rec = record.value['value']['text']['value']
-                        processed_data += "\n" + rec if processed_data != "" else rec
-
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
         sdc_executor.stop_pipeline(pipeline)
+
+        raw_data = "\n".join(files_content)
+        processed_data = snapshot_content(snapshot, directory)
         if file_name_pattern == 'pattern_check_processing_1.txt':
             assert files_content[0] == processed_data
         else:
