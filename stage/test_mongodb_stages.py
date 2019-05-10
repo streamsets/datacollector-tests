@@ -311,13 +311,16 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
         assert len(insert_list) == len(docs_in_database)
 
         # Verify that insert was in-fact successful
-        assert docs_in_database == [item for item in mongodb.engine[mongodb_origin.database][mongodb_origin.collection].find()]
+        assert docs_in_database == [item
+                                    for item in
+                                    mongodb.engine[mongodb_origin.database][mongodb_origin.collection].find()]
 
         # Start pipeline and verify the documents using snapshot.
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'data': decimal128.Decimal128(record.value2['data'])} for record in snapshot[mongodb_origin].output]
+        rows_from_snapshot = [{'data': decimal128.Decimal128(record.field['data'])}
+                              for record in snapshot[mongodb_origin].output]
 
         assert rows_from_snapshot == ORIG_BINARY_DOCS
 

@@ -759,7 +759,7 @@ def test_kudu_lookup_decimal_type(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
         i = 0
         for result in snapshot[kudu.instance_name].output:
-            assert result.field['weight'].value == str(tour_de_france_contenders[i]['weight'])
+            assert result.field['weight'].value == tour_de_france_contenders[i]['weight']
             i += 1
 
     finally:
