@@ -12,10 +12,12 @@
 #     sdc_executor.add_pipeline(pipeline)
 # -*- end test template -*-
 #
+import json
 import logging
 import os
 
 import pytest
+import string
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
 
@@ -213,9 +215,43 @@ def test_directory_origin_configuration_auth_file(sdc_builder, sdc_executor, dat
 
 
 @pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, data_format):
-    pass
+def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, data_format, avro_file_writer, shell_executor):
+    """Test Directory Origin reading of Avro data. The sample Avro file has 5 records.
+        Directory origin should produce header avroSchema.
+        The pipelines looks like: directory >> trash."""
+    files_directory = os.path.join('/tmp', get_random_string(string.ascii_letters, 10))
+    avro_records = get_avro_records()
+    input_avro_schema = get_avro_schema()
+
+    try:
+        avro_file_writer(files_directory, avro_records, input_avro_schema)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory', type='origin')
+        directory.set_attributes(data_format=data_format, file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                                 file_post_processing='DELETE', files_directory=files_directory,
+                                 process_subdirectories=True, read_order='TIMESTAMP')
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        directory_pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(directory_pipeline)
+        snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+        sdc_executor.stop_pipeline(directory_pipeline)
+
+        # assert all the data captured have the same raw_data
+        output_records = snapshot[directory.instance_name].output
+        avroSchema = json.loads(output_records[0].header["values"]['avroSchema'])
+
+        assert 5 == len(output_records)
+        assert input_avro_schema == avroSchema
+        for i in range(0, 5):
+            assert output_records[i].get_field_data('/name') == avro_records[i].get('name')
+            assert output_records[i].get_field_data('/age') == avro_records[i].get('age')
+            assert output_records[i].get_field_data('/emails') == avro_records[i].get('emails')
+            assert output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -827,3 +863,77 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
                                                               data_format, log_format, use_custom_log_format):
     pass
 
+
+# General functions
+def get_avro_records():
+    avro_records = [
+        {
+            "name": "sdc1",
+            "age": 3,
+            "emails": ["sdc1@streamsets.com", "sdc@company.com"],
+            "boss": {
+                "name": "sdc0",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                "boss": None
+            }
+        },
+        {
+            "name": "sdc2",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+            "boss": {
+                "name": "sdc0",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                "boss": None
+            }
+        },
+        {
+            "name": "sdc3",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+            "boss": {
+                "name": "sdc0",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                "boss": None
+            }
+        },
+        {
+            "name": "sdc4",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+            "boss": {
+                "name": "sdc0",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                "boss": None
+            }
+        },
+        {
+            "name": "sdc5",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+            "boss": {
+                "name": "sdc0",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                "boss": None
+            }
+        }]
+    return avro_records
+
+
+def get_avro_schema():
+    avro_schema = {
+        "type": "record",
+        "name": "Employee",
+        "fields": [
+            {"name": "name", "type": "string"},
+            {"name": "age", "type": "int"},
+            {"name": "emails", "type": {"type": "array", "items": "string"}},
+            {"name": "boss", "type": ["Employee", "null"]}
+        ]
+    }
+    return avro_schema

@@ -1,6 +1,6 @@
-import textwrap
-
+import json
 import pytest
+import textwrap
 from streamsets.sdk.models import Configuration
 
 FILE_WRITER_SCRIPT = """
@@ -64,4 +64,29 @@ def shell_executor(sdc_executor):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         sdc_executor.remove_pipeline(pipeline)
     return shell_executor_
+
+@pytest.fixture
+def avro_file_writer(sdc_executor):
+    def avro_file_writer_(tmp_directory, avro_records, avro_schema):
+        """Setup avro records and save in local system. The pipelines looks like:
+            dev_raw_data_source >> local_fs."""
+        raw_data = ''.join(json.dumps(avro_record) for avro_record in avro_records)
+
+        pipeline_builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='AVRO',
+                                avro_schema_location='INLINE',
+                                avro_schema=json.dumps(avro_schema),
+                                directory_template=tmp_directory,
+                                files_prefix='sdc-${sdc:id()}', files_suffix='txt', max_records_in_file=5)
+
+        dev_raw_data_source >> local_fs
+        files_pipeline = pipeline_builder.build('Generate files pipeline')
+        sdc_executor.add_pipeline(files_pipeline)
+
+        # generate some batches/files
+        sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
+    return avro_file_writer_
 
