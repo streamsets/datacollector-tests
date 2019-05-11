@@ -102,7 +102,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> groovy_evaluator >> trash
-    pipeline = pipeline_builder.build('Groovy Evaluator pipeline')
+    pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -115,3 +115,43 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     assert record_1.field['officeSpace'] == (raw_company_1['floors'] > 2)
     record_2 = next(record for record in output_records if record.field['name'] == raw_company_2['name'])
     assert record_2.field['officeSpace'] == (raw_company_2['floors'] > 2)
+
+
+# SDC-10353: Unable to delete record headers in Scripting Evaluators
+def test_delete_header_attribute(sdc_builder, sdc_executor):
+    """Make sure that deleted attributes stays deleted."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='TEXT', raw_data="BLA BLA")
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.header_attribute_expressions = [
+        {'attributeToSet': 'remove', 'headerAttributeExpression': 'I should be deleted'}
+    ]
+
+    groovy = builder.add_stage('Groovy Evaluator')
+    groovy.init_script = ''
+    groovy.destroy_script = ''
+    groovy.script =  """
+        for (record in records) {
+            record.attributes.remove('remove')
+            output.write(record)
+        }
+    """
+
+    trash = builder.add_stage('Trash')
+
+    origin >> expression >> groovy >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    records = snapshot[groovy].output
+
+    assert len(records) == 1
+    # STF-797: Please add a way how to detect that given header attribute doesn't exists
+    assert 'remove' not in records[0].header._data
