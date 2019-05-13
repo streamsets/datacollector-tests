@@ -155,3 +155,43 @@ def test_delete_header_attribute(sdc_builder, sdc_executor):
     assert len(records) == 1
     # STF-797: Please add a way how to detect that given header attribute doesn't exists
     assert 'remove' not in records[0].header._data
+
+
+# SDC-11546: Expose the underlying Data Collector Record in Scripting processors
+def test_expose_sdc_record(sdc_builder, sdc_executor):
+    """Ensure that underlying SDC record is accessible."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='TEXT', raw_data="BLA BLA")
+    origin.stop_after_first_batch = True
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_attribute_expressions = [
+        {"fieldToSet": "/text", "attributeToSet": "attr", "fieldAttributeExpression": "is-here"}
+    ]
+
+    groovy = builder.add_stage('Groovy Evaluator')
+    groovy.init_script = ''
+    groovy.destroy_script = ''
+    groovy.script =  """
+        for (record in records) {
+            record.attributes['attr'] = record.sdcRecord.get('/text').getAttribute('attr')
+            output.write(record)
+        }
+    """
+
+    trash = builder.add_stage('Trash')
+
+    origin >> expression >> groovy >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    records = snapshot[groovy].output
+
+    assert len(records) == 1
+    # STF-798: RecordHeader is inconsistent in STF and SDC
+    assert 'is-here' == records[0].header['values']['attr']
