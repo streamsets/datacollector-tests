@@ -1792,3 +1792,73 @@ def test_jdbc_multitable_oracle_split_by_timestamp_with_timezone(sdc_builder, sd
         logger.info('Dropping table %s and %s in %s database ...', table_name, table_name_dest, database.type)
         connection.execute(f"DROP TABLE {table_name}")
         connection.execute(f"DROP TABLE {table_name_dest}")
+
+
+@sdc_min_version('3.9.0')
+@database('mysql')
+def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_builder, sdc_executor, database):
+    """
+    Check if Jdbc Multi-table Origin can retrieve any records from a table using as an offset a high resolution
+    timestamp of milliseconds order. It is checked that the records read have a timestamp greater than the timestamp
+    used as initial offset.
+
+    Pipeline looks like:
+
+    jdbc_multitable_consumer >> trash
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = f'{src_table_prefix}_{get_random_string(string.ascii_lowercase, 20)}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{'tablePattern': f'%{src_table_prefix}%',
+                                                            'overrideDefaultOffsetColumns': True,
+                                                            'offsetColumns': ['added'],
+                                                            'offsetColumnToInitialOffsetValue': [{
+                                                                'key': 'added',
+                                                                'value': '${time:extractNanosecondsFromString(' +
+                                                                         '"1996-12-02 00:00:00.020111000")}'
+                                                            }]
+                                                            }])
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    connection = database.engine.connect()
+    # Create table
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    connection.execute(f"""
+                CREATE TABLE {table_name}(
+                    id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    name varchar(100) NOT NULL,
+                    age INT UNSIGNED NOT NULL,
+                    added TIMESTAMP(6) NOT NULL
+                )
+            """)
+
+    # Insert rows
+    logger.info('Adding four rows into %s database ...', database.type)
+    connection.execute(f'INSERT INTO {table_name} VALUES(1, "Charly", 14, "2005-02-08 14:00:00.100105002")')
+    connection.execute(f'INSERT INTO {table_name} VALUES(2, "Paco", 28, "1992-05-25 11:00:00.000201010")')
+    connection.execute(f'INSERT INTO {table_name} VALUES(3, "Eugenio", 21, "1996-12-01 23:00:00.020111")')
+    connection.execute(f'INSERT INTO {table_name} VALUES(4, "Romualdo", 19, "2000-06-15 18:30:00.10523121")')
+
+    try:
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        name_id_from_output = [(record.field['name'], record.field['id'])
+                               for record in snapshot[jdbc_multitable_consumer].output]
+
+        assert len(name_id_from_output) == 2
+        assert name_id_from_output == [('Romualdo', 4), ('Charly', 1)]
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f'DROP TABLE {table_name}')
