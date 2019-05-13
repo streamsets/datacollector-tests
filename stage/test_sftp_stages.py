@@ -35,7 +35,7 @@ def test_sftp_origin(sdc_builder, sdc_executor, sftp):
     sftp.put_string(os.path.join(sftp.path, sftp_file_name), raw_text_data)
 
     builder = sdc_builder.get_pipeline_builder()
-    sftp_ftp_client = builder.add_stage('SFTP/FTP Client', type='origin')
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
     sftp_ftp_client.file_name_pattern = sftp_file_name
     sftp_ftp_client.data_format = 'TEXT'
 
@@ -75,7 +75,7 @@ def test_sftp_origin_open_files(sdc_builder, sdc_executor, sftp, ssh):
     sftp.put_string(os.path.join(sftp.path, sftp_file_name), raw_text_data)
 
     builder = sdc_builder.get_pipeline_builder()
-    sftp_ftp_client = builder.add_stage('SFTP/FTP Client', type='origin')
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
     sftp_ftp_client.file_name_pattern = sftp_file_name
     sftp_ftp_client.data_format = 'TEXT'
 
@@ -144,7 +144,7 @@ def test_sftp_destination(sdc_builder, sdc_executor, sftp):
     directory.file_name_pattern = 'sdc*'
     directory.files_directory = local_tmp_directory
 
-    sftp_ftp_client = builder.add_stage('SFTP/FTP Client', type='destination')
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget')
     sftp_ftp_client.file_name_expression = sftp_file_name
 
     directory >> sftp_ftp_client
