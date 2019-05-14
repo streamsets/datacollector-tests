@@ -313,11 +313,68 @@ def test_directory_origin_configuration_custom_delimiter(sdc_builder, sdc_execut
 
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('use_custom_log_format', [True])
+@pytest.mark.parametrize('standard_format_provided', [True])
 @pytest.mark.parametrize('log_format', ['LOG4J'])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_custom_log4j_format(sdc_builder, sdc_executor,
-                                                            data_format, use_custom_log_format, log_format):
-    pass
+                                                            data_format, use_custom_log_format,
+                                                            log_format, shell_executor, file_writer,
+                                                            standard_format_provided):
+    """Check if the file custom_log_format for the log 4j format works properly.
+    We will also use same test case with differnt parameters to test use_custom_log_format configuration.
+    use_custom_log_format - True. Should parse custom logs properly.
+    use_custom_log_format - False Have two cases
+    i) standard_format_provided - True Should parse default log format %r [%t] %-5p %c %x - %m%n
+    ii) standard_format_provided - False Should not parse as log record provided is not standard.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = 'log4j_custom_log_data.log'
+    if use_custom_log_format or not standard_format_provided:
+        file_content = '2014-07-02 20:52:39 [main] 140 DEBUG: com.Streamsets.HelloWorld HelloExample:19 - This is debug : mkyong'
+    else:
+        if standard_format_provided:
+            file_content = '140 [main] DEBUG cat1.cat2.cat3 unknown - This is debug : mkyong'
+    custom_log4j_format = '%d{ISO8601} [%t] %r %-5p: %F %C:%L - %m%n' if use_custom_log_format else None
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, file_name), file_content)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 log_format=log_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern_mode='GLOB',
+                                 file_name_pattern='*.log',
+                                 use_custom_log_format=use_custom_log_format,
+                                 custom_log4j_format=custom_log4j_format)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build('test_directory_origin_configuration_custom_log4j_format')
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory].output
+        sdc_executor.stop_pipeline(pipeline)
+
+        if not use_custom_log_format and not standard_format_provided:
+            assert not output_records
+        else:
+            assert output_records[0].field['severity'] == 'DEBUG'
+            assert output_records[0].field['relativetime'] == '140'
+            assert output_records[0].field['thread'] == 'main'
+            assert output_records[0].field['message'] == 'This is debug : mkyong'
+            if use_custom_log_format:
+                assert output_records[0].field['filename'] == 'com.Streamsets.HelloWorld'
+                assert output_records[0].field['line'] == '19'
+                assert output_records[0].field['class'] == 'HelloExample'
+                assert output_records[0].field['timestamp'] == '2014-07-02 20:52:39'
+            else:
+                assert output_records[0].field['category'] == 'cat1.cat2.cat3'
+                assert output_records[0].field['ndc'] == 'unknown'
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
@@ -820,10 +877,18 @@ def test_directory_origin_configuration_use_custom_delimiter(sdc_builder, sdc_ex
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
+@pytest.mark.parametrize('use_custom_log_format', [True, False])
+@pytest.mark.parametrize('standard_format_provided', [True, False])
 @pytest.mark.parametrize('log_format', ['LOG4J'])
-@pytest.mark.parametrize('use_custom_log_format', [False, True])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_executor,
-                                                              data_format, log_format, use_custom_log_format):
-    pass
-
+                                                            data_format, use_custom_log_format,
+                                                            log_format, shell_executor, file_writer,
+                                                            standard_format_provided):
+    """Check if use_custom_log_format for the log 4j format works properly.
+    Actual TC is custom_log4j_format. We are just calling it with different parameters.
+    """
+    if not (use_custom_log_format and not standard_format_provided):
+        test_directory_origin_configuration_custom_log4j_format(sdc_builder, sdc_executor,
+                                                            data_format, use_custom_log_format,
+                                                            log_format, shell_executor, file_writer,
+                                                            standard_format_provided)
