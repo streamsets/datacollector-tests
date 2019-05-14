@@ -14,6 +14,7 @@
 #
 import logging
 import os
+import json
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -520,9 +521,44 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
 
 @pytest.mark.parametrize('data_format', ['JSON'])
 @pytest.mark.parametrize('json_content', ['ARRAY_OBJECTS', 'MULTIPLE_OBJECTS'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, data_format, json_content):
-    pass
+def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, shell_executor, data_format,
+                                                     file_writer, json_content):
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = f'{get_random_string()}.json'
+    raw_records = [{f'Key{msg}': f'Value{msg}'} for msg in range(3)] if json_content == "ARRAY_OBJECTS" \
+                  else """{'Key0':'Value0'}, {'Key1':'Value1'}, {'Key2':'Value2'}"""
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), json.dumps(raw_records))
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="*.json",
+                                 file_name_pattern_mode='GLOB',
+                                 json_content=json_content)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        if json_content == "ARRAY_OBJECTS":
+            assert 3 == len(output_records)
+            assert output_records[0].get_field_data('Key0') == 'Value0'
+            assert output_records[1].get_field_data('Key1') == 'Value1'
+            assert output_records[2].get_field_data('Key2') == 'Value2'
+        else:
+            assert 1 == len(output_records)
+            assert raw_records == output_records[0].field
+
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
