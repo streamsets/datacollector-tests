@@ -233,7 +233,7 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     FILE_NAME_2 = 'streamsets_temp2.txt'
     FILE_CONTENTS_1 = get_text_file_content('1')
     FILE_CONTENTS_2 = get_text_file_content('2')
-    number_of_batches = math.ceil(6 / batch_size_in_recs)
+    number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
         logger.debug('Creating files directory %s ...', files_directory)
