@@ -577,7 +577,7 @@ def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('max_record_length_in_chars', [20, 23, 30])
-def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, sdc_executor, data_format,
+def test_directory_origin_configuration_max_record_length_in_chars_delimited(sdc_builder, sdc_executor, data_format,
                                             max_record_length_in_chars, file_writer, shell_executor):
 
     """
@@ -618,7 +618,7 @@ def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, 
 
 @pytest.mark.parametrize('data_format', ['XML'])
 @pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_max_record_length_in_chars1(sdc_builder, sdc_executor, data_format):
+def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_builder, sdc_executor, data_format):
     pass
 
 
