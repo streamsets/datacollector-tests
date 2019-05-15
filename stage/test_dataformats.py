@@ -239,3 +239,58 @@ def test_avro_decimal_union_index_on_write(sdc_builder, sdc_executor):
 
     assert len(snapshot[parser].output) == 1
     assert snapshot[parser].output[0].get_field_data('/a') == 'b'
+
+
+# SDC-11557: Publish field attributes for typed nulls when reading Avro
+def test_avro_decimal_field_attributes_for_typed_null(sdc_builder, sdc_executor):
+    """Make sure that we persist decimal's field attributes for typed nul """
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = '{"decimal": "12.01"}{"decimal":null}'
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.conversion_method = 'BY_FIELD'
+    converter.field_type_converter_configs = [{
+        'fields': ['/decimal'],
+        'targetType': 'DECIMAL'
+    }]
+
+    generator = builder.add_stage('Data Generator')
+    generator.data_format = 'AVRO'
+    generator.avro_schema_location = 'INLINE'
+    generator.avro_schema = """{
+      "type" : "record",
+      "name" : "TestDecimal",
+      "fields" : [ {
+        "name" : "decimal",
+        "type" : ["null", {"name": "name", "type": "bytes", "logicalType": "decimal", "precision":4, "scale":2}],
+        "default" : null
+      }]
+    }"""
+
+    parser = builder.add_stage('Data Parser')
+    parser.field_to_parse = '/'
+    parser.target_field = '/'
+    parser.data_format = 'AVRO'
+    parser.avro_schema_location = 'SOURCE'
+
+    trash = builder.add_stage('Trash')
+
+    source >> converter >> generator >> parser >> trash
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    assert len(snapshot[parser].output) == 2
+    assert snapshot[parser].output[0].get_field_data('/decimal') == Decimal("12.01")
+    assert snapshot[parser].output[1].get_field_data('/decimal') == None
+
+    assert snapshot[parser].output[0].get_field_data('/decimal').attributes['precision'] == '4'
+    assert snapshot[parser].output[1].get_field_data('/decimal').attributes['precision'] == '4'
+
+    assert snapshot[parser].output[0].get_field_data('/decimal').attributes['scale'] == '2'
+    assert snapshot[parser].output[1].get_field_data('/decimal').attributes['scale'] == '2'
