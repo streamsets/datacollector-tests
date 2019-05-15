@@ -930,9 +930,13 @@ def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, sh
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('parse_nulls', [True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_null_constant(sdc_builder, sdc_executor, data_format, parse_nulls):
-    pass
+@pytest.mark.parametrize('null_constant', ['TEST_DATA'])
+def test_directory_origin_configuration_null_constant(sdc_builder, sdc_executor, shell_executor, delimited_file_writer,
+                                                      data_format, parse_nulls, null_constant):
+    """ Verify if DC can replaces the specified string constant with null values
+     in the delimited file when Parse Null is checked"""
+    test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, shell_executor, delimited_file_writer,
+                                                    null_constant, data_format, parse_nulls)
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -1023,9 +1027,57 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('parse_nulls', [False, True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, data_format, parse_nulls):
-    pass
+@pytest.mark.parametrize('null_constant', ['TEST_DATA'])
+def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, shell_executor, delimited_file_writer,
+                                                    null_constant, data_format, parse_nulls):
+    """ Verify if DC can replaces the specified string constant with null values or passes the string as it is
+     in the delimited file when Parse Null is True or False respectively"""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = f'{get_random_string()}.csv'
+    FILE_CONTENTS = [[f'{null_constant}', 'Field11','Field12', 'Field13'],
+                     ['Field21', 'Field22', f'{null_constant}', 'Field23']]
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        delimited_file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS, 'CSV', ',')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="*.csv",
+                                 file_name_pattern_mode='GLOB',
+                                 parse_nulls=parse_nulls
+                                 )
+        if parse_nulls:
+            directory.set_attributes(null_constant=null_constant)
+
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        assert 2 == len(output_records)
+        if parse_nulls:
+            assert output_records[0].get_field_data('/0') == None
+            assert output_records[1].get_field_data('/2') == None
+        else:
+            assert output_records[0].get_field_data('/0') == FILE_CONTENTS[0][0]
+            assert output_records[1].get_field_data('/2') == FILE_CONTENTS[1][2]
+
+        assert output_records[0].get_field_data('/1') == FILE_CONTENTS[0][1]
+        assert output_records[0].get_field_data('/2') == FILE_CONTENTS[0][2]
+        assert output_records[0].get_field_data('/3') == FILE_CONTENTS[0][3]
+        assert output_records[1].get_field_data('/0') == FILE_CONTENTS[1][0]
+        assert output_records[1].get_field_data('/1') == FILE_CONTENTS[1][1]
+        assert output_records[1].get_field_data('/3') == FILE_CONTENTS[1][3]
+
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('read_order', ['TIMESTAMP'])
