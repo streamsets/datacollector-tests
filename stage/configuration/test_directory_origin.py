@@ -576,14 +576,49 @@ def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, 
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, sdc_executor, data_format):
-    pass
+@pytest.mark.parametrize('max_record_length_in_chars', [20, 23, 30])
+def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, sdc_executor, data_format,
+                                            max_record_length_in_chars, file_writer, shell_executor):
+
+    """
+    Case 1:   Record length > max_record_length | Expected outcome --> Record to error
+    Case 2:   Record length = max_record_length | Expected outcome --> Record processed
+    Case 3:   Record length < max_record_length | Expected outcome --> Record processed
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    shell_executor(f'mkdir {files_directory}')
+
+    file_name = f'{get_random_string()}.txt'
+    file_path = os.path.join(files_directory, file_name)
+    file_contents = 'Field11,Field12,Field13'
+    file_writer(file_path, file_contents)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory')
+
+    directory.set_attributes(max_record_length_in_chars=max_record_length_in_chars,
+                            data_format=data_format,
+                            files_directory=files_directory,
+                            file_name_pattern=file_name)
+    trash = pipeline_builder.add_stage('Trash')
+    directory >> trash
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    output_records = snapshot[directory.instance_name].output
+
+    if max_record_length_in_chars == 20:
+        assert not snapshot[directory].output
+    else:
+        assert output_records[0].get_field_data('/0') == 'Field11'
+        assert output_records[0].get_field_data('/1') == 'Field12'
+        assert output_records[0].get_field_data('/2') == 'Field13'
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
 @pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, sdc_executor, data_format):
+def test_directory_origin_configuration_max_record_length_in_chars1(sdc_builder, sdc_executor, data_format):
     pass
 
 
