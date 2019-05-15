@@ -793,6 +793,58 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     # and value
     assert field_output[0].field['largeDecimal'].value == Decimal(decimal_str_val)
 
+
+# SDC-11561: File Type Converter doesn't work properly with null in MAP and LIST types
+@sdc_min_version('3.9.0') # For the JavaScript processor use
+def test_field_type_converter_null_map(sdc_builder, sdc_executor):
+    """Make sure that the origin doesn't fail (does a no-op) on a map that is null."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'TEXT'
+    origin.raw_data = 'Does not matter'
+    origin.stop_after_first_batch = True
+
+    javascript = builder.add_stage('JavaScript Evaluator')
+    javascript.script_record_type = 'SDC_RECORDS'
+    javascript.init_script = ''
+    javascript.destroy_script = ''
+    javascript.script =  """
+          var Field = Java.type('com.streamsets.pipeline.api.Field');
+          for (var i = 0; i < records.length; i++) {
+            records[i].sdcRecord.set(Field.create(Field.Type.MAP, null));
+            output.write(records[i]);
+          }
+        """
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.conversion_method = 'BY_FIELD'
+    converter.field_type_converter_configs = [{
+        'fields': ['/somethingSomewhere'],
+        'targetType': 'DECIMAL',
+        'dataLocale': 'en,US',
+        'scale': -1,
+        'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    origin >> javascript >> converter >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # No exceptions, so the pipeline should be in finished state
+    status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+    assert status == 'FINISHED'
+
+    history = sdc_executor.get_pipeline_history(pipeline)
+    assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+    assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+
+
 def test_field_zip(sdc_builder, sdc_executor):
     """Test field zip processor. The pipeline would look like:
 
