@@ -328,3 +328,40 @@ def test_pipeline_finisher(reset_offset, sdc_builder, sdc_executor):
     else:
         assert len(offset['offsets']) == 1
 
+
+# SDC-11555: Provide ability to use direct SDC record in scripting processors
+def test_javascript_sdc_record(sdc_builder, sdc_executor):
+    """Iterate over SDC record directly rather then JSR-223 wrapper."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.stop_after_first_batch = True
+
+    javascript = builder.add_stage('JavaScript Evaluator')
+    javascript.script_record_type = 'SDC_RECORDS'
+    javascript.init_script = ''
+    javascript.destroy_script = ''
+    javascript.script =  """
+          var Field = Java.type('com.streamsets.pipeline.api.Field');
+          for (var i = 0; i < records.length; i++) {
+            records[i].sdcRecord.set('/new', Field.create(Field.Type.STRING, 'new-value'));
+            records[i].sdcRecord.get('/old').setAttribute('attr', 'attr-value');
+            output.write(records[i]);
+          }
+        """
+
+    trash = builder.add_stage('Trash')
+
+    origin >> javascript >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    records = snapshot[javascript].output
+
+    assert len(records) == 1
+    assert 'new-value' == records[0].field['new']
+    assert 'attr-value' == records[0].get_field_data('/old').attributes['attr']

@@ -195,3 +195,41 @@ def test_expose_sdc_record(sdc_builder, sdc_executor):
     assert len(records) == 1
     # STF-798: RecordHeader is inconsistent in STF and SDC
     assert 'is-here' == records[0].header['values']['attr']
+
+
+# SDC-11555: Provide ability to use direct SDC record in scripting processors
+def test_sdc_record(sdc_builder, sdc_executor):
+    """Iterate over SDC record directly rather then JSR-223 wrapper."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.stop_after_first_batch = True
+
+    groovy = builder.add_stage('Groovy Evaluator')
+    groovy.script_record_type = 'SDC_RECORDS'
+    groovy.init_script = ''
+    groovy.destroy_script = ''
+    groovy.script =  """
+        import com.streamsets.pipeline.api.Field
+        for (record in records) {
+            record.sdcRecord.set('/new', Field.create(Field.Type.STRING, 'new-value'))
+            record.sdcRecord.get('/old').setAttribute('attr', 'attr-value')
+            output.write(record)
+        }
+    """
+
+    trash = builder.add_stage('Trash')
+
+    origin >> groovy >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    records = snapshot[groovy].output
+
+    assert len(records) == 1
+    assert 'new-value' == records[0].field['new']
+    assert 'attr-value' == records[0].get_field_data('/old').attributes['attr']
