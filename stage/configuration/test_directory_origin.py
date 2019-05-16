@@ -12,6 +12,7 @@
 #     sdc_executor.add_pipeline(pipeline)
 # -*- end test template -*-
 #
+from collections import OrderedDict
 import logging
 import os
 
@@ -511,9 +512,48 @@ def test_directory_origin_configuration_grok_pattern_definition(sdc_builder, sdc
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('header_line', ['IGNORE_HEADER', 'NO_HEADER', 'WITH_HEADER'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_header_line(sdc_builder, sdc_executor, data_format, header_line):
-    pass
+def test_directory_origin_configuration_header_line(sdc_builder, sdc_executor, data_format,
+                                                    header_line, shell_executor, file_writer):
+    """Test for header line configuration.
+        i) For IGNORE_HEADER - Should ignore headerof delimited file. Record should be with integers as key e.g. 0,1,2
+        ii) NO_HEADER - For delimited file with no header.
+        iii) WITH_HEADER - Should produce records with header fileds as column names."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = get_random_string()+'.csv'
+    csv_data = get_csv_records(True) if header_line in ['WITH_HEADER', 'IGNORE_HEADER'] else get_csv_records()
+    FILE_CONTENTS = '\n'.join([','.join(t) for t in csv_data])
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="*.csv",
+                                 file_name_pattern_mode='GLOB',
+                                 header_line=header_line)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        assert 2 == len(output_records)
+        if header_line == 'WITH_HEADER':
+            assert output_records[0].field == OrderedDict(zip(csv_data[0], csv_data[1]))
+            assert output_records[1].field == OrderedDict(zip(csv_data[0], csv_data[2]))
+        elif header_line in ['IGNORE_HEADER', 'NO_HEADER']:
+            ip_data = csv_data if header_line == 'NO_HEADER' else csv_data[1:3]
+            assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 3)], ip_data[0]))
+            assert output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 3)], ip_data[1]))
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM', 'DELIMITED', 'JSON', 'LOG', 'TEXT', 'XML'])
@@ -827,3 +867,11 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
                                                               data_format, log_format, use_custom_log_format):
     pass
 
+# General functions
+def get_csv_records(with_header=False):
+    if with_header:
+        csv_data = [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'Field13'],
+                    ['Field21', 'Field22', 'Field23']]
+    else:
+        csv_data = [['Field11', 'Field12', 'Field13'], ['Field21', 'Field22', 'Field23']]
+    return csv_data
