@@ -14,6 +14,7 @@
 #
 import logging
 import os
+from collections import OrderedDict
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -494,10 +495,49 @@ def test_directory_origin_configuration_ignore_control_characters(sdc_builder, s
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('ignore_empty_lines', [False, True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_ignore_empty_lines(sdc_builder, sdc_executor,
-                                                           delimiter_format_type, data_format, ignore_empty_lines):
-    pass
+def test_directory_origin_configuration_ignore_empty_lines(sdc_builder, sdc_executor, delimiter_format_type,
+                            data_format, ignore_empty_lines, file_writer, shell_executor):
+
+    """ignore_empty_lines = True -- if no field is found in the line then ignore the line.
+    In this test case 3 lines are there 1st line containing fields, 2nd line is empty and 3rd line
+    is containing fields.
+    check if ignore_empty_lines == True then skipping the 2nd line.
+    check if ignore_empty_lines == False then does not skip the empty 2nd line.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = f'{get_random_string()}.txt'
+    file_path = os.path.join(files_directory, file_name)
+    file_contents = '\n'.join(['Field11^Field12^Field13', '', 'Field21^Field22^Field23'])
+
+    try:
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(file_path, file_contents)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(delimiter_character='^',
+                                 delimiter_format_type=delimiter_format_type,
+                                 data_format=data_format,
+                                 ignore_empty_lines=ignore_empty_lines,
+                                 files_directory=files_directory,
+                                 file_name_pattern=file_name)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
+        if ignore_empty_lines:
+            assert output_records[1].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
+        else:
+            assert output_records[1].field == OrderedDict([('0', '')])
+            assert output_records[2].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('use_custom_delimiter', [True])
