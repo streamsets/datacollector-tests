@@ -18,6 +18,7 @@ import math
 import os
 import string
 import tempfile
+import textwrap
 import time
 from collections import OrderedDict
 
@@ -1069,6 +1070,53 @@ def test_grok_pattern_definition(sdc_builder, sdc_executor, stage_attributes, sh
     finally:
         if not keep_data:
             shell_executor(f'rm -r {files_directory}')
+
+
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED',
+                                               'delimiter_format_type': 'CUSTOM',
+                                               'ignore_empty_lines': False},
+                                              {'data_format': 'DELIMITED',
+                                               'delimiter_format_type': 'CUSTOM',
+                                               'ignore_empty_lines': True}])
+def test_ignore_empty_lines(sdc_builder, sdc_executor, stage_attributes, keep_data):
+    """Ignore Empty Lines configuration skips past empty lines in delimited files if enabled."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'file.txt'
+    file_path = os.path.join(files_directory, FILE_NAME)
+    file_contents = textwrap.dedent("""\
+                                    Field11|Field12|Field13
+
+                                    Field21|Field22|Field23
+                                    """)
+    EXPECTED_OUTPUT_IGNORE_EMPTY_LINES_ENABLED = [{'0': 'Field11', '1': 'Field12', '2': 'Field13'},
+                                                  {'0': 'Field21', '1': 'Field22', '2': 'Field23'}]
+    EXPECTED_OUTPUT_IGNORE_EMPTY_LINES_DISABLED = [{'0': 'Field11', '1': 'Field12', '2': 'Field13'},
+                                                   {'0': ''},
+                                                   {'0': 'Field21', '1': 'Field22', '2': 'Field23'}]
+
+    try:
+        sdc_executor.execute_shell(f'mkdir {files_directory}')
+        sdc_executor.write_file(file_path, file_contents)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory').set_attributes(files_directory=files_directory,
+                                                                           file_name_pattern=FILE_NAME,
+                                                                           **stage_attributes)
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [wiretap.destination, pipeline_finisher]
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        output_records = [record.field for record in wiretap.output_records]
+        assert output_records == (EXPECTED_OUTPUT_IGNORE_EMPTY_LINES_ENABLED
+                                  if directory.ignore_empty_lines
+                                  else EXPECTED_OUTPUT_IGNORE_EMPTY_LINES_DISABLED)
+    finally:
+        if not keep_data:
+            sdc_executor.execute_shell(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'header_line': 'IGNORE_HEADER'},
