@@ -930,7 +930,7 @@ def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, sh
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('parse_nulls', [True])
-@pytest.mark.parametrize('null_constant', ['TEST_DATA'])
+@pytest.mark.parametrize('null_constant', ['TEST_DATA', '\\N'])
 def test_directory_origin_configuration_null_constant(sdc_builder, sdc_executor, shell_executor, delimited_file_writer,
                                                       data_format, parse_nulls, null_constant):
     """ Verify if DC can replaces the specified string constant with null values
@@ -1027,14 +1027,15 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('parse_nulls', [False, True])
-@pytest.mark.parametrize('null_constant', ['TEST_DATA'])
+@pytest.mark.parametrize('null_constant', ['TEST_DATA', '\\N'])
 def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, shell_executor, delimited_file_writer,
                                                     null_constant, data_format, parse_nulls):
-    """ Verify if DC can replaces the specified string constant with null values or passes the string as it is
-     in the delimited file when Parse Null is True or False respectively"""
+    """ Verify if DC can replaces the specified string constant with null values or passes the string
+    as it is in the delimited file when Parse Null is True or False respectively.
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = f'{get_random_string()}.csv'
-    FILE_CONTENTS = [[f'{null_constant}', 'Field11','Field12', 'Field13'],
+    FILE_CONTENTS = [[f'{null_constant}', 'Field11', 'Field12', 'Field13'],
                      ['Field21', 'Field22', f'{null_constant}', 'Field23']]
 
     try:
@@ -1063,18 +1064,15 @@ def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, s
 
         assert 2 == len(output_records)
         if parse_nulls:
-            assert output_records[0].get_field_data('/0') == None
-            assert output_records[1].get_field_data('/2') == None
+            assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 5)],
+                                                              [None, 'Field11', 'Field12', 'Field13']))
+            assert output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 5)],
+                                                              ['Field21', 'Field22', None, 'Field23']))
         else:
-            assert output_records[0].get_field_data('/0') == FILE_CONTENTS[0][0]
-            assert output_records[1].get_field_data('/2') == FILE_CONTENTS[1][2]
-
-        assert output_records[0].get_field_data('/1') == FILE_CONTENTS[0][1]
-        assert output_records[0].get_field_data('/2') == FILE_CONTENTS[0][2]
-        assert output_records[0].get_field_data('/3') == FILE_CONTENTS[0][3]
-        assert output_records[1].get_field_data('/0') == FILE_CONTENTS[1][0]
-        assert output_records[1].get_field_data('/1') == FILE_CONTENTS[1][1]
-        assert output_records[1].get_field_data('/3') == FILE_CONTENTS[1][3]
+            assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 5)],
+                                                              [f'{null_constant}', 'Field11', 'Field12', 'Field13']))
+            assert output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 5)],
+                                                              ['Field21', 'Field22', f'{null_constant}', 'Field23']))
 
     finally:
         shell_executor(f'rm -r {files_directory}')
