@@ -233,12 +233,15 @@ def test_directory_origin_configuration_batch_wait_time_in_secs(sdc_builder, sdc
 def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_executor, shell_executor,
                                                            buffer_limit_in_kb, file_writer,):
     """ Verify if DC can discard the records as per size of the buffer. We will set the buffer limit in kb.
-        Create a file with texts greater than this buffer then DC should discard the records.
+        Create a file with two lines of text. In first line keep text within buffer and in next line keep text
+        greater than this buffer then DC should discard the second line.
         Minimum required buffer size is 64 KB.
     """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = f'{get_random_string()}.txt'
-    FILE_CONTENTS = get_random_string(string.ascii_lowercase,  (buffer_limit_in_kb + 1)*1024)
+    text_within_buffer_limit = get_random_string(string.ascii_lowercase,  10)
+    text_above_buffer_limit = get_random_string(string.ascii_lowercase,  (buffer_limit_in_kb + 1)*1024)
+    FILE_CONTENTS = text_within_buffer_limit + '\n' + text_above_buffer_limit
 
     try:
         logger.debug('Creating files directory %s ...', files_directory)
@@ -250,7 +253,7 @@ def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_exec
         directory.set_attributes(buffer_limit_in_kb=buffer_limit_in_kb,
                                  data_format='TEXT',
                                  files_directory=files_directory,
-                                 file_name_pattern=FILE_NAME
+                                 file_name_pattern="*.txt"
                                  )
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
@@ -259,7 +262,9 @@ def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_exec
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        assert len(snapshot[directory].output) == 0
+
+        assert len(snapshot[directory].output) == 1
+        assert snapshot[directory].output[0].field['text'] == text_within_buffer_limit
 
     finally:
         shell_executor(f'rm -r {files_directory}')
