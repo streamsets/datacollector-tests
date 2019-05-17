@@ -229,13 +229,13 @@ def test_directory_origin_configuration_batch_wait_time_in_secs(sdc_builder, sdc
     pass
 
 
-@pytest.mark.parametrize('buffer_limit_in_kb', [64, 90])
+@pytest.mark.parametrize('buffer_limit_in_kb', [64, 96])
 def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_executor, shell_executor,
                                                            buffer_limit_in_kb, file_writer,):
-    """ Verify if DC can discard the records as per size of the buffer. We will set the buffer limit in kb.
-        Create a file with two lines of text. In first line keep text within buffer and in next line keep text
-        greater than this buffer then DC should discard the second line.
-        Minimum required buffer size is 64 KB.
+    """Verify if DC can discard the records as per size of the buffer. We will set the buffer limit in kb.
+    Create a file with two lines of text. In first line keep text within buffer and in next line keep text
+    greater than this buffer then DC should discard the second line.
+    Minimum required buffer size is 64 KB.
     """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = f'{get_random_string()}.txt'
