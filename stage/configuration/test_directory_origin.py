@@ -234,8 +234,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = get_text_file_content('1')
-    FILE_CONTENTS_2 = get_text_file_content('2')
+    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
+    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -375,11 +375,44 @@ def test_directory_origin_configuration_custom_log_format(sdc_builder, sdc_execu
     pass
 
 
-@pytest.mark.parametrize('data_format', ['AVRO', 'DELIMITED', 'EXCEL', 'JSON', 'LOG',
-                                         'PROTOBUF', 'SDC_JSON', 'TEXT', 'WHOLE_FILE', 'XML'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, data_format):
-    pass
+@pytest.mark.parametrize('data_format', ['SDC_JSON'])
+# 'AVRO', 'DELIMITED', 'EXCEL', 'JSON', 'LOG', 'PROTOBUF',  'TEXT', 'WHOLE_FILE', 'XML'
+def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, data_format,
+                                                    shell_executor, file_writer):
+    """Test if Directory Origin can read data with different data format.
+    We will be testing only SDC_JSON data formats now. Other data formats are covered in other TCs.
+    Following is mapping of data format to respective TC.
+    AVRO - test_directory_origin_configuration_avro_schema
+    DELIMITED - test_directory_origin_configuration_delimiter_format_type
+    EXCEL - test_directory_origin_configuration_excel_header_option
+    JSON - test_directory_origin_configuration_json_content
+    LOG - test_directory_origin_configuration_log_format
+    PROTOBUF - test_directory_origin_configuration_protobuf_descriptor_file
+    TEXT - test_directory_origin_configuration_process_subdirectories. Other TCs which validates different configs.
+    WHOLE_FILE - test_directory_origin_configuration_buffer_size_in_bytes
+    XML - test_directory_origin_configuration_delimiter_element
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+
+    try:
+        json_data = DirectoryOriginCommon.setup_sdc_json_file(sdc_executor, files_directory)
+
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': '*.json',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': files_directory,
+                      'json_content': 'MULTIPLE_OBJECTS'}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+    
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory].output
+        assert 2 == len(output_records)
+        assert output_records[0].field == json_data[0]
+        assert output_records[1].field == json_data[1]
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
@@ -1429,3 +1462,4 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
         assert output_records[0].field == json_data[0]
+
