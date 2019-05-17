@@ -12,6 +12,7 @@
 #     sdc_executor.add_pipeline(pipeline)
 # -*- end test template -*-
 #
+import json
 import logging
 import math
 import os
@@ -232,8 +233,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = get_text_file_content('1')
-    FILE_CONTENTS_2 = get_text_file_content('2')
+    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
+    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -373,11 +374,44 @@ def test_directory_origin_configuration_custom_log_format(sdc_builder, sdc_execu
     pass
 
 
-@pytest.mark.parametrize('data_format', ['AVRO', 'DELIMITED', 'EXCEL', 'JSON', 'LOG',
-                                         'PROTOBUF', 'SDC_JSON', 'TEXT', 'WHOLE_FILE', 'XML'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, data_format):
-    pass
+@pytest.mark.parametrize('data_format', ['SDC_JSON'])
+# 'AVRO', 'DELIMITED', 'EXCEL', 'JSON', 'LOG', 'PROTOBUF',  'TEXT', 'WHOLE_FILE', 'XML'
+def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, data_format,
+                                                    shell_executor, file_writer):
+    """Test if Directory Origin can read data with different data format.
+    We will be testing only SDC_JSON data formats now. Other data formats are covered in other TCs.
+    Following is mapping of data format to respective TC.
+    AVRO - test_directory_origin_configuration_avro_schema
+    DELIMITED - test_directory_origin_configuration_delimiter_format_type
+    EXCEL - test_directory_origin_configuration_excel_header_option
+    JSON - test_directory_origin_configuration_json_content
+    LOG - test_directory_origin_configuration_log_format
+    PROTOBUF - test_directory_origin_configuration_protobuf_descriptor_file
+    TEXT - test_directory_origin_configuration_process_subdirectories. Other TCs which validates different configs.
+    WHOLE_FILE - test_directory_origin_configuration_buffer_size_in_bytes
+    XML - test_directory_origin_configuration_delimiter_element
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+
+    try:
+        json_data = DirectoryOriginCommon.setup_sdc_json_file(sdc_executor, files_directory)
+
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': '*.json',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': files_directory,
+                      'json_content': 'MULTIPLE_OBJECTS'}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+    
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory].output
+        assert 2 == len(output_records)
+        assert output_records[0].field == json_data[0]
+        assert output_records[1].field == json_data[1]
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
@@ -917,6 +951,53 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-## Start of general supportive functions
-def get_text_file_content(file_number):
-    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return (directory, pipeline)
+
+    @staticmethod
+    def create_file_directory(file_name, file_content, shell_executor, file_writer):
+        files_directory = os.path.join('/tmp', get_random_string())
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, file_name), file_content)
+        return files_directory
+
+    @staticmethod
+    def get_text_file_content(file_number, number_of_lines_in_file=3):
+        return '\n'.join(['This is line{}{}'.format(str(file_number), i)
+                          for i in range(1, (number_of_lines_in_file + 1))])
+
+    @staticmethod
+    def setup_sdc_json_file(sdc_executor, files_directory):
+        json_data = [{"field1": "abc", "field2": "def", "field3": "ghi"},
+                     {"field1": "jkl", "field2": "mno", "field3": "pqr"}]
+        raw_data = ''.join(json.dumps(record) for record in json_data)
+
+        pipeline_builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='SDC_JSON',
+                                directory_template=files_directory,
+                                files_prefix='sdc-${sdc:id()}', files_suffix='json', max_records_in_file=5)
+
+        dev_raw_data_source >> local_fs
+        files_pipeline = pipeline_builder.build('Generate files pipeline')
+        sdc_executor.add_pipeline(files_pipeline)
+
+        # generate some batches/files
+        sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
+        return json_data
