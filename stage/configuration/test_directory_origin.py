@@ -650,7 +650,7 @@ def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, 
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = f'{get_random_string()}.json'
     raw_records = [{f'Key{msg}': f'Value{msg}'} for msg in range(3)] if json_content == "ARRAY_OBJECTS" \
-                  else """{'Key0':'Value0'}, {'Key1':'Value1'}, {'Key2':'Value2'}"""
+        else """{'Key0':'Value0'}, {'Key1':'Value1'}, {'Key2':'Value2'}"""
 
     try:
         logger.debug('Creating files directory %s ...', files_directory)
