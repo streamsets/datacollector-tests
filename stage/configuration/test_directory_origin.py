@@ -229,7 +229,7 @@ def test_directory_origin_configuration_batch_wait_time_in_secs(sdc_builder, sdc
     pass
 
 
-@pytest.mark.parametrize('buffer_limit_in_kb', [64])
+@pytest.mark.parametrize('buffer_limit_in_kb', [64, 90])
 def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_executor, shell_executor,
                                                            buffer_limit_in_kb, file_writer,):
     """ Verify if DC can discard the records as per size of the buffer. We will set the buffer limit in kb.
@@ -241,7 +241,7 @@ def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_exec
     FILE_NAME = f'{get_random_string()}.txt'
     text_within_buffer_limit = get_random_string(string.ascii_lowercase,  10)
     text_above_buffer_limit = get_random_string(string.ascii_lowercase,  (buffer_limit_in_kb + 1)*1024)
-    FILE_CONTENTS = text_within_buffer_limit + '\n' + text_above_buffer_limit
+    FILE_CONTENTS = '\n'.join([text_within_buffer_limit, text_above_buffer_limit])
 
     try:
         logger.debug('Creating files directory %s ...', files_directory)
@@ -253,8 +253,7 @@ def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_exec
         directory.set_attributes(buffer_limit_in_kb=buffer_limit_in_kb,
                                  data_format='TEXT',
                                  files_directory=files_directory,
-                                 file_name_pattern="*.txt"
-                                 )
+                                 file_name_pattern="*.txt")
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
