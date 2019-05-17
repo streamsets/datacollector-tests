@@ -100,7 +100,7 @@ def test_shell_executor_impersonation(sdc_executor, pipeline_shell_generator, pi
     records = snapshot[pipeline_shell_read.origin_stage].output_lanes[pipeline_shell_read.origin_stage.output_lanes[0]]
     assert len(records) == 1
     # Blocked by TEST-128, should be different user
-    assert records[0].value['value']['text']['value'] == 'sdc'
+    assert records[0].field['text'].value == 'sdc'
 
 
 def test_stream_selector_processor(sdc_builder, sdc_executor):
@@ -148,14 +148,14 @@ def test_stream_selector_processor(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[0]]
-    multi_winners_from_snapshot = [{field: value['value']
-                                    for field, value in record.value['value'].items()}
+    multi_winners_from_snapshot = [{key: value
+                                    for key, value in record.field.items()}
                                    for record in multi_winners_records]
     assert multi_winners == multi_winners_from_snapshot
 
     not_multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[1]]
-    not_multi_winners_from_snapshot = [{field: value['value']
-                                        for field, value in record.value['value'].items()}
+    not_multi_winners_from_snapshot = [{field: value
+                                        for field, value in record.field.items()}
                                        for record in not_multi_winners_records]
     assert not_multi_winners == not_multi_winners_from_snapshot
 
@@ -293,3 +293,75 @@ def test_log_parser_processor_multiple_grok_patterns_not_all_present(sdc_builder
     assert 1 == len(bad_records)
 
     assert 'DEBUG' == bad_records[0]['log']
+
+
+@sdc_min_version('3.9.0')
+@pytest.mark.parametrize('reset_offset', [True, False])
+def test_pipeline_finisher(reset_offset, sdc_builder, sdc_executor):
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.raw_data = '{}'
+
+    executor = builder.add_stage('Pipeline Finisher Executor')
+    executor.reset_offset = reset_offset
+
+    origin >> executor
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # The pipeline should read/write exactly one record
+    history = sdc_executor.get_pipeline_history(pipeline)
+    assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+    assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+
+    # Let's validate offset
+    offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()
+    assert offset is not None
+    assert offset['offsets'] is not None
+
+    if reset_offset:
+        assert len(offset['offsets']) == 0
+    else:
+        assert len(offset['offsets']) == 1
+
+
+# SDC-11555: Provide ability to use direct SDC record in scripting processors
+def test_javascript_sdc_record(sdc_builder, sdc_executor):
+    """Iterate over SDC record directly rather then JSR-223 wrapper."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.stop_after_first_batch = True
+
+    javascript = builder.add_stage('JavaScript Evaluator')
+    javascript.script_record_type = 'SDC_RECORDS'
+    javascript.init_script = ''
+    javascript.destroy_script = ''
+    javascript.script =  """
+          var Field = Java.type('com.streamsets.pipeline.api.Field');
+          for (var i = 0; i < records.length; i++) {
+            records[i].sdcRecord.set('/new', Field.create(Field.Type.STRING, 'new-value'));
+            records[i].sdcRecord.get('/old').setAttribute('attr', 'attr-value');
+            output.write(records[i]);
+          }
+        """
+
+    trash = builder.add_stage('Trash')
+
+    origin >> javascript >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    records = snapshot[javascript].output
+
+    assert len(records) == 1
+    assert 'new-value' == records[0].field['new']
+    assert 'attr-value' == records[0].get_field_data('/old').attributes['attr']

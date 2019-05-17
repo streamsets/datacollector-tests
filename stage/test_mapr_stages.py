@@ -140,13 +140,13 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(cdc_pipeline)
         sdc_executor.stop_pipeline(json_db_origin_pipeline)
 
-        actual_cdc = [record.value2 for record in cdc_snapshot[mapr_db_cdc_consumer].output]
+        actual_cdc = [record.field for record in cdc_snapshot[mapr_db_cdc_consumer].output]
         for record in test_data:
             # In the pipeline, Field Remover stage removed field 'operation' and so it will not be present in actual.
             # Remove it from test_data, for verification with assert.
             record.pop('operation')
 
-        actual_json = [record.value2 for record in json_snapshot[mapr_db_json_origin].output]
+        actual_json = [record.field for record in json_snapshot[mapr_db_json_origin].output]
 
         assert actual_cdc == test_data
         assert actual_json == final_data
@@ -289,7 +289,7 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
         sdc_executor.start_pipeline(mapr_fs_pipeline).wait_for_finished()
 
         snapshot = snapshot_pipeline_command.wait_for_finished().snapshot
-        lines_from_snapshot = [record.value['value']['text']['value']
+        lines_from_snapshot = [record.field['text'].value
                                for record in snapshot[snapshot_pipeline[0].instance_name].output]
 
         assert lines_from_snapshot == lines_in_file
@@ -481,7 +481,7 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
         snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, start_pipeline=True,
                                                                   wait=False)
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        snapshot_data = snapshot[consumer_pipeline[0].instance_name].output[0].value['value']['text']['value']
+        snapshot_data = snapshot[consumer_pipeline[0].instance_name].output[0].field['text'].value
         assert dev_raw_data_source.raw_data == snapshot_data
     finally:
         sdc_executor.stop_pipeline(consumer_pipeline)
@@ -541,7 +541,7 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
         snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, start_pipeline=True,
                                                                   wait=False)
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        snapshot_data = [record.value['value']['text']['value'] for record in
+        snapshot_data = [record.field['text'].value for record in
                          snapshot[consumer_pipeline[0].instance_name].output]
         sdc_executor.stop_pipeline(producer_pipeline)
         assert len(snapshot_data) > 0
@@ -550,7 +550,7 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
         sdc_executor.start_pipeline(producer_pipeline_2).wait_for_pipeline_batch_count(wait_batches)
         snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, wait=False)
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        snapshot_data = [record.value['value']['text']['value'] for record in
+        snapshot_data = [record.field['text'].value for record in
                          snapshot[consumer_pipeline[0].instance_name].output]
         sdc_executor.stop_pipeline(producer_pipeline_2)
         assert len(snapshot_data) > 0
@@ -669,7 +669,7 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
         snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=False,
                                                                   wait=False)
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        snapshot_data = snapshot[snapshot_pipeline[0].instance_name].output[0].value['value']['text']['value']
+        snapshot_data = snapshot[snapshot_pipeline[0].instance_name].output[0].field['text'].value
 
         assert dev_raw_data_source.raw_data == snapshot_data
     finally:
@@ -677,5 +677,3 @@ def test_mapr_cluster_streams(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True)
         sdc_executor.stop_pipeline(producer_pipeline)
         sdc_executor.stop_pipeline(consumer_pipeline)
-
-

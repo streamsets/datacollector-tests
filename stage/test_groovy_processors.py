@@ -102,7 +102,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source >> groovy_evaluator >> trash
-    pipeline = pipeline_builder.build('Groovy Evaluator pipeline')
+    pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -111,7 +111,125 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     output_records = snapshot[groovy_evaluator.instance_name].output  # is a list of output records
     # search for a record whose 'name' is raw_company_1['name'] and assert new attribute ('officeSpace') is created
     # with expected boolean value (where 'floors' > 2)
-    record_1 = list(filter(lambda x: x.value['value']['name']['value'] == raw_company_1['name'], output_records))[0]
-    assert record_1.value['value']['officeSpace']['value'] == (raw_company_1['floors'] > 2)
-    record_2 = list(filter(lambda x: x.value['value']['name']['value'] == raw_company_2['name'], output_records))[0]
-    assert record_2.value['value']['officeSpace']['value'] == (raw_company_2['floors'] > 2)
+    record_1 = next(record for record in output_records if record.field['name'] == raw_company_1['name'])
+    assert record_1.field['officeSpace'] == (raw_company_1['floors'] > 2)
+    record_2 = next(record for record in output_records if record.field['name'] == raw_company_2['name'])
+    assert record_2.field['officeSpace'] == (raw_company_2['floors'] > 2)
+
+
+# SDC-10353: Unable to delete record headers in Scripting Evaluators
+def test_delete_header_attribute(sdc_builder, sdc_executor):
+    """Make sure that deleted attributes stays deleted."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='TEXT', raw_data="BLA BLA")
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.header_attribute_expressions = [
+        {'attributeToSet': 'remove', 'headerAttributeExpression': 'I should be deleted'}
+    ]
+
+    groovy = builder.add_stage('Groovy Evaluator')
+    groovy.init_script = ''
+    groovy.destroy_script = ''
+    groovy.script =  """
+        for (record in records) {
+            record.attributes.remove('remove')
+            output.write(record)
+        }
+    """
+
+    trash = builder.add_stage('Trash')
+
+    origin >> expression >> groovy >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    records = snapshot[groovy].output
+
+    assert len(records) == 1
+    # STF-797: Please add a way how to detect that given header attribute doesn't exists
+    assert 'remove' not in records[0].header._data
+
+
+# SDC-11546: Expose the underlying Data Collector Record in Scripting processors
+def test_expose_sdc_record(sdc_builder, sdc_executor):
+    """Ensure that underlying SDC record is accessible."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='TEXT', raw_data="BLA BLA")
+    origin.stop_after_first_batch = True
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_attribute_expressions = [
+        {"fieldToSet": "/text", "attributeToSet": "attr", "fieldAttributeExpression": "is-here"}
+    ]
+
+    groovy = builder.add_stage('Groovy Evaluator')
+    groovy.init_script = ''
+    groovy.destroy_script = ''
+    groovy.script =  """
+        for (record in records) {
+            record.attributes['attr'] = record.sdcRecord.get('/text').getAttribute('attr')
+            output.write(record)
+        }
+    """
+
+    trash = builder.add_stage('Trash')
+
+    origin >> expression >> groovy >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    records = snapshot[groovy].output
+
+    assert len(records) == 1
+    # STF-798: RecordHeader is inconsistent in STF and SDC
+    assert 'is-here' == records[0].header['values']['attr']
+
+
+# SDC-11555: Provide ability to use direct SDC record in scripting processors
+def test_sdc_record(sdc_builder, sdc_executor):
+    """Iterate over SDC record directly rather then JSR-223 wrapper."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.stop_after_first_batch = True
+
+    groovy = builder.add_stage('Groovy Evaluator')
+    groovy.script_record_type = 'SDC_RECORDS'
+    groovy.init_script = ''
+    groovy.destroy_script = ''
+    groovy.script =  """
+        import com.streamsets.pipeline.api.Field
+        for (record in records) {
+            record.sdcRecord.set('/new', Field.create(Field.Type.STRING, 'new-value'))
+            record.sdcRecord.get('/old').setAttribute('attr', 'attr-value')
+            output.write(record)
+        }
+    """
+
+    trash = builder.add_stage('Trash')
+
+    origin >> groovy >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    records = snapshot[groovy].output
+
+    assert len(records) == 1
+    assert 'new-value' == records[0].field['new']
+    assert 'attr-value' == records[0].get_field_data('/old').attributes['attr']

@@ -132,7 +132,7 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
 
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-start'
-        assert record.value['value']['user']['value'] == 'admin'
+        assert record.field['user'].value == 'admin'
 
     finally:
         sdc_executor.stop_pipeline(successful_receiver_pipeline)
@@ -167,7 +167,7 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
 
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
-        assert record.value['value']['reason']['value'] == 'USER_ACTION'
+        assert record.field['reason'].value == 'USER_ACTION'
 
     finally:
         sdc_executor.stop_pipeline(successful_receiver_pipeline)
@@ -200,7 +200,7 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
 
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
-        assert record.value['value']['reason']['value'] == 'FINISHED'
+        assert record.field['reason'].value == 'FINISHED'
 
     finally:
         sdc_executor.stop_pipeline(successful_receiver_pipeline)
@@ -234,7 +234,7 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
 
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
-        assert record.value['value']['reason']['value'] == 'FAILURE'
+        assert record.field['reason'].value == 'FAILURE'
 
     finally:
         sdc_executor.stop_pipeline(successful_receiver_pipeline)
