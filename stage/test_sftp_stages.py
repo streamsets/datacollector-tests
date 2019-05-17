@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import string
 import tempfile
 
-from streamsets.testframework.markers import sftp, sdc_min_version
+from streamsets.testframework.markers import sftp, sdc_min_version, ssh
 from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
 
 
 @sdc_min_version('3.8.0')
@@ -32,7 +35,7 @@ def test_sftp_origin(sdc_builder, sdc_executor, sftp):
     sftp.put_string(os.path.join(sftp.path, sftp_file_name), raw_text_data)
 
     builder = sdc_builder.get_pipeline_builder()
-    sftp_ftp_client = builder.add_stage('SFTP/FTP Client', type='origin')
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
     sftp_ftp_client.file_name_pattern = sftp_file_name
     sftp_ftp_client.data_format = 'TEXT'
 
@@ -55,6 +58,53 @@ def test_sftp_origin(sdc_builder, sdc_executor, sftp):
     finally:
         client.close()
         transport.close()
+
+
+@sdc_min_version('3.8.0')
+@sftp
+@ssh
+def test_sftp_origin_open_files(sdc_builder, sdc_executor, sftp, ssh):
+    """Test SFTP origin to see if it leaves any open files on the SSH server after its pipeline has processed records.
+    We first create a file on SFTP server and have the SFTP origin stage read it. We then check if open files are left
+    after the pipeline processes all data. The pipeline look like:
+        sftp_ftp_client >> trash
+    """
+    sftp_file_name = get_random_string(string.ascii_letters, 10)
+    raw_text_data = 'Hello World!'
+    logger.debug('Creating file at %s/%s on SFTP server ...', sftp.path, sftp_file_name)
+    sftp.put_string(os.path.join(sftp.path, sftp_file_name), raw_text_data)
+
+    builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
+    sftp_ftp_client.file_name_pattern = sftp_file_name
+    sftp_ftp_client.data_format = 'TEXT'
+
+    trash = builder.add_stage('Trash')
+
+    sftp_ftp_client >> trash
+    sftp_ftp_client_pipeline = builder.build('SFTP Origin open file check Pipeline').configure_for_environment(sftp)
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+    start_command = sdc_executor.start_pipeline(sftp_ftp_client_pipeline)
+
+    ssh_client = ssh.client
+    try:
+        # make sure pipeline has processed all data
+        start_command.wait_for_pipeline_output_records_count(1)
+        # since now pipeline has processed all records, make sure it has not left a open stream to the remote file
+        ssh_stdin, ssh_stdout, ssh_stderr = ssh_client.exec_command(f'lsof | grep {sftp_file_name}')
+        lsof_status = ssh_stdout.channel.recv_exit_status()
+        assert lsof_status == 1
+    finally:
+        sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+        ssh_client.close()
+        # Delete the test SFTP origin file we created
+        transport, sftp_client = sftp.client
+        try:
+            logger.debug('Removing file at %s/%s on SFTP server ...', sftp.path, sftp_file_name)
+            sftp_client.remove(os.path.join(sftp.path, sftp_file_name))
+        finally:
+            sftp_client.close()
+            transport.close()
 
 
 @sdc_min_version('3.9.0')
@@ -94,7 +144,7 @@ def test_sftp_destination(sdc_builder, sdc_executor, sftp):
     directory.file_name_pattern = 'sdc*'
     directory.files_directory = local_tmp_directory
 
-    sftp_ftp_client = builder.add_stage('SFTP/FTP Client', type='destination')
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget')
     sftp_ftp_client.file_name_expression = sftp_file_name
 
     directory >> sftp_ftp_client

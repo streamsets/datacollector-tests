@@ -15,6 +15,7 @@
 import json
 import logging
 import string
+import time
 import uuid
 from collections import OrderedDict
 from datetime import datetime
@@ -26,7 +27,7 @@ from urllib.parse import urlparse
 import pytest
 import sqlalchemy
 from streamsets.testframework.markers import database, cluster, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
         assert len(snapshot[mapreduce.instance_name].event_records) == len(rows_in_database)
         # make sure MapReduce job is done and is successful
         for event in snapshot[mapreduce.instance_name].event_records:
-            job_id = event.value['value']['job-id']['value']
+            job_id = event.field['job-id'].value
             assert cluster.yarn.wait_for_job_to_end(job_id) == 'SUCCEEDED'
         # assert data
         hive_cursor.execute(f'RELOAD `{table_name}`')
@@ -1564,6 +1565,12 @@ def test_sub_partitions(sdc_builder, sdc_executor, cluster):
                                  decimal_precision_expression='10',
                                  table_name="${record:attribute('table_name')}",
                                  time_basis="${record:value('/timestamp')}")
+    if Version(sdc_builder.version) >= Version('3.9.0'):
+        # Convert Timestamps To String has to be set like below as it was not working with the set_attributes() method.
+        # Probably it was not working due to having the stage defined in more than one lib that this has not been
+        # confirmed. Additionally it has to be set only for SDC versions >= 3.9.0 as it is when this new property
+        # is added.
+        hive_metadata.configuration.update({"convertTimesToString": True})
 
     hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
     hadoop_fs.set_attributes(avro_schema_location='HEADER',
@@ -1590,6 +1597,103 @@ def test_sub_partitions(sdc_builder, sdc_executor, cluster):
         def split_date_time_string(datetime_str):
             v = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
             return [datetime_str, v.strftime('%Y'), v.strftime('%m'),
+                    v.strftime('%d'), v.strftime('%H'), v.strftime('%M'),
+                    v.strftime('%S')]
+
+        raw_values = [list(chain.from_iterable([[v] if k != 'timestamp' else split_date_time_string(v)
+                                                for k, v in row.items()])) for row in raw_data]
+        assert sorted(hive_values) == sorted(raw_values)
+    finally:
+        logger.info('Dropping table %s in Hive...', _get_qualified_table_name(None, table_name))
+        hive_cursor.execute('DROP TABLE {0}'.format(_get_qualified_table_name(None, table_name)))
+
+
+@sdc_min_version('3.9.0')
+@cluster('cdh')
+def test_native_parquet_timestamps(sdc_builder, sdc_executor, cluster):
+    """Validate native timestamps can be written in a Hive Parquet table. The pipeline looks like:
+
+        dev_raw_data_source >> expression_evaluator >> field_type_convertor >> hive_metadata
+        hive_metadata >> hadoop_fs
+        hive_metadata >> hive_metastore
+        hadoop_fs >= mapreduce
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    raw_data = [dict(id=1, name='abc', timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                dict(id=2, name='def', timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+                dict(id=3, name='ghi', timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))]
+
+    dev_raw_data_source_data = ''.join(json.dumps(d) for d in raw_data)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=dev_raw_data_source_data,
+                                       stop_after_first_batch=True)
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[{'attributeToSet': 'table_name',
+                                                                       'headerAttributeExpression': table_name}])
+
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter.conversion_method = 'BY_FIELD'
+    field_type_converter.set_attributes(field_type_converter_configs=[{'fields': ['/timestamp'],
+                                                                       'targetType':'DATETIME',
+                                                                       'dateFormat':'YYYY_MM_DD_HH_MM_SS'}])
+
+    partition_configuration = [{'name': 'year', 'valueType': 'STRING', 'valueEL': '${YYYY()}'},
+                               {'name': 'month', 'valueType': 'STRING', 'valueEL': '${MM()}'},
+                               {'name': 'day', 'valueType': 'STRING', 'valueEL': '${DD()}'},
+                               {'name': 'hour', 'valueType': 'STRING', 'valueEL': '${hh()}'},
+                               {'name': 'minute', 'valueType': 'STRING', 'valueEL': '${mm()}'},
+                               {'name': 'seconds', 'valueType': 'STRING', 'valueEL': '${ss()}'}]
+
+    hive_metadata = pipeline_builder.add_stage('Hive Metadata')
+    hive_metadata.set_attributes(data_format='PARQUET',
+                                 database_expression="${record:attribute('db')}",
+                                 external_table=False,
+                                 partition_configuration=partition_configuration,
+                                 decimal_scale_expression='5',
+                                 decimal_precision_expression='10',
+                                 table_name="${record:attribute('table_name')}",
+                                 time_basis="${record:value('/timestamp')}")
+
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(avro_schema_location='HEADER',
+                             data_format='AVRO',
+                             directory_in_header=True,
+                             use_roll_attribute=True,
+                             produce_events=True,
+                             max_records_in_file=1)
+
+    hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
+
+    mapreduce = pipeline_builder.add_stage('MapReduce', type='executor')
+    mapreduce.set_attributes(job_type='AVRO_PARQUET',
+                             output_directory="${file:parentPath(file:parentPath(record:value('/filepath')))}")
+
+    dev_raw_data_source >> expression_evaluator >> field_type_converter >> hive_metadata
+    hive_metadata >> hadoop_fs
+    hive_metadata >> hive_metastore
+    hadoop_fs >= mapreduce
+
+    pipeline = pipeline_builder.build(
+        title='Hive drift test - hive parquet native timestamps').configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    hive_cursor = cluster.hive.client.cursor()
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        # Need to wait for 45 seconds until mapreduce jobs are finished.
+        time.sleep(45)
+        hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
+        hive_values = [list(row) for row in hive_cursor.fetchall()]
+
+        def split_date_time_string(datetime_str):
+            v = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
+            return [v, v.strftime('%Y'), v.strftime('%m'),
                     v.strftime('%d'), v.strftime('%H'), v.strftime('%M'),
                     v.strftime('%S')]
 

@@ -72,7 +72,7 @@ def test_tcp_server_simple(sdc_executor, tcp_server_pipeline):
     snapshot = snapshot_cmd.wait_for_finished().snapshot
     origin_data = snapshot[tcp_server_pipeline.tcp_server.instance_name]
     assert len(origin_data.output) == 1
-    assert origin_data.output[0].value['value']['text']['value'] == expected_msg
+    assert origin_data.output[0].field['text'].value == expected_msg
     assert record_ack1 == f'record_{expected_msg}'
 
     # Stop the pipelines.

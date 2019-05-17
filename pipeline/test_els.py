@@ -101,10 +101,10 @@ def test_str_unescape_and_replace_el(sdc_builder, sdc_executor):
     input_records = snapshot[dev_raw_data_source.instance_name].output
     output_records = snapshot[expression_evaluator.instance_name].output
     assert len(output_records) == len(input_records)
-    assert input_records[0].value['value']['text']['value'] == 'here\nis\tsome\ndata'
-    assert output_records[0].value['value']['text']['value'] == 'here\nis\tsome\ndata'
-    assert output_records[0].value['value']['transformed']['value'] == 'here<NEWLINE>is\tsome<NEWLINE>data'
-    assert output_records[0].value['value']['transformed2']['value'] == 'here<NEWLINE>is<TAB>some<NEWLINE>data'
+    assert input_records[0].field['text'] == 'here\nis\tsome\ndata'
+    assert output_records[0].field['text'] == 'here\nis\tsome\ndata'
+    assert output_records[0].field['transformed'] == 'here<NEWLINE>is\tsome<NEWLINE>data'
+    assert output_records[0].field['transformed2'] == 'here<NEWLINE>is<TAB>some<NEWLINE>data'
 
 
 def test_record_el(random_expression_pipeline_builder, sdc_executor):

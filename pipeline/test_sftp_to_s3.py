@@ -49,7 +49,7 @@ def test_sftp_origin_whole_file_to_s3(sdc_builder, sdc_executor, sftp, aws):
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
 
-    sftp_ftp_client = builder.add_stage('SFTP/FTP Client', type='origin')
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
     sftp_ftp_client.file_name_pattern = sftp_file_name
     sftp_ftp_client.data_format = 'WHOLE_FILE'
     sftp_ftp_client.set_attributes(disable_read_ahead_stream=True)

@@ -67,11 +67,11 @@ def test_databricks_ml_evaluator_string_model(sdc_builder, sdc_executor):
 
     # assert Databricks ML Model evaluation Output
     ml_output = snapshot[databricks_ml_evaluator.instance_name].output
-    assert ml_output[0].value['value']['output']['type'] == 'MAP'
-    output_field = ml_output[0].value['value']['output']['value']
-    assert output_field['prediction']['type'] == 'DOUBLE'
-    assert output_field['prediction']['value'] == '7.0'
-    assert output_field['label']['type'] == 'DOUBLE'
-    assert output_field['label']['value'] == '7.0'
-    assert output_field['probability']['type'] == 'MAP'
-    assert output_field['probability']['value']['type']['type'] == 'INTEGER'
+    output_field = ml_output[0].field['output']
+    assert isinstance(output_field, dict)
+    assert isinstance(output_field['prediction'].value, float)
+    assert output_field['prediction'].value == 7.0
+    assert isinstance(output_field['label'].value, float)
+    assert output_field['label'].value == 7.0
+    assert isinstance(output_field['probability'], dict)
+    assert isinstance(output_field['probability']['type'].value, int)

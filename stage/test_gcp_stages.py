@@ -180,22 +180,24 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [(int(record.value['value'][0]['value'])
-                                   if record.value['value'][0]['value'] is not None else None,
-                               record.value['value'][1]['value'],
-                               float(record.value['value'][2]['value'])
-                                   if record.value['value'][2]['value'] is not None else None,
-                               record.value['value'][3]['value'],
-                               record.value['value'][4]['value'],
-                               time.strftime('%Y-%m-%d', time.localtime(record.value['value'][5]['value']/1000))
-                                   if record.value['value'][5]['value'] is not None else None,
-                               datetime.fromtimestamp(record.value['value'][6]['value']/1000).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                                   if record.value['value'][6]['value'] is not None else None,
-                               '{} UTC'.format(datetime.utcfromtimestamp(record.value['value'][7]['value']/1000).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
-                                   if record.value['value'][7]['value'] is not None else None,
-                               datetime.fromtimestamp(record.value['value'][8]['value']/1000).strftime('%H:%M:%S.%f')[:-3]
-                                   if record.value['value'][8]['value'] is not None else None,
-                               base64.b64decode(record.value['value'][9]['value']) if record.value['value'][9]['value'] is not None else None)
+        get_value_by_index = lambda x: list(x[0].field.values())[x[1]].value
+        rows_from_snapshot = [(int(get_value_by_index((record, 0)))
+                                   if get_value_by_index((record, 0)) is not None else None,
+                               get_value_by_index((record, 1)),
+                               float(get_value_by_index((record, 2)))
+                                   if get_value_by_index((record, 2)) is not None else None,
+                               str(get_value_by_index((record, 3)))
+                                   if get_value_by_index((record, 3)) is not None else None,
+                               get_value_by_index((record, 4)),
+                               get_value_by_index((record, 5)).strftime("%Y-%m-%d")
+                                   if get_value_by_index((record, 5)) is not None else None,
+                               get_value_by_index((record, 6)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                                   if get_value_by_index((record, 6)) is not None else None,
+                               '{} UTC'.format(get_value_by_index((record, 7)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                                   if get_value_by_index((record, 7)) is not None else None,
+                               get_value_by_index((record, 8)).strftime('%H:%M:%S.%f')[:-3]
+                                   if get_value_by_index((record, 8)) is not None else None,
+                               get_value_by_index((record, 9)) if get_value_by_index((record, 9)) is not None else None)
                               for record in snapshot[google_bigquery].output]
 
         assert rows_from_snapshot == ROWS_TO_INSERT
@@ -317,7 +319,7 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
         logger.debug('Finish the snapshot and verify')
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [record.value['value']['text']['value']
+        rows_from_snapshot = [record.field['text'].value
                               for record in snapshot[google_pubsub_subscriber].output]
 
         logger.debug(rows_from_snapshot)
@@ -516,7 +518,7 @@ def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        rows_from_snapshot = [record.value2['text']
+        rows_from_snapshot = [record.field['text']
                               for record in snapshot[google_cloud_storage].output]
 
         logger.debug(rows_from_snapshot)
