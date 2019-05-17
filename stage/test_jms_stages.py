@@ -80,7 +80,7 @@ def test_jms_consumer_origin(sdc_builder, sdc_executor, jms):
         # Verify the messages are received correctly.
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        lines_from_snapshot = [record.value['value']['text']['value']
+        lines_from_snapshot = [record.field['text'].value
                                for record in snapshot[pipeline[0].instance_name].output]
 
         assert lines_from_snapshot == [message_data] * 10

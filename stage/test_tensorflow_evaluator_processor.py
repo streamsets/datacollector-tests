@@ -162,16 +162,10 @@ def test_tensorflow_evaluator(sdc_builder, sdc_executor):
 
     # assert TensorFlow Model evaluation Output
     tensorflow_output = snapshot[tensorflow_evaluator.instance_name].output
-    assert tensorflow_output[0].value['value']['output']['type'] == 'MAP'
-    outputField = tensorflow_output[0].value['value']['output']['value']
-    assert outputField['dnn/head/predictions/ExpandDims_0']['type'] == 'LIST'
-    assert outputField['dnn/head/predictions/ExpandDims_0']['value'][0]['type'] == 'LONG'
-    assert outputField['dnn/head/predictions/ExpandDims_0']['value'][0]['value'] == '2'
-    assert outputField['dnn/head/predictions/probabilities_0']['type'] == 'LIST'
-    assert outputField['dnn/head/predictions/probabilities_0']['value'][0]['type'] == 'FLOAT'
-    assert outputField['dnn/head/predictions/probabilities_0']['value'][1]['type'] == 'FLOAT'
-    assert outputField['dnn/head/predictions/probabilities_0']['value'][2]['type'] == 'FLOAT'
-
-
-
-
+    output_field = tensorflow_output[0].field['output']
+    assert isinstance(output_field, dict)
+    assert isinstance(output_field['dnn/head/predictions/ExpandDims_0'], list)
+    assert isinstance(output_field['dnn/head/predictions/ExpandDims_0'][0].value, int)
+    assert output_field['dnn/head/predictions/ExpandDims_0'][0].value == 2
+    assert isinstance(output_field['dnn/head/predictions/probabilities_0'], list)
+    assert all([isinstance(prob.value, float) for prob in output_field['dnn/head/predictions/probabilities_0']])

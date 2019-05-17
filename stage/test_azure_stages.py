@@ -200,8 +200,8 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
         snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
 
-        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].value['value']
-        results = [{key: value['value'] for key, value in record['value'].items()} for record in result_record]
+        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].field
+        results = [{key: value for key, value in record.items()} for record in result_record]
         assert results == send_records
     finally:
         logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
