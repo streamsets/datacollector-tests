@@ -403,7 +403,8 @@ def test_directory_origin_configuration_custom_delimiter(sdc_builder, sdc_execut
                                                          use_custom_delimiter, data_format,
                                                          custom_delimiter, shell_executor, file_writer,
                                                          include_custom_delimiter):
-    """ Verify if DC can read the custom delimited file"""
+    """Verify if DC can read the custom delimited file.
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'delimited_file'
     FILE_CONTENTS = """Field11{custom_delimiter}Field12{custom_delimiter}Field13
@@ -422,8 +423,7 @@ Field21{custom_delimiter}Field22{custom_delimiter}Field23""".format(custom_delim
                                  file_name_pattern_mode='GLOB',
                                  use_custom_delimiter=use_custom_delimiter,
                                  custom_delimiter=custom_delimiter,
-                                 include_custom_delimiter=include_custom_delimiter
-                                 )
+                                 include_custom_delimiter=include_custom_delimiter)
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
@@ -437,7 +437,7 @@ Field21{custom_delimiter}Field22{custom_delimiter}Field23""".format(custom_delim
             assert 5 == len(output_records)
             assert output_records[0].get_field_data('/text') == 'Field11' + suffix
             assert output_records[1].get_field_data('/text') == 'Field12' + suffix
-            assert output_records[2].get_field_data('/text') == 'Field13\nField21' + suffix
+            assert output_records[2].get_field_data('/text') == '\n'.join(['Field13', 'Field21']) + suffix
             assert output_records[3].get_field_data('/text') == 'Field22' + suffix
             assert output_records[4].get_field_data('/text') == 'Field23'
         else:
