@@ -14,10 +14,12 @@
 
 import copy
 import logging
+import pytest
 import time
 from bson import binary, DBRef, decimal128
 from string import ascii_letters
 
+from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import mongodb, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -88,12 +90,22 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
         sdc_executor.stop_pipeline(pipeline)
 
         assert len(snapshot[mongodb_oplog].output) == input_rec_count
-        for record in list(enumerate(snapshot[mongodb_oplog].output)):
-            assert record[1].value['value']['o']['value']['x']['value'] == str(record[0])
+        for i, record in enumerate(snapshot[mongodb_oplog].output):
+            assert record.field['o']['x'].value == i
             # Verify the operation type is 'i' which is for 'insert' since we inserted the records earlier.
-            assert record[1].value['value']['op']['value'] == 'i'
-            assert record[1].value['value']['ts']['value']['timestamp']['value'] > time_now
+            assert record.field['op'].value == 'i'
+            assert record.field['ts']['timestamp'].value.timestamp() >= time_now
 
+        # Now we want to make sure that the previous offset is respected over the
+        # configured initial timestamp and ordinal
+        input_rec_count2 = 2
+        inserted_list2 = mongodb_collection.insert_many([{'x': i} for i in range(input_rec_count2)])
+        assert len(inserted_list2.inserted_ids) == input_rec_count2
+
+        snapshot2 = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot2[mongodb_oplog].output) == 2
     finally:
         logger.info('Dropping %s database...', database_name)
         mongodb.engine.drop_database(database_name)
@@ -137,8 +149,8 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{record.value['value']['name']['sqpath'].lstrip('/'):
-                               record.value['value']['name']['value']}
+        rows_from_snapshot = [{'name':
+                               record.field['name'].value}
                               for record in snapshot[mongodb_origin].output]
 
         assert rows_from_snapshot == ORIG_DOCS
@@ -253,7 +265,7 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'data': str(record.value2['data'])} for record in snapshot[mongodb_origin].output]
+        rows_from_snapshot = [{'data': str(record.field['data'])} for record in snapshot[mongodb_origin].output]
 
         assert rows_from_snapshot == [{'data': str(record.get('data'))} for record in ORIG_BINARY_DOCS]
 
@@ -365,6 +377,107 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
         for record, actual in zip(snapshot[mongodb_lookup].output, NESTED_DOCS):
             assert record.get_field_data('/result/location/city') == actual['location']['city']
             assert record.get_field_data('/result/location/state') == actual['location']['state']
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_lookup.database)
+        mongodb.engine.drop_database(mongodb_lookup.database)
+
+
+@mongodb
+# SDC-11418
+@sdc_min_version('3.5.0')
+def test_mongodb_lookup_processor_implicit_port(sdc_builder, sdc_executor, mongodb):
+    """
+    Just set up the origin and processor; don't need any data in
+    MongoDB.
+
+    The pipeline looks like:
+        dev_raw_data_source >> MongoDB Lookup Processor >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    lookup_data = ['name'] + [row['name'] for row in NESTED_DOCS]
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(lookup_data),
+                                       stop_after_first_batch=True)
+
+    mapping = [dict(keyName='name', sdcField='/name')]
+    mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
+    mongodb_lookup.set_attributes(capped_collection=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10),
+                                  result_field='/result',
+                                  document_to_sdc_field_mappings=mapping)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> mongodb_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    # configure_for_environment will set the connection string, so we
+    # need to override it here without the explicit port number
+    connection_string = f'mongodb://{mongodb.hostname}/{mongodb.database}?{mongodb.options}'
+    mongodb_lookup.set_attributes(connection_string=connection_string)
+
+    try:
+        # Start pipeline - no exception should be raised
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        # Pipeline might be finished, since dev origin is set to stop
+        # after first batch
+        assert status in ['RUNNING', 'FINISHED']
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_lookup.database)
+        mongodb.engine.drop_database(mongodb_lookup.database)
+
+
+@mongodb
+# SDC-11416
+@sdc_min_version('3.5.0')
+def test_mongodb_lookup_processor_invalid_url(sdc_builder, sdc_executor, mongodb):
+    """
+    Just set up the origin and processor; don't need any data in
+    MongoDB.
+
+    The pipeline looks like:
+        dev_raw_data_source >> MongoDB Lookup Processor >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    lookup_data = ['name'] + [row['name'] for row in NESTED_DOCS]
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(lookup_data),
+                                       stop_after_first_batch=True)
+
+    mapping = [dict(keyName='name', sdcField='/name')]
+    mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
+    mongodb_lookup.set_attributes(capped_collection=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10),
+                                  result_field='/result',
+                                  document_to_sdc_field_mappings=mapping)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> mongodb_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    # configure_for_environment will set the connection string, so we
+    # need to override it here with an invalid one
+    mongodb_lookup.set_attributes(connection_string='mongodb://bogus-hostname:27101')
+
+    try:
+        # Start pipeline and verify that the exception is raised
+        sdc_executor.add_pipeline(pipeline)
+        with pytest.raises(StartError) as start_error:
+            sdc_executor.start_pipeline(pipeline)
+        assert 'MONGODB_09' in start_error.value.message
 
     finally:
         logger.info('Dropping %s database...', mongodb_lookup.database)

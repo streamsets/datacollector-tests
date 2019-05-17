@@ -104,8 +104,8 @@ def test_tensorflow_evaluator(sdc_builder, sdc_executor):
 
     # Assert PMML Model evaluation Output
     pmml_output = snapshot[pmml_evaluator.instance_name].output
-    assert pmml_output[0].value['value']['output']['type'] == 'LIST_MAP'
-    outputField = pmml_output[0].value['value']['output']['value']
+    assert pmml_output[0].field['output'].type == 'LIST_MAP'
+    outputField = pmml_output[0].field['output'].value
     predicted_species_item = [item for item in outputField if item['sqpath'] == '/output/Predicted_Species'][0]
     assert predicted_species_item['type'] == 'STRING'
     assert predicted_species_item['value'] == 'virginica'

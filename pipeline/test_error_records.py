@@ -268,7 +268,7 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(directory_pipeline)
 
     # assert file content's error data has our raw_data
-    record = snapshot[directory.instance_name].output[0].value['value']['text']['value']
+    record = snapshot[directory.instance_name].output[0].field['text'].value
     # remove special ASCII characters in the output. Note: 1st record of Error file has special ASCII character.
     record_json = json.loads(record.encode('ascii', 'ignore').decode())
     assert raw_data == record_json['value']['value']['text']['value']

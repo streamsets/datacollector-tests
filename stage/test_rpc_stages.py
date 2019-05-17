@@ -72,7 +72,7 @@ def test_sdcrpc_origin_target(sdc_builder, sdc_executor):
     sdc_executor.start_pipeline(rpc_origin_pipeline)
     sdc_executor.start_pipeline(rpc_target_pipeline).wait_for_pipeline_output_records_count(1)
     snapshot = sdc_executor.capture_snapshot(rpc_origin_pipeline, start_pipeline=False).snapshot
-    snapshot_data = snapshot[sdc_rpc_origin.instance_name].output[0].value['value']['text']['value']
+    snapshot_data = snapshot[sdc_rpc_origin.instance_name].output[0].field['text'].value
 
     assert raw_str == snapshot_data
 
@@ -134,5 +134,5 @@ def test_write_to_another_pipeline_error_stage(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(error_stage_pipeline)
     sdc_executor.stop_pipeline(sdc_rpc_origin_pipeline)
 
-    assert [{key: value['value'] for key, value in record.value['value'].items()}
+    assert [{key: value.value for key, value in record.field.items()}
             for record in snapshot[sdc_rpc_origin.instance_name].output] == tdf_did_not_starts

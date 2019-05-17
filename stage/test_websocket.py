@@ -95,8 +95,8 @@ def test_websocket(sdc_executor, websocket_server_pipeline, websocket_client_pip
     processor_Data = snapshot[websocket_client_pipeline.javascript_evaluator.instance_name]
     assert len(origin_data.output) == 2
     assert len(processor_Data.output) == 2
-    assert origin_data.output[0].value['value']['f1']['value'] == 'abc'
-    assert origin_data.output[1].value['value']['f1']['value'] == 'xyz'
+    assert origin_data.output[0].field['f1'].value == 'abc'
+    assert origin_data.output[1].field['f1'].value == 'xyz'
 
     # Capture snapshot for WebSocket Server pipeline.
     snapshot = sdc_executor.capture_snapshot(websocket_server_pipeline.pipeline).snapshot
@@ -104,8 +104,8 @@ def test_websocket(sdc_executor, websocket_server_pipeline, websocket_client_pip
     processor_Data = snapshot[websocket_server_pipeline.expression_evaluator.instance_name]
     assert len(origin_data.output) == 1
     assert len(processor_Data.output) == 1
-    assert (origin_data.output[0].value['value']['f1']['value'] == 'abc' or
-            origin_data.output[0].value['value']['f1']['value'] == 'xyz')
+    assert (origin_data.output[0].field['f1'].value == 'abc' or
+            origin_data.output[0].field['f1'].value == 'xyz')
 
     # Stop the pipeline and verify pipeline's status
     sdc_executor.stop_pipeline(websocket_client_pipeline.pipeline)

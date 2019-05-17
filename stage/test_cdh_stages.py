@@ -335,10 +335,10 @@ def test_kudu_lookup_apply_default(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
         for result in snapshot[kudu.instance_name].output:
             if Version(sdc_executor.version) >= Version('3.2.0.0'):
-                assert 'name' not in result.value['value']
+                assert 'name' not in result.field
             else:
-                assert result.value['value']['name']['value'] == 'None'
-            assert int(result.value['value']['wins']['value']) == 0
+                assert result.field['name'].value == 'None'
+            assert int(result.field['wins'].value) == 0
 
     finally:
         logger.info('Dropping Kudu table %s ...', kudu_table_name)
@@ -511,18 +511,18 @@ def test_kudu_lookup_data_types(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
         # Check the data type and value
         for actual, expected in zip(snapshot[kudu.instance_name].output, test_data):
-            assert actual.value['value']['name']['value'] == expected['name']
-            assert actual.value['value']['wins']['type'] == 'INTEGER'
-            assert int(actual.value['value']['wins']['value']) == expected['wins']
-            assert actual.value['value']['consecutive_2017']['type'] == 'BOOLEAN'
-            assert bool(actual.value['value']['consecutive_2017']['value']) == expected['consecutive']
-            assert actual.value['value']['prize_2017']['type'] == 'LONG'
+            assert actual.field['name'].value == expected['name']
+            assert actual.field['wins'].type == 'INTEGER'
+            assert int(actual.field['wins'].value) == expected['wins']
+            assert actual.field['consecutive_2017'].type == 'BOOLEAN'
+            assert bool(actual.field['consecutive_2017'].value) == expected['consecutive']
+            assert actual.field['prize_2017'].type == 'LONG'
             # Integer is long in Python3
-            assert int(actual.value['value']['prize_2017']['value']) == expected['prize']
-            assert actual.value['value']['total_miles_2017']['type'] == 'SHORT'
-            assert int(actual.value['value']['total_miles_2017']['value']) == expected['total_miles']
-            assert actual.value['value']['avg_speed_2017']['type'] == 'FLOAT'
-            assert float(actual.value['value']['avg_speed_2017']['value']) == expected['average_speed']
+            assert int(actual.field['prize_2017'].value) == expected['prize']
+            assert actual.field['total_miles_2017'].type == 'SHORT'
+            assert int(actual.field['total_miles_2017'].value) == expected['total_miles']
+            assert actual.field['avg_speed_2017'].type == 'FLOAT'
+            assert float(actual.field['avg_speed_2017'].value) == expected['average_speed']
 
         assert len(snapshot[kudu.instance_name].error_records) == 1
     finally:
@@ -682,9 +682,9 @@ def test_kudu_lookup_missing_primary_keys(sdc_builder, sdc_executor, cluster):
 
         # Check the returned values
         for actual, expected in zip(snapshot[kudu.instance_name].output, sample_data):
-            assert actual.value['value']['favorite_rank']['value'] == str(expected['rank'])
-            assert actual.value['value']['wins']['value'] == str(expected['wins'])
-            assert actual.value['value']['name']['value'] == str(expected['name'])
+            assert actual.field['favorite_rank'].value == expected['rank']
+            assert actual.field['wins'].value == expected['wins']
+            assert actual.field['name'].value == str(expected['name'])
     finally:
         logger.info('Dropping Kudu table %s ...', kudu_table_name)
         tdf_contenders_table.drop(engine)
@@ -759,7 +759,7 @@ def test_kudu_lookup_decimal_type(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
         i = 0
         for result in snapshot[kudu.instance_name].output:
-            assert result.value['value']['weight']['value'] == str(tour_de_france_contenders[i]['weight'])
+            assert result.field['weight'].value == str(tour_de_france_contenders[i]['weight'])
             i += 1
 
     finally:
@@ -857,12 +857,12 @@ def test_mapreduce_executor(sdc_builder, sdc_executor, cluster):
 
         # make sure MapReduce job is done and is successful
         for event in snapshot[mapreduce.instance_name].event_records:
-            job_id = event.value['value']['job-id']['value']
+            job_id = event.field['job-id'].value
             assert cluster.yarn.wait_for_job_to_end(job_id) == 'SUCCEEDED'
 
         # assert parquet data is same as what is ingested
         for event in snapshot[hadoop_fs.instance_name].event_records:
-            file_path = event.value['value']['filepath']['value']
+            file_path = event.field['filepath'].value
             hdfs_parquet_file_path = '{}.parquet'.format(file_path)
             hdfs_data = cluster.hdfs.get_data_from_parquet(hdfs_parquet_file_path)
             assert hdfs_data[0] in product_data
@@ -906,7 +906,7 @@ def test_spark_executor(sdc_builder, sdc_executor, cluster):
 
     # run the pipeline and capture the file path
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    file_path = snapshot[local_fs.instance_name].event_records[0].value['value']['filepath']['value']
+    file_path = snapshot[local_fs.instance_name].event_records[0].field['filepath'].value
 
     # build the 2nd pipeline - spark executor
     builder = sdc_builder.get_pipeline_builder()
