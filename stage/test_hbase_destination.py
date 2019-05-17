@@ -73,7 +73,7 @@ def test_hbase_destination(sdc_builder, sdc_executor, cluster):
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        assert [record.value2['text']
+        assert [record.field['text']
                 for record in snapshot[dev_raw_data_source.instance_name].output] == dumb_haiku
     finally:
         # Delete table.

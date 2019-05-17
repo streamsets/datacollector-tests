@@ -235,5 +235,5 @@ def perform_test(sdc_executor, producer, consumer):
 
     assert output is not None
     assert len(output) == 1
-    assert output[0].value2['a'] == 1
-    assert output[0].value2['b'] == 'Text'
+    assert output[0].field['a'].value == 1
+    assert output[0].field['b'].value == 'Text'

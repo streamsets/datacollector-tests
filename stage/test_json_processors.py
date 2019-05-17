@@ -49,8 +49,8 @@ def test_json_parser(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[json_parser.instance_name].output[0].value['value'][result_field]['value']
-    assert expected_dict[result_key] == new_value[result_key]['value']
+    new_value = snapshot[json_parser.instance_name].output[0].field[result_field]
+    assert expected_dict[result_key] == new_value[result_key].value
 
 
 @sdc_min_version('2.7.0.0-SNAPSHOT')
@@ -91,6 +91,6 @@ def test_json_generator(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[json_generator.instance_name].output[0].value['value']['result']['value']
+    new_value = snapshot[json_generator.instance_name].output[0].field['result'].value
     # load expected data as JSON (checks for JSON format) and assert it is same
     assert json.loads(raw_data)['contact']['address'] == json.loads(new_value)

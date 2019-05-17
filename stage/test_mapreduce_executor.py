@@ -71,12 +71,12 @@ def test_mapreduce_executor(sdc_builder, sdc_executor, cluster, compression_code
 
         # make sure MapReduce job is done and is successful
         for event in snapshot[mapreduce.instance_name].event_records:
-            job_id = event.value['value']['job-id']['value']
+            job_id = event.field['job-id'].value
             assert cluster.yarn.wait_for_job_to_end(job_id) == 'SUCCEEDED'
 
         # assert parquet data is same as what is ingested
         for event in snapshot[hadoop_fs.instance_name].event_records:
-            file_path = event.value['value']['filepath']['value']
+            file_path = event.field['filepath'].value
             hdfs_parquet_file_path = '{}.parquet'.format(file_path)
             hdfs_data = cluster.hdfs.get_data_from_parquet(hdfs_parquet_file_path)
             assert hdfs_data[0] in product_data

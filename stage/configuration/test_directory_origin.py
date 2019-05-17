@@ -13,7 +13,9 @@
 # -*- end test template -*-
 #
 import logging
+import math
 import os
+from collections import OrderedDict
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -218,9 +220,53 @@ def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, d
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor):
-    pass
+@pytest.mark.parametrize('batch_size_in_recs', [2, 3, 4])
+def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor, shell_executor,
+                                                           file_writer, batch_size_in_recs):
+    """Verify batch size in records (batch_size_in_recs) configuration for various values
+    which limits maximum number of records to pass through pipeline at time.
+    e.g. For 2 files with each containing 3 records. Verify with batch_size_in_recs = 2
+    (less than records per file), 3 (equal to number of records per file),
+    4 (greater than number of records per file).
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME_1 = 'streamsets_temp1.txt'
+    FILE_NAME_2 = 'streamsets_temp2.txt'
+    FILE_CONTENTS_1 = get_text_file_content('1')
+    FILE_CONTENTS_2 = get_text_file_content('2')
+    number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME_1), FILE_CONTENTS_1)
+        file_writer(os.path.join(files_directory, FILE_NAME_2), FILE_CONTENTS_2)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.txt',
+                                 batch_size_in_recs=batch_size_in_recs)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=number_of_batches).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        raw_data = '{}\n{}'.format(FILE_CONTENTS_1, FILE_CONTENTS_2)
+        temp = []
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[directory.instance_name].output_lanes.values():
+                assert batch_size_in_recs >= len(value)
+                for record in value:
+                    temp.append(str(record.field['text']))
+        stage_output = '\n'.join(temp)
+        assert raw_data == stage_output
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -265,7 +311,7 @@ def test_directory_origin_configuration_charset(sdc_builder, sdc_executor, file_
                              file_name_pattern=file_name)
     trash = pipeline_builder.add_stage('Trash')
     directory >> trash
-    pipeline = pipeline_builder.build('test_directory_origin_configuration_charset')
+    pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -364,12 +410,55 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('delimiter_format_type', ['CSV', 'CUSTOM', 'EXCEL', 'MYSQL',
-                                                   'POSTGRES_CSV', 'POSTGRES_TEXT', 'RFC4180', 'TDF'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_executor,
-                                                              data_format, delimiter_format_type):
-    pass
+@pytest.mark.parametrize('delimiter_format_type', ['CSV', 'CUSTOM', 'POSTGRES_CSV', 'TDF', 'RFC4180', 'EXCEL',
+                                                   'POSTGRES_TEXT', 'MYSQL'])
+@pytest.mark.parametrize('root_field_type', ['LIST_MAP'])
+@pytest.mark.parametrize('header_line', ['WITH_HEADER'])
+def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_executor, data_format,
+                                                              delimiter_format_type, delimited_file_writer,
+                                                              shell_executor, root_field_type, header_line):
+    """Test for Directory origin can read delimited file with different delimiter format type.
+    Here we will be creating delimited files in different formats for testing. e.g. POSTGRES_CSV, TDF, RFC4180, etc.,
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'delimited_file.csv'
+    FILE_CONTENTS = [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'fält13'], ['стол', 'Field22', 'Field23']]
+    delimiter_character_map = {'CUSTOM': '^'}
+    delimiter_character = '^' if delimiter_format_type == 'CUSTOM' else None
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        delimited_file_writer(os.path.join(files_directory, FILE_NAME),
+                              FILE_CONTENTS, delimiter_format_type, delimiter_character)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='delimited_*',
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 delimiter_character=delimiter_character,
+                                 root_field_type=root_field_type,
+                                 header_line=header_line)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+        new_line_field = 'Field12\nSTR' if delimiter_format_type == 'EXCEL' else 'Field12'
+
+        assert 2 == len(output_records)
+        assert output_records[0].field == OrderedDict(
+            [('field1', 'Field11'), ('field2', new_line_field), ('field3', 'fält13')])
+        assert output_records[1].field == OrderedDict(
+            [('field1', 'стол'), ('field2', 'Field22'), ('field3', 'Field23')])
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
@@ -457,9 +546,42 @@ def test_directory_origin_configuration_files_directory(sdc_builder, sdc_executo
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_first_file_to_process(sdc_builder, sdc_executor):
-    pass
+def test_directory_origin_configuration_first_file_to_process(sdc_builder, sdc_executor,
+                                                              file_writer, shell_executor):
+    files_directory = os.path.join('/tmp', get_random_string())
+    FIRST_FILE_NAME = 'b.txt'
+    FIRST_FILE_CONTENTS = 'This is file b'
+    EARLIER_FILE_NAME = 'a.txt'
+    EARLIER_FILE_CONTENTS = 'This is file a'
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FIRST_FILE_NAME), FIRST_FILE_CONTENTS)
+        file_writer(os.path.join(files_directory, EARLIER_FILE_NAME), EARLIER_FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.txt',
+                                 first_file_to_process=FIRST_FILE_NAME)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
+        records = [record.field
+                   for batch in snapshot.snapshot_batches
+                   for record in batch.stage_outputs[directory.instance_name].output]
+        assert len(records) == 1
+        assert records[0] == {'text': FIRST_FILE_CONTENTS}
+        sdc_executor.stop_pipeline(pipeline)
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
@@ -575,13 +697,7 @@ def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, 
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, sdc_executor, data_format):
-    pass
-
-
-@pytest.mark.parametrize('data_format', ['XML'])
+@pytest.mark.parametrize('data_format', ['DELIMITED', 'XML'])
 @pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, sdc_executor, data_format):
     pass
@@ -800,3 +916,7 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
                                                               data_format, log_format, use_custom_log_format):
     pass
 
+
+## Start of general supportive functions
+def get_text_file_content(file_number):
+    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])

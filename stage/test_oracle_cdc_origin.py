@@ -236,8 +236,8 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
         op_index = 0
         # assert all the data captured have the same raw_data
         for record in snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output:
-            assert row_index == int(record.value['value']['ID']['value'])
-            assert rows[op_index]['NAME'] == record.value['value']['NAME']['value']
+            assert row_index == int(record.field['ID'].value)
+            assert rows[op_index]['NAME'] == record.field['NAME'].value
             assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
             assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
@@ -402,10 +402,10 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
         output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
         for i, record in enumerate(output):
             # In update records, values with NULLs in the row are not returned
-            if 'ID' in record.value2:
-                id_val = record.value2['ID']
+            if 'ID' in record.field:
+                id_val = record.field['ID'].value
                 assert rows[i]['ID'] == None if id_val is None else int(id_val)
-            assert rows[i]['NAME'] == record.value2['NAME']
+            assert rows[i]['NAME'] == record.field['NAME']
 
         assert len(output) == len(rows)
     finally:
@@ -492,8 +492,8 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         def compare_output(output_records, rows):
             assert len(output_records) == len(rows)
             for i, output_record in enumerate(output_records):
-                assert output_record.value2['ID'] == rows[i]['ID']
-                assert output_record.value2['NAME'] == rows[i]['NAME']
+                assert output_record.field['ID'] == rows[i]['ID']
+                assert output_record.field['NAME'] == rows[i]['NAME']
 
         # assert all the data captured have the same as rows_c1
         output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output

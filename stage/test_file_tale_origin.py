@@ -76,5 +76,5 @@ def test_directory_origin(sdc_builder, sdc_executor):
     # by checking a Record having a key called 'text'
     for value in snapshot.snapshot_batches[0][file_tail.instance_name].output_lanes.values():
         for record in value:
-            if 'text' in record.value['value']:
-                assert raw_data == record.value['value']['text']['value']
+            if 'text' in record.field:
+                assert raw_data == record.field['text'].value

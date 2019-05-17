@@ -11,14 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import io
 import json
 import logging
+import pytest
 import string
 import time
 
-import pytest
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from xlwt import Workbook
 
 logger = logging.getLogger(__name__)
 
@@ -675,4 +677,92 @@ def test_offset_upgrade(sdc_builder, sdc_executor, aws):
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in
                                    client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+# SDC-11410: S3 Origin reads excel files
+@aws('s3')
+def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
+    """
+    Test that an excel file on a s3 bucket is properly read
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    s3_obj_count = 1
+
+    # Create the Excel file
+    file_excel = io.BytesIO()  # create a file-like object
+    workbook = Workbook()
+    sheet = workbook.add_sheet('0')
+
+    colcount = 5
+    rowcount = 1000
+
+    for col in range(colcount):
+        for row in range(rowcount):
+            sheet.write(row, col, 'TAB({row}, {col})'.format(row=row, col=col))
+
+    workbook.save(file_excel)
+    file_excel.seek(0)  # Move the pointer to first position of the file object so when
+    # it reads the content it starts from the beginning.
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket,
+                             data_format='EXCEL',
+                             prefix_pattern=f'{s3_key}*',
+                             excel_header_option="NO_HEADER")
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
+
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Fileobj=f)
+
+        # Snapshot the pipeline and compare the records.
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+
+        output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
+
+        len_records = len(output_records)
+
+        # Compare the results get from the output_records
+        for row_res in range(len_records):
+            for col_res in range(colcount):
+                assert output_records[row_res][str(col_res)] == "TAB({row}, {col})".format(row=row_res, col=col_res)
+
+        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=60)
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == rowcount
+        # We need to add 1 since the event is considered a record
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == rowcount + 1
+
+    finally:
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)

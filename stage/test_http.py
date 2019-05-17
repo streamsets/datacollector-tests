@@ -132,8 +132,8 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
     processor_data = snapshot[http_client_pipeline.expression_evaluator.instance_name]
     assert len(origin_data.output) == 2
     assert len(processor_data.output) == 2
-    assert origin_data.output[0].value2['f1'] == 'abc'
-    assert origin_data.output[1].value2['f1'] == 'xyz'
+    assert origin_data.output[0].field['f1'] == 'abc'
+    assert origin_data.output[1].field['f1'] == 'xyz'
 
     # Capture snapshot for HTTP Server pipeline.
     snapshot = sdc_executor.capture_snapshot(http_server_pipeline.pipeline).snapshot
@@ -141,12 +141,12 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
     processor_data = snapshot[http_server_pipeline.javascript_evaluator.instance_name]
     assert len(origin_data.output) == 2
     assert len(processor_data.output) == 2
-    assert origin_data.output[0].value2['f1'] == 'abc'
-    assert origin_data.output[1].value2['f1'] == 'xyz'
-    assert processor_data.output[0].value2['f1'] == 'abc'
-    assert processor_data.output[0].value2['javscriptField'] == 5000
-    assert processor_data.output[1].value2['f1'] == 'xyz'
-    assert processor_data.output[1].value2['javscriptField'] == 5000
+    assert origin_data.output[0].field['f1'] == 'abc'
+    assert origin_data.output[1].field['f1'] == 'xyz'
+    assert processor_data.output[0].field['f1'] == 'abc'
+    assert processor_data.output[0].field['javscriptField'] == 5000
+    assert processor_data.output[1].field['f1'] == 'xyz'
+    assert processor_data.output[1].field['javscriptField'] == 5000
 
     # Stop the pipelines.
     sdc_executor.stop_pipeline(http_client_pipeline.pipeline)
@@ -165,8 +165,8 @@ def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
     processor_data = snapshot[http_client_pipeline.expression_evaluator.instance_name]
     assert len(origin_data.output) == 2
     assert len(processor_data.output) == 2
-    assert origin_data.output[0].value2['f1'] == 'abc'
-    assert origin_data.output[1].value2['f1'] == 'xyz'
+    assert origin_data.output[0].field['f1'] == 'abc'
+    assert origin_data.output[1].field['f1'] == 'xyz'
 
     # Since resource URL is invalid, all the records should go to error in target stage.
     target_data = snapshot[http_client_pipeline.http_client.instance_name]
@@ -211,7 +211,7 @@ def test_http_processor_get(sdc_builder, sdc_executor, http_client):
 
         # ensure HTTP GET result is only stored to one record and assert the data
         assert len(snapshot[http_client_processor.instance_name].output) == 1
-        record = snapshot[http_client_processor.instance_name].output[0].value2
+        record = snapshot[http_client_processor.instance_name].output[0].field
         assert record[record_output_field]['latitude'] == expected_dict['latitude']
         assert record[record_output_field]['longitude'] == expected_dict['longitude']
     finally:
@@ -277,7 +277,7 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
 
         # ensure HTTP POST/PATCH result is only stored to one record and assert the data
         assert len(snapshot[http_client_processor.instance_name].output) == 1
-        record = snapshot[http_client_processor.instance_name].output[0].value2
+        record = snapshot[http_client_processor.instance_name].output[0].field
         if expected_data:
             assert record[record_output_field]['latitude'] == expected_dict['latitude']
             assert record[record_output_field]['longitude'] == expected_dict['longitude']
@@ -375,7 +375,7 @@ def test_http_client_source_simple(sdc_builder, sdc_executor, http_client):
         origin_stage_output = snapshot[http_client_source.instance_name]
 
         assert len(origin_stage_output.output) == 1
-        assert json.dumps(origin_stage_output.output[0].value2) == raw_data
+        assert origin_stage_output.output[0].field == json.loads(raw_data)
     finally:
         http_mock.delete_mock()
 
