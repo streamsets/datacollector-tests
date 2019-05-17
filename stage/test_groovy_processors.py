@@ -207,7 +207,7 @@ def test_sdc_record(sdc_builder, sdc_executor):
     origin.stop_after_first_batch = True
 
     groovy = builder.add_stage('Groovy Evaluator')
-    groovy.script_record_type = 'SDC_RECORDS'
+    groovy.record_type = 'SDC_RECORDS'
     groovy.init_script = ''
     groovy.destroy_script = ''
     groovy.script =  """

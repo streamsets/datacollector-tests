@@ -120,7 +120,7 @@ def test_sdc_record(sdc_builder, sdc_executor):
     origin.stop_after_first_batch = True
 
     jython = builder.add_stage('Jython Evaluator', type='processor')
-    jython.script_record_type = 'SDC_RECORDS'
+    jython.record_type = 'SDC_RECORDS'
     jython.init_script = ''
     jython.destroy_script = ''
     jython.script =  """

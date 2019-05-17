@@ -339,7 +339,7 @@ def test_javascript_sdc_record(sdc_builder, sdc_executor):
     origin.stop_after_first_batch = True
 
     javascript = builder.add_stage('JavaScript Evaluator')
-    javascript.script_record_type = 'SDC_RECORDS'
+    javascript.record_type = 'SDC_RECORDS'
     javascript.init_script = ''
     javascript.destroy_script = ''
     javascript.script =  """
