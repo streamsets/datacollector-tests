@@ -1,3 +1,5 @@
+import csv
+import io
 import textwrap
 
 import pytest
@@ -28,20 +30,7 @@ def file_writer(sdc_executor):
         encoding (:obj:`str`, optional): The file encoding. Default: ``'utf8'``
     """
     def file_writer_(filepath, file_contents, encoding='utf8'):
-        builder = sdc_executor.get_pipeline_builder()
-        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
-        jython_evaluator = builder.add_stage('Jython Evaluator')
-        jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT).format(filepath=str(filepath),
-                                                                             file_contents=file_contents,
-                                                                             encoding=encoding)
-        trash = builder.add_stage('Trash')
-        dev_raw_data_source >> jython_evaluator >> trash
-        pipeline = builder.build('File writer pipeline')
-
-        sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        sdc_executor.remove_pipeline(pipeline)
+        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding)
     return file_writer_
 
 
@@ -65,3 +54,54 @@ def shell_executor(sdc_executor):
         sdc_executor.remove_pipeline(pipeline)
     return shell_executor_
 
+
+def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8'):
+    builder = sdc_executor.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+    jython_evaluator = builder.add_stage('Jython Evaluator')
+    jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT).format(filepath=str(filepath),
+                                                                         file_contents=file_contents,
+                                                                         encoding=encoding)
+    trash = builder.add_stage('Trash')
+    dev_raw_data_source >> jython_evaluator >> trash
+    pipeline = builder.build('File writer pipeline')
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    sdc_executor.remove_pipeline(pipeline)
+
+
+@pytest.fixture
+def delimited_file_writer(sdc_executor):
+    def delimited_file_writer_(filepath, file_contents_list, delimiter_format, delimiter_character, encoding='utf8'):
+        delimited_file_contents = get_file_content(file_contents_list, delimiter_format, delimiter_character)
+        write_file_with_pipeline(sdc_executor, filepath, delimited_file_contents, encoding)
+    return delimited_file_writer_
+
+
+def get_file_content(file_contents, delimiter_format, delimiter_character):
+    if delimiter_format in ['EXCEL']:
+        return get_excel_compatible_csv(file_contents)
+    elif delimiter_format in ['POSTGRES_CSV', 'CSV']:
+        return '\n'.join([','.join(t1) for t1 in file_contents])
+    elif delimiter_format == 'RFC4180':
+        #  As per https://tools.ietf.org/html/rfc4180 last record may or may not have line break.
+        return '\n'.join([','.join(t1) for t1 in file_contents]) + '\n'
+    elif delimiter_format in ['TDF', 'POSTGRES_TEXT', 'MYSQL']:
+        return '\n'.join(['\t'.join(t1) for t1 in file_contents])
+    elif delimiter_format in ['CUSTOM', 'POSTGRES_TEXT']:
+        return '\n'.join([delimiter_character.join(t1) for t1 in file_contents])
+
+
+def get_excel_compatible_csv(data):
+    content = None
+    queue = io.StringIO()
+    try:
+        data[1][1] = data[1][1] + '\nSTR'
+        writer = csv.writer(queue, dialect='excel', quotechar='"', quoting=csv.QUOTE_ALL)
+        writer.writerows(data)
+        content = queue.getvalue()
+    finally:
+        queue.close()
+    return content

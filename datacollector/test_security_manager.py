@@ -117,5 +117,4 @@ for record in records:
 
     # There should be field lines that is an array of 2+ entries (each row)
     record = snapshot[jython].output[0]
-    assert len(record.value2['lines']) > 2
-
+    assert len(record.field['lines']) > 2

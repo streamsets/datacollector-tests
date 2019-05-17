@@ -29,7 +29,8 @@ def test_base64_field_decoder(sdc_builder, sdc_executor):
         dev_raw_data_source >> field_type_converter >> base64_field_decoder >> trash
     """
     # input raw_data is a Base64 encoded string
-    raw_data = base64.b64encode('hello there!'.encode()).decode()
+    normal_string = 'hello there!'.encode()
+    raw_data = base64.b64encode(normal_string).decode()
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
@@ -49,9 +50,9 @@ def test_base64_field_decoder(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    result_data = snapshot[base64_field_decoder.instance_name].output[0].value['value']['result']['value']
+    result_data = snapshot[base64_field_decoder.instance_name].output[0].field['result'].value
     # result data is Base64 encoded for JSON transport, hence we can directly compare to our raw Base64 string
-    assert raw_data == result_data
+    assert normal_string == result_data
 
 
 def test_base64_field_encoder(sdc_builder, sdc_executor):
@@ -82,7 +83,7 @@ def test_base64_field_encoder(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    result_data = snapshot[base64_field_encoder.instance_name].output[0].value['value']['result']['value']
+    result_data = snapshot[base64_field_encoder.instance_name].output[0].field['result'].value
     # result_data is Base64 encoded by the Base64 encoder stage and for JSON transport it is again encoded, hence
     # we encode our raw_data twice for assertion
-    assert base64.b64encode(base64.b64encode(raw_data.encode())).decode() == result_data
+    assert base64.b64encode(raw_data.encode()) == result_data

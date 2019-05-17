@@ -117,7 +117,7 @@ def test_pipeline_snapshot(sdc_executor, pipeline):
     assert snapshot is not None
     snap_data = snapshot[pipeline.origin_stage.instance_name]
     assert len(snap_data.output) == 1
-    assert snap_data.output[0].value['value']['emp_id']['value'] == '123456'
+    assert snap_data.output[0].field['emp_id'].value == '123456'
 
     sdc_executor.stop_pipeline(pipeline)
 
@@ -130,7 +130,7 @@ def test_pipeline_preview(sdc_executor, pipeline):
     assert preview.issues.issues_count == 0
     preview_data = preview[pipeline.origin_stage.instance_name]
     assert len(preview_data.output) == 1
-    assert preview_data.output[0].value['value']['emp_id']['value'] == '123456'
+    assert preview_data.output[0].field['emp_id'].value == '123456'
 
 
 @sdc_min_version('3.5.1')

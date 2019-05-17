@@ -60,7 +60,7 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
         output_records = snapshot[dev_raw_data_source.instance_name].output
         for output_record in output_records:
             # sanity checks on output of raw data source
-            assert output_record.value['value']['text']['value'] == raw_str
+            assert output_record.field['text'].value == raw_str
 
         # with QOS=2 (default), exactly one message should be received per published message
         # so we should have no trouble getting as many messages as output records from the
@@ -127,7 +127,7 @@ def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
             assert len(output_records) == 1
 
             for output_record in output_records:
-                value = output_record.value['value']['text']['value']
+                value = output_record.field['text'].value
                 assert value in expected_messages
                 assert expected_messages.remove(value) is None
         assert len(expected_messages) == 0

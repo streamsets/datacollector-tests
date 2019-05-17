@@ -62,8 +62,8 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
         snapshot = snapshot_command.wait_for_finished().snapshot
         assert redis_consumer.max_batch_size_in_records == len(snapshot[redis_consumer.instance_name].output)
         for record in snapshot[redis_consumer.instance_name].output:
-            assert record.value['value']['name']['value'] == raw_dict['name']
-            assert record.value['value']['zip_code']['value'] == str(raw_dict['zip_code'])
+            assert record.field['name'].value == raw_dict['name']
+            assert record.field['zip_code'].value == raw_dict['zip_code']
 
         # case when we have valid pattern for ?
         snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
@@ -73,8 +73,8 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
         snapshot = snapshot_command.wait_for_finished().snapshot
         assert redis_consumer.max_batch_size_in_records == len(snapshot[redis_consumer.instance_name].output)
         for record in snapshot[redis_consumer.instance_name].output:
-            assert record.value['value']['name']['value'] == raw_dict['name']
-            assert record.value['value']['zip_code']['value'] == str(raw_dict['zip_code'])
+            assert record.field['name'].value == raw_dict['name']
+            assert record.field['zip_code'].value == raw_dict['zip_code']
 
         # Case when we have an invalid pattern. No data is expected and hence no snapshot can be taken to compare.
         key_3 = f'{pattern_2}XX'
@@ -153,8 +153,8 @@ def test_redis_lookup_processor(sdc_builder, sdc_executor, redis):
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
-        record = snapshot[redis_lookup_processor.instance_name].output[0].value['value']
-        expected_value = record[record_output_field]['value'][0]['value']
+        record = snapshot[redis_lookup_processor.instance_name].output[0].field
+        expected_value = str(record[record_output_field][0])
         assert redis_data == expected_value
     finally:
         # delete our key from Redis

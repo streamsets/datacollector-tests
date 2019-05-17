@@ -125,14 +125,14 @@ def test_schema_generator_processor(sdc_builder, sdc_executor):
     record = snapshot.snapshot_batches[0][directory.instance_name].output[0]
 
     # Assert proper values & types
-    assert 'str' == record.value2['str']
-    assert 10 == record.value2['int']
-    assert record.value2['boolean'] is True
-    assert Decimal('10.50') == record.value2['decimal']
-    assert datetime(2017, 1, 1, 0, 0) == record.value2['date']
-    assert datetime(1970, 1, 1, 10, 9, 8) == record.value2['time']
-    assert datetime(2017, 1, 1, 10, 9, 8) == record.value2['datetime']
-    assert 'a' == record.value2['list'][0]
-    assert 'b' == record.value2['list'][1]
-    assert 'value' == record.value2['map']['first-key']
-    assert 'secret value' == record.value2['map']['second-key']
+    assert 'str' == record.field['str'].value
+    assert 10 == record.field['int'].value
+    assert record.field['boolean'].value == True
+    assert Decimal('10.50') == record.field['decimal'].value
+    assert datetime(2017, 1, 1, 0, 0) == record.field['date'].value
+    assert datetime(1970, 1, 1, 10, 9, 8) == record.field['time'].value
+    assert datetime(2017, 1, 1, 10, 9, 8) == record.field['datetime'].value
+    assert 'a' == record.field['list'][0].value
+    assert 'b' == record.field['list'][1].value
+    assert 'value' == record.field['map']['first-key'].value
+    assert 'secret value' == record.field['map']['second-key'].value
