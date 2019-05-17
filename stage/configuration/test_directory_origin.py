@@ -649,7 +649,8 @@ def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 def test_directory_origin_configuration_lines_to_skip(sdc_builder, sdc_executor, data_format, shell_executor, file_writer):
-    """ Verify if DC skips the delimited file with given value """
+    """Verify if DC skips the delimited file with given value.
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'delimited_file.csv'
     FILE_CONTENTS = """Field11,Field12,Field13
@@ -670,8 +671,7 @@ Field51,Field52,Field53"""
                                  file_name_pattern="*.csv",
                                  file_name_pattern_mode='GLOB',
                                  delimiter_character=",",
-                                 lines_to_skip=3
-                                 )
+                                 lines_to_skip=3)
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
@@ -679,13 +679,12 @@ Field51,Field52,Field53"""
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
+
         assert 2 == len(output_records)
-        assert output_records[0].get_field_data('/0') == 'Field41'
-        assert output_records[0].get_field_data('/1') == 'Field42'
-        assert output_records[0].get_field_data('/2') == 'Field43'
-        assert output_records[1].get_field_data('/0') == 'Field51'
-        assert output_records[1].get_field_data('/1') == 'Field52'
-        assert output_records[1].get_field_data('/2') == 'Field53'
+        assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 3)], ['Field41', 'Field42',
+                                                                                          'Field43']))
+        assert output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 3)], ['Field51', 'Field52',
+                                                                                          'Field53']))
     finally:
         shell_executor(f'rm -r {files_directory}')
 
