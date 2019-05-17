@@ -417,11 +417,47 @@ def test_directory_origin_configuration_custom_log_format(sdc_builder, sdc_execu
     pass
 
 
-@pytest.mark.parametrize('data_format', ['AVRO', 'DELIMITED', 'EXCEL', 'JSON', 'LOG',
-                                         'PROTOBUF', 'SDC_JSON', 'TEXT', 'WHOLE_FILE', 'XML'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, data_format):
-    pass
+@pytest.mark.parametrize('data_format', ['SDC_JSON'])
+# 'AVRO', 'DELIMITED', 'EXCEL', 'JSON', 'LOG', 'PROTOBUF',  'TEXT', 'WHOLE_FILE', 'XML'
+def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, data_format,
+                                                    shell_executor, compressed_file_writer):
+    """Test if Directory Origin can read data with different data format.
+    We will be testing only SDC_JSON data formats now. Other data formats are covered in other TCs.
+    Following is mapping of data format to respective TC.
+    AVRO - test_directory_origin_configuration_avro_schema
+    DELIMITED - test_directory_origin_configuration_delimiter_format_type
+    EXCEL - test_directory_origin_configuration_excel_header_option
+    JSON - test_directory_origin_configuration_json_content
+    LOG - test_directory_origin_configuration_log_format
+    PROTOBUF - test_directory_origin_configuration_protobuf_descriptor_file
+    TEXT - test_directory_origin_configuration_process_subdirectories. Other TCs which validates different configs.
+    WHOLE_FILE - test_directory_origin_configuration_buffer_size_in_bytes
+    XML - test_directory_origin_configuration_delimiter_element
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    json_data = [{"field1": "abc", "field2": "def", "field3": "ghi"},
+                 {"field1": "jkl", "field2": "mno", "field3": "pqr"}]
+    file_content = ''.join(json.dumps(record) for record in json_data)
+
+    try:
+        compressed_file_writer(files_directory, data_format, 'NONE', file_content, 'NONE')
+
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': '*.json',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': files_directory,
+                      'json_content': 'MULTIPLE_OBJECTS'}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory].output
+        assert 2 == len(output_records)
+        assert output_records[0].field == json_data[0]
+        assert output_records[1].field == json_data[1]
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
