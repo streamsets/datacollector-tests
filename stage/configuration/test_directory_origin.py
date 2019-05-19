@@ -799,9 +799,42 @@ def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executo
 
 
 @pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor, read_order):
-    pass
+def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor, shell_executor,
+                                                   file_writer, read_order, snapshot_content):
+    """Check how Directory origin read files in order given. We will create two files b_read_order_check.txt
+    and a_read_order_check.txt
+    LEXICOGRAPHICAL -> a_read_order_check.txt should be read 1st followed b_read_order_check.txt
+    TIMESTAMP -> b_read_order_check.txt should be read 1st followed a_read_order_check.txt
+    """
+    file_name_1= 'b_read_order_check.txt'
+    file_content_1 = DirectoryOriginCommon.get_text_file_content(2, 1)
+    file_name_2 = 'a_read_order_check.txt'
+    file_content_2 = DirectoryOriginCommon.get_text_file_content(1, 1)
+
+    try:
+        files_directory = DirectoryOriginCommon.create_file_directory(file_name_1, file_content_1, shell_executor,
+                                                                      file_writer)
+        file_writer(os.path.join(files_directory, file_name_2), file_content_2)
+
+        attributes = {'data_format':'TEXT',
+                      'files_directory':files_directory,
+                      'file_name_pattern_mode':"GLOB",
+                      'file_name_pattern':"*.txt",
+                      'read_order':read_order}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2, batch_size=10).snapshot
+        processed_data = snapshot_content(snapshot, directory)
+
+        if read_order == "LEXICOGRAPHICAL":
+            raw_data = file_content_2 + "\n" + file_content_1
+        else:
+            raw_data = file_content_1 + "\n" + file_content_2
+        assert raw_data == processed_data
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['NETFLOW'])
@@ -917,6 +950,36 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-## Start of general supportive functions
-def get_text_file_content(file_number):
-    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return directory, pipeline
+
+    @staticmethod
+    def create_file_directory(file_name, file_content, shell_executor, file_writer, delimiter_format_type=None,
+                              delimiter_character=None):
+        files_directory = os.path.join('/tmp', get_random_string())
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir -p {files_directory}')
+        file_path = os.path.join(files_directory, file_name)
+        if delimiter_format_type:
+            file_writer(file_path, file_content, delimiter_format_type, delimiter_character)
+        else:
+            file_writer(file_path, file_content)
+        return files_directory
+
+    @staticmethod
+    def get_text_file_content(file_number, lines_needed=3):
+        return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
+
