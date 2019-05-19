@@ -787,9 +787,47 @@ def test_directory_origin_configuration_protobuf_descriptor_file(sdc_builder, sd
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executor, delimiter_format_type, data_format):
-    pass
+@pytest.mark.parametrize('quote_character', ['\t', ';' , ' '])
+@pytest.mark.parametrize('delimiter_character', ['^'])
+def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executor, delimiter_format_type, data_format,
+                                                        quote_character, shell_executor, delimited_file_writer,
+                                                        delimiter_character):
+    """Verify if directory origin can read delimited data with custom quote character.
+    This TC check for different escape characters. Input data fields have delimiter characters.
+    Directory origin should read this data and produce field without escape character.
+    e.g. ;|Field is value of field with "|" as delimiter character and ";" as quote character
+    then output field should be "|Field".
+    """
+    file_name = 'custom_delimited_file.csv'
+    f = lambda ip_string: ip_string.format(quote_character=quote_character, delimiter_character=delimiter_character)
+    f1 = lambda ip_string: ip_string.replace(quote_character, "")
+    data = [['{quote_character}Field11{delimiter_character}{quote_character}', 'Field12',
+             '{quote_character},Field13{quote_character}'],
+            [f('{quote_character}Field{delimiter_character}21{quote_character}'), 'Field22', 'Field23']]
+
+    try:
+        files_directory = DirectoryOriginCommon.create_file_directory(file_name, data, shell_executor,
+                                                                      delimited_file_writer,
+                                                                      delimiter_format_type, delimiter_character)
+
+        attributes = {'data_format': data_format,
+                      'files_directory': files_directory,
+                      'file_name_pattern': 'custom_delimited_*',
+                      'file_name_pattern_mode': 'GLOB',
+                      'delimiter_format_type': delimiter_format_type,
+                      'delimiter_character': delimiter_character,
+                      'quote_character': quote_character}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        expected_output = [map(f1, data[0]), map(f1, data[1])]
+        DirectoryOriginCommon.verify_delimited_output(output_records, expected_output)
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
@@ -917,6 +955,44 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-## Start of general supportive functions
-def get_text_file_content(file_number):
-    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return directory, pipeline
+
+    @staticmethod
+    def create_file_directory(file_name, file_content, shell_executor, file_writer, delimiter_format_type=None,
+                              delimiter_character=None):
+        files_directory = os.path.join('/tmp', get_random_string())
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_path = os.path.join(files_directory, file_name)
+        if delimiter_format_type:
+            file_writer(file_path, file_content, delimiter_format_type, delimiter_character)
+        else:
+            file_writer(file_path, file_content)
+        return files_directory
+
+    @staticmethod
+    def get_text_file_content(file_number, lines_needed=3):
+        return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
+
+    @staticmethod
+    def verify_delimited_output(output_records, data, header=None):
+        if not header:
+            header = [str(i) for i in range(0, 3)]
+        assert 2 == len(output_records)
+        assert output_records[0].field == OrderedDict(zip(header, data[0]))
+        assert output_records[1].field == OrderedDict(zip(header, data[1]))
+
