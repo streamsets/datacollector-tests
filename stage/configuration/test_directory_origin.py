@@ -541,9 +541,14 @@ def test_directory_origin_configuration_file_post_processing(sdc_builder, sdc_ex
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_files_directory(sdc_builder, sdc_executor):
-    pass
+def test_directory_origin_configuration_files_directory(sdc_builder, sdc_executor, shell_executor,
+                                                        file_writer):
+    """Check if directory origin can read files from directory configured with parameters file directory.
+    We will use batch_size_in_recs TC to avoid repetition. We pass batch_size_in_recs parameter as 1000
+    which is default setting, so that this TC prominently checks files directory function.
+    """
+    test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor, shell_executor,
+                                                           file_writer, 1000)
 
 
 def test_directory_origin_configuration_first_file_to_process(sdc_builder, sdc_executor,
