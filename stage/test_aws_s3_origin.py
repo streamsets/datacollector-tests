@@ -737,7 +737,7 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Fileobj=f)
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Fileobj=file_excel)
 
         # Snapshot the pipeline and compare the records.
         snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
