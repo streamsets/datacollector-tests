@@ -495,8 +495,8 @@ def test_directory_origin_configuration_ignore_control_characters(sdc_builder, s
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('ignore_empty_lines', [False, True])
-def test_directory_origin_configuration_ignore_empty_lines(sdc_builder, sdc_executor, delimiter_format_type,
-                            data_format, ignore_empty_lines, file_writer, shell_executor):
+def test_directory_origin_configuration_ignore_empty_lines(sdc_builder, sdc_executor,
+                            delimiter_format_type, data_format, ignore_empty_lines, file_writer, shell_executor):
 
     """ignore_empty_lines = True -- if no field is found in the line then ignore the line.
     In this test case 3 lines are there 1st line containing fields, 2nd line is empty and 3rd line
