@@ -756,6 +756,7 @@ def test_directory_origin_configuration_ignore_control_characters_delimited(sdc_
 
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
+@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_ignore_control_characters_json(sdc_builder, sdc_executor,
                                                                        ignore_control_characters, shell_executor,
                                                                        file_writer):
@@ -790,6 +791,7 @@ def test_directory_origin_configuration_ignore_control_characters_log(sdc_builde
 
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
+@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_ignore_control_characters_xml(sdc_builder, sdc_executor,
                                                                        ignore_control_characters, shell_executor,
                                                                        file_writer):
@@ -797,6 +799,7 @@ def test_directory_origin_configuration_ignore_control_characters_xml(sdc_builde
 
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
+@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_ignore_control_characters_datagram(sdc_builder, sdc_executor,
                                                                        ignore_control_characters, shell_executor,
                                                                        file_writer):
