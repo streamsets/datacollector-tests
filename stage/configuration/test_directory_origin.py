@@ -12,6 +12,7 @@
 #     sdc_executor.add_pipeline(pipeline)
 # -*- end test template -*-
 #
+import json
 import logging
 import math
 import os
@@ -527,12 +528,57 @@ def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_
     pass
 
 
-@pytest.mark.parametrize('data_format', ['BINARY', 'DELIMITED', 'JSON', 'LOG', 'PROTOBUF', 'SDC_JSON', 'TEXT', 'XML'])
+@pytest.mark.parametrize('data_format', ['TEXT', 'DELIMITED', 'JSON', 'LOG', 'SDC_JSON', 'XML'])
 @pytest.mark.parametrize('compression_format', ['ARCHIVE', 'COMPRESSED_ARCHIVE'])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_file_name_pattern_within_compressed_directory(sdc_builder, sdc_executor,
-                                                                                      data_format, compression_format):
-    pass
+                                                                                      data_format, compression_format,
+                                                                                      shell_executor, file_writer,
+                                                                                      delimited_file_writer):
+    """Verify direcotry origin can read data from compressed files with GLOB pattern.
+    Pattern is inside the compressed file.
+    e.g. compression_format_test.txt is compressed as compression_format_test.txt.zip then
+    file_name_pattern_within_compressed_directory = '.txt'
+    Here we are using TEXT data format to check if data can be read from compressed txt files.
+    Similarly we will generate compressed file for all data formats and test it.
+    Note : 1) PROTOBUF -> Bug filed SDC-11530. So protobuf related issues are resolved
+    2) BINARY -> Not supported by Directory origin. Confirmed by developers.
+    """
+    ext_map = {'BINARY': 'bin', 'TEXT': 'txt', 'DELIMITED': 'csv', 'JSON': 'json', 'LOG': 'log', 'PROTOBUF': 'proto',
+               'SDC_JSON': 'json', 'XML': 'xml'}
+    file_name = 'compression_format_test.%s' %(ext_map[data_format])
+    file_content = DirectoryOriginCommon.get_data_format_content(data_format)
+
+    try:
+        json_data = None
+        if data_format == 'DELIMITED':
+            files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
+                                                                          delimited_file_writer, 'CSV')
+        elif data_format == 'SDC_JSON':
+            files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor)
+            json_data = DirectoryOriginCommon.setup_sdc_json_file(sdc_executor, files_directory, file_content,
+                                                                  'compression_format_test')
+        else:
+            files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
+                                                                          file_writer)
+        DirectoryOriginCommon.write_compressed_file(shell_executor, files_directory, file_name, compression_format)
+        file_name_pattern = '*.tar' if compression_format == 'ARCHIVE' else '*.gz'
+
+        attributes = {'data_format':data_format,
+                      'files_directory':files_directory,
+                      'file_name_pattern_within_compressed_directory':'compression_*',
+                      'file_name_pattern':file_name_pattern,
+                      'file_name_pattern_mode': 'GLOB',
+                      'compression_format':compression_format,
+                      'header_line': 'WITH_HEADER',
+                      'log_format': 'LOG4J',
+                      'json_content': 'MULTIPLE_OBJECTS'}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+        DirectoryOriginCommon.execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
+                                                        json_data)
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('file_post_processing', ['ARCHIVE', 'DELETE', 'NONE'])
@@ -917,6 +963,143 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-## Start of general supportive functions
-def get_text_file_content(file_number):
-    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return directory, pipeline
+
+    @staticmethod
+    def create_file_directory(file_name, file_content, shell_executor, file_writer=None, delimiter_format_type=None,
+                              delimiter_character=None):
+        files_directory = os.path.join('/tmp', get_random_string())
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_path = os.path.join(files_directory, file_name)
+        if file_writer:
+            if delimiter_format_type:
+                file_writer(file_path, file_content, delimiter_format_type, delimiter_character)
+            else:
+                file_writer(file_path, file_content)
+        return files_directory
+
+    @staticmethod
+    def get_text_file_content(file_number, lines_needed=3):
+        return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
+
+    @staticmethod
+    def write_compressed_file(shell_executor, files_directory, file_name, compression_format):
+        if compression_format == 'ARCHIVE':
+            shell_executor(f'cd {files_directory} '
+                           f'&& tar -cvf {file_name}.tar {file_name} '
+                           f'&& rm {file_name}')
+            file_name_pattern = '*.tar'
+        else:
+            shell_executor(f'cd {files_directory} '
+                           f'&& tar -czvf {file_name}.tar.gz {file_name} '
+                           f'&& rm {file_name}')
+            file_name_pattern = '*.gz'
+
+    @staticmethod
+    def create_compressed_file(sdc_executor, files_directory, file_contents):
+        raw_data = file_contents
+
+        pipeline_builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='TEXT',
+                                directory_template=files_directory,
+                                files_prefix='sdc-${sdc:id()}',
+                                files_suffix='txt',
+                                max_records_in_file=5,
+                                compression_codec='GZIP')
+
+        dev_raw_data_source >> local_fs
+        files_pipeline = pipeline_builder.build('Generate files pipeline')
+        sdc_executor.add_pipeline(files_pipeline)
+
+        # generate some batches/files
+        sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
+
+    @staticmethod
+    def get_data_format_content(data_format):
+        # Add data for Binary and protobug format. sdc json need to generated with pipeline
+        if data_format == 'TEXT':
+            return DirectoryOriginCommon.get_text_file_content(1, 1)
+        elif data_format in ['DELIMITED', 'BINARY']:
+            return [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'Field13']]
+        elif data_format == 'JSON':
+            return json.dumps([{'col11': 'value11', 'col12': 'value12', 'col13': 'value13', 'col14': 'value14'}])
+        elif data_format == 'LOG':
+            return '200 [main] DEBUG org.StreamSets.Log4j unknown - This is sample log message'
+        elif data_format == 'XML':
+            return """<?xml version="1.0" encoding="UTF-8"?>
+                        <root>
+                          <msg>
+                              <request>GET /index.html 200</request>
+                              <metainfo>Index page:More info about content</metainfo>
+                          </msg>
+                        </root>"""
+        elif data_format == 'SDC_JSON':
+            return [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13', 'col14': 'value14'}]
+
+    @staticmethod
+    def setup_sdc_json_file(sdc_executor, files_directory, json_data, suffix='sdc'):
+        """json_data = [{"field1": "abc", "field2": "def", "field3": "ghi"},
+                     {"field1": "jkl", "field2": "mno", "field3": "pqr"}] """
+        raw_data = ''.join(json.dumps(record) for record in json_data)
+
+        pipeline_builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='SDC_JSON',
+                                directory_template=files_directory,
+                                files_prefix=suffix+'-${sdc:id()}', files_suffix='json', max_records_in_file=5)
+
+        dev_raw_data_source >> local_fs
+        files_pipeline = pipeline_builder.build('Generate files pipeline')
+        sdc_executor.add_pipeline(files_pipeline)
+
+        # generate some batches/files
+        sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
+        return json_data
+
+    @staticmethod
+    def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
+                                           json_data=None):
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        if data_format == 'TEXT':
+            assert output_records[0].field['text'] == file_content
+        elif data_format == 'DELIMITED':
+            assert output_records[0].field == OrderedDict(zip(file_content[0], file_content[1]))
+        elif data_format == 'JSON':
+            assert output_records[0].field == [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13',
+                                                'col14': 'value14'}]
+        elif data_format == 'LOG':
+            assert output_records[0].field == {'severity': 'DEBUG', 'relativetime': '200', 'thread': 'main',
+                                               'category': 'org.StreamSets.Log4j', 'ndc': 'unknown',
+                                               'message': 'This is sample log message'}
+        elif data_format == 'XML':
+            msg_field = output_records[0].field['msg']
+            assert (msg_field[0]['metainfo'][0]['value'] ==
+                    'Index page:More info about content')
+            assert (msg_field[0]['request'][0]['value'] ==
+                    'GET /index.html 200')
+        elif data_format == 'SDC_JSON':
+            assert output_records[0].field == json_data[0]
+
