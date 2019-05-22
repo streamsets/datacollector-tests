@@ -484,11 +484,41 @@ def test_directory_origin_configuration_escape_character(sdc_builder, sdc_execut
 
 @pytest.mark.parametrize('data_format', ['EXCEL'])
 @pytest.mark.parametrize('excel_header_option', ['IGNORE_HEADER', 'NO_HEADER', 'WITH_HEADER'])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_excel_header_option(sdc_builder, sdc_executor,
-                                                            data_format, excel_header_option):
-    pass
+                            data_format, excel_header_option, shell_executor, file_writer):
+    """Indicates whether files include a header row and whether to ignore the header row.
+    A header row must be the first row of a file.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = f'{get_random_string()}.xls'
+    file_path = os.path.join(files_directory, file_name)
+    try:
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(file_path, DirectoryOriginCommon.generate_excel_file().getvalue(), 'utf8', 'BINARY')
 
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(excel_header_option=excel_header_option,
+                                 data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.xls')
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        if excel_header_option == 'IGNORE_HEADER':
+            assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'ఫీల్డ్12'), ('2', 'fält13')])
+        elif excel_header_option == 'NO_HEADER':
+            assert output_records[0].field == OrderedDict([('0', 'column1'), ('1', 'column2'), ('2', 'column3')])
+        else:
+            assert output_records[0].field == OrderedDict([('column1', 'Field11'), ('column2', 'ఫీల్డ్12'), ('column3', 'fält13')])
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
 @pytest.mark.parametrize('datagram_packet_format', ['COLLECTD'])
@@ -920,3 +950,33 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
 ## Start of general supportive functions
 def get_text_file_content(file_number):
     return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def generate_excel_file():
+        import io
+        from xlwt import Workbook
+
+        file_excel = io.BytesIO()  # create a file-like object
+        # Create the Excel file
+        workbook = Workbook(encoding='utf-8')
+        sheet = workbook.add_sheet('sheet1')
+
+        sheet.write(0, 0, 'column1')
+        sheet.write(0, 1, 'column2')
+        sheet.write(0, 2, 'column3')
+
+        sheet.write(1, 0, 'Field11')
+        sheet.write(1, 1, 'ఫీల్డ్12')
+        sheet.write(1, 2, 'fält13')
+
+        sheet.write(2, 0, 'поле21')
+        sheet.write(2, 1, 'फील्ड22')
+        sheet.write(2, 2, 'สนาม23')
+        workbook.save(file_excel)
+        return file_excel

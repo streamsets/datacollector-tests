@@ -12,6 +12,10 @@ FILE_WRITER_SCRIPT = """
             f.write(file_contents.decode('utf8').encode('{encoding}'))
 """
 
+FILE_WRITER_SCRIPT_BINARY = """
+    with open('{filepath}', 'wb') as f:
+        f.write({file_contents})
+"""
 
 @pytest.fixture(scope='module')
 def sdc_common_hook():
@@ -29,8 +33,8 @@ def file_writer(sdc_executor):
         file_contents (:obj:`str`): The file contents.
         encoding (:obj:`str`, optional): The file encoding. Default: ``'utf8'``
     """
-    def file_writer_(filepath, file_contents, encoding='utf8'):
-        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding)
+    def file_writer_(filepath, file_contents, encoding='utf8', is_binary='BINARY'):
+        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding, is_binary)
     return file_writer_
 
 
@@ -55,14 +59,19 @@ def shell_executor(sdc_executor):
     return shell_executor_
 
 
-def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8'):
+def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8', is_binary='BINARY'):
     builder = sdc_executor.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
     jython_evaluator = builder.add_stage('Jython Evaluator')
-    jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT).format(filepath=str(filepath),
+    if is_binary == 'BINARY':
+        jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT_BINARY).format(filepath=str(filepath),
                                                                          file_contents=file_contents,
                                                                          encoding=encoding)
+    else:
+        jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT).format(filepath=str(filepath),
+                                                                                    file_contents=file_contents,
+                                                                                    encoding=encoding)
     trash = builder.add_stage('Trash')
     dev_raw_data_source >> jython_evaluator >> trash
     pipeline = builder.build('File writer pipeline')
@@ -105,3 +114,29 @@ def get_excel_compatible_csv(data):
     finally:
         queue.close()
     return content
+
+@pytest.fixture
+def file_writer_excel(sdc_executor):
+    """Writes a file to SDC's local FS.
+
+    Args:
+        filepath (:obj:`str`): The absolute path to which to write the file.
+        file_contents (:obj:`str`): The file contents.
+        encoding (:obj:`str`, optional): The file encoding. Default: ``'utf8'``
+    """
+    def file_writer_(filepath, file_contents, encoding='utf8'):
+        builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+        jython_evaluator = builder.add_stage('Jython Evaluator')
+        jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT_EXCEL).format(filepath=str(filepath),
+                                                                             file_contents=file_contents,
+                                                                             encoding=encoding)
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> jython_evaluator >> trash
+        pipeline = builder.build('File writer pipeline')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.remove_pipeline(pipeline)
+    return file_writer_
