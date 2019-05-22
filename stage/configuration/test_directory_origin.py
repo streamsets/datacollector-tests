@@ -657,12 +657,71 @@ def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_
     pass
 
 
-@pytest.mark.parametrize('data_format', ['BINARY', 'DELIMITED', 'JSON', 'LOG', 'PROTOBUF', 'SDC_JSON', 'TEXT', 'XML'])
+@pytest.mark.parametrize('data_format', ['TEXT', 'DELIMITED', 'JSON', 'LOG', 'SDC_JSON', 'XML'])
 @pytest.mark.parametrize('compression_format', ['ARCHIVE', 'COMPRESSED_ARCHIVE'])
-@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_file_name_pattern_within_compressed_directory(sdc_builder, sdc_executor,
-                                                                                      data_format, compression_format):
-    pass
+                                                                                      data_format, compression_format,
+                                                                                      shell_executor, file_writer,
+                                                                                      delimited_file_writer,
+                                                                                      compressed_file_writer):
+    """Verify direcotry origin can read data from compressed files with GLOB pattern.
+    Pattern is inside the compressed file.
+    e.g. compression_format_test.txt is compressed as compression_format_test.txt.zip then
+    file_name_pattern_within_compressed_directory = '.txt'
+    Here we are using TEXT data format to check if data can be read from compressed txt files.
+    Similarly we will generate compressed file for all data formats and test it.
+    Note : 1) PROTOBUF -> Bug filed SDC-11530. So protobuf related issues are resolved
+    2) BINARY -> Not supported by Directory origin. Confirmed by developers.
+    """
+    ext_map = {'BINARY': 'bin', 'TEXT': 'txt', 'DELIMITED': 'csv', 'JSON': 'json', 'LOG': 'log', 'PROTOBUF': 'proto',
+               'SDC_JSON': 'json', 'XML': 'xml'}
+    file_name = 'compression_format_test.%s' %(ext_map[data_format])
+    compressed_file_name = file_name
+    file_content = get_data_format_content(data_format)
+
+    try:
+        json_data = None
+        if data_format == 'DELIMITED':
+            files_directory = create_file_and_directory(file_name, file_content, shell_executor,
+                                                                          delimited_file_writer, 'CSV')
+        elif data_format == 'SDC_JSON':
+            files_directory = os.path.join('/tmp', get_random_string())
+            file_name = file_name.replace('.json', '*.json')
+            json_data = file_content # Used in assertion
+            file_content = ''.join(json.dumps(record) for record in file_content)
+            compressed_file_writer(files_directory, data_format, 'NONE', file_content, 'NONE',
+                                   'compression_format_test')
+        else:
+            files_directory = create_file_and_directory(file_name, file_content, shell_executor,
+                                                                          file_writer)
+
+        if compression_format == 'ARCHIVE':
+            shell_executor(f'cd {files_directory} '
+                           f'&& tar -cvf {compressed_file_name}.tar {file_name} '
+                           f'&& rm {file_name}')
+            file_name_pattern = '*.tar'
+        else:
+            shell_executor(f'cd {files_directory} '
+                           f'&& tar -czvf {compressed_file_name}.tar.gz {file_name} '
+                           f'&& rm {file_name}')
+            file_name_pattern = '*.gz'
+
+        attributes = {'data_format':data_format,
+                      'files_directory':files_directory,
+                      'file_name_pattern_within_compressed_directory':'compression_*',
+                      'file_name_pattern':file_name_pattern,
+                      'file_name_pattern_mode': 'GLOB',
+                      'compression_format':compression_format,
+                      'header_line': 'WITH_HEADER',
+                      'log_format': 'LOG4J',
+                      'json_content': 'MULTIPLE_OBJECTS'}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
+                                           json_data)
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('file_post_processing', ['ARCHIVE', 'DELETE', 'NONE'])
