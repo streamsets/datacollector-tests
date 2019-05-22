@@ -12,6 +12,10 @@ FILE_WRITER_SCRIPT = """
             f.write(file_contents.decode('utf8').encode('{encoding}'))
 """
 
+FILE_WRITER_SCRIPT_BINARY = """
+    with open('{filepath}', 'wb') as f:
+        f.write({file_contents})
+"""
 
 @pytest.fixture(scope='module')
 def sdc_common_hook():
@@ -29,8 +33,8 @@ def file_writer(sdc_executor):
         file_contents (:obj:`str`): The file contents.
         encoding (:obj:`str`, optional): The file encoding. Default: ``'utf8'``
     """
-    def file_writer_(filepath, file_contents, encoding='utf8'):
-        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding)
+    def file_writer_(filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
+        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding, file_data_type)
     return file_writer_
 
 
@@ -55,12 +59,14 @@ def shell_executor(sdc_executor):
     return shell_executor_
 
 
-def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8'):
+def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
     builder = sdc_executor.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
     jython_evaluator = builder.add_stage('Jython Evaluator')
-    jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT).format(filepath=str(filepath),
+
+    file_writer_script = FILE_WRITER_SCRIPT_BINARY if file_data_type == 'BINARY' else FILE_WRITER_SCRIPT
+    jython_evaluator.script = textwrap.dedent(file_writer_script).format(filepath=str(filepath),
                                                                          file_contents=file_contents,
                                                                          encoding=encoding)
     trash = builder.add_stage('Trash')
@@ -74,9 +80,10 @@ def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='ut
 
 @pytest.fixture
 def delimited_file_writer(sdc_executor):
-    def delimited_file_writer_(filepath, file_contents_list, delimiter_format, delimiter_character, encoding='utf8'):
+    def delimited_file_writer_(filepath, file_contents_list, delimiter_format, delimiter_character, encoding='utf8',
+                               file_data_type='NOT_BINARY'):
         delimited_file_contents = get_file_content(file_contents_list, delimiter_format, delimiter_character)
-        write_file_with_pipeline(sdc_executor, filepath, delimited_file_contents, encoding)
+        write_file_with_pipeline(sdc_executor, filepath, delimited_file_contents, encoding, file_data_type)
     return delimited_file_writer_
 
 
@@ -157,3 +164,4 @@ def compressed_file_writer(sdc_executor):
         sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=30)
 
     return compressed_file_writer_
+
