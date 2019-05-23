@@ -65,16 +65,3 @@ def shell_executor(sdc_executor):
         sdc_executor.remove_pipeline(pipeline)
     return shell_executor_
 
-
-@pytest.fixture
-def snapshot_content():
-    def snapshot_content_(snapshot, directory):
-        """This is common function can be used at in may TCs to get snapshot content.
-        """
-        processed_data = []
-        for snapshot_batch in snapshot.snapshot_batches:
-            for value in snapshot_batch[directory.instance_name].output_lanes.values():
-                for record in value:
-                    processed_data.append(str(record.field['text']))
-        return '\n'.join(processed_data)
-    return snapshot_content_
