@@ -12,6 +12,7 @@
 #     sdc_executor.add_pipeline(pipeline)
 # -*- end test template -*-
 #
+from collections import OrderedDict
 import logging
 import math
 import os
@@ -327,10 +328,47 @@ def test_directory_origin_configuration_charset(sdc_builder, sdc_executor, file_
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('enable_comments', [True])
-@pytest.mark.skip('Not yet implemented')
+@pytest.mark.parametrize('delimiter_character', ['^'])
+@pytest.mark.parametrize('comment_marker', ['#', ' ', ';', ','])
 def test_directory_origin_configuration_comment_marker(sdc_builder, sdc_executor,
-                                                       delimiter_format_type, data_format, enable_comments):
-    pass
+                                                       delimiter_format_type, data_format, delimiter_character,
+                                                       enable_comments, comment_marker, shell_executor, file_writer):
+    """Verify if DC can read the delimited file with comments.
+        Direcotry origin should ignore comment line."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'delimited_file.csv'
+    data = get_delimited_file_data(True)
+    FILE_CONTENTS = get_delimited_file_content(data, delimiter_character, comment_marker)
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.csv',
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 enable_comments=enable_comments,
+                                 comment_marker=comment_marker,
+                                 delimiter_character=delimiter_character)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = snapshot[directory.instance_name].output
+
+        assert 2 == len(output_records)
+        assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
+        assert output_records[1].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['BINARY', 'DELIMITED', 'JSON', 'LOG', 'PROTOBUF', 'SDC_JSON', 'TEXT', 'XML'])
@@ -915,6 +953,18 @@ def test_directory_origin_configuration_use_custom_delimiter(sdc_builder, sdc_ex
 def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_executor,
                                                               data_format, log_format, use_custom_log_format):
     pass
+
+
+# General Functions
+def get_delimited_file_data(with_comments=True):
+    data = [['Field11', 'Field12', 'Field13'], ['Field21', 'Field22', 'Field23']]
+    if with_comments:
+        data.insert(1, ['{comment_marker} This is comment'])
+    return data
+
+
+def get_delimited_file_content(data, delimiter_character=",", comment_marker='#'):
+    return '\n'.join([str(delimiter_character.join(t)).format(comment_marker=comment_marker) for t in data])
 
 
 ## Start of general supportive functions
