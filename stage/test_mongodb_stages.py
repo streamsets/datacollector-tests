@@ -32,6 +32,22 @@ ORIG_DOCS = [
     {'name': 'Violin'}
 ]
 
+NESTED_DOC = [
+    {
+        "data": {
+            "data": {
+                "foo": "bar"
+            },
+            "metadata": {
+                "created_time": "2018-03-22T02:24:06.945319214Z",
+                "deletion_time": "",
+                "destroyed": False,
+                "version": 1
+            }
+        }
+    }
+]
+
 NESTED_DOCS = [
     {
         'name': 'StreamSets',
@@ -327,6 +343,60 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
 #        mongodb.engine.drop_database(mongodb_origin.database)
+
+
+@mongodb
+def test_mongodb_origin_nested_field_offset(sdc_builder, sdc_executor, mongodb):
+    """
+    Create 1 simple document with nested fields in MongoDB and confirm that MongoDB origin reads it using as offset the
+    nested field.
+
+    The pipeline looks like:
+        mongodb_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_origin = pipeline_builder.add_stage('MongoDB', type='origin')
+    mongodb_origin.set_attributes(capped_collection=False,
+                                  database=get_random_string(ascii_letters, 5),
+                                  collection=get_random_string(ascii_letters, 10),
+                                  initial_offset='baa',
+                                  offset_field_type='STRING',
+                                  offset_field='data.data.foo')
+
+    trash = pipeline_builder.add_stage('Trash')
+    mongodb_origin >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(NESTED_DOC)
+
+        # Create document in MongoDB using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then document is created in that collection.
+        logger.info('Adding document into %s collection using PyMongo...', mongodb_origin.collection)
+        mongodb_database = mongodb.engine[mongodb_origin.database]
+        mongodb_collection = mongodb_database[mongodb_origin.collection]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents using snaphot.
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        rows_from_snapshot = [{'foo':
+                               record.field['data']['data']['foo'].value}
+                              for record in snapshot[mongodb_origin].output]
+
+        assert rows_from_snapshot == [{'foo': 'bar'}]
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_origin.database)
+        mongodb.engine.drop_database(mongodb_origin.database)
+
 
 @mongodb
 @sdc_min_version('3.5.0')
