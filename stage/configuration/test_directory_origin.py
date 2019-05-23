@@ -652,45 +652,39 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
 
 @pytest.mark.parametrize('file_name_pattern_mode', ['GLOB', 'REGEX'])
 def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_executor, shell_executor,
-                                                               file_writer, file_name_pattern_mode,
-                                                               snapshot_content):
+                                                               file_writer, file_name_pattern_mode):
     """Check how DC process different file pattern mode. Here we will be creating 2 files.
     pattern_check_processing_1.txt and pattern_check_processing_22.txt.
     with regex we match only 1st file and with glob both files.
     """
-    files_directory = os.path.join('/tmp', get_random_string())
-    files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_22.txt']
-    files_content = ['This is sample file111', 'This is sample file222']
-    file_name_pattern = "*.txt" if file_name_pattern_mode == "GLOB" else "^p(.*)([0-9]{1})(\.txt)"
-    number_of_batches = 2 if file_name_pattern_mode == "GLOB" else 1
+    files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
+    files_content = [DirectoryOriginCommon.get_text_file_content(1, 1),
+                     DirectoryOriginCommon.get_text_file_content(2, 1)]
+    file_name_pattern = '*.txt' if file_name_pattern_mode == 'GLOB' else '^p(.*)([0-9]{1})(\.txt)'
+    number_of_batches = 2 if file_name_pattern_mode == 'GLOB' else 1
 
     try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, files_name[0]), files_content[0])
+        files_directory = DirectoryOriginCommon.create_file_directory(files_name[0], files_content[0], shell_executor,
+                                                                      file_writer)
         file_writer(os.path.join(files_directory, files_name[1]), files_content[1])
 
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format='TEXT',
-                                 files_directory=files_directory,
-                                 file_name_pattern_mode=file_name_pattern_mode,
-                                 file_name_pattern=file_name_pattern)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
+        attributes = {'data_format':'TEXT',
+                      'files_directory':files_directory,
+                      'file_name_pattern_mode':file_name_pattern_mode,
+                      'file_name_pattern':file_name_pattern}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=number_of_batches).snapshot
-        sdc_executor.stop_pipeline(pipeline)
 
         raw_data = '\n'.join(files_content)
-        processed_data = snapshot_content(snapshot, directory)
-        if file_name_pattern_mode == "GLOB":
+        processed_data = '\n'.join(DirectoryOriginCommon.snapshot_content(snapshot, directory))
+        if file_name_pattern_mode == 'GLOB':
             assert raw_data == processed_data
         else:
             assert files_content[0] == processed_data
     finally:
+        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
