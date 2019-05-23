@@ -33,6 +33,7 @@ AZURE_IOT_EVENT_HUB_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_eventhubs
 # Another stage label tweak introduced in 3.7.0 (SDC-10651) necessitates the same
 # workaround.
 AZURE_DATA_LAKE_STORAGE_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_datalake_DataLakeDTarget'
+AZURE_DATA_LAKE_STORAGE_ORIGIN_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_datalake_gen1_DataLakeDSource'
 
 @azure('datalake')
 @sdc_min_version('2.2.0.0')
@@ -160,6 +161,61 @@ def test_datalake_destination_max_records(sdc_builder, sdc_executor, azure):
         dl_fs.rmdir(directory_name)
 
 
+@azure('datalake')
+@sdc_min_version('3.9.0')
+def test_datalake_origin(sdc_builder, sdc_executor, azure):
+    """ Test for Data Lake Store origin stage. We do so by creating a file in Azure Data Lake Storage using the
+    STF client, then reading the file using the ALDS Gen1 Origin Stage, to assert data ingested by the pipeline
+    is the expected data from the file.
+    The pipeline looks like:
+
+    azure_data_lake_store_origin >> trash
+    """
+
+    directory_name = get_random_string(string.ascii_letters, 10)
+    file_name = 'test-data.txt'
+    messages = [f'message{i}' for i in range(1, 10)]
+
+    try:
+        # Create a file with the raw data messages
+        with open('test-data.txt', 'w+') as file:
+            for message in messages:
+                file.write(f'{message}\n')
+
+        # Put files in the azure storage file system
+        dl_fs = azure.datalake.file_system
+        dl_fs.mkdir(f'/{directory_name}')
+        dl_fs.put(file_name, f'/{directory_name}/{file_name}')
+
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        trash = builder.add_stage('Trash')
+        azure_data_lake_store_origin = builder.add_stage(name=AZURE_DATA_LAKE_STORAGE_ORIGIN_STAGE_NAME, type='origin')
+        azure_data_lake_store_origin.set_attributes(data_format='TEXT',
+                                                    files_directory=f'/{directory_name}',
+                                                    file_name_pattern='*')
+        azure_data_lake_store_origin >> trash
+
+        datalake_origin_pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(datalake_origin_pipeline)
+
+        # start pipeline and read file in ADLS
+        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.stop_pipeline(datalake_origin_pipeline)
+        output_records = [record.field['text'] for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+
+        # assert Data Lake files generated
+        assert messages == output_records
+
+    finally:
+        dl_files = dl_fs.ls(directory_name)
+        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        for dl_file in dl_files:
+            dl_fs.rm(dl_file)
+        dl_fs.rmdir(directory_name)
+
+
 @azure('eventhub')
 @sdc_min_version('2.7.1.0')
 def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
@@ -200,8 +256,8 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
         snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
 
-        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].value['value']
-        results = [{key: value['value'] for key, value in record['value'].items()} for record in result_record]
+        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].field
+        results = [{key: value for key, value in record.items()} for record in result_record]
         assert results == send_records
     finally:
         logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)

@@ -113,13 +113,14 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished()
 
         snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        records_from_snapshot = [json.dumps(record.value2) for record in snapshot[sdc_rpc_origin.instance_name].output]
+        records_from_snapshot = [record.field for record in snapshot[sdc_rpc_origin.instance_name].output]
 
         sdc_executor.stop_pipeline(snapshot_pipeline, force=True)
 
         history = sdc_executor.get_pipeline_history(snapshot_pipeline)
         assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == no_of_records
-        assert all([record in data for record in records_from_snapshot]) #TODO checks only subsets of data till SDC-8765 is fixed
+        data_json = [json.loads(d) for d in data]
+        assert all([record in data_json for record in records_from_snapshot]) #TODO checks only subsets of data till SDC-8765 is fixed
     finally:
         logger.info('Deleting blob data under %s container with path as %s', container_name, files_dir_path)
         for blob_path in blob_paths:

@@ -53,6 +53,7 @@ def test_solr_write_records_apache(sdc_builder, sdc_executor, solr):
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(instance_type='SINGLE_NODE',
                                record_indexing_mode='RECORD',
+                               map_fields_automatically=False,
                                fields=json_fields_map,
                                ignore_optional_fields=True)
 

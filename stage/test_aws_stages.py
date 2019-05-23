@@ -73,7 +73,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
         snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
-        output_records = [record.value['value']['text']['value']
+        output_records = [record.field['text'].value
                           for record in snapshot[kinesis_consumer.instance_name].output]
 
         assert set(output_records) == expected_messages
@@ -222,6 +222,26 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
         dev_raw_data_source >> record_deduplicator >> s3_destination
                                                    >> to_error
     """
+    _run_test_s3_destination(sdc_builder, sdc_executor, aws, False)
+
+
+@aws('s3', 'kms')
+@sdc_min_version('3.9.0')
+def test_s3_destination_sse_kms(sdc_builder, sdc_executor, aws):
+    """Test for S3 target stage using SSE-KMS. We do so by running a dev raw data source generator to S3 destination
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been ingested by the pipeline; we also verify that the data was in fact encrypted in the server using the KMS. We
+    use a record deduplicator processor in between dev raw data source origin and S3 destination in order to determine
+    exactly what has been ingested. The pipeline looks like:
+
+    S3 Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> s3_destination
+                                                   >> to_error
+    """
+    _run_test_s3_destination(sdc_builder, sdc_executor, aws, True)
+
+
+def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms):
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
 
@@ -240,6 +260,11 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
     s3_destination = builder.add_stage('Amazon S3', type='destination')
     bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
     s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key)
+    if sse_kms:
+        # Use SSE with KMS
+        s3_destination.set_attributes(use_server_side_encryption=True,
+                                      server_side_encryption_option='KMS',
+                                      aws_kms_key_arn=aws.kms_key_arn)
 
     dev_raw_data_source >> record_deduplicator >> s3_destination
     record_deduplicator >> to_error
@@ -258,11 +283,16 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
         assert len(list_s3_objs['Contents']) == 1
 
         # read data from S3 to assert it is what got ingested into the pipeline
-        s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
-                       for s3_content in list_s3_objs['Contents']]
+        s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
 
         # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
-        assert json.loads(s3_contents[0]) == json.loads(raw_str)
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert json.loads(s3_contents) == json.loads(raw_str)
+
+        if sse_kms:
+            # assert that the data was stored with SSE using the KMS
+            assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
+            assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}

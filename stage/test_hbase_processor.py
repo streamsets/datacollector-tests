@@ -92,8 +92,8 @@ def test_hbase_lookup_processor(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
 
         # Validate output.
-        assert [dict(name=record.value2['text'],
-                     first_edition=record.value2['founded'])
+        assert [dict(name=record.field['text'],
+                     first_edition=record.field['founded'])
                 for record in snapshot[hbase_lookup.instance_name].output] == bike_races
 
     finally:
@@ -598,8 +598,8 @@ def test_hbase_lookup_processor_get_row(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
 
         # Validate output.
-        assert [dict(name=record.value2['text'],
-                     first_edition=record.value2['founded'])
+        assert [dict(name=record.field['text'],
+                     first_edition=record.field['founded'])
                 for record in snapshot[hbase_lookup.instance_name].output] == bike_races
 
         # Validate output.
@@ -674,8 +674,8 @@ def test_hbase_lookup_processor_row_key_lookup(sdc_builder, sdc_executor, cluste
         sdc_executor.stop_pipeline(pipeline)
 
         # Validate output.
-        assert [dict(dict(name=record.value2['text']),
-                     **record.value2['data'])
+        assert [dict(dict(name=record.field['text']),
+                     **record.field['data'])
                 for record in snapshot[hbase_lookup.instance_name].output] == bike_races
 
     finally:

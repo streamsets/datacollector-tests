@@ -326,7 +326,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=60).snapshot
 
-        rows_from_snapshot = [record.value['value']
+        rows_from_snapshot = [record.field
                               for record in snapshot[salesforce_origin].output]
 
         inserted_ids = [dict([(rec['sqpath'].strip('/'), rec['value'])
@@ -349,7 +349,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         sdc_executor.stop_pipeline(pipeline)
 
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=60).snapshot
-        rows_from_snapshot = [record.value['value']
+        rows_from_snapshot = [record.field
                               for record in snapshot[salesforce_origin].output]
 
         assert len(rows_from_snapshot) == 0
@@ -717,6 +717,7 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
         if contact_ids:
             logger.info('Deleting records ...')
             client.bulk.Contact.delete(contact_ids)
+
 
 @salesforce
 @pytest.mark.parametrize(('api'), [

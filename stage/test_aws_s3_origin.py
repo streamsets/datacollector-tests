@@ -11,14 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import io
 import json
 import logging
+import os
 import string
+import tempfile
 import time
+from zipfile import ZipFile
 
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from xlwt import Workbook
 
 logger = logging.getLogger(__name__)
 
@@ -675,4 +680,180 @@ def test_offset_upgrade(sdc_builder, sdc_executor, aws):
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in
                                    client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+# SDC-11410: S3 Origin reads excel files
+@aws('s3')
+def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
+    """
+    Test that an excel file on a s3 bucket is properly read
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    s3_obj_count = 1
+
+    # Create the Excel file
+    file_excel = io.BytesIO()  # create a file-like object
+    workbook = Workbook()
+    sheet = workbook.add_sheet('0')
+
+    colcount = 5
+    rowcount = 1000
+
+    for col in range(colcount):
+        for row in range(rowcount):
+            sheet.write(row, col, 'TAB({row}, {col})'.format(row=row, col=col))
+
+    workbook.save(file_excel)
+    file_excel.seek(0)  # Move the pointer to first position of the file object so when
+    # it reads the content it starts from the beginning.
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket,
+                             data_format='EXCEL',
+                             prefix_pattern=f'{s3_key}*',
+                             excel_header_option="NO_HEADER")
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
+
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Fileobj=file_excel)
+
+        # Snapshot the pipeline and compare the records.
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+
+        output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
+
+        len_records = len(output_records)
+
+        # Compare the results get from the output_records
+        for row_res in range(len_records):
+            for col_res in range(colcount):
+                assert output_records[row_res][str(col_res)] == "TAB({row}, {col})".format(row=row_res, col=col_res)
+
+        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=60)
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == rowcount
+        # We need to add 1 since the event is considered a record
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == rowcount + 1
+
+    finally:
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
+    """
+    Tests that compressed file offsets are properly handled
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+        s3_origin >= pipeline_finished_executor
+    """
+    s3_bucket = aws.s3_bucket_name
+    directory_to_write = tempfile.gettempdir()
+
+    zip_file_name = get_random_string()
+    json1_file_name = get_random_string()
+    json2_file_name = get_random_string()
+
+    data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(50)]
+
+    json_data = "".join(json.dumps(x) for x in data)
+
+    with open(f'{directory_to_write}/{json1_file_name}.json', 'w') as outfile:
+        outfile.write(json_data)
+
+    with open(f'{directory_to_write}/{json2_file_name}.json', 'w') as outfile:
+        outfile.write(json_data)
+
+    with ZipFile(f'{zip_file_name}.zip', 'w') as zipfile:
+        zipfile.write(f'{directory_to_write}/{json1_file_name}.json', f'{json1_file_name}.json')
+        zipfile.write(f'{directory_to_write}/{json2_file_name}.json', f'{json2_file_name}.json')
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket,
+                             data_format='JSON',
+                             compression_format='ARCHIVE',
+                             file_name_pattern_within_compressed_directory='*.json',
+                             json_content='MULTIPLE_OBJECTS',
+                             prefix_pattern='*')
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
+
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.upload_file(Bucket=s3_bucket, Key=f'{zip_file_name}.zip',
+                           Filename=f'{zip_file_name}.zip')
+
+        # Snapshot the pipeline and compare the records.
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+
+        output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
+
+        for i in range(len(output_records)):
+            assert output_records[i]['f1'] == data[i]['f1']
+            assert output_records[i]['f2'] == data[i]['f2']
+
+        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 50 * 2
+        # We need to add 1 since the event is considered a record
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 50 * 2 + 1
+
+    finally:
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)

@@ -104,7 +104,44 @@ def test_jython_evaluator(sdc_builder, sdc_executor):
     output_records = snapshot[jython_evaluator.instance_name].output  # is a list of output records
     # search for a record whose 'name' is raw_company_1['name'] and assert new attribute ('office_space') is created
     # with expected boolean value (where 'floors' > 2)
-    record_1 = list(filter(lambda x: x.value['value']['name']['value'] == raw_company_1['name'], output_records))[0]
-    assert record_1.value['value']['office_space']['value'] == (raw_company_1['floors'] > 2)
-    record_2 = list(filter(lambda x: x.value['value']['name']['value'] == raw_company_2['name'], output_records))[0]
-    assert record_2.value['value']['office_space']['value'] == (raw_company_2['floors'] > 2)
+    record_1 = next(record for record in output_records if record.field['name'] == raw_company_1['name'])
+    assert record_1.field['office_space'] == (raw_company_1['floors'] > 2)
+    record_2 = next(record for record in output_records if record.field['name'] == raw_company_2['name'])
+    assert record_2.field['office_space'] == (raw_company_2['floors'] > 2)
+
+
+# SDC-11555: Provide ability to use direct SDC record in scripting processors
+def test_sdc_record(sdc_builder, sdc_executor):
+    """Iterate over SDC record directly rather then JSR-223 wrapper."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.stop_after_first_batch = True
+
+    jython = builder.add_stage('Jython Evaluator', type='processor')
+    jython.record_type = 'SDC_RECORDS'
+    jython.init_script = ''
+    jython.destroy_script = ''
+    jython.script =  """
+from com.streamsets.pipeline.api import Field
+for record in records:
+  record.sdcRecord.set('/new', Field.create(Field.Type.STRING, 'new-value'))
+  record.sdcRecord.get('/old').setAttribute('attr', 'attr-value')
+  output.write(record)
+"""
+
+    trash = builder.add_stage('Trash')
+
+    origin >> jython >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    records = snapshot[jython].output
+
+    assert len(records) == 1
+    assert 'new-value' == records[0].field['new']
+    assert 'attr-value' == records[0].get_field_data('/old').attributes['attr']

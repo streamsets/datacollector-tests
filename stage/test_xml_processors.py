@@ -55,8 +55,8 @@ def test_xml_parser(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     # Gather snapshot data in a list for verification.
-    item_list = snapshot[xml_parser].output[0].value2['text']['msg']
-    rows_from_snapshot = [{item['time'][0]['value']: item['request'][0]['value']}
+    item_list = snapshot[xml_parser].output[0].field['text']['msg']
+    rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
                           for item in item_list]
 
     # Parse input xml data to verify results from snapshot.
@@ -122,8 +122,8 @@ def test_xml_parser_namespace_xpath(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     # Gather snapshot data as a list for verification.
-    item_list = snapshot[xml_parser].output[0].value2['text']
-    rows_from_snapshot = [{item['time'][0]['value']: item['request'][0]['value']}
+    item_list = snapshot[xml_parser].output[0].field['text']
+    rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
                           for item in item_list]
 
     # Parse input xml data to verify results from snapshot using xpath for search.
@@ -174,7 +174,7 @@ def test_xml_flattener(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     # Gather snapshot data as a list for verification.
-    items = [record.value2 for record in snapshot[xml_flattener].output]
+    items = [record.field for record in snapshot[xml_flattener].output]
 
     expected_data = [{'contact.name#type': 'maiden',
                       'contact.name': 'NAME1',

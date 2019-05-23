@@ -81,7 +81,7 @@ def test_rpm_related_directories(sdc_builder):
     sdc_builder.stop_pipeline(pipeline)
 
     output_records = snapshot[jython_evaluator.instance_name].output  # is a list of output records
-    actual_records = [record.value2 for record in output_records]
+    actual_records = [record.field for record in output_records]
     assert expected_records == actual_records
 
 
@@ -133,5 +133,5 @@ def test_default_stagelibs_exist(sdc_builder):
     sdc_builder.stop_pipeline(pipeline)
 
     output_records = snapshot[jython_evaluator.instance_name].output  # is a list of output records
-    actual_records = [record.value2 for record in output_records]
+    actual_records = [record.field for record in output_records]
     assert expected_records == actual_records

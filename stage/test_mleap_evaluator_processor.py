@@ -14,6 +14,8 @@
 
 
 import logging
+from collections import OrderedDict
+
 import pytest
 from streamsets.testframework.markers import sdc_min_version
 
@@ -134,7 +136,6 @@ def test_mleap_evaluator(sdc_builder, sdc_executor):
 
     # assert MLeap Model evaluation Output
     tensorflow_output = snapshot[mleap_evaluator.instance_name].output
-    assert tensorflow_output[0].value['value']['output']['type'] == 'LIST_MAP'
-    output_field = tensorflow_output[0].value['value']['output']['value']
-    assert output_field[0]['type'] == 'DOUBLE'
-    assert output_field[0]['value'] == '218.2767196535019'
+    assert isinstance(tensorflow_output[0].field['output'], OrderedDict)
+    output_field_value = tensorflow_output[0].field['output']['price_prediction'].value
+    assert output_field_value == 218.2767196535019
