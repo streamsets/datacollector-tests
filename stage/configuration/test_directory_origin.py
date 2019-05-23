@@ -720,12 +720,7 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
     file_content = '''2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).
     2019-04-30 08:23:57 AM [INFO] [streamsets.sdk.sdc] Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...'''
 
-    field_path_to_regex_group_mapping = [{'fieldPath': '/date', 'group': 1},
-                                         {'fieldPath': '/time', 'group': 2},
-                                         {'fieldPath': '/timehalf', 'group': 3},
-                                         {'fieldPath': '/info', 'group': 4},
-                                         {'fieldPath': '/file', 'group': 5},
-                                         {'fieldPath': '/message', 'group': 6}]
+    field_path_to_regex_group_mapping = DirectoryOriginCommon.get_log_field_mapping()
 
     try:
         files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
@@ -743,14 +738,17 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         output_records = snapshot[directory].output
+
         if regular_expression == '(\S+)(\W+)(\S+)\[(\W+)\](\S+)(\W+)':
             assert not output_records
         else:
             assert (output_records[0].field == {'/time': '08:23:53', '/date': '2019-04-30', '/timehalf': 'AM',
-                                                '/info': '[INFO]', '/message': 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).',
+                                                '/info': '[INFO]',
+                                                '/message': 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).',
                                                 '/file': '[streamsets.sdk.sdc_api]'})
             assert (output_records[1].field == {'/time': '08:23:57', '/date': '2019-04-30', '/timehalf': 'AM',
-                                                '/info': '[INFO]', '/message': 'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...',
+                                                '/info': '[INFO]',
+                                                '/message': 'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...',
                                                 '/file': '[streamsets.sdk.sdc]'})
     finally:
         sdc_executor.stop_pipeline(pipeline)
@@ -873,3 +871,13 @@ class DirectoryOriginCommon(object):
         else:
             file_writer(file_path, file_content)
         return files_directory
+
+    @staticmethod
+    def get_log_field_mapping():
+        return [{"fieldPath": "/date", "group": 1},
+                {"fieldPath": "/time", "group": 2},
+                {"fieldPath": "/timehalf", "group": 3},
+                {"fieldPath": "/info", "group": 4},
+                {"fieldPath": "/file", "group": 5},
+                {"fieldPath": "/message", "group": 6}]
+
