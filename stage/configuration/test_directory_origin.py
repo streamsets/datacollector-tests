@@ -1130,7 +1130,6 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
     There are two interations of this test case. One with valid regex which should parse logs.
     Another with invalid regex which should produce null or no result.
     """
-    files_directory = os.path.join('/tmp', get_random_string())
     file_name = 'custom_log_data.log'
     file_content = '''2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).
     2019-04-30 08:23:57 AM [INFO] [streamsets.sdk.sdc] Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...'''
@@ -1143,41 +1142,32 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
                                          {'fieldPath': '/message', 'group': 6}]
 
     try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, file_name), file_content)
+        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
+                                                                      file_writer)
 
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 log_format=log_format,
-                                 files_directory=files_directory,
-                                 file_name_pattern_mode='GLOB',
-                                 file_name_pattern='*.log',
-                                 field_path_to_regex_group_mapping=field_path_to_regex_group_mapping,
-                                 regular_expression=regular_expression)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
+        attributes = {'data_format':data_format,
+                      'log_format':log_format,
+                      'files_directory':files_directory,
+                      'file_name_pattern_mode':'GLOB',
+                      'file_name_pattern':'*.log',
+                      'field_path_to_regex_group_mapping':field_path_to_regex_group_mapping,
+                      'regular_expression':regular_expression}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         output_records = snapshot[directory].output
-        sdc_executor.stop_pipeline(pipeline)
         if regular_expression == '(\S+)(\W+)(\S+)\[(\W+)\](\S+)(\W+)':
             assert not output_records
         else:
-            assert output_records[0].field['/date'] == '2019-04-30'
-            assert output_records[0].field['/time'] == '08:23:53'
-            assert output_records[0].field['/file'] == '[streamsets.sdk.sdc_api]'
-            assert (output_records[0].field['/message'] ==
-                    'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).')
-            assert output_records[1].field['/date'] == '2019-04-30'
-            assert output_records[1].field['/time'] == '08:23:57'
-            assert output_records[1].field['/file'] == '[streamsets.sdk.sdc]'
-            assert (output_records[1].field['/message'] ==
-                    'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...')
+            assert (output_records[0].field == {'/time': '08:23:53', '/date': '2019-04-30', '/timehalf': 'AM',
+                                                '/info': '[INFO]', '/message': 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).',
+                                                '/file': '[streamsets.sdk.sdc_api]'})
+            assert (output_records[1].field == {'/time': '08:23:57', '/date': '2019-04-30', '/timehalf': 'AM',
+                                                '/info': '[INFO]', '/message': 'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...',
+                                                '/file': '[streamsets.sdk.sdc]'})
     finally:
+        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -1524,3 +1514,4 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
         assert output_records[0].field == json_data[0]
+
