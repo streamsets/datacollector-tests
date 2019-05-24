@@ -1,6 +1,7 @@
 import json
-import pytest
 import textwrap
+
+import pytest
 from streamsets.sdk.models import Configuration
 
 FILE_WRITER_SCRIPT = """
@@ -68,8 +69,10 @@ def shell_executor(sdc_executor):
 @pytest.fixture
 def avro_file_writer(sdc_executor):
     def avro_file_writer_(tmp_directory, avro_records, avro_schema):
-        """Setup avro records and save in local system. The pipelines looks like:
-            dev_raw_data_source >> local_fs."""
+        """Here we are using dev raw data source to read the json data. Then we will use localfs stage to write
+        avro file. Function requires avro records and avro schema for generating avro file.
+        Pipeline : dev_raw_data_source >> local_fs.
+        """
         raw_data = ''.join(json.dumps(avro_record) for avro_record in avro_records)
 
         pipeline_builder = sdc_executor.get_pipeline_builder()

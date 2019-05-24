@@ -15,9 +15,9 @@
 import json
 import logging
 import os
+import string
 
 import pytest
-import string
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
 
@@ -217,27 +217,28 @@ def test_directory_origin_configuration_auth_file(sdc_builder, sdc_executor, dat
 @pytest.mark.parametrize('data_format', ['AVRO'])
 def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, data_format, avro_file_writer, shell_executor):
     """Test Directory Origin reading of Avro data. The sample Avro file has 5 records.
-        Directory origin should produce header avroSchema.
-        The pipelines looks like: directory >> trash."""
+    Directory origin should produce header avroSchema.
+    The pipelines looks like: directory >> trash.
+    """
     files_directory = os.path.join('/tmp', get_random_string(string.ascii_letters, 10))
-    avro_records = get_avro_records()
-    input_avro_schema = get_avro_schema()
+    avro_records = DirectoryOriginCommon.get_avro_records()
+    input_avro_schema = DirectoryOriginCommon.get_avro_schema()
 
     try:
         avro_file_writer(files_directory, avro_records, input_avro_schema)
 
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory', type='origin')
-        directory.set_attributes(data_format=data_format, file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                                 file_post_processing='DELETE', files_directory=files_directory,
-                                 process_subdirectories=True, read_order='TIMESTAMP')
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        directory_pipeline = pipeline_builder.build()
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': 'sdc*',
+                      'file_name_pattern_mode': 'GLOB',
+                      #'file_post_processing': 'DELETE',
+                      'files_directory': files_directory,
+                      'process_subdirectories': True,
+                      'read_order': 'TIMESTAMP'}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
 
-        sdc_executor.add_pipeline(directory_pipeline)
-        snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
-        sdc_executor.stop_pipeline(directory_pipeline)
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=10).snapshot
+        sdc_executor.stop_pipeline(pipeline)
 
         # assert all the data captured have the same raw_data
         output_records = snapshot[directory.instance_name].output
@@ -245,11 +246,8 @@ def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, d
 
         assert 5 == len(output_records)
         assert input_avro_schema == avroSchema
-        for i in range(0, 5):
-            assert output_records[i].get_field_data('/name') == avro_records[i].get('name')
-            assert output_records[i].get_field_data('/age') == avro_records[i].get('age')
-            assert output_records[i].get_field_data('/emails') == avro_records[i].get('emails')
-            assert output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
+        for i in range(5):
+            assert output_records[i].field == avro_records[i]
     finally:
         shell_executor(f'rm -r {files_directory}')
 
@@ -837,76 +835,93 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-# General functions
-def get_avro_records():
-    avro_records = [
-        {
-            "name": "sdc1",
-            "age": 3,
-            "emails": ["sdc1@streamsets.com", "sdc@company.com"],
-            "boss": {
-                "name": "sdc0",
-                "age": 3,
-                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-                "boss": None
-            }
-        },
-        {
-            "name": "sdc2",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
-            "boss": {
-                "name": "sdc0",
-                "age": 3,
-                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-                "boss": None
-            }
-        },
-        {
-            "name": "sdc3",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
-            "boss": {
-                "name": "sdc0",
-                "age": 3,
-                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-                "boss": None
-            }
-        },
-        {
-            "name": "sdc4",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
-            "boss": {
-                "name": "sdc0",
-                "age": 3,
-                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-                "boss": None
-            }
-        },
-        {
-            "name": "sdc5",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
-            "boss": {
-                "name": "sdc0",
-                "age": 3,
-                "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-                "boss": None
-            }
-        }]
-    return avro_records
+# Class with common functionalities
+class DirectoryOriginCommon(object):
 
+    def __init__(self):
+        pass
 
-def get_avro_schema():
-    avro_schema = {
-        "type": "record",
-        "name": "Employee",
-        "fields": [
-            {"name": "name", "type": "string"},
-            {"name": "age", "type": "int"},
-            {"name": "emails", "type": {"type": "array", "items": "string"}},
-            {"name": "boss", "type": ["Employee", "null"]}
-        ]
-    }
-    return avro_schema
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return directory, pipeline
+
+    @staticmethod
+    def get_avro_records():
+        avro_records = [
+            {
+                "name": "sdc1",
+                "age": 3,
+                "emails": ["sdc1@streamsets.com", "sdc@company.com"],
+                "boss": {
+                    "name": "sdc0",
+                    "age": 3,
+                    "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                    "boss": None
+                }
+            },
+            {
+                "name": "sdc2",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+                "boss": {
+                    "name": "sdc0",
+                    "age": 3,
+                    "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                    "boss": None
+                }
+            },
+            {
+                "name": "sdc3",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+                "boss": {
+                    "name": "sdc0",
+                    "age": 3,
+                    "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                    "boss": None
+                }
+            },
+            {
+                "name": "sdc4",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+                "boss": {
+                    "name": "sdc0",
+                    "age": 3,
+                    "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                    "boss": None
+                }
+            },
+            {
+                "name": "sdc5",
+                "age": 3,
+                "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+                "boss": {
+                    "name": "sdc0",
+                    "age": 3,
+                    "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+                    "boss": None
+                }
+            }]
+        return avro_records
+
+    @staticmethod
+    def get_avro_schema():
+        avro_schema = {
+            "type": "record",
+            "name": "Employee",
+            "fields": [
+                {"name": "name", "type": "string"},
+                {"name": "age", "type": "int"},
+                {"name": "emails", "type": {"type": "array", "items": "string"}},
+                {"name": "boss", "type": ["Employee", "null"]}
+            ]
+        }
+        return avro_schema
+
