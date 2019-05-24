@@ -783,6 +783,8 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
     s3_bucket = aws.s3_bucket_name
     directory_to_write = tempfile.gettempdir()
 
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
     zip_file_name = get_random_string()
     json1_file_name = get_random_string()
     json2_file_name = get_random_string()
@@ -812,7 +814,7 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
                              compression_format='ARCHIVE',
                              file_name_pattern_within_compressed_directory='*.json',
                              json_content='MULTIPLE_OBJECTS',
-                             prefix_pattern='*')
+                             prefix_pattern=f'{s3_key}/*')
 
     trash = builder.add_stage('Trash')
 
@@ -830,7 +832,7 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.upload_file(Bucket=s3_bucket, Key=f'{zip_file_name}.zip',
+        client.upload_file(Bucket=s3_bucket, Key=f'{s3_key}/{zip_file_name}.zip',
                            Filename=f'{zip_file_name}.zip')
 
         # Snapshot the pipeline and compare the records.
