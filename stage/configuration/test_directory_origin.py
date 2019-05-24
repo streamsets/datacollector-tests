@@ -406,7 +406,7 @@ def test_directory_origin_configuration_delimiter_character(sdc_builder, sdc_exe
                                                             root_field_type, header_line):
     """Test for Directory origin can read delimited file with custom delimiter character format type.
         Here we will be creating delimited files with different delimiter character for testing. e.g. [' ', '^']
-        """
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'custom_delimited_file.csv'
     FILE_CONTENTS = [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'fält13'], ['стол', 'Field22', 'Field23']]
