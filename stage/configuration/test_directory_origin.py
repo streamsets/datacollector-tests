@@ -557,84 +557,42 @@ def test_directory_origin_configuration_max_files_soft_limit(sdc_builder, sdc_ex
     pass
 
 
-@pytest.mark.parametrize('data_format', ['TEXT'])
-@pytest.mark.parametrize('max_line_length', [100, 50])
+@pytest.mark.parametrize('data_format', ['LOG', 'TEXT'])
+@pytest.mark.parametrize('max_line_length', [155, 82])
 def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executor, data_format,
                                                         shell_executor, file_writer, max_line_length):
-    """Check how Directory origin read line in text file < max_line_length properly and truncate longer line."""
-    files_directory = os.path.join('/tmp', get_random_string())
-    file_name = 'pattern_check_processing_1.txt'
-    file_content = 'This is sample file111.Adding this additional string to check the maximum line length parameter.'
+    """Check how Directory origin read line in text and log file with Max Line Length set.
+    Case 1 Max Line Length > length of record -> Should read complete record
+    Case 2 Max Line Length < length of record -> Should truncate the record to Max Line Length value.
+    """
+    extension = 'txt' if data_format == 'TEXT' else 'log'
+    file_name = 'sample_input_file.{extension}'.format(extension=extension)
+    file_content = '2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).'
+    field_path_to_regex_group_mapping = DirectoryOriginCommon.get_log_field_mapping()
     try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, file_name), file_content)
+        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
+                                                                      file_writer)
 
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 file_name_pattern='*.txt',
-                                 file_name_pattern_mode='GLOB',
-                                 files_directory=files_directory,
-                                 max_line_length=max_line_length)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build('test_directory_origin_configuration_max_line_length')
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': 'sample_input_*',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': files_directory,
+                      'max_line_length': max_line_length,
+                      'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
+                      'regular_expression': '(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
+                      'log_format': 'REGEX'}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         record = snapshot[directory].output[0]
-        assert record.field['text'] == file_content[:max_line_length]
-        sdc_executor.stop_pipeline(pipeline)
+
+        if data_format == 'TEXT':
+            assert record.field['text'] == file_content[:max_line_length]
+        else:
+            assert record.field['/message'] == file_content[55:max_line_length]
     finally:
-        shell_executor(f'rm -r {files_directory}')
-
-
-@pytest.mark.parametrize('data_format', ['LOG'])
-@pytest.mark.parametrize('max_line_length', [155, 82])
-def test_directory_origin_configuration_max_line_length_for_log_data_format(sdc_builder, sdc_executor,
-                                                                            data_format, shell_executor,
-                                                                            file_writer, max_line_length):
-    """Check how Directory origin read line in log file < max_line_length properly and truncate longer line."""
-    files_directory = os.path.join('/tmp', get_random_string())
-    file_name = 'custom_log_data.log'
-    file_content = '2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).'
-
-    field_path_to_regex_group_mapping = [{"fieldPath": "/date", "group": 1},
-                                         {"fieldPath": "/time", "group": 2},
-                                         {"fieldPath": "/timehalf", "group": 3},
-                                         {"fieldPath": "/info", "group": 4},
-                                         {"fieldPath": "/file", "group": 5},
-                                         {"fieldPath": "/message", "group": 6}]
-
-    try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, file_name), file_content)
-
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 log_format="REGEX",
-                                 files_directory=files_directory,
-                                 file_name_pattern_mode='GLOB',
-                                 file_name_pattern='*.log',
-                                 field_path_to_regex_group_mapping=field_path_to_regex_group_mapping,
-                                 regular_expression='(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
-                                 max_line_length=max_line_length
-                                 )
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build('test_directory_origin_configuration_max_line_length_for_log_data_format')
-
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = snapshot[directory].output
         sdc_executor.stop_pipeline(pipeline)
-        log_message = 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).'
-        log_message_length = 27 if max_line_length == 82 else len(log_message)
-        assert output_records[0].field['/message'] == log_message[:log_message_length]
-    finally:
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -868,4 +826,43 @@ def test_directory_origin_configuration_use_custom_delimiter(sdc_builder, sdc_ex
 def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_executor,
                                                               data_format, log_format, use_custom_log_format):
     pass
+
+
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return directory, pipeline
+
+    @staticmethod
+    def create_file_directory(file_name, file_content, shell_executor, file_writer, delimiter_format_type=None,
+                              delimiter_character=None):
+        files_directory = os.path.join('/tmp', get_random_string())
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_path = os.path.join(files_directory, file_name)
+        if delimiter_format_type:
+            file_writer(file_path, file_content, delimiter_format_type, delimiter_character)
+        else:
+            file_writer(file_path, file_content)
+        return files_directory
+
+    @staticmethod
+    def get_log_field_mapping():
+        return [{'fieldPath': '/date', 'group': 1},
+                {'fieldPath': '/time', 'group': 2},
+                {'fieldPath': '/timehalf', 'group': 3},
+                {'fieldPath': '/info', 'group': 4},
+                {'fieldPath': '/file', 'group': 5},
+                {'fieldPath': '/message', 'group': 6}]
 
