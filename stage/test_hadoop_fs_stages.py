@@ -306,6 +306,65 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
 
 
+@sdc_min_version('3.2.0.0')
+@cluster('cdh', 'hdp')
+@pytest.mark.parametrize('filename', ['file.txt', '_tmp_file.txt', '.tmp_file.txt'])
+def test_hadoop_fs_origin_standalone_subdirectories(sdc_builder, sdc_executor, cluster, filename):
+    """Write a simple file into each level of a Hadoop FS folder hierarchy, with randomly-generated names
+    and confirm that the Hadoop FS origin successfully reads all of them. Specifically, this would look like:
+    Hadoop FS pipeline:
+        hadoop_fs_origin >> trash
+    """
+    hadoop_fs_root_folder = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
+    hadoop_fs_folder_subdir_1 = f'{hadoop_fs_root_folder}/{get_random_string(string.ascii_letters, 10)}'
+    hadoop_fs_folder_subdir_2 = f'{hadoop_fs_folder_subdir_1}/{get_random_string(string.ascii_letters, 10)}'
+
+    # Build the Hadoop FS pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
+    hadoop_fs.set_attributes(data_format='WHOLE_FILE', files_directory=hadoop_fs_root_folder,
+                             file_name_pattern='*', read_order='TIMESTAMP', process_subdirectories=True)
+
+    trash = builder.add_stage('Trash')
+
+    hadoop_fs >> trash
+    hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
+    hadoop_fs_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(hadoop_fs_pipeline)
+
+    try:
+        lines_in_file = ['hello', 'hi', 'how are you?']
+
+        logger.debug(f'Writing file {hadoop_fs_root_folder}/file.txt to Hadoop FS ...')
+        cluster.hdfs.client.makedirs(hadoop_fs_root_folder)
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_root_folder, filename), data='\n'.join(lines_in_file))
+        logger.debug(f'Writing file {hadoop_fs_folder_subdir_1}/file.txt to Hadoop FS ...')
+        cluster.hdfs.client.makedirs(hadoop_fs_folder_subdir_1)
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_subdir_1, filename), data='\n'.join(lines_in_file))
+        logger.debug(f'Writing file {hadoop_fs_folder_subdir_2}/file.txt to Hadoop FS ...')
+        cluster.hdfs.client.makedirs(hadoop_fs_folder_subdir_2)
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_subdir_2, filename), data='\n'.join(lines_in_file))
+
+        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
+        snapshot_pipeline_command = sdc_executor.capture_snapshot(hadoop_fs_pipeline, batches=3,
+                                                                  start_pipeline=True, wait=False)
+
+        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        sdc_executor.stop_pipeline(hadoop_fs_pipeline, force=True)
+
+        expected_filenames = [hadoop_fs_root_folder, hadoop_fs_folder_subdir_1, hadoop_fs_folder_subdir_2]
+
+        for i in range(0, 3):
+            batch = snapshot.snapshot_batches[i][hadoop_fs_pipeline[0].instance_name].output[0]
+            assert batch.field['fileInfo']['file'] == f'{expected_filenames[i]}/{filename}'
+    finally:
+        logger.debug('Deleting folders and files')
+        cluster.hdfs.client.delete(hadoop_fs_root_folder, recursive=True)
+
+
 @sdc_min_version('3.8.0')
 @cluster('cdh', 'hdp')
 def test_hadoop_fs_origin_standalone_glob_pattern(sdc_builder, sdc_executor, cluster):
