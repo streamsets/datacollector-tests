@@ -886,11 +886,44 @@ def test_directory_origin_configuration_template_cache_timeout_in_ms(sdc_builder
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('log_format', ['LOG4J'])
 @pytest.mark.parametrize('on_parse_error', ['INCLUDE_AS_STACK_TRACE'])
-@pytest.mark.skip('Not yet implemented')
+@pytest.mark.parametrize('trim_stack_trace_to_length', [2])
 def test_directory_origin_configuration_trim_stack_trace_to_length(sdc_builder, sdc_executor,
-                                                                   data_format, log_format, on_parse_error):
-    pass
+    data_format, log_format, on_parse_error, trim_stack_trace_to_length, shell_executor, file_writer):
+    """The stack trace will be trimmed to the specified number of lines.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = f'{get_random_string()}.txt'
+    file_path = os.path.join(files_directory, file_name)
+    input_content =['1 [main] ERROR test.pack.Log4J  - failed!',
+                    'Exception in thread "main" java.lang.NullPointerException',
+                    'at com.example.myproject.Book.getTitle(Book.java:16)'
+                    'at com.example.myproject.Author.getBookTitles(Author.java:25)']
+    file_contents = '\n'.join(input_content)
+    try:
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(file_path, file_contents)
 
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(log_format=log_format,
+                                 on_parse_error=on_parse_error,
+                                 data_format=data_format,
+                                 trim_stack_trace_to_length=trim_stack_trace_to_length,
+                                 files_directory=files_directory,
+                                 file_name_pattern=file_name)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        assert output_records[0].field['message'] == '{first_record}\n{stack_trace}'.format(first_record='failed!',
+                                                    stack_trace='\n'.join(input_content[1:3]))
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
 @pytest.mark.parametrize('datagram_packet_format', ['COLLECTD'])
