@@ -888,7 +888,7 @@ def test_directory_origin_configuration_template_cache_timeout_in_ms(sdc_builder
 @pytest.mark.parametrize('on_parse_error', ['INCLUDE_AS_STACK_TRACE'])
 @pytest.mark.parametrize('trim_stack_trace_to_length', [2])
 def test_directory_origin_configuration_trim_stack_trace_to_length(sdc_builder, sdc_executor,
-    data_format, log_format, on_parse_error, trim_stack_trace_to_length, shell_executor, file_writer):
+            data_format, log_format, on_parse_error, trim_stack_trace_to_length, shell_executor, file_writer):
     """The stack trace will be trimmed to the specified number of lines.
     """
     files_directory = os.path.join('/tmp', get_random_string())
