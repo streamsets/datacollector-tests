@@ -59,6 +59,7 @@ def shell_executor(sdc_executor):
     return shell_executor_
 
 
+
 def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
     builder = sdc_executor.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
