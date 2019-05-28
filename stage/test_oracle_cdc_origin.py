@@ -140,7 +140,7 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
         oracle_cdc_client >> trash
         instance_name = oracle_cdc_client.instance_name
     else:
-        sql_parser = pipeline_builder.add_stage('SQL Parser Processor')
+        sql_parser = pipeline_builder.add_stage('SQL Parser')
         sql_parser.set_attributes(sql_field='/sql',
                                   target_field='/',
                                   resolve_schema_from_db=True,
