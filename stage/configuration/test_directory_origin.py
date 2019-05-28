@@ -15,6 +15,7 @@
 import logging
 import math
 import os
+import time
 from collections import OrderedDict
 
 import pytest
@@ -232,8 +233,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = get_text_file_content('1')
-    FILE_CONTENTS_2 = get_text_file_content('2')
+    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
+    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -793,9 +794,44 @@ def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executo
 
 
 @pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executor, data_format):
-    pass
+def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executor, data_format, shell_executor):
+    """Test if Directory origin honours rate_per_second attribute. Here we will run pipeline with its 2 values
+    We will check number of records / files read is greater when rate is set to 1 MB as compare to 0.5 MB value.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        DirectoryOriginCommon.write_multiple_files(sdc_builder, sdc_executor, files_directory, 'rate_per')
+
+        def run_pipeline(attributes):
+            directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+            sdc_executor.add_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline)
+            time.sleep(1)
+            sdc_executor.stop_pipeline(pipeline)
+            directory_pipeline_history = sdc_executor.get_pipeline_history(pipeline)
+            return directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        #1st run with rate per second as 0.5 MB
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': 'rate_*',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': files_directory,
+                      'rate_per_second': '${0.5 * MB}'}
+        msgs_result_count1 = run_pipeline(attributes)
+
+        #2nd run with rate per second as 1 MB
+        attributes['rate_per_second'] = '${1 * MB}'
+        msgs_result_count2 = run_pipeline(attributes)
+
+        # As there is no linear relation between the two we can not do exact assertions.
+        # We can at least expect more number of records read when this value is increased.
+        assert msgs_result_count2 > msgs_result_count1
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
@@ -917,6 +953,51 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-## Start of general supportive functions
-def get_text_file_content(file_number):
-    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return directory, pipeline
+
+    @staticmethod
+    def get_text_file_content(file_number, lines_needed=3):
+        return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
+
+    @staticmethod
+    def write_multiple_files(sdc_builder, sdc_executor, tmp_directory, file_suffix):
+        # 1st pipeline which writes one record per file with interval 0.1 seconds
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+        batch_size = 100
+        dev_data_generator.set_attributes(batch_size=batch_size,
+                                          delay_between_batches=10)
+
+        dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
+
+        max_records_in_file = 2
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='TEXT',
+                                directory_template=os.path.join(tmp_directory),
+                                files_prefix='{suffix}'.format(suffix=file_suffix),
+                                files_suffix='txt',
+                                max_records_in_file=max_records_in_file)
+
+        dev_data_generator >> local_fs
+
+        number_of_batches = 10
+        # run the 1st pipeline to create the directory and starting files
+        files_pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(files_pipeline)
+        sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(number_of_batches)
+        sdc_executor.stop_pipeline(files_pipeline)
+
