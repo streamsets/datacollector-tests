@@ -20,6 +20,7 @@ from collections import OrderedDict
 import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
+from xml.etree import ElementTree
 
 logger = logging.getLogger(__file__)
 
@@ -404,9 +405,55 @@ def test_directory_origin_configuration_delimiter_character(sdc_builder, sdc_exe
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_executor, data_format):
-    pass
+def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_executor, shell_executor, file_writer,
+                                                          data_format):
+    """Test for Directory origin can read delimited file with different delimiter format type.
+    Here we will be creating XML delimited files for testing.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'xml_delimited_file.xml'
+    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
+                      <root>
+                          <msg>
+                              <time>8/12/2016 6:01:00</time>
+                              <request>GET /index.html 200</request>
+                          </msg>
+                          <msg>
+                              <time>8/12/2016 6:03:43</time>
+                              <request>GET /images/sponsored.gif 304</request>
+                          </msg>
+                      </root>"""
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='xml_delimited_file*',
+                                 file_name_pattern_mode='GLOB',
+                                 delimeter_element='msg')
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        output_records = snapshot[directory.instance_name].output
+        item_list = output_records[0].field['msg']
+        rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
+                              for item in item_list]
+        # Parse input xml data to verify results from snapshot.
+        root = ElementTree.fromstring(FILE_CONTENTS)
+        expected_data = [{msg.find('time').text: msg.find('request').text}
+                         for msg in root.iter('msg')]
+        assert rows_from_snapshot == expected_data
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
