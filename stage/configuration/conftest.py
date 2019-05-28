@@ -33,8 +33,8 @@ def file_writer(sdc_executor):
         file_contents (:obj:`str`): The file contents.
         encoding (:obj:`str`, optional): The file encoding. Default: ``'utf8'``
     """
-    def file_writer_(filepath, file_contents, encoding='utf8', is_binary='BINARY'):
-        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding, is_binary)
+    def file_writer_(filepath, file_contents, encoding='utf8', file_data_type='BINARY'):
+        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding, file_data_type)
     return file_writer_
 
 
@@ -59,12 +59,12 @@ def shell_executor(sdc_executor):
     return shell_executor_
 
 
-def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8', is_binary='BINARY'):
+def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8', file_data_type='BINARY'):
     builder = sdc_executor.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
     jython_evaluator = builder.add_stage('Jython Evaluator')
-    if is_binary == 'BINARY':
+    if file_data_type == 'BINARY':
         jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT_BINARY).format(filepath=str(filepath),
                                                                          file_contents=file_contents,
                                                                          encoding=encoding)
