@@ -18,6 +18,7 @@ import math
 import os
 import string
 import tempfile
+import time
 from collections import OrderedDict
 
 import pytest
@@ -1158,9 +1159,44 @@ def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executo
 
 
 @pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executor, data_format):
-    pass
+def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executor, data_format, shell_executor):
+    """Test if Directory origin honours rate_per_second attribute. Here we will run pipeline with its 2 values
+    We will check number of records / files read is greater when rate is set to 1 MB as compare to 0.5 MB value.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        write_multiple_files(sdc_builder, sdc_executor, files_directory, 'rate_per')
+
+        def run_pipeline(attributes):
+            directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+            sdc_executor.add_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline)
+            time.sleep(1)
+            sdc_executor.stop_pipeline(pipeline)
+            directory_pipeline_history = sdc_executor.get_pipeline_history(pipeline)
+            return directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        #1st run with rate per second as 0.5 MB
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': 'rate_*',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': files_directory,
+                      'rate_per_second': '${0.5 * MB}'}
+        msgs_result_count1 = run_pipeline(attributes)
+
+        #2nd run with rate per second as 1 MB
+        attributes['rate_per_second'] = '${1 * MB}'
+        msgs_result_count2 = run_pipeline(attributes)
+
+        # As there is no linear relation between the two we can not do exact assertions.
+        # We can at least expect more number of records read when this value is increased.
+        assert msgs_result_count2 > msgs_result_count1
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
