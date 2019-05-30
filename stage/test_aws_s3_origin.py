@@ -685,6 +685,7 @@ def test_offset_upgrade(sdc_builder, sdc_executor, aws):
 
 # SDC-11410: S3 Origin reads excel files
 @aws('s3')
+@sdc_min_version('3.9.0')
 def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
     """
     Test that an excel file on a s3 bucket is properly read
