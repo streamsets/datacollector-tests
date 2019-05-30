@@ -1631,6 +1631,7 @@ def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
 
 # SDC-11326: JDBC MultiTable origin forgets offset of non-incremental table on consecutive execution
 @database('mysql')
+@sdc_min_version('3.0.0.0')
 def test_jdbc_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, database):
     """Validate the origin does not loose non-incremental offset on various runs."""
     table_name = get_random_string(string.ascii_lowercase, 10)

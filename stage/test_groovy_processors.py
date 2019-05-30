@@ -16,6 +16,7 @@ import json
 import logging
 
 import pytest
+from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -158,6 +159,7 @@ def test_delete_header_attribute(sdc_builder, sdc_executor):
 
 
 # SDC-11546: Expose the underlying Data Collector Record in Scripting processors
+@sdc_min_version('3.9.0')
 def test_expose_sdc_record(sdc_builder, sdc_executor):
     """Ensure that underlying SDC record is accessible."""
     builder = sdc_builder.get_pipeline_builder()
@@ -198,6 +200,7 @@ def test_expose_sdc_record(sdc_builder, sdc_executor):
 
 
 # SDC-11555: Provide ability to use direct SDC record in scripting processors
+@sdc_min_version('3.9.0')
 def test_sdc_record(sdc_builder, sdc_executor):
     """Iterate over SDC record directly rather then JSR-223 wrapper."""
     builder = sdc_builder.get_pipeline_builder()

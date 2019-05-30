@@ -242,6 +242,7 @@ def test_avro_decimal_union_index_on_write(sdc_builder, sdc_executor):
 
 
 # SDC-11557: Publish field attributes for typed nulls when reading Avro
+@sdc_min_version('3.9.0')
 def test_avro_decimal_field_attributes_for_typed_null(sdc_builder, sdc_executor):
     """Make sure that we persist decimal's field attributes for typed nul """
     builder = sdc_builder.get_pipeline_builder()

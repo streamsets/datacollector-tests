@@ -330,6 +330,7 @@ def test_pipeline_finisher(reset_offset, sdc_builder, sdc_executor):
 
 
 # SDC-11555: Provide ability to use direct SDC record in scripting processors
+@sdc_min_version('3.9.0')
 def test_javascript_sdc_record(sdc_builder, sdc_executor):
     """Iterate over SDC record directly rather then JSR-223 wrapper."""
     builder = sdc_builder.get_pipeline_builder()
