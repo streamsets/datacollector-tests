@@ -16,6 +16,9 @@ import logging
 import math
 import os
 from collections import OrderedDict
+import tempfile
+import string
+import json
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -232,8 +235,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = get_text_file_content('1')
-    FILE_CONTENTS_2 = get_text_file_content('2')
+    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
+    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -333,11 +336,50 @@ def test_directory_origin_configuration_comment_marker(sdc_builder, sdc_executor
     pass
 
 
-@pytest.mark.parametrize('data_format', ['BINARY', 'DELIMITED', 'JSON', 'LOG', 'PROTOBUF', 'SDC_JSON', 'TEXT', 'XML'])
-@pytest.mark.parametrize('compression_format', ['ARCHIVE', 'COMPRESSED_ARCHIVE', 'COMPRESSED_FILE', 'NONE'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_compression_format(sdc_builder, sdc_executor, data_format, compression_format):
-    pass
+@pytest.mark.parametrize('data_format', ['TEXT', 'DELIMITED', 'JSON', 'SDC_JSON', 'XML', 'LOG'])
+@pytest.mark.parametrize('compression_format', ['COMPRESSED_FILE'])
+@pytest.mark.parametrize('compression_codec', ['GZIP', 'BZIP2'])
+def test_directory_origin_configuration_compression_format(sdc_builder, sdc_executor, data_format,
+        compression_format, compressed_file_writer, compression_codec, shell_executor):
+    """Verify direcotry origin can read data from compressed files.
+        Pattern is inside the compressed file.
+        e.g. compression_format_test.txt is compressed as compression_format_test.txt.gz then
+        Using TEXT data format to check if data can be read from compressed txt files.
+        Similarly generating compressed file for all data formats and testing it.
+        Note : 1) PROTOBUF -> Bug filed SDC-11530. So protobuf related issues are resolved
+        2) BINARY -> Not supported by Directory origin. Confirmed by developers.
+        3) 'ARCHIVE', 'COMPRESSED_ARCHIVE' these two 'compression_format' are completed in
+        'file_name_pattern_within_compressed_directory' test case.
+        4) 'None' no 'compression_format' is completed in the 'data_format' test case.
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    actual_file_content = DirectoryOriginCommon.get_data_format_content(data_format)
+    try:
+        file_content = actual_file_content
+        if data_format == 'DELIMITED':
+            file_content = '\n'.join([','.join(record) for record in file_content])
+        elif data_format == 'SDC_JSON':
+            file_content = ''.join(json.dumps(record) for record in file_content)
+
+        # Writes compressed file to local FS.
+        compressed_file_writer(tmp_directory, data_format, compression_format, file_content,
+                               compression_codec=compression_codec, files_prefix='sdc-${sdc:id()}')
+        # Reading from compressed file.
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': 'sdc*',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': tmp_directory,
+                      'compression_format': compression_format,
+                      'read_order': 'TIMESTAMP',
+                      'header_line': 'WITH_HEADER',
+                      'log_format': 'LOG4J'}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+        DirectoryOriginCommon.execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format,
+                                                    actual_file_content, actual_file_content)
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {tmp_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
@@ -917,6 +959,71 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-## Start of general supportive functions
-def get_text_file_content(file_number):
-    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+# Class with common functionalities
+class DirectoryOriginCommon(object):
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def get_directory_trash_pipeline(sdc_builder, attributes):
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(**attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+        return directory, pipeline
+
+    @staticmethod
+    def get_data_format_content(data_format):
+        # Add data for Binary and protobug format. sdc json need to generated with pipeline
+        if data_format == 'TEXT':
+            return DirectoryOriginCommon.get_text_file_content(1, 1)
+        elif data_format in ['DELIMITED', 'BINARY']:
+            return [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'Field13']]
+        elif data_format == 'JSON':
+            return json.dumps([{'col11': 'value11', 'col12': 'value12', 'col13': 'value13', 'col14': 'value14'}])
+        elif data_format == 'LOG':
+            return '200 [main] DEBUG org.StreamSets.Log4j unknown - This is sample log message'
+        elif data_format == 'XML':
+            return """<?xml version="1.0" encoding="UTF-8"?>
+                            <root>
+                              <msg>
+                                  <request>GET /index.html 200</request>
+                                  <metainfo>Index page:More info about content</metainfo>
+                              </msg>
+                            </root>"""
+        elif data_format == 'SDC_JSON':
+            return [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13', 'col14': 'value14'}]
+
+    @staticmethod
+    def get_text_file_content(file_number, lines_needed=3):
+        return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
+
+    @staticmethod
+    def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
+                                           json_data=None):
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        if data_format == 'TEXT':
+            assert output_records[0].field['text'] == file_content
+        elif data_format == 'DELIMITED':
+            assert output_records[0].field == OrderedDict(zip(file_content[0], file_content[1]))
+        elif data_format == 'JSON':
+            assert output_records[0].field == [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13',
+                                                'col14': 'value14'}]
+        elif data_format == 'LOG':
+            assert output_records[0].field == {'severity': 'DEBUG', 'relativetime': '200', 'thread': 'main',
+                                               'category': 'org.StreamSets.Log4j', 'ndc': 'unknown',
+                                               'message': 'This is sample log message'}
+        elif data_format == 'XML':
+            msg_field = output_records[0].field['msg']
+            assert (msg_field[0]['metainfo'][0]['value'] ==
+                    'Index page:More info about content')
+            assert (msg_field[0]['request'][0]['value'] ==
+                    'GET /index.html 200')
+        elif data_format == 'SDC_JSON':
+            assert output_records[0].field == json_data[0]
