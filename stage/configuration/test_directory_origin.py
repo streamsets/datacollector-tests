@@ -17,6 +17,9 @@ import logging
 import math
 import os
 from collections import OrderedDict
+import tempfile
+import string
+import json
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -234,8 +237,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = get_text_file_content('1')
-    FILE_CONTENTS_2 = get_text_file_content('2')
+    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
+    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -335,11 +338,50 @@ def test_directory_origin_configuration_comment_marker(sdc_builder, sdc_executor
     pass
 
 
-@pytest.mark.parametrize('data_format', ['BINARY', 'DELIMITED', 'JSON', 'LOG', 'PROTOBUF', 'SDC_JSON', 'TEXT', 'XML'])
-@pytest.mark.parametrize('compression_format', ['ARCHIVE', 'COMPRESSED_ARCHIVE', 'COMPRESSED_FILE', 'NONE'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_compression_format(sdc_builder, sdc_executor, data_format, compression_format):
-    pass
+@pytest.mark.parametrize('data_format', ['TEXT', 'DELIMITED', 'JSON', 'SDC_JSON', 'XML', 'LOG'])
+@pytest.mark.parametrize('compression_format', ['COMPRESSED_FILE'])
+@pytest.mark.parametrize('compression_codec', ['GZIP', 'BZIP2'])
+def test_directory_origin_configuration_compression_format(sdc_builder, sdc_executor, data_format,
+        compression_format, compressed_file_writer, compression_codec, shell_executor):
+    """Verify direcotry origin can read data from compressed files.
+        Pattern is inside the compressed file.
+        e.g. compression_format_test.txt is compressed as compression_format_test.txt.gz then
+        Using TEXT data format to check if data can be read from compressed txt files.
+        Similarly generating compressed file for all data formats and testing it.
+        Note : 1) PROTOBUF -> Bug filed SDC-11530. So protobuf related issues are resolved
+        2) BINARY -> Not supported by Directory origin. Confirmed by developers.
+        3) 'ARCHIVE', 'COMPRESSED_ARCHIVE' these two 'compression_format' are completed in
+        'file_name_pattern_within_compressed_directory' test case.
+        4) 'None' no 'compression_format' is completed in the 'data_format' test case.
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    actual_file_content = DirectoryOriginCommon.get_data_format_content(data_format)
+    try:
+        file_content = actual_file_content
+        if data_format == 'DELIMITED':
+            file_content = '\n'.join([','.join(record) for record in file_content])
+        elif data_format == 'SDC_JSON':
+            file_content = ''.join(json.dumps(record) for record in file_content)
+
+        # Writes compressed file to local FS.
+        compressed_file_writer(tmp_directory, data_format, compression_format, file_content,
+                               compression_codec=compression_codec, files_prefix='sdc-${sdc:id()}')
+        # Reading from compressed file.
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': 'sdc*',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': tmp_directory,
+                      'compression_format': compression_format,
+                      'read_order': 'TIMESTAMP',
+                      'header_line': 'WITH_HEADER',
+                      'log_format': 'LOG4J'}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+
+        DirectoryOriginCommon.execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format,
+                                                    actual_file_content, actual_file_content)
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {tmp_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
