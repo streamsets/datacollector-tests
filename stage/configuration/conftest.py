@@ -125,9 +125,13 @@ def compressed_file_writer(sdc_executor):
                                 compression_codec='GZIP', files_prefix='sdc-${sdc:id()}'):
         ext_map = {'BINARY': 'bin', 'TEXT': 'txt', 'DELIMITED': 'csv', 'JSON': 'json', 'LOG': 'log',
                    'PROTOBUF': 'proto', 'SDC_JSON': 'json', 'XML': 'xml'}
+
+        extension = ext_map[local_fs_data_format]
+        dev_raw_data_source_data_format = local_fs_data_format
+
         if local_fs_data_format in ['LOG', 'XML']:
             local_fs_data_format = 'TEXT'
-            dev_raw_data_source_data_format = local_fs_data_format
+            dev_raw_data_source_data_format = 'TEXT'
         if local_fs_data_format == 'SDC_JSON':
             dev_raw_data_source_data_format = 'JSON'
 
@@ -135,7 +139,7 @@ def compressed_file_writer(sdc_executor):
                       'compression_format': compression_format,
                       'directory_template': tmp_directory,
                       'files_prefix': files_prefix,
-                      'files_suffix': ext_map[local_fs_data_format],
+                      'files_suffix': extension,
                       'compression_codec': compression_codec}
 
         pipeline_builder = sdc_executor.get_pipeline_builder()
