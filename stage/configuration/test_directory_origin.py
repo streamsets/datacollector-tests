@@ -1360,6 +1360,7 @@ def create_file_and_directory(file_name, file_content, shell_executor, file_writ
 def get_text_file_content(file_number, lines_needed=3):
     return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
 
+<<<<<<< HEAD
 
 def verify_delimited_output(output_records, data, header=None):
     if not header:
@@ -1471,3 +1472,25 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
         assert output_records[0].field == json_data[0]
+=======
+        if data_format == 'TEXT':
+            assert output_records[0].field['text'] == file_content
+        elif data_format == 'DELIMITED':
+            assert output_records[0].field == OrderedDict(zip(file_content[0], file_content[1]))
+        elif data_format == 'JSON':
+            assert output_records[0].field == [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13',
+                                                'col14': 'value14'}]
+        elif data_format == 'LOG':
+            assert output_records[0].field == {'severity': 'DEBUG', 'relativetime': '200', 'thread': 'main',
+                                               'category': 'org.StreamSets.Log4j', 'ndc': 'unknown',
+                                               'message': 'This is sample log message'}
+        elif data_format == 'XML':
+            msg_field = output_records[0].field['msg']
+            assert (msg_field[0]['metainfo'][0]['value'] ==
+                    'Index page:More info about content')
+            assert (msg_field[0]['request'][0]['value'] ==
+                    'GET /index.html 200')
+        elif data_format == 'SDC_JSON':
+            assert output_records[0].field == json_data[0]
+            
+>>>>>>> SDC-11674 Add test case for Directory origin's compression format configuration.
