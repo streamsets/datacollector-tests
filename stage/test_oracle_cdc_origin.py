@@ -100,6 +100,7 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database):
             logger.info('Table: %s dropped.', src_table_name)
 
 
+@sdc_min_version('3.9.0')
 @database('oracle')
 @pytest.mark.parametrize('parse_sql', [True, False])
 def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
