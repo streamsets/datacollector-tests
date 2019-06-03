@@ -31,6 +31,8 @@ SDC_RPC_PORT = 20000
 def version_check(sdc_builder, cluster):
     if cluster.version == 'cdh6.0.0' and Version('3.5.0') <= Version(sdc_builder.version) < Version('3.6.0'):
         pytest.skip('HBase Lookup processor is not included in streamsets-datacollector-cdh_6_0-lib in SDC 3.5')
+    elif cluster.version == 'cdh6.1.1':
+        pytest.skip('Temporarily skip HBase tests for CDH 6.1.1 since they are failing due to happybase related code.')
 
 
 @cluster('cdh', 'hdp')
