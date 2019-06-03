@@ -1027,3 +1027,4 @@ class DirectoryOriginCommon(object):
                     'GET /index.html 200')
         elif data_format == 'SDC_JSON':
             assert output_records[0].field == json_data[0]
+            
