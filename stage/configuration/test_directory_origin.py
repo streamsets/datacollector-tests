@@ -20,7 +20,7 @@ from collections import OrderedDict
 import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
-
+from xml.etree import ElementTree
 logger = logging.getLogger(__file__)
 
 
@@ -758,10 +758,65 @@ def test_directory_origin_configuration_on_record_error(sdc_builder, sdc_executo
 
 @pytest.mark.parametrize('data_format', ['XML'])
 @pytest.mark.parametrize('output_field_attributes', [False, True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc_executor,
+def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc_executor, shell_executor, file_writer,
                                                                 data_format, output_field_attributes):
-    pass
+    """Test for Directory origin can read XML file with Output field attributes parameter as true or false.
+    Here we will be creating XML file with namespaces .
+
+    Output field attributes |Expected outcome
+    --------------------------------------------------------------
+    True                  |Includes XML attributes and namespace declarations in the record as field attributes.
+    False                 |XML attributes and namespace declarations will not be included as field attributes.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'xml_output_field_attributes_file.xml'
+    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
+                            <bookstore xmlns:prc="http://books.com/price">
+                                <b:book xmlns:b="http://books.com/book">
+                                    <title lang="en">Harry Potter</title>
+                                    <prc:price>29.99</prc:price>
+                                </b:book>
+                                <b:book xmlns:b="http://books.com/book">
+                                    <title lang="en_us">Learning XML</title>
+                                    <prc:price>39.95</prc:price>
+                                </b:book>
+                            </bookstore>"""
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='xml_output_field_attributes_file*',
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_element='/*[1]/*',
+                                 output_field_attributes=output_field_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        item_list = [output.field for output in snapshot[directory.instance_name].output]
+        rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
+                              for item in item_list]
+        # Parse input xml data to verify results from snapshot using xpath for search.
+        root = ElementTree.fromstring(FILE_CONTENTS)
+        expected_data = [{msg.find('title').text: msg.find('{http://books.com/price}price').text}
+                         for msg in root.findall('{http://books.com/book}book')]
+        assert rows_from_snapshot == expected_data
+
+        if output_field_attributes:
+            output_records = snapshot[directory.instance_name].output
+            # Test for Field Headers .Currently using _data property since api for filed header is not there.
+            field_header = output_records[0]._data['value']['attributes']
+            assert field_header['xmlns:b'] == 'http://books.com/book'
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
