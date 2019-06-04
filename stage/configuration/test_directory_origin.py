@@ -762,11 +762,78 @@ def test_directory_origin_configuration_include_custom_delimiter(sdc_builder, sd
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
-@pytest.mark.parametrize('include_field_xpaths', [False, True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_executor,
+@pytest.mark.parametrize('include_field_xpaths', [True, False])
+def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_executor, shell_executor, file_writer,
                                                              data_format, include_field_xpaths):
-    pass
+    """Test for Directory origin can read XML file with include field xpath parameter as true or false.
+    Here we will be creating XML file with namespaces .
+
+    Include Field Xpaths |Expected outcome
+    --------------------------------------------------------------
+    True                  |Includes the XPath to XML attribute in field attributes and in xmlns record header attribute.
+    False                 | XPath will not be included.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'xml_include_xpath_file.xml'
+    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
+                        <bookstore xmlns:prc="http://books.com/price">
+                            <b:book xmlns:b="http://books.com/book">
+                                <title lang="en">Harry Potter</title>
+                                <prc:price>29.99</prc:price>
+                            </b:book>
+                            <b:book xmlns:b="http://books.com/book">
+                                <title lang="en_us">Learning XML</title>
+                                <prc:price>39.95</prc:price>
+                            </b:book>
+                        </bookstore>"""
+    try:
+        files_directory = create_file_and_directory(FILE_NAME, FILE_CONTENTS, shell_executor,file_writer)
+        attributes= {'data_format':data_format,
+                                 'files_directory':files_directory,
+                                 'file_name_pattern':'xml_include_xpath_file*',
+                                 'file_name_pattern_mode':'GLOB',
+                                 'delimiter_element':'/*[1]/*',
+                                 'include_field_xpaths':include_field_xpaths}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        item_list = [output.field for output in snapshot[directory.instance_name].output]
+        rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
+                              for item in item_list]
+        # Parse input xml data to verify results from snapshot using xpath for search.
+        root = ElementTree.fromstring(FILE_CONTENTS)
+        expected_data = [{msg.find('title').text: msg.find('{http://books.com/price}price').text}
+                         for msg in root.findall('{http://books.com/book}book')]
+        assert rows_from_snapshot == expected_data
+        output_records = snapshot[directory.instance_name].output
+
+        if include_field_xpaths:
+            # Test for Record Headers
+            record_header = [record.header.values for record in output_records]
+            assert record_header[0]['xmlns:b'] == 'http://books.com/book'
+            assert record_header[0]['xmlns:prc'] == 'http://books.com/price'
+            # Test for Field Headers .Currently using _data property since api for field header is not there.
+            field_info = output_records[0]._data['value']['value']
+            assert (field_info['title']['value'][0]['value']['attr|lang']['attributes'][
+                        'xpath'] == '/bookstore/b:book/title/@lang')
+            assert (field_info['title']['value'][0]['value']['value']['attributes'][
+                        'xpath'] == '/bookstore/b:book/title')
+            assert (field_info['prc:price']['value'][0]['value']['value']['attributes']['xpath'] ==
+                    '/bookstore/b:book/prc:price')
+        else:
+            # Test for Record Headers
+            record_header = [record.header.values for record in output_records]
+            assert 'xmlns:b' not in record_header[0]
+            assert 'xmlns:prc' not in record_header[0]
+            # Test for Field Headers .Currently using _data property since api for field header is not there.
+            field_info = output_records[0]._data['value']['value']
+            assert 'attributes' not in field_info['title']['value'][0]['value']['attr|lang']
+            assert 'attributes' not in field_info['title']['value'][0]['value']['value']
+            assert 'attributes' not in field_info['prc:price']['value'][0]['value']['value']
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['JSON'])
