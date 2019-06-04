@@ -750,6 +750,62 @@ def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, 
     pass
 
 
+@pytest.mark.parametrize('data_format', ['XML'])
+@pytest.mark.parametrize('max_record_length_in_chars', [238, 240, 260])
+def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_builder, sdc_executor, shell_executor,
+                                                                       file_writer, data_format,
+                                                                       max_record_length_in_chars):
+    """Case 1:   Record length > max_record_length | Expected outcome --> Record to error
+    Case 2:   Record length = max_record_length | Expected outcome --> Record processed
+    Case 3:   Record length < max_record_length | Expected outcome --> Record processed
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'xml_max_record_length_in_chars_file.xml'
+    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
+                          <root>
+                              <msg>
+                                  <time>8/12/2016 6:01:00</time>
+                                  <request>GET /index.html 200</request>
+                              </msg>
+                          </root>"""
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='xml_max_record_length_in_chars_file*',
+                                 file_name_pattern_mode='GLOB',
+                                 delimeter_element='msg',
+                                 max_record_length_in_chars=max_record_length_in_chars)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        if max_record_length_in_chars < 240:
+            assert not snapshot[directory].output
+        else:
+            item_list = output_records[0].field['msg']
+            rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
+                                  for item in item_list]
+            # Parse input xml data to verify results from snapshot.
+            root = ElementTree.fromstring(FILE_CONTENTS)
+            expected_data = [{msg.find('time').text: msg.find('request').text}
+                             for msg in root.iter('msg')]
+            assert rows_from_snapshot == expected_data
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
+
+
 @pytest.mark.parametrize('data_format', ['NETFLOW'])
 @pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_max_templates_in_cache(sdc_builder, sdc_executor, data_format):
