@@ -771,9 +771,64 @@ def test_directory_origin_configuration_message_type(sdc_builder, sdc_executor, 
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, data_format):
-    pass
+def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, shell_executor, file_writer, data_format):
+    """Test for Directory origin can read XML files with namespaces.
+    Here we will be creating XML file with namespaces and parsing the XML document using namespace prefix.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'xml_namespaces_file.xml'
+    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
+                      <root>
+                          <a:data xmlns:a="http://www.companyA.com">
+                              <msg>
+                                  <time>8/12/2016 6:01:00</time>
+                                  <request>GET /index.html 200</request>
+                              </msg>
+                              </a:data>
+                          <c:data xmlns:c="http://www.companyC.com">
+                              <sale>
+                                  <item>Shoes</item>
+                                  <item>Magic wand</item>
+                                  <item>Tires</item>
+                              </sale>
+                          </c:data>
+                          <a:data xmlns:a="http://www.companyA.com">
+                              <msg>
+                                  <time>8/12/2016 6:03:43</time>
+                                  <request>GET /images/sponsored.gif 304</request>
+                              </msg>
+                          </a:data>
+                      </root>"""
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='xml_namespaces_file*',
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_element='/root/a:data/msg',
+                                 namespaces=[{'key': 'a', 'value': 'http://www.companyA.com'}])
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        item_list = [output.field for output in snapshot[directory.instance_name].output]
+        rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
+                              for item in item_list]
+        # Parse input xml data to verify results from snapshot using xpath for search.
+        root = ElementTree.fromstring(FILE_CONTENTS)
+        expected_data = [{msg.find('time').text: msg.find('request').text}
+                         for msg in root.findall('.//msg')]
+        assert rows_from_snapshot == expected_data
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
