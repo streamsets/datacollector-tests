@@ -22,6 +22,7 @@ from collections import OrderedDict
 import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
+from xml.etree import ElementTree
 
 logger = logging.getLogger(__file__)
 
