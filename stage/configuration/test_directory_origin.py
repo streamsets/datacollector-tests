@@ -21,6 +21,7 @@ import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
 from xml.etree import ElementTree
+
 logger = logging.getLogger(__file__)
 
 
@@ -639,7 +640,7 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
     """Test for Directory origin can read XML file with include field xpath parameter as true or false.
     Here we will be creating XML file with namespaces .
 
-    Include Filed Xpaths |Expected outcome
+    Include Field Xpaths |Expected outcome
     --------------------------------------------------------------
     True                  |Includes the XPath to XML attribute in field attributes and in xmlns record header attribute.
     False                 | XPath will not be included.
@@ -684,20 +685,31 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
         expected_data = [{msg.find('title').text: msg.find('{http://books.com/price}price').text}
                          for msg in root.findall('{http://books.com/book}book')]
         assert rows_from_snapshot == expected_data
+        output_records = snapshot[directory.instance_name].output
 
         if include_field_xpaths:
-            output_records = snapshot[directory.instance_name].output
             # Test for Record Headers
             record_header = [record.header.values for record in output_records]
             assert record_header[0]['xmlns:b'] == 'http://books.com/book'
             assert record_header[0]['xmlns:prc'] == 'http://books.com/price'
-            # Test for Field Headers .Currently using _data property since api for filed header is not there.
+            # Test for Field Headers .Currently using _data property since api for field header is not there.
             field_info = output_records[0]._data['value']['value']
-            assert field_info['title']['value'][0]['value']['attr|lang']['attributes'][
-                       'xpath'] == '/bookstore/b:book/title/@lang'
-            assert field_info['title']['value'][0]['value']['value']['attributes']['xpath'] == '/bookstore/b:book/title'
-            assert field_info['prc:price']['value'][0]['value']['value']['attributes'][
-                       'xpath'] == '/bookstore/b:book/prc:price'
+            assert (field_info['title']['value'][0]['value']['attr|lang']['attributes'][
+                        'xpath'] == '/bookstore/b:book/title/@lang')
+            assert (field_info['title']['value'][0]['value']['value']['attributes'][
+                        'xpath'] == '/bookstore/b:book/title')
+            assert (field_info['prc:price']['value'][0]['value']['value']['attributes']['xpath'] ==
+                    '/bookstore/b:book/prc:price')
+        else:
+            # Test for Record Headers
+            record_header = [record.header.values for record in output_records]
+            assert 'xmlns:b' not in record_header[0]
+            assert 'xmlns:prc' not in record_header[0]
+            # Test for Field Headers .Currently using _data property since api for field header is not there.
+            field_info = output_records[0]._data['value']['value']
+            assert 'attributes' not in field_info['title']['value'][0]['value']['attr|lang']
+            assert 'attributes' not in field_info['title']['value'][0]['value']['value']
+            assert 'attributes' not in field_info['prc:price']['value'][0]['value']['value']
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
