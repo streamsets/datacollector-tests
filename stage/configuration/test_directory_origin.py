@@ -21,6 +21,7 @@ import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
 from xml.etree import ElementTree
+
 logger = logging.getLogger(__file__)
 
 
@@ -808,12 +809,14 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
         expected_data = [{msg.find('title').text: msg.find('{http://books.com/price}price').text}
                          for msg in root.findall('{http://books.com/book}book')]
         assert rows_from_snapshot == expected_data
+        output_records = snapshot[directory.instance_name].output
 
         if output_field_attributes:
-            output_records = snapshot[directory.instance_name].output
-            # Test for Field Headers .Currently using _data property since api for filed header is not there.
+            # Test for Field Attributes. Currently using _data property since attributes are not accessible with the field property.
             field_header = output_records[0]._data['value']['attributes']
             assert field_header['xmlns:b'] == 'http://books.com/book'
+        else:
+            assert 'attributes' not in output_records[0]._data['value']
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
