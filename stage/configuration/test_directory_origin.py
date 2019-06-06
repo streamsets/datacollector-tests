@@ -593,35 +593,30 @@ def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_e
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('enable_comments', [False, True])
-@pytest.mark.parametrize('comment_marker', ['#'])
+@pytest.mark.parametrize('comment_marker', ['#', '%'])
 def test_directory_origin_configuration_enable_comments(sdc_builder, sdc_executor,
                                                         shell_executor, file_writer, delimiter_format_type, data_format,
-                                                        enable_comments,comment_marker):
+                                                        enable_comments, comment_marker):
     """Test for Directory origin can read delimited files with comments.
     Here we will be creating delimited files with comments and verify if DC can skip comments or read comments as texts
     """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'delimited_file.csv'
-    csv_content = [['Field11','Field12','Field13'],['{comment_marker} This is comment'],['Field21','Field22','Field23']]
-    FILE_CONTENTS = '\n'.join([ ','.join(t) for t in csv_content]).format(comment_marker=comment_marker)
+    csv_content = [['Field11', 'Field12', 'Field13'], ['{comment_marker} This is comment'],
+                   ['Field21', 'Field22', 'Field23']]
+    FILE_CONTENTS = '\n'.join([','.join(t) for t in csv_content]).format(comment_marker=comment_marker)
     try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
-
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 files_directory=files_directory,
-                                 file_name_pattern='*.csv',
-                                 file_name_pattern_mode='GLOB',
-                                 delimiter_format_type=delimiter_format_type,
-                                 enable_comments=enable_comments,
-                                 comment_marker=comment_marker,
-                                 delimiter_character=',')
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
+        files_directory = DirectoryOriginCommon.create_file_directory(FILE_NAME, FILE_CONTENTS, shell_executor,
+                                                                      file_writer)
+        attributes = {'data_format': data_format,
+                      'files_directory': files_directory,
+                      'file_name_pattern': '*.csv',
+                      'file_name_pattern_mode': 'GLOB',
+                      'delimiter_format_type': delimiter_format_type,
+                      'enable_comments': enable_comments,
+                      'comment_marker': comment_marker,
+                      'delimiter_character': ','}
+        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
@@ -634,7 +629,7 @@ def test_directory_origin_configuration_enable_comments(sdc_builder, sdc_executo
         else:
             assert 3 == len(output_records)
             assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
-            assert output_records[1].field == OrderedDict([('0', '# This is comment')])
+            assert output_records[1].field == OrderedDict([('0', '{} This is comment'.format(comment_marker))])
             assert output_records[2].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
     finally:
         sdc_executor.stop_pipeline(pipeline)
