@@ -888,7 +888,8 @@ def test_directory_origin_configuration_template_cache_timeout_in_ms(sdc_builder
 @pytest.mark.parametrize('on_parse_error', ['INCLUDE_AS_STACK_TRACE'])
 @pytest.mark.parametrize('trim_stack_trace_to_length', [2])
 def test_directory_origin_configuration_trim_stack_trace_to_length(sdc_builder, sdc_executor,
-            data_format, log_format, on_parse_error, trim_stack_trace_to_length, shell_executor, file_writer):
+                                                                   data_format, log_format, on_parse_error,
+                                                                   trim_stack_trace_to_length, shell_executor, file_writer):
     """The stack trace will be trimmed to the specified number of lines.
     """
     files_directory = os.path.join('/tmp', get_random_string())
@@ -896,7 +897,7 @@ def test_directory_origin_configuration_trim_stack_trace_to_length(sdc_builder, 
     file_path = os.path.join(files_directory, file_name)
     input_content =['1 [main] ERROR test.pack.Log4J  - failed!',
                     'Exception in thread "main" java.lang.NullPointerException',
-                    'at com.example.myproject.Book.getTitle(Book.java:16)'
+                    'at com.example.myproject.Book.getTitle(Book.java:16)',
                     'at com.example.myproject.Author.getBookTitles(Author.java:25)']
     file_contents = '\n'.join(input_content)
     try:
@@ -919,11 +920,12 @@ def test_directory_origin_configuration_trim_stack_trace_to_length(sdc_builder, 
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         output_records = snapshot[directory.instance_name].output
 
-        assert output_records[0].field['message'] == '{first_record}\n{stack_trace}'.format(first_record='failed!',
-                                                    stack_trace='\n'.join(input_content[1:3]))
+        assert output_records[0].field['message'] == '{}\n{}'.format('failed!',
+                                                                     '\n'.join(input_content[1:trim_stack_trace_to_length+1]))
     finally:
         shell_executor(f'rm -r {files_directory}')
         sdc_executor.stop_pipeline(pipeline)
+
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
 @pytest.mark.parametrize('datagram_packet_format', ['COLLECTD'])
