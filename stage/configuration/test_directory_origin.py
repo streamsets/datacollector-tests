@@ -1099,8 +1099,8 @@ def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executo
     file_name = 'custom_delimited_file.csv'
     f = lambda ip_string: ip_string.format(quote_character=quote_character, delimiter_character=delimiter_character)
     f1 = lambda ip_string: ip_string.replace(quote_character, "")
-    data = [['{quote_character}Field11{delimiter_character}{quote_character}', 'Field12',
-             '{quote_character},Field13{quote_character}'],
+    data = [[f('{quote_character}Field11{delimiter_character}{quote_character}'), 'Field12',
+             f('{quote_character},Field13{quote_character}')],
             [f('{quote_character}Field{delimiter_character}21{quote_character}'), 'Field22', 'Field23']]
 
     try:
