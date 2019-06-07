@@ -12,6 +12,7 @@
 #     sdc_executor.add_pipeline(pipeline)
 # -*- end test template -*-
 #
+import json
 import logging
 import math
 import os
@@ -1211,6 +1212,220 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
-## Start of general supportive functions
-def get_text_file_content(file_number):
-    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, 4)])
+# Util functions
+
+LOG_FIELD_MAPPING = [{'fieldPath': '/date', 'group': 1},
+                     {'fieldPath': '/time', 'group': 2},
+                     {'fieldPath': '/timehalf', 'group': 3},
+                     {'fieldPath': '/info', 'group': 4},
+                     {'fieldPath': '/file', 'group': 5},
+                     {'fieldPath': '/message', 'group': 6}]
+JSON_DATA = [{"name": "Manish Zope", "age": 35, "car": "lll company", "address": ""},
+             {"name": "Sachin Tope", "age": 30, "car": "hhh company",
+              "address": "FLAT NO 555 xyz society opposite to abc school near ddd chowk wakad Pune - 411057"},
+             {"name": "Sagar HiFi", "age": 28, "car": "rrr company", "address": "ttt"}]
+AVRO_RECORDS = [
+    {
+        "name": "sdc1",
+        "age": 3,
+        "emails": ["sdc1@streamsets.com", "sdc@company.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc2",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc3",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc4",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc5",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    }]
+AVRO_SCHEMA = {
+    "type": "record",
+    "name": "Employee",
+    "fields": [
+        {"name": "name", "type": "string"},
+        {"name": "age", "type": "int"},
+        {"name": "emails", "type": {"type": "array", "items": "string"}},
+        {"name": "boss", "type": ["Employee", "null"]}
+    ]
+}
+
+
+def get_directory_to_trash_pipeline(sdc_builder, attributes):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory')
+    directory.set_attributes(**attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    directory >> trash
+    pipeline = pipeline_builder.build()
+    return directory, pipeline
+
+
+def create_file_and_directory(file_name, file_content, shell_executor, file_writer, delimiter_format_type=None,
+                          delimiter_character=None):
+    files_directory = os.path.join('/tmp', get_random_string())
+    logger.debug('Creating files directory %s ...', files_directory)
+    shell_executor(f'mkdir {files_directory}')
+    file_path = os.path.join(files_directory, file_name)
+    if delimiter_format_type:
+        file_writer(file_path, file_content, delimiter_format_type, delimiter_character)
+    else:
+        file_writer(file_path, file_content)
+    return files_directory
+
+
+def get_text_file_content(file_number, lines_needed=3):
+    return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
+
+
+def verify_delimited_output(output_records, data, header=None):
+    if not header:
+        header = [str(i) for i in range(0, 3)]
+    assert 2 == len(output_records)
+    assert output_records[0].field == OrderedDict(zip(header, data[0]))
+    assert output_records[1].field == OrderedDict(zip(header, data[1]))
+
+
+def get_control_characters_attributes(data_format, files_directory, ignore_control_characters):
+    return {'data_format': data_format,
+            'file_name_pattern': 'ignore_ctrl_*',
+            'file_name_pattern_mode': 'GLOB',
+            'files_directory': files_directory,
+            'ignore_control_characters': ignore_control_characters}
+
+
+def snapshot_content(snapshot, directory):
+    """This is common function can be used at in many TCs to get snapshot content."""
+    processed_data = []
+    for snapshot_batch in snapshot.snapshot_batches:
+        for value in snapshot_batch[directory.instance_name].output_lanes.values():
+            for record in value:
+                processed_data.append(str(record.field['text']))
+    return processed_data
+
+
+def execute_and_verify_log_regex_output(sdc_executor, directory, pipeline):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    output_records = snapshot[directory].output
+    assert (output_records[0].field == {'/time': '08:23:53', '/date': '2019-04-30', '/timehalf': 'AM',
+                                        '/info': '[INFO]',
+                                        '/message': 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).',
+                                        '/file': '[streamsets.sdk.sdc_api]'})
+    assert (output_records[1].field == {'/time': '08:23:57', '/date': '2019-04-30', '/timehalf': 'AM',
+                                        '/info': '[INFO]',
+                                        '/message': 'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...',
+                                        '/file': '[streamsets.sdk.sdc]'})
+
+
+def write_multiple_files(sdc_builder, sdc_executor, tmp_directory, file_suffix):
+    # 1st pipeline which writes one record per file with interval 0.1 seconds
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    batch_size = 100
+    dev_data_generator.set_attributes(batch_size=batch_size,
+                                      delay_between_batches=10)
+
+    dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
+
+    max_records_in_file = 2
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=os.path.join(tmp_directory),
+                            files_prefix='{suffix}'.format(suffix=file_suffix),
+                            files_suffix='txt',
+                            max_records_in_file=max_records_in_file)
+
+    dev_data_generator >> local_fs
+
+    number_of_batches = 10
+    # run the 1st pipeline to create the directory and starting files
+    files_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(files_pipeline)
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(number_of_batches)
+    sdc_executor.stop_pipeline(files_pipeline)
+
+
+def get_data_format_content(data_format):
+    # Todo - Add data for Binary and protobuf format. sdc json need to generated with pipeline
+    json_data = [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13', 'col14': 'value14'}]
+    data_format_content = {'TEXT': get_text_file_content(1, 1),
+                           'DELIMITED': [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'Field13']],
+                           'JSON': json.dumps(json_data),
+                           'LOG': '200 [main] DEBUG org.StreamSets.Log4j unknown - This is sample log message',
+                           'XML': """<?xml version="1.0" encoding="UTF-8"?>
+                                       <root>
+                                         <msg>
+                                             <request>GET /index.html 200</request>
+                                             <metainfo>Index page:More info about content</metainfo>
+                                         </msg>
+                                       </root>""",
+                           'SDC_JSON': json_data}
+    return data_format_content[data_format]
+
+
+def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
+                                       json_data=None):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    output_records = snapshot[directory.instance_name].output
+
+    if data_format == 'TEXT':
+        processed_data = snapshot_content(snapshot, directory)
+        assert file_content == '\n'.join(processed_data)
+    elif data_format == 'DELIMITED':
+        assert output_records[0].field == OrderedDict(zip(file_content[0], file_content[1]))
+    elif data_format == 'JSON':
+        assert output_records[0].field == [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13',
+                                            'col14': 'value14'}]
+    elif data_format == 'LOG':
+        assert output_records[0].field == {'severity': 'DEBUG', 'relativetime': '200', 'thread': 'main',
+                                           'category': 'org.StreamSets.Log4j', 'ndc': 'unknown',
+                                           'message': 'This is sample log message'}
+    elif data_format == 'XML':
+        msg_field = output_records[0].field['msg']
+        assert msg_field[0]['metainfo'][0]['value'] == 'Index page:More info about content'
+        assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
+    elif data_format == 'SDC_JSON':
+        assert output_records[0].field == json_data[0]
