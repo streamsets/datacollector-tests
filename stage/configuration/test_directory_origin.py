@@ -995,13 +995,6 @@ def verify_delimited_output(output_records, data, header=None):
     assert output_records[1].field == OrderedDict(zip(header, data[1]))
 
 
-def execute_and_verify(sdc_executor, directory, pipeline, raw_data, snapshot_content, no_of_batches):
-    sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=no_of_batches).snapshot
-    processed_data = snapshot_content(snapshot, directory)
-    assert raw_data == processed_data
-
-
 def get_control_characters_attributes(data_format, files_directory, ignore_control_characters):
     return {'data_format': data_format,
             'file_name_pattern': 'ignore_ctrl_*',
@@ -1137,7 +1130,7 @@ def write_multiple_files(sdc_builder, sdc_executor, tmp_directory, file_suffix):
 
 
 def get_data_format_content(data_format):
-    # Add data for Binary and protobug format. sdc json need to generated with pipeline
+    # Todo - Add data for Binary and protobuf format. sdc json need to generated with pipeline
     if data_format == 'TEXT':
         return get_text_file_content(1, 1)
     elif data_format in ['DELIMITED', 'BINARY']:
@@ -1165,7 +1158,8 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
     output_records = snapshot[directory.instance_name].output
 
     if data_format == 'TEXT':
-        assert output_records[0].field['text'] == file_content
+        processed_data = snapshot_content(snapshot, directory)
+        assert file_content == '\n'.join(processed_data)
     elif data_format == 'DELIMITED':
         assert output_records[0].field == OrderedDict(zip(file_content[0], file_content[1]))
     elif data_format == 'JSON':

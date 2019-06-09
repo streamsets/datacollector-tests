@@ -105,3 +105,42 @@ def get_excel_compatible_csv(data):
     finally:
         queue.close()
     return content
+
+
+@pytest.fixture
+def compressed_file_writer(sdc_executor):
+    """Writes compressed file to local fs.
+    To write to any file other than the compressed file make compression_format='NONE' and
+    compression_codec='NONE'.
+    """
+    def compressed_file_writer_(tmp_directory, data_format, compression_format, file_content,
+                                compression_codec='GZIP', files_prefix='sdc-${sdc:id()}'):
+        ext_map = {'BINARY': 'bin', 'TEXT': 'txt', 'DELIMITED': 'csv', 'JSON': 'json', 'LOG': 'log',
+                   'PROTOBUF': 'proto', 'SDC_JSON': 'json', 'XML': 'xml'}
+        if data_format in ['LOG', 'XML']:
+            data_format = 'TEXT'
+        dev_raw_data_format = data_format
+        if data_format == 'SDC_JSON':
+            dev_raw_data_format = 'JSON'
+
+        attributes = {'data_format': data_format,
+                      'compression_format': compression_format,
+                      'directory_template': tmp_directory,
+                      'files_prefix': files_prefix,
+                      'files_suffix': ext_map[data_format],
+                      'compression_codec': compression_codec}
+
+        pipeline_builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format=dev_raw_data_format, raw_data=file_content, stop_after_first_batch=True)
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(**attributes)
+
+        dev_raw_data_source >> local_fs
+        files_pipeline = pipeline_builder.build('Generate files pipeline')
+        sdc_executor.add_pipeline(files_pipeline)
+
+        # generate some batches/files
+        sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=30)
+
+    return compressed_file_writer_
