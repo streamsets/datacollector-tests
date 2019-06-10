@@ -1131,24 +1131,20 @@ def write_multiple_files(sdc_builder, sdc_executor, tmp_directory, file_suffix):
 
 def get_data_format_content(data_format):
     # Todo - Add data for Binary and protobuf format. sdc json need to generated with pipeline
-    if data_format == 'TEXT':
-        return get_text_file_content(1, 1)
-    elif data_format in ['DELIMITED', 'BINARY']:
-        return [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'Field13']]
-    elif data_format == 'JSON':
-        return json.dumps([{'col11': 'value11', 'col12': 'value12', 'col13': 'value13', 'col14': 'value14'}])
-    elif data_format == 'LOG':
-        return '200 [main] DEBUG org.StreamSets.Log4j unknown - This is sample log message'
-    elif data_format == 'XML':
-        return """<?xml version="1.0" encoding="UTF-8"?>
-                        <root>
-                          <msg>
-                              <request>GET /index.html 200</request>
-                              <metainfo>Index page:More info about content</metainfo>
-                          </msg>
-                        </root>"""
-    elif data_format == 'SDC_JSON':
-        return [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13', 'col14': 'value14'}]
+    json_data = [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13', 'col14': 'value14'}]
+    data_format_content = {'TEXT': get_text_file_content(1, 1),
+                           'DELIMITED': [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'Field13']],
+                           'JSON': json.dumps(json_data),
+                           'LOG': '200 [main] DEBUG org.StreamSets.Log4j unknown - This is sample log message',
+                           'XML': """<?xml version="1.0" encoding="UTF-8"?>
+                                       <root>
+                                         <msg>
+                                             <request>GET /index.html 200</request>
+                                             <metainfo>Index page:More info about content</metainfo>
+                                         </msg>
+                                       </root>""",
+                           'SDC_JSON': json_data}
+    return data_format_content[data_format]
 
 
 def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
