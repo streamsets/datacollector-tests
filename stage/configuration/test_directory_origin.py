@@ -614,7 +614,8 @@ def test_directory_origin_configuration_escape_character(sdc_builder, sdc_execut
 @pytest.mark.parametrize('data_format', ['EXCEL'])
 @pytest.mark.parametrize('excel_header_option', ['IGNORE_HEADER', 'NO_HEADER', 'WITH_HEADER'])
 def test_directory_origin_configuration_excel_header_option(sdc_builder, sdc_executor,
-                            data_format, excel_header_option, shell_executor, file_writer):
+                                                            data_format, excel_header_option, shell_executor,
+                                                            file_writer):
     """Indicates whether files include a header row and whether to ignore the header row.
     A header row must be the first row of a file.
     """
@@ -1509,6 +1510,8 @@ def get_text_file_content(file_number):
 
 
 def generate_excel_file():
+    """Builds excel file in memory, later bind this data to BINARY file.
+    """
     import io
     from xlwt import Workbook
 

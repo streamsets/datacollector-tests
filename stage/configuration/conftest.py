@@ -32,6 +32,7 @@ def file_writer(sdc_executor):
         filepath (:obj:`str`): The absolute path to which to write the file.
         file_contents (:obj:`str`): The file contents.
         encoding (:obj:`str`, optional): The file encoding. Default: ``'utf8'``
+        file_data_type (:obj:`str`, optional): The file which type of data containing . Default: ``'NOT_BINARY'``
     """
     def file_writer_(filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
         write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding, file_data_type)
@@ -57,7 +58,6 @@ def shell_executor(sdc_executor):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         sdc_executor.remove_pipeline(pipeline)
     return shell_executor_
-
 
 
 def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
@@ -113,6 +113,7 @@ def get_excel_compatible_csv(data):
     finally:
         queue.close()
     return content
+<<<<<<< HEAD
 
 
 @pytest.fixture
@@ -166,3 +167,5 @@ def compressed_file_writer(sdc_executor):
 
     return compressed_file_writer_
 
+=======
+>>>>>>> SDC-11401 Add test case for Directory origin's Excel Header Option configuration
