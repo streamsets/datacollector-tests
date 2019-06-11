@@ -1062,28 +1062,6 @@ def get_text_file_content(file_number, lines_needed=3):
     return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
 
 
-def setup_sdc_json_file(sdc_executor, files_directory):
-    json_data = [{"field1": "abc", "field2": "def", "field3": "ghi"},
-                 {"field1": "jkl", "field2": "mno", "field3": "pqr"}]
-    raw_data = ''.join(json.dumps(record) for record in json_data)
-
-    pipeline_builder = sdc_executor.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
-    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
-    local_fs.set_attributes(data_format='SDC_JSON',
-                            directory_template=files_directory,
-                            files_prefix='sdc-${sdc:id()}', files_suffix='json', max_records_in_file=5)
-
-    dev_raw_data_source >> local_fs
-    files_pipeline = pipeline_builder.build('Generate files pipeline')
-    sdc_executor.add_pipeline(files_pipeline)
-
-    # generate some batches/files
-    sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
-    return json_data
-
-
 def verify_delimited_output(output_records, data, header=None):
     if not header:
         header = [str(i) for i in range(0, 3)]
