@@ -606,7 +606,7 @@ def test_directory_origin_configuration_enable_comments(sdc_builder, sdc_executo
                    ['Field21', 'Field22', 'Field23']]
     FILE_CONTENTS = '\n'.join([','.join(t) for t in csv_content]).format(comment_marker=comment_marker)
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(FILE_NAME, FILE_CONTENTS, shell_executor,
+        files_directory = create_file_and_directory(FILE_NAME, FILE_CONTENTS, shell_executor,
                                                                       file_writer)
         attributes = {'data_format': data_format,
                       'files_directory': files_directory,
@@ -616,7 +616,7 @@ def test_directory_origin_configuration_enable_comments(sdc_builder, sdc_executo
                       'enable_comments': enable_comments,
                       'comment_marker': comment_marker,
                       'delimiter_character': ','}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
