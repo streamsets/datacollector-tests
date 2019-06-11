@@ -237,8 +237,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
-    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
+    FILE_CONTENTS_1 = get_text_file_content('1')
+    FILE_CONTENTS_2 = get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -341,8 +341,8 @@ def test_directory_origin_configuration_comment_marker(sdc_builder, sdc_executor
 @pytest.mark.parametrize('data_format', ['TEXT', 'DELIMITED', 'JSON', 'SDC_JSON', 'XML', 'LOG'])
 @pytest.mark.parametrize('compression_format', ['COMPRESSED_FILE'])
 @pytest.mark.parametrize('compression_codec', ['GZIP', 'BZIP2'])
-def test_directory_origin_configuration_compression_format(sdc_builder, sdc_executor, data_format,
-        compression_format, compressed_file_writer, compression_codec, shell_executor):
+def test_directory_origin_configuration_compression_format(sdc_builder, sdc_executor, data_format, compression_format,
+                                                           compressed_file_writer, compression_codec, shell_executor):
     """Verify direcotry origin can read data from compressed files.
         Pattern is inside the compressed file.
         e.g. compression_format_test.txt is compressed as compression_format_test.txt.gz then
@@ -355,7 +355,7 @@ def test_directory_origin_configuration_compression_format(sdc_builder, sdc_exec
         4) 'None' no 'compression_format' is completed in the 'data_format' test case.
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
-    actual_file_content = DirectoryOriginCommon.get_data_format_content(data_format)
+    actual_file_content = get_data_format_content(data_format)
     try:
         file_content = actual_file_content
         if data_format == 'DELIMITED':
@@ -375,10 +375,10 @@ def test_directory_origin_configuration_compression_format(sdc_builder, sdc_exec
                       'read_order': 'TIMESTAMP',
                       'header_line': 'WITH_HEADER',
                       'log_format': 'LOG4J'}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
-        DirectoryOriginCommon.execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format,
-                                                    actual_file_content, actual_file_content)
+        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format,
+                                           actual_file_content, actual_file_content)
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {tmp_directory}')
@@ -1360,7 +1360,6 @@ def create_file_and_directory(file_name, file_content, shell_executor, file_writ
 def get_text_file_content(file_number, lines_needed=3):
     return '\n'.join(['This is line{}{}'.format(str(file_number), i) for i in range(1, (lines_needed + 1))])
 
-<<<<<<< HEAD
 
 def verify_delimited_output(output_records, data, header=None):
     if not header:
@@ -1472,25 +1471,3 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
         assert output_records[0].field == json_data[0]
-=======
-        if data_format == 'TEXT':
-            assert output_records[0].field['text'] == file_content
-        elif data_format == 'DELIMITED':
-            assert output_records[0].field == OrderedDict(zip(file_content[0], file_content[1]))
-        elif data_format == 'JSON':
-            assert output_records[0].field == [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13',
-                                                'col14': 'value14'}]
-        elif data_format == 'LOG':
-            assert output_records[0].field == {'severity': 'DEBUG', 'relativetime': '200', 'thread': 'main',
-                                               'category': 'org.StreamSets.Log4j', 'ndc': 'unknown',
-                                               'message': 'This is sample log message'}
-        elif data_format == 'XML':
-            msg_field = output_records[0].field['msg']
-            assert (msg_field[0]['metainfo'][0]['value'] ==
-                    'Index page:More info about content')
-            assert (msg_field[0]['request'][0]['value'] ==
-                    'GET /index.html 200')
-        elif data_format == 'SDC_JSON':
-            assert output_records[0].field == json_data[0]
-            
->>>>>>> SDC-11674 Add test case for Directory origin's compression format configuration.
