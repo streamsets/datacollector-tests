@@ -23,82 +23,7 @@ from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__file__)
-LOG_FIELD_MAPPING = [{'fieldPath': '/date', 'group': 1},
-                     {'fieldPath': '/time', 'group': 2},
-                     {'fieldPath': '/timehalf', 'group': 3},
-                     {'fieldPath': '/info', 'group': 4},
-                     {'fieldPath': '/file', 'group': 5},
-                     {'fieldPath': '/message', 'group': 6}]
-JSON_DATA = [{"name": "Manish Zope", "age": 35, "car": "lll company", "address": ""},
-             {"name": "Sachin Tope", "age": 30, "car": "hhh company",
-              "address": "FLAT NO 555 xyz society opposite to abc school near ddd chowk wakad Pune - 411057"},
-             {"name": "Sagar HiFi", "age": 28, "car": "rrr company", "address": "ttt"}]
-AVRO_RECORDS = [
-    {
-        "name": "sdc1",
-        "age": 3,
-        "emails": ["sdc1@streamsets.com", "sdc@company.com"],
-        "boss": {
-            "name": "sdc0",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-            "boss": None
-        }
-    },
-    {
-        "name": "sdc2",
-        "age": 3,
-        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
-        "boss": {
-            "name": "sdc0",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-            "boss": None
-        }
-    },
-    {
-        "name": "sdc3",
-        "age": 3,
-        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
-        "boss": {
-            "name": "sdc0",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-            "boss": None
-        }
-    },
-    {
-        "name": "sdc4",
-        "age": 3,
-        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
-        "boss": {
-            "name": "sdc0",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-            "boss": None
-        }
-    },
-    {
-        "name": "sdc5",
-        "age": 3,
-        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
-        "boss": {
-            "name": "sdc0",
-            "age": 3,
-            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
-            "boss": None
-        }
-    }]
-AVRO_SCHEMA = {
-    "type": "record",
-    "name": "Employee",
-    "fields": [
-        {"name": "name", "type": "string"},
-        {"name": "age", "type": "int"},
-        {"name": "emails", "type": {"type": "array", "items": "string"}},
-        {"name": "boss", "type": ["Employee", "null"]}
-    ]
-}
+
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('header_line', ['WITH_HEADER'])
@@ -994,6 +919,84 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
 
 
 # Util functions
+
+LOG_FIELD_MAPPING = [{'fieldPath': '/date', 'group': 1},
+                     {'fieldPath': '/time', 'group': 2},
+                     {'fieldPath': '/timehalf', 'group': 3},
+                     {'fieldPath': '/info', 'group': 4},
+                     {'fieldPath': '/file', 'group': 5},
+                     {'fieldPath': '/message', 'group': 6}]
+JSON_DATA = [{"name": "Manish Zope", "age": 35, "car": "lll company", "address": ""},
+             {"name": "Sachin Tope", "age": 30, "car": "hhh company",
+              "address": "FLAT NO 555 xyz society opposite to abc school near ddd chowk wakad Pune - 411057"},
+             {"name": "Sagar HiFi", "age": 28, "car": "rrr company", "address": "ttt"}]
+AVRO_RECORDS = [
+    {
+        "name": "sdc1",
+        "age": 3,
+        "emails": ["sdc1@streamsets.com", "sdc@company.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc2",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc3",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc4",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    },
+    {
+        "name": "sdc5",
+        "age": 3,
+        "emails": ["sdc0@streamsets.com", "sdc@gmail.com"],
+        "boss": {
+            "name": "sdc0",
+            "age": 3,
+            "emails": ["sdc0@streamsets.com", "sdc1@apache.org"],
+            "boss": None
+        }
+    }]
+AVRO_SCHEMA = {
+    "type": "record",
+    "name": "Employee",
+    "fields": [
+        {"name": "name", "type": "string"},
+        {"name": "age", "type": "int"},
+        {"name": "emails", "type": {"type": "array", "items": "string"}},
+        {"name": "boss", "type": ["Employee", "null"]}
+    ]
+}
+
 
 def get_directory_to_trash_pipeline(sdc_builder, attributes):
     pipeline_builder = sdc_builder.get_pipeline_builder()
