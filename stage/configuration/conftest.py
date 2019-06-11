@@ -112,27 +112,36 @@ def compressed_file_writer(sdc_executor):
     """Writes compressed file to local fs.
     To write to any file other than the compressed file make compression_format='NONE' and
     compression_codec='NONE'.
+    Args:
+        tmp_directory (:obj:`str`): The absolute path to which to write the file.
+        local_fs_data_format: Format in which data should be generated.
+        compression_format: Compression format = COMPRESSED_FILE.
+        file_content (:obj:`str`): The file contents.
+        compression_codec (:obj:`str`): Compression format in which we have to write the file
+                                        By default GZIP file will be generated
+        files_prefix (:obj:`str`): File name format to be generated.
     """
-    def compressed_file_writer_(tmp_directory, data_format, compression_format, file_content,
+    def compressed_file_writer_(tmp_directory, local_fs_data_format, compression_format, file_content,
                                 compression_codec='GZIP', files_prefix='sdc-${sdc:id()}'):
         ext_map = {'BINARY': 'bin', 'TEXT': 'txt', 'DELIMITED': 'csv', 'JSON': 'json', 'LOG': 'log',
                    'PROTOBUF': 'proto', 'SDC_JSON': 'json', 'XML': 'xml'}
-        if data_format in ['LOG', 'XML']:
-            data_format = 'TEXT'
-        dev_raw_data_format = data_format
-        if data_format == 'SDC_JSON':
-            dev_raw_data_format = 'JSON'
+        if local_fs_data_format in ['LOG', 'XML']:
+            local_fs_data_format = 'TEXT'
+            dev_raw_data_source_data_format = local_fs_data_format
+        if local_fs_data_format == 'SDC_JSON':
+            dev_raw_data_source_data_format = 'JSON'
 
-        attributes = {'data_format': data_format,
+        attributes = {'data_format': local_fs_data_format,
                       'compression_format': compression_format,
                       'directory_template': tmp_directory,
                       'files_prefix': files_prefix,
-                      'files_suffix': ext_map[data_format],
+                      'files_suffix': ext_map[local_fs_data_format],
                       'compression_codec': compression_codec}
 
         pipeline_builder = sdc_executor.get_pipeline_builder()
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format=dev_raw_data_format, raw_data=file_content, stop_after_first_batch=True)
+        dev_raw_data_source.set_attributes(data_format=dev_raw_data_source_data_format, raw_data=file_content,
+                                           stop_after_first_batch=True)
         local_fs = pipeline_builder.add_stage('Local FS', type='destination')
         local_fs.set_attributes(**attributes)
 
