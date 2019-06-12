@@ -125,9 +125,9 @@ def compressed_file_writer(sdc_executor):
                                 compression_codec='GZIP', files_prefix='sdc-${sdc:id()}'):
         ext_map = {'BINARY': 'bin', 'TEXT': 'txt', 'DELIMITED': 'csv', 'JSON': 'json', 'LOG': 'log',
                    'PROTOBUF': 'proto', 'SDC_JSON': 'json', 'XML': 'xml'}
+        dev_raw_data_source_data_format = local_fs_data_format
         if local_fs_data_format in ['LOG', 'XML']:
             local_fs_data_format = 'TEXT'
-            dev_raw_data_source_data_format = local_fs_data_format
         if local_fs_data_format == 'SDC_JSON':
             dev_raw_data_source_data_format = 'JSON'
 
@@ -153,17 +153,3 @@ def compressed_file_writer(sdc_executor):
         sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=30)
 
     return compressed_file_writer_
-
-
-def snapshot_content():
-    def snapshot_content_(snapshot, directory):
-        """This is common function can be used at in may TCs to get snapshot content.
-        """
-        processed_data = []
-        for snapshot_batch in snapshot.snapshot_batches:
-            for value in snapshot_batch[directory.instance_name].output_lanes.values():
-                for record in value:
-                    processed_data.append(str(record.field['text']))
-        return '\n'.join(processed_data)
-    return snapshot_content_
-

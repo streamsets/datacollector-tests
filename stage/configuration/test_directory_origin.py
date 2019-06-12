@@ -1031,33 +1031,31 @@ def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, d
 @pytest.mark.parametrize('read_order', ['TIMESTAMP'])
 @pytest.mark.parametrize('process_subdirectories', [False, True])
 def test_directory_origin_configuration_process_subdirectories(sdc_builder, sdc_executor, read_order,
-                                                               process_subdirectories, shell_executor, file_writer,
-                                                               snapshot_content):
+                                                               process_subdirectories, shell_executor, file_writer):
     """Check if the process_subdirectories configuration works properly. Here we will create  two files one
-        in root level (direcotry which we process) and one in nested directory"""
+    in root level (direcotry which we process) and one in nested directory.
+    """
     files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
-    files_content = [DirectoryOriginCommon.get_text_file_content(1,1), DirectoryOriginCommon.get_text_file_content(2,1)]
+    files_content = [get_text_file_content(1, 1), get_text_file_content(2, 1)]
     no_of_batches = 2 if process_subdirectories else 1
 
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(files_name[0], files_content[0], shell_executor,
-                                                                      file_writer)
-        inner_direcotry = os.path.join(files_directory, get_random_string())
+        files_directory = create_file_and_directory(files_name[0], files_content[0], shell_executor, file_writer)
+        inner_directory = os.path.join(files_directory, get_random_string())
         logger.debug('Creating nested direcotry within files directory %s ...', files_directory)
-        shell_executor(f'mkdir -p {inner_direcotry}')
-        file_writer(os.path.join(inner_direcotry, files_name[1]), files_content[1])
+        shell_executor(f'mkdir -p {inner_directory}')
+        file_writer(os.path.join(inner_directory, files_name[1]), files_content[1])
 
-        attributes = {'data_format':'TEXT',
-                      'files_directory':files_directory,
-                      'process_subdirectories':process_subdirectories,
-                      'read_order':read_order,
-                      'file_name_pattern_mode':'GLOB',
-                      'file_name_pattern':'*.txt'}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        attributes = {'data_format': 'TEXT',
+                      'files_directory': files_directory,
+                      'process_subdirectories': process_subdirectories,
+                      'read_order': read_order,
+                      'file_name_pattern_mode': 'GLOB',
+                      'file_name_pattern': '*.txt'}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         raw_data = "\n".join(files_content) if process_subdirectories else files_content[0]
-        DirectoryOriginCommon.execute_and_verify(sdc_executor, directory, pipeline, raw_data, snapshot_content,
-                                                 no_of_batches)
+        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, 'TEXT', raw_data, None, no_of_batches)
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
@@ -1433,9 +1431,9 @@ def get_data_format_content(data_format):
 
 
 def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
-                                       json_data=None):
+                                       json_data=None, no_of_batches=1):
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=no_of_batches).snapshot
     output_records = snapshot[directory.instance_name].output
 
     if data_format == 'TEXT':
