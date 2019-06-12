@@ -934,7 +934,8 @@ def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, sh
 def test_directory_origin_configuration_null_constant(sdc_builder, sdc_executor, shell_executor, delimited_file_writer,
                                                       data_format, parse_nulls, null_constant):
     """ Verify if DC can replaces the specified string constant with null values
-     in the delimited file when Parse Null is checked"""
+    in the delimited file when Parse Null is checked
+    """
     test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, shell_executor, delimited_file_writer,
                                                     null_constant, data_format, parse_nulls)
 
@@ -1037,7 +1038,6 @@ def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, s
     FILE_NAME = f'{get_random_string()}.csv'
     FILE_CONTENTS = [[f'{null_constant}', 'Field11', 'Field12', 'Field13'],
                      ['Field21', 'Field22', f'{null_constant}', 'Field23']]
-
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
@@ -1059,7 +1059,6 @@ def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, s
         pipeline = pipeline_builder.build()
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
 
         assert 2 == len(output_records)
@@ -1075,6 +1074,7 @@ def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, s
                                                               ['Field21', 'Field22', f'{null_constant}', 'Field23']))
 
     finally:
+        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
