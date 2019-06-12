@@ -522,6 +522,7 @@ def test_directory_origin_configuration_excel_header_option(sdc_builder, sdc_exe
         shell_executor(f'rm -r {files_directory}')
         sdc_executor.stop_pipeline(pipeline)
 
+
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
 @pytest.mark.parametrize('datagram_packet_format', ['COLLECTD'])
 @pytest.mark.parametrize('exclude_interval', [False, True])
