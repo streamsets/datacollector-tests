@@ -226,6 +226,102 @@ def test_directory_origin_in_whole_file_dataformat(sdc_builder, sdc_executor, no
     assert msgs_result_count == no_of_input_files
 
 
+@pytest.mark.parametrize('no_of_threads', [10])
+@sdc_min_version('3.2.0.0')
+def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_executor, no_of_threads):
+    """Test Directory Origin. We use the directory origin to read a batch of 100 files,
+    after some times we will read a new batch of 100 files. No initial file configured.
+    This test has been written to avoid regression, especially of issues raised in ESC-371
+    The pipelines look like:
+
+        dev_raw_data_source >> local_fs
+        dev_raw_data_source_2 >> local_fs_2
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    number_of_batches = 5
+    max_records_in_file = 10
+
+    # run the 1st pipeline to create the directory and starting files
+    files_pipeline = get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, 1)
+    sdc_executor.add_pipeline(files_pipeline)
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(number_of_batches)
+    sdc_executor.stop_pipeline(files_pipeline)
+
+    # get how many records are sent
+    file_pipeline_history = sdc_executor.get_pipeline_history(files_pipeline)
+    msgs_sent_count = file_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    # compute the expected number of batches to process all files
+    no_of_input_files = (msgs_sent_count / max_records_in_file)
+
+    # 2nd pipeline which reads the files using Directory Origin stage in whole data format
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(batch_wait_time_in_secs=1,
+                             data_format='WHOLE_FILE',
+                             max_files_in_directory=1000,
+                             files_directory=tmp_directory,
+                             file_name_pattern='*',
+                             file_name_pattern_mode='GLOB',
+                             number_of_threads=no_of_threads,
+                             process_subdirectories=True,
+                             read_order='LEXICOGRAPHICAL',
+                             file_post_processing='DELETE')
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='WHOLE_FILE',
+                            file_name_expression='${record:attribute(\'filename\')}')
+
+    directory >> local_fs
+
+    directory_pipeline = pipeline_builder.build(title='Directory Origin')
+    sdc_executor.add_pipeline(directory_pipeline)
+    pipeline_start_command = sdc_executor.start_pipeline(directory_pipeline)
+    pipeline_start_command.wait_for_pipeline_batch_count(no_of_input_files)
+
+    # Send another round of records while the reading pipeline is running
+    files_pipeline_2 = get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, 2)
+    sdc_executor.add_pipeline(files_pipeline_2)
+    sdc_executor.start_pipeline(files_pipeline_2).wait_for_pipeline_batch_count(number_of_batches)
+    sdc_executor.stop_pipeline(files_pipeline_2)
+
+    file_pipeline_2_history = sdc_executor.get_pipeline_history(files_pipeline_2)
+    msgs_sent_count_2 = file_pipeline_2_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+    no_of_input_files_2 = (msgs_sent_count_2 / max_records_in_file)
+
+    pipeline_start_command.wait_for_pipeline_batch_count(no_of_input_files + no_of_input_files_2)
+
+    sdc_executor.stop_pipeline(directory_pipeline)
+    directory_pipeline_history = sdc_executor.get_pipeline_history(directory_pipeline)
+    msgs_result_count = directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    assert msgs_result_count == (no_of_input_files + no_of_input_files_2)
+
+
+def get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, index):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    batch_size = 100
+    dev_data_generator.set_attributes(batch_size=batch_size,
+                                      delay_between_batches=10,
+                                      number_of_threads=no_of_threads)
+    dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=os.path.join(tmp_directory),
+                            files_prefix=f'sdc{index}-${{sdc:id()}}',
+                            files_suffix='txt',
+                            max_records_in_file=max_records_in_file)
+
+    dev_data_generator >> local_fs
+
+    files_pipeline = pipeline_builder.build(title=f'Local FS Target {index}')
+    return files_pipeline
+
+
 def test_directory_timestamp_ordering(sdc_builder, sdc_executor):
     """This test is mainly for SDC-10019.  The bug that was fixed there involves a race condition.  It only manifests if
     the files are ordered in increasing timestamp order and reverse alphabetical order AND the processing time required

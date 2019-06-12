@@ -1631,6 +1631,7 @@ def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
 
 # SDC-11326: JDBC MultiTable origin forgets offset of non-incremental table on consecutive execution
 @database('mysql')
+@sdc_min_version('3.0.0.0')
 def test_jdbc_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, database):
     """Validate the origin does not loose non-incremental offset on various runs."""
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -1862,3 +1863,69 @@ def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_bu
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         connection.execute(f'DROP TABLE {table_name}')
+
+@database
+def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc_executor, database):
+    """
+    Ensure that the multi-table JDBC origin can handle large gaps between offset columns in partitioned mode
+    The destination is trash, and there is a finisher waiting for the no-more-data event
+
+    The pipeline will be started, and we will capture two snapshots (to ensure all expected rows are covered),
+    then assert those captured snapshot rows match the expected data.
+
+    This is a test for SDC-10053
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs = [{
+        "tablePattern": f'{table_name}',
+        "enableNonIncremental": False,
+        "partitioningMode": "REQUIRED",
+        "partitionSize": "1000000",
+        "maxNumActivePartitions": -1
+    }])
+
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+    jdbc_multitable_consumer >= finisher
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32))
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding four rows into %s table, with a large gap in the primary keys ...', table_name)
+        connection = database.engine.connect()
+        rows_with_gap = ROWS_IN_DATABASE + [{'id': 5000000, 'name': 'Evil Jeff'}]
+        connection.execute(table.insert(), rows_with_gap)
+        connection.close()
+
+        sdc_executor.add_pipeline(pipeline)
+        # need to capture two batches, one for row IDs 1-3, and one for the last row after the large gap
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, batches=2, start_pipeline=True).snapshot
+        rows_from_snapshot = [(record.get_field_data('/name').value, record.get_field_data('/id').value)
+                               for batch in snapshot.snapshot_batches
+                               for record in batch.stage_outputs[jdbc_multitable_consumer.instance_name].output]
+
+        expected_data = [(row['name'], row['id']) for row in rows_with_gap]
+        logger.info('Actual %s expected %s', rows_from_snapshot, expected_data)
+        assert rows_from_snapshot == expected_data
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
