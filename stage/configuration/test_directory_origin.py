@@ -694,8 +694,9 @@ def test_directory_origin_configuration_header_line(sdc_builder, sdc_executor, d
 
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
-def test_directory_origin_configuration_ignore_control_characters_text(sdc_builder, sdc_executor, ignore_control_characters,
-                                                                  shell_executor, file_writer):
+def test_directory_origin_configuration_ignore_control_characters_text(sdc_builder, sdc_executor,
+                                                                       ignore_control_characters, shell_executor,
+                                                                       file_writer):
     """Check if directory origin honours ignore_control_characters parameter.
     When set to true it should ignore all control characters.
     When False it should maintain these characters.
@@ -703,12 +704,10 @@ def test_directory_origin_configuration_ignore_control_characters_text(sdc_build
     file_name = 'ignore_ctrl_chars.txt'
     file_content = 'File \0 with \a control characters with normal \v string to \f check the ignore control characters parameter.'
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
-                                                                      file_writer)
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
-        attributes = DirectoryOriginCommon.get_control_characters_attributes('TEXT', files_directory,
-                                                                             ignore_control_characters)
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        attributes = get_control_characters_attributes('TEXT', files_directory, ignore_control_characters)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -724,20 +723,23 @@ def test_directory_origin_configuration_ignore_control_characters_text(sdc_build
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
 def test_directory_origin_configuration_ignore_control_characters_delimited(sdc_builder, sdc_executor,
-                                                                       ignore_control_characters, shell_executor,
-                                                                        delimited_file_writer):
+                                                                            ignore_control_characters, shell_executor,
+                                                                            delimited_file_writer):
+    """Check if directory origin honours ignore_control_characters parameter.
+    When set to true it should ignore all control characters.
+    When False it should maintain these characters.
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     file_name = 'ignore_ctrl_chars.csv'
     file_content = [['field1', 'field2', 'field3'], ['Field\0 11', 'Field\v12', 'Fie\fld\a13']]
 
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
-                                                                      delimited_file_writer, 'CSV')
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, delimited_file_writer,
+                                                    'CSV')
 
-        attributes = DirectoryOriginCommon.get_control_characters_attributes('DELIMITED', files_directory,
-                                                                             ignore_control_characters)
+        attributes = get_control_characters_attributes('DELIMITED', files_directory, ignore_control_characters)
         attributes['header_line'] = 'WITH_HEADER'
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
@@ -767,16 +769,18 @@ def test_directory_origin_configuration_ignore_control_characters_json(sdc_build
 def test_directory_origin_configuration_ignore_control_characters_log(sdc_builder, sdc_executor,
                                                                       ignore_control_characters, shell_executor,
                                                                       file_writer):
+    """Check if directory origin honours ignore_control_characters parameter.
+    When set to true it should ignore all control characters.
+    When False it should maintain these characters.
+    """
     file_name = 'ignore_ctrl_chars.log'
     file_content = '200 [main] DEBUG org.StreamSets.Log4j unknown - Th\fis is sam\aple l\0og message\v'
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
-                                                                      file_writer)
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
-        attributes = DirectoryOriginCommon.get_control_characters_attributes('DELIMITED', files_directory,
-                                                                             ignore_control_characters)
-        attributes.update({'data_format': 'LOG', 'log_format': 'LOG4J'})
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        attributes = get_control_characters_attributes('LOG', files_directory, ignore_control_characters)
+        attributes.update({'log_format': 'LOG4J'})
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
