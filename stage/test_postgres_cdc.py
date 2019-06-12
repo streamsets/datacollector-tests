@@ -220,9 +220,9 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
                                        replication_slot=replication_slot_name,
                                        max_batch_size_in_records=BATCH_SIZE,
                                        poll_interval=POLL_INTERVAL,
-                                       schema_table_configs=[{'schema': 'public'},
-                                                             {'exclude_pattern': table_name_deny},
-                                                             {'table': table_name_allow}])
+                                       tables=[{'schema': 'public'},
+                                               {'exclude_pattern': table_name_deny},
+                                               {'table': table_name_allow}])
     trash = pipeline_builder.add_stage('Trash')
     postgres_cdc_client >> trash
 
