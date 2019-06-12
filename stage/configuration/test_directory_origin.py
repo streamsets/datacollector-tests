@@ -590,11 +590,48 @@ def test_directory_origin_configuration_exclude_interval(sdc_builder, sdc_execut
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('allow_extra_columns', [True])
 @pytest.mark.parametrize('header_line', ['WITH_HEADER'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_extra_column_prefix(sdc_builder, sdc_executor,
-                                                            data_format, allow_extra_columns, header_line):
-    pass
+def test_directory_origin_configuration_extra_column_prefix(sdc_builder, sdc_executor, data_format,
+                                allow_extra_columns, header_line, file_writer, shell_executor):
+    """In this test case 3 lines are taken with delimited of ',' of 3 columns(header).
+    1st line is with 3 fields, 2nd line is with 5 fields. 3rd line is with 6 fields.
+    When allow_extra_columns = True then columns(fields) which are exceeds 3 consider those fields
+    are taken as _extra_(integer).
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name = f'{get_random_string()}.txt'
+    file_path = os.path.join(files_directory, file_name)
+    header = ['columnA', 'columnB', 'columnC']
+    data = [dict(columnA='1', columnB='2', columnC='3'),
+            dict(columnA='4', columnB='5', columnC='6', _extra_01='7', _extra_02='8'),
+            dict(columnA='9', columnB='10', columnC='11', _extra_01='12', _extra_02='13', _extra_03='14')]
+    file_contents = '\n'.join([','.join(header)] + [','.join(record.values()) for record in data])
+    try:
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(file_path, file_contents)
 
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(extra_column_prefix="_extra_",
+                                 allow_extra_columns=allow_extra_columns,
+                                 header_line=header_line,
+                                 data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern=file_name)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        assert output_records[0].field == OrderedDict([('columnA', '1'), ('columnB', '2'), ('columnC', '3')])
+        assert output_records[1].field == OrderedDict([('columnA', '4'), ('columnB', '5'), ('columnC', '6'), ('_extra_01', '7'), ('_extra_02', '8')])
+        assert output_records[2].field == OrderedDict([('columnA', '9'), ('columnB', '10'), ('columnC', '11'),
+                                          ('_extra_01', '12'), ('_extra_02', '13'), ('_extra_03', '14')])
+    finally:
+        shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
 
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('log_format', ['REGEX'])
