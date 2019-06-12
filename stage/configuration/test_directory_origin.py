@@ -234,8 +234,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
-    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
+    FILE_CONTENTS_1 = get_text_file_content('1')
+    FILE_CONTENTS_2 = get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -378,7 +378,7 @@ def test_directory_origin_configuration_custom_log_format(sdc_builder, sdc_execu
 @pytest.mark.parametrize('data_format', ['SDC_JSON'])
 # 'AVRO', 'DELIMITED', 'EXCEL', 'JSON', 'LOG', 'PROTOBUF',  'TEXT', 'WHOLE_FILE', 'XML'
 def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, data_format,
-                                                    shell_executor, file_writer):
+                                                    shell_executor, compressed_file_writer):
     """Test if Directory Origin can read data with different data format.
     We will be testing only SDC_JSON data formats now. Other data formats are covered in other TCs.
     Following is mapping of data format to respective TC.
@@ -393,16 +393,19 @@ def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, d
     XML - test_directory_origin_configuration_delimiter_element
     """
     files_directory = os.path.join('/tmp', get_random_string())
+    json_data = [{"field1": "abc", "field2": "def", "field3": "ghi"},
+                 {"field1": "jkl", "field2": "mno", "field3": "pqr"}]
+    file_content = ''.join(json.dumps(record) for record in json_data)
 
     try:
-        json_data = DirectoryOriginCommon.setup_sdc_json_file(sdc_executor, files_directory)
+        compressed_file_writer(files_directory, data_format, 'NONE', file_content, 'NONE')
 
         attributes = {'data_format': data_format,
                       'file_name_pattern': '*.json',
                       'file_name_pattern_mode': 'GLOB',
                       'files_directory': files_directory,
                       'json_content': 'MULTIPLE_OBJECTS'}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
     
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
