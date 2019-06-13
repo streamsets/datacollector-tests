@@ -16,10 +16,10 @@ import json
 import logging
 import math
 import os
-from collections import OrderedDict
 import tempfile
 import string
 import json
+from collections import OrderedDict
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
