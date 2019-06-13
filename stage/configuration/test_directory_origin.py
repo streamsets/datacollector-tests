@@ -656,26 +656,25 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
     read complete data from first files
     """
     files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
-    files_content = [DirectoryOriginCommon.get_text_file_content(1, 1),
-                     DirectoryOriginCommon.get_text_file_content(2, 1)]
+    files_content = [get_text_file_content(1, 1),
+                     get_text_file_content(2, 1)]
 
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(files_name[0], files_content[0], shell_executor,
-                                                                      file_writer)
+        files_directory = create_file_and_directory(files_name[0], files_content[0], shell_executor, file_writer)
         file_writer(os.path.join(files_directory, files_name[1]), files_content[1])
 
         attributes = {'data_format':'TEXT',
                       'file_name_pattern':file_name_pattern,
                       'file_name_pattern_mode':'GLOB',
                       'files_directory':files_directory}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         raw_data = '\n'.join(files_content)
-        processed_data = '\n'.join(DirectoryOriginCommon.snapshot_content(snapshot, directory))
+        processed_data = '\n'.join(snapshot_content(snapshot, directory))
         if file_name_pattern == 'pattern_check_processing_1.txt':
             assert files_content[0] == processed_data
         else:
