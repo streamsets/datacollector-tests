@@ -671,7 +671,6 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
-        sdc_executor.stop_pipeline(pipeline)
 
         raw_data = '\n'.join(files_content)
         processed_data = '\n'.join(snapshot_content(snapshot, directory))
@@ -680,6 +679,7 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
         else:
             assert raw_data == processed_data
     finally:
+        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
