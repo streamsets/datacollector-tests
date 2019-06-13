@@ -440,102 +440,16 @@ def test_directory_origin_configuration_delimited_messages(sdc_builder, sdc_exec
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('delimiter_character', [' ', '^'])
-@pytest.mark.parametrize('root_field_type', ['LIST_MAP'])
-@pytest.mark.parametrize('header_line', ['WITH_HEADER'])
+@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_delimiter_character(sdc_builder, sdc_executor,
-                                                            delimiter_format_type, data_format,
-                                                            delimiter_character, shell_executor, delimited_file_writer,
-                                                            root_field_type, header_line):
-    """Test for Directory origin can read delimited file with custom delimiter character format type.
-    Here we will be creating delimited files with different delimiter character for testing. e.g. [' ', '^']
-    """
-    files_directory = os.path.join('/tmp', get_random_string())
-    FILE_NAME = 'custom_delimited_file.csv'
-    FILE_CONTENTS = [['header1', 'header2', 'header3'], ['Field11', 'Field12', 'fält13'],['стол', 'Field22', 'Field23']]
-    try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        delimited_file_writer(os.path.join(files_directory, FILE_NAME),
-                              FILE_CONTENTS, delimiter_format_type, delimiter_character)
-
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 files_directory=files_directory,
-                                 file_name_pattern='custom_delimited_*',
-                                 file_name_pattern_mode='GLOB',
-                                 delimiter_format_type=delimiter_format_type,
-                                 delimiter_character=delimiter_character,
-                                 root_field_type=root_field_type,
-                                 header_line=header_line)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
-
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
-        assert 2 == len(output_records)
-        assert (output_records[0].field == OrderedDict(
-            [('header1', 'Field11'), ('header2', 'Field12'), ('header3', 'fält13')]))
-        assert (output_records[1].field == OrderedDict(
-            [('header1', 'стол'), ('header2', 'Field22'), ('header3', 'Field23')]))
-    finally:
-        sdc_executor.stop_pipeline(pipeline)
-        shell_executor(f'rm -r {files_directory}')
+                                                            delimiter_format_type, data_format):
+    pass
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
-def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_executor, shell_executor, file_writer,
-                                                          data_format):
-    """Test for Directory origin can read delimited file with different delimiter format type.
-    Here we will be creating XML delimited files for testing.
-    """
-    files_directory = os.path.join('/tmp', get_random_string())
-    FILE_NAME = 'xml_delimited_file.xml'
-    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
-                      <root>
-                          <msg>
-                              <time>8/12/2016 6:01:00</time>
-                              <request>GET /index.html 200</request>
-                          </msg>
-                          <msg>
-                              <time>8/12/2016 6:03:43</time>
-                              <request>GET /images/sponsored.gif 304</request>
-                          </msg>
-                      </root>"""
-
-    try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
-
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 files_directory=files_directory,
-                                 file_name_pattern='xml_delimited_file*',
-                                 file_name_pattern_mode='GLOB',
-                                 delimeter_element='msg')
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
-
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
-        item_list = output_records[0].field['msg']
-        rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
-                              for item in item_list]
-        # Parse input xml data to verify results from snapshot.
-        root = ElementTree.fromstring(FILE_CONTENTS)
-        expected_data = [{msg.find('time').text: msg.find('request').text}
-                         for msg in root.iter('msg')]
-        assert rows_from_snapshot == expected_data
-    finally:
-        sdc_executor.stop_pipeline(pipeline)
-        shell_executor(f'rm -r {files_directory}')
+@pytest.mark.skip('Not yet implemented')
+def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_executor, data_format):
+    pass
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
@@ -899,62 +813,6 @@ def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, 
     pass
 
 
-@pytest.mark.parametrize('data_format', ['XML'])
-@pytest.mark.parametrize('max_record_length_in_chars', [238, 240, 260])
-def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_builder, sdc_executor, shell_executor,
-                                                                       file_writer, data_format,
-                                                                       max_record_length_in_chars):
-    """Case 1:   Record length > max_record_length | Expected outcome --> Record to error
-    Case 2:   Record length = max_record_length | Expected outcome --> Record processed
-    Case 3:   Record length < max_record_length | Expected outcome --> Record processed
-    """
-    files_directory = os.path.join('/tmp', get_random_string())
-    FILE_NAME = 'xml_max_record_length_in_chars_file.xml'
-    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
-                          <root>
-                              <msg>
-                                  <time>8/12/2016 6:01:00</time>
-                                  <request>GET /index.html 200</request>
-                              </msg>
-                          </root>"""
-
-    try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
-
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 files_directory=files_directory,
-                                 file_name_pattern='xml_max_record_length_in_chars_file*',
-                                 file_name_pattern_mode='GLOB',
-                                 delimeter_element='msg',
-                                 max_record_length_in_chars=max_record_length_in_chars)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
-
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
-
-        if max_record_length_in_chars < 240:
-            assert not snapshot[directory].output
-        else:
-            item_list = output_records[0].field['msg']
-            rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
-                                  for item in item_list]
-            # Parse input xml data to verify results from snapshot.
-            root = ElementTree.fromstring(FILE_CONTENTS)
-            expected_data = [{msg.find('time').text: msg.find('request').text}
-                             for msg in root.iter('msg')]
-            assert rows_from_snapshot == expected_data
-    finally:
-        sdc_executor.stop_pipeline(pipeline)
-        shell_executor(f'rm -r {files_directory}')
-
-
 @pytest.mark.parametrize('data_format', ['NETFLOW'])
 @pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_max_templates_in_cache(sdc_builder, sdc_executor, data_format):
@@ -976,64 +834,9 @@ def test_directory_origin_configuration_message_type(sdc_builder, sdc_executor, 
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
-def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, shell_executor, file_writer, data_format):
-    """Test for Directory origin can read XML files with namespaces.
-    Here we will be creating XML file with namespaces and parsing the XML document using namespace prefix.
-    """
-    files_directory = os.path.join('/tmp', get_random_string())
-    FILE_NAME = 'xml_namespaces_file.xml'
-    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
-                      <root>
-                          <a:data xmlns:a="http://www.companyA.com">
-                              <msg>
-                                  <time>8/12/2016 6:01:00</time>
-                                  <request>GET /index.html 200</request>
-                              </msg>
-                              </a:data>
-                          <c:data xmlns:c="http://www.companyC.com">
-                              <sale>
-                                  <item>Shoes</item>
-                                  <item>Magic wand</item>
-                                  <item>Tires</item>
-                              </sale>
-                          </c:data>
-                          <a:data xmlns:a="http://www.companyA.com">
-                              <msg>
-                                  <time>8/12/2016 6:03:43</time>
-                                  <request>GET /images/sponsored.gif 304</request>
-                              </msg>
-                          </a:data>
-                      </root>"""
-    try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
-
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 files_directory=files_directory,
-                                 file_name_pattern='xml_namespaces_file*',
-                                 file_name_pattern_mode='GLOB',
-                                 delimiter_element='/root/a:data/msg',
-                                 namespaces=[{'key': 'a', 'value': 'http://www.companyA.com'}])
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
-
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        item_list = [output.field for output in snapshot[directory.instance_name].output]
-        rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
-                              for item in item_list]
-        # Parse input xml data to verify results from snapshot using xpath for search.
-        root = ElementTree.fromstring(FILE_CONTENTS)
-        expected_data = [{msg.find('time').text: msg.find('request').text}
-                         for msg in root.findall('.//msg')]
-        assert rows_from_snapshot == expected_data
-    finally:
-        sdc_executor.stop_pipeline(pipeline)
-        shell_executor(f'rm -r {files_directory}')
+@pytest.mark.skip('Not yet implemented')
+def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, data_format):
+    pass
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
@@ -1065,68 +868,10 @@ def test_directory_origin_configuration_on_record_error(sdc_builder, sdc_executo
 
 @pytest.mark.parametrize('data_format', ['XML'])
 @pytest.mark.parametrize('output_field_attributes', [False, True])
-def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc_executor, shell_executor, file_writer,
+@pytest.mark.skip('Not yet implemented')
+def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc_executor,
                                                                 data_format, output_field_attributes):
-    """Test for Directory origin can read XML file with Output field attributes parameter as true or false.
-    Here we will be creating XML file with namespaces .
-
-    Output field attributes |Expected outcome
-    --------------------------------------------------------------
-    True                  |Includes XML attributes and namespace declarations in the record as field attributes.
-    False                 |XML attributes and namespace declarations will not be included as field attributes.
-    """
-    files_directory = os.path.join('/tmp', get_random_string())
-    FILE_NAME = 'xml_output_field_attributes_file.xml'
-    FILE_CONTENTS = """<?xml version="1.0" encoding="UTF-8"?>
-                            <bookstore xmlns:prc="http://books.com/price">
-                                <b:book xmlns:b="http://books.com/book">
-                                    <title lang="en">Harry Potter</title>
-                                    <prc:price>29.99</prc:price>
-                                </b:book>
-                                <b:book xmlns:b="http://books.com/book">
-                                    <title lang="en_us">Learning XML</title>
-                                    <prc:price>39.95</prc:price>
-                                </b:book>
-                            </bookstore>"""
-    try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
-
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 files_directory=files_directory,
-                                 file_name_pattern='xml_output_field_attributes_file*',
-                                 file_name_pattern_mode='GLOB',
-                                 delimiter_element='/*[1]/*',
-                                 output_field_attributes=output_field_attributes)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
-
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        item_list = [output.field for output in snapshot[directory.instance_name].output]
-        rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
-                              for item in item_list]
-        # Parse input xml data to verify results from snapshot using xpath for search.
-        root = ElementTree.fromstring(FILE_CONTENTS)
-        expected_data = [{msg.find('title').text: msg.find('{http://books.com/price}price').text}
-                         for msg in root.findall('{http://books.com/book}book')]
-        assert rows_from_snapshot == expected_data
-        output_records = snapshot[directory.instance_name].output
-
-        if output_field_attributes:
-            # Test for Field Attributes. Currently using _data property since attributes are not accessible with the
-            # field property.
-            field_header = output_records[0]._data['value']['attributes']
-            assert field_header['xmlns:b'] == 'http://books.com/book'
-        else:
-            assert 'attributes' not in output_records[0]._data['value']
-    finally:
-        sdc_executor.stop_pipeline(pipeline)
-        shell_executor(f'rm -r {files_directory}')
+    pass
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
@@ -1251,48 +996,10 @@ def test_directory_origin_configuration_template_cache_timeout_in_ms(sdc_builder
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('log_format', ['LOG4J'])
 @pytest.mark.parametrize('on_parse_error', ['INCLUDE_AS_STACK_TRACE'])
-@pytest.mark.parametrize('trim_stack_trace_to_length', [2])
+@pytest.mark.skip('Not yet implemented')
 def test_directory_origin_configuration_trim_stack_trace_to_length(sdc_builder, sdc_executor,
-                                                                   data_format, log_format, on_parse_error,
-                                                                   trim_stack_trace_to_length, shell_executor,
-                                                                   file_writer):
-    """The stack trace will be trimmed to the specified number of lines.
-    """
-    files_directory = os.path.join('/tmp', get_random_string())
-    file_name = f'{get_random_string()}.txt'
-    file_path = os.path.join(files_directory, file_name)
-    input_content =['1 [main] ERROR test.pack.Log4J  - failed!',
-                    'Exception in thread "main" java.lang.NullPointerException',
-                    'at com.example.myproject.Book.getTitle(Book.java:16)',
-                    'at com.example.myproject.Author.getBookTitles(Author.java:25)']
-    file_contents = '\n'.join(input_content)
-    try:
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(file_path, file_contents)
-
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(log_format=log_format,
-                                 on_parse_error=on_parse_error,
-                                 data_format=data_format,
-                                 trim_stack_trace_to_length=trim_stack_trace_to_length,
-                                 files_directory=files_directory,
-                                 file_name_pattern=file_name)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
-
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = snapshot[directory.instance_name].output
-
-        expected_output = '{}\n{}'.format('failed!',
-                                          '\n'.join(input_content[1:trim_stack_trace_to_length+1]))
-        assert output_records[0].field['message'] == expected_output
-
-    finally:
-        shell_executor(f'rm -r {files_directory}')
-        sdc_executor.stop_pipeline(pipeline)
+                                                                   data_format, log_format, on_parse_error):
+    pass
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
