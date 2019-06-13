@@ -16,9 +16,8 @@ import json
 import logging
 import math
 import os
-import tempfile
 import string
-import json
+import tempfile
 from collections import OrderedDict
 
 import pytest
