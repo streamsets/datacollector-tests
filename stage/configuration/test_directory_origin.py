@@ -646,9 +646,42 @@ def test_directory_origin_configuration_field_path_to_regex_group_mapping(sdc_bu
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_executor):
-    pass
+@pytest.mark.parametrize('file_name_pattern', ['pattern_check_processing_1.txt', '*.txt', 'pattern_*', '*_check_*'])
+def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_executor, shell_executor,
+                                                          file_writer, file_name_pattern):
+    """Check Directory origin can read files with different patterns.
+    Here we have two files pattern_check_processing_1.txt & pattern_check_processing_2.txt.
+    Patterns '*.txt', 'pattern_*', '*_check_*' -> Should match both files and directory origin should
+    read complete data from both files.
+    Pattern 'pattern_check_processing_1.txt' -> Should match first file and directory origin should
+    read complete data from first file.
+    """
+    files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
+    files_content = [get_text_file_content(1, 1),
+                     get_text_file_content(2, 1)]
+
+    try:
+        files_directory = create_file_and_directory(files_name[0], files_content[0], shell_executor, file_writer)
+        file_writer(os.path.join(files_directory, files_name[1]), files_content[1])
+
+        attributes = {'data_format': 'TEXT',
+                      'file_name_pattern': file_name_pattern,
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': files_directory}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        raw_data = '\n'.join(files_content)
+        processed_data = '\n'.join(snapshot_content(snapshot, directory))
+        if file_name_pattern == 'pattern_check_processing_1.txt':
+            assert files_content[0] == processed_data
+        else:
+            assert raw_data == processed_data
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('file_name_pattern_mode', ['GLOB', 'REGEX'])
@@ -1689,3 +1722,4 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
         assert output_records[0].field == json_data[0]
+
