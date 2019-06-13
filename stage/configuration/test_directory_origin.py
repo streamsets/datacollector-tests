@@ -16,6 +16,7 @@ import json
 import logging
 import math
 import os
+import string
 from collections import OrderedDict
 
 import pytest
@@ -276,9 +277,44 @@ def test_directory_origin_configuration_batch_wait_time_in_secs(sdc_builder, sdc
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_executor):
-    pass
+@pytest.mark.parametrize('buffer_limit_in_kb', [64, 96])
+def test_directory_origin_configuration_buffer_limit_in_kb(sdc_builder, sdc_executor, shell_executor,
+                                                           buffer_limit_in_kb, file_writer,):
+    """Verify if DC can discard the records as per size of the buffer. We will set the buffer limit in kb.
+    Create a file with two lines of text. In first line keep text within buffer and in next line keep text
+    greater than this buffer then DC should discard the second line.
+    Minimum required buffer size is 64 KB.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = f'{get_random_string()}.txt'
+    text_within_buffer_limit = get_random_string(string.ascii_lowercase,  10)
+    text_above_buffer_limit = get_random_string(string.ascii_lowercase,  (buffer_limit_in_kb + 1)*1024)
+    FILE_CONTENTS = '\n'.join([text_within_buffer_limit, text_above_buffer_limit])
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(buffer_limit_in_kb=buffer_limit_in_kb,
+                                 data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern="*.txt")
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot[directory].output) == 1
+        assert snapshot[directory].output[0].field['text'] == text_within_buffer_limit
+
+    finally:
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
