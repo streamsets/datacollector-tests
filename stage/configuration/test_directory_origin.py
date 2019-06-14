@@ -647,11 +647,12 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
 @pytest.mark.parametrize('json_content', ['ARRAY_OBJECTS', 'MULTIPLE_OBJECTS'])
 def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, shell_executor, data_format,
                                                      file_writer, json_content):
+    """Verify Directory origin configurations for JSON contents type. eg:ARRAY_OBJECT & MULTIPLE_OBJECTS
+    """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = f'{get_random_string()}.json'
-    raw_records = [{f'Key{msg}': f'Value{msg}'} for msg in range(3)] if json_content == "ARRAY_OBJECTS" \
-        else """{'Key0':'Value0'}, {'Key1':'Value1'}, {'Key2':'Value2'}"""
-
+    raw_list = [{f'Key{msg}': f'Value{msg}'} for msg in range(3)]
+    raw_records = raw_list if json_content == "ARRAY_OBJECTS" else ','.join(str(rec) for rec in raw_list)
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
@@ -667,21 +668,19 @@ def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, 
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
+
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
 
         if json_content == "ARRAY_OBJECTS":
             assert 3 == len(output_records)
-            assert output_records[0].get_field_data('Key0') == 'Value0'
-            assert output_records[1].get_field_data('Key1') == 'Value1'
-            assert output_records[2].get_field_data('Key2') == 'Value2'
+            assert raw_records == [record.field for record in output_records]
         else:
             assert 1 == len(output_records)
             assert raw_records == output_records[0].field
-
     finally:
+        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
