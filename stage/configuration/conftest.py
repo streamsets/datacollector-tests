@@ -65,14 +65,11 @@ def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='ut
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
     jython_evaluator = builder.add_stage('Jython Evaluator')
-    if file_data_type == 'BINARY':
-        jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT_BINARY).format(filepath=str(filepath),
-                                                                                    file_contents=file_contents,
-                                                                                    encoding=encoding)
-    else:
-        jython_evaluator.script = textwrap.dedent(FILE_WRITER_SCRIPT).format(filepath=str(filepath),
-                                                                             file_contents=file_contents,
-                                                                             encoding=encoding)
+
+    file_writer_script = FILE_WRITER_SCRIPT_BINARY if file_data_type == 'BINARY' else FILE_WRITER_SCRIPT
+    jython_evaluator.script = textwrap.dedent(file_writer_script).format(filepath=str(filepath),
+                                                                         file_contents=file_contents,
+                                                                         encoding=encoding)
     trash = builder.add_stage('Trash')
     dev_raw_data_source >> jython_evaluator >> trash
     pipeline = builder.build('File writer pipeline')
