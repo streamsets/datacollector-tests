@@ -593,7 +593,7 @@ def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_e
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('enable_comments', [False, True])
-@pytest.mark.parametrize('comment_marker', ['#', '%'])
+@pytest.mark.parametrize('comment_marker', ['#'])
 def test_directory_origin_configuration_enable_comments(sdc_builder, sdc_executor,
                                                         shell_executor, file_writer, delimiter_format_type, data_format,
                                                         enable_comments, comment_marker):
