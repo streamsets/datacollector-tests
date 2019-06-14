@@ -648,9 +648,9 @@ def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, 
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
-def test_directory_origin_configuration_lines_to_skip(sdc_builder, sdc_executor, data_format, shell_executor, file_writer):
-    """Verify if DC skips the delimited file with given value.
-    """
+def test_directory_origin_configuration_lines_to_skip(sdc_builder, sdc_executor, data_format, shell_executor,
+                                                      file_writer):
+    """Verify if DC skips the delimited file with given value."""
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'delimited_file.csv'
     FILE_CONTENTS = """Field11,Field12,Field13
@@ -658,7 +658,6 @@ Field21,Field22,Field23
 Field31,Field32,Field33
 Field41,Field42,Field43
 Field51,Field52,Field53"""
-
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
@@ -675,18 +674,19 @@ Field51,Field52,Field53"""
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
+
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
 
         assert 2 == len(output_records)
-        assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 3)], ['Field41', 'Field42',
-                                                                                          'Field43']))
-        assert output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 3)], ['Field51', 'Field52',
-                                                                                          'Field53']))
+        assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 3)],
+                                                      FILE_CONTENTS.split('\n')[3].split(',')))
+        assert output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 3)],
+                                                      FILE_CONTENTS.split('\n')[4].split(',')))
     finally:
         shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
