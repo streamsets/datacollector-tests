@@ -350,7 +350,7 @@ def test_directory_origin_configuration_convert_hi_res_time_and_interval(sdc_bui
     pass
 
 
-@pytest.mark.parametrize('use_custom_delimiter', [True, False])
+@pytest.mark.parametrize('use_custom_delimiter', [True])
 @pytest.mark.parametrize('data_format', ['TEXT'])
 @pytest.mark.parametrize('include_custom_delimiter', [False])
 @pytest.mark.parametrize('custom_delimiter', ['@', '^'])
@@ -358,14 +358,11 @@ def test_directory_origin_configuration_custom_delimiter(sdc_builder, sdc_execut
                                                          use_custom_delimiter, data_format,
                                                          custom_delimiter, shell_executor, file_writer,
                                                          include_custom_delimiter):
-    """
-    Verify if DC can read the custom delimited file.
-    """
+    """Verify if DC can read the custom delimited file."""
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'delimited_file'
     FILE_CONTENTS = """Field11{custom_delimiter}Field12{custom_delimiter}Field13
 Field21{custom_delimiter}Field22{custom_delimiter}Field23""".format(custom_delimiter=custom_delimiter)
-
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
@@ -383,24 +380,27 @@ Field21{custom_delimiter}Field22{custom_delimiter}Field23""".format(custom_delim
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
+
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
+
         suffix = custom_delimiter if include_custom_delimiter else ''
+        file_content_split = FILE_CONTENTS.split(custom_delimiter)
 
         if use_custom_delimiter:
             assert 5 == len(output_records)
-            assert output_records[0].get_field_data('/text') == 'Field11' + suffix
-            assert output_records[1].get_field_data('/text') == 'Field12' + suffix
-            assert output_records[2].get_field_data('/text') == '\n'.join(['Field13', 'Field21']) + suffix
-            assert output_records[3].get_field_data('/text') == 'Field22' + suffix
-            assert output_records[4].get_field_data('/text') == 'Field23'
+            assert output_records[0].field['text'] == f'{file_content_split[0]}{suffix}'
+            assert output_records[1].field['text'] == f'{file_content_split[1]}{suffix}'
+            assert output_records[2].field['text'] == f'{file_content_split[2]}{suffix}'
+            assert output_records[3].field['text'] == f'{file_content_split[3]}{suffix}'
+            assert output_records[4].field['text'] == f'{file_content_split[4]}{suffix}'
         else:
             assert 2 == len(output_records)
-            assert output_records[0].get_field_data('/text') == FILE_CONTENTS.split("\n")[0]
+            assert output_records[0].field['text'] == FILE_CONTENTS.split("\n")[0]
     finally:
         shell_executor(f'rm -r {files_directory}')
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
