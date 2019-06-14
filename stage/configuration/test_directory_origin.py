@@ -525,6 +525,7 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
         output_records = snapshot[directory.instance_name].output
+
         item_list = output_records[0].field['msg']
         rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
                               for item in item_list]
@@ -1497,12 +1498,3 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
         assert output_records[0].field == json_data[0]
-
-    @staticmethod
-    def verify_delimited_output(output_records, data, header=None):
-        if not header:
-            header = [str(i) for i in range(0, 3)]
-        assert 2 == len(output_records)
-        assert output_records[0].field == OrderedDict(zip(header, data[0]))
-        assert output_records[1].field == OrderedDict(zip(header, data[1]))
-
