@@ -579,8 +579,8 @@ def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('max_record_length_in_chars', [20, 23, 30])
 def test_directory_origin_configuration_max_record_length_in_chars_delimited(sdc_builder, sdc_executor, data_format,
-                                            max_record_length_in_chars, file_writer, shell_executor):
-
+                                                                             max_record_length_in_chars, file_writer,
+                                                                             shell_executor):
     """
     Case 1:   Record length > max_record_length | Expected outcome --> Record to error
     Case 2:   Record length = max_record_length | Expected outcome --> Record processed
@@ -597,9 +597,9 @@ def test_directory_origin_configuration_max_record_length_in_chars_delimited(sdc
         pipeline_builder = sdc_builder.get_pipeline_builder()
         directory = pipeline_builder.add_stage('Directory')
         directory.set_attributes(max_record_length_in_chars=max_record_length_in_chars,
-                                data_format=data_format,
-                                files_directory=files_directory,
-                                file_name_pattern=file_name)
+                                 data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern=file_name)
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
@@ -611,9 +611,7 @@ def test_directory_origin_configuration_max_record_length_in_chars_delimited(sdc
         if max_record_length_in_chars == 20:
             assert not snapshot[directory].output
         else:
-            assert output_records[0].get_field_data('/0') == 'Field11'
-            assert output_records[0].get_field_data('/1') == 'Field12'
-            assert output_records[0].get_field_data('/2') == 'Field13'
+            assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 3)], file_contents.split(',')))
     finally:
         shell_executor(f'rm -r {files_directory}')
         sdc_executor.stop_pipeline(pipeline)
