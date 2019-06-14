@@ -113,7 +113,6 @@ def get_excel_compatible_csv(data):
     finally:
         queue.close()
     return content
-<<<<<<< HEAD
 
 
 @pytest.fixture
@@ -166,6 +165,3 @@ def compressed_file_writer(sdc_executor):
         sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=30)
 
     return compressed_file_writer_
-
-=======
->>>>>>> SDC-11401 Add test case for Directory origin's Excel Header Option configuration
