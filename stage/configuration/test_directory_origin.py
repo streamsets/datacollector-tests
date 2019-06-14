@@ -1381,10 +1381,43 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
 
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('retain_original_line', [False, True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_retain_original_line(sdc_builder, sdc_executor,
-                                                             data_format, retain_original_line):
-    pass
+def test_directory_origin_configuration_retain_original_line(sdc_builder, sdc_executor, data_format,
+                                                             retain_original_line, shell_executor, file_writer):
+    """Check if the file regex group mapping for the log format works properly.
+    Here we consider logs from DC as our test data.We provide the DC with regex that groups data in date,
+    time, timehalf, info, file and message fields.
+    """
+    file_name = 'custom_log_data.log'
+    file_content = "2019-04-30 08:23:59 AM [INFO] [streamsets.sdk.sdc] Waiting for status ['RUNNING', 'FINISHED'] ..."
+    field_path_to_regex_group_mapping = LOG_FIELD_MAPPING
+
+    try:
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
+
+        attributes = {'data_format': data_format,
+                      'log_format': 'REGEX',
+                      'files_directory': files_directory,
+                      'file_name_pattern_mode': 'GLOB',
+                      'file_name_pattern': '*.log',
+                      'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
+                      'retain_original_line': retain_original_line,
+                      'regular_expression': '(\S+) (\S+) (\S+) (\S+) (\S+) (.*)'}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory].output
+
+        fieldValue = {'/time': '08:23:59', '/date': '2019-04-30', '/timehalf': 'AM', '/info': '[INFO]',
+                      '/message': "Waiting for status ['RUNNING', 'FINISHED'] ...", '/file': '[streamsets.sdk.sdc]'}
+        if retain_original_line:
+            fieldValue['originalLine'] = file_content
+            assert output_records[0].field ==  fieldValue
+        else:
+            assert output_records[0].field == fieldValue
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
