@@ -234,8 +234,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = DirectoryOriginCommon.get_text_file_content('1')
-    FILE_CONTENTS_2 = DirectoryOriginCommon.get_text_file_content('2')
+    FILE_CONTENTS_1 = get_text_file_content('1')
+    FILE_CONTENTS_2 = get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
 
     try:
@@ -762,6 +762,9 @@ def test_directory_origin_configuration_ignore_control_characters_delimited(sdc_
 def test_directory_origin_configuration_ignore_control_characters_json(sdc_builder, sdc_executor,
                                                                        ignore_control_characters, shell_executor,
                                                                        file_writer):
+    """Directory origin not able to read json data with control characters.
+    Filed bug :- https://issues.streamsets.com/browse/SDC-11604.
+    """
     pass
 
 
@@ -799,6 +802,9 @@ def test_directory_origin_configuration_ignore_control_characters_log(sdc_builde
 def test_directory_origin_configuration_ignore_control_characters_xml(sdc_builder, sdc_executor,
                                                                        ignore_control_characters, shell_executor,
                                                                        file_writer):
+    """Directory origin not able to read XML data with control characters.
+    Filed bug :- https://issues.streamsets.com/browse/SDC-11604.
+    """
     pass
 
 
@@ -807,6 +813,7 @@ def test_directory_origin_configuration_ignore_control_characters_xml(sdc_builde
 def test_directory_origin_configuration_ignore_control_characters_datagram(sdc_builder, sdc_executor,
                                                                        ignore_control_characters, shell_executor,
                                                                        file_writer):
+    """Directory origin does not support Datagram, NetFlow abd Binary data formats."""
     pass
 
 
