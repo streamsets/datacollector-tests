@@ -1137,10 +1137,10 @@ def test_directory_origin_configuration_retain_original_line(sdc_builder, sdc_ex
     """
     file_name = 'custom_log_data.log'
     file_content = "2019-04-30 08:23:59 AM [INFO] [streamsets.sdk.sdc] Waiting for status ['RUNNING', 'FINISHED'] ..."
-    field_path_to_regex_group_mapping = DirectoryOriginCommon.get_log_field_mapping()
+    field_path_to_regex_group_mapping = LOG_FIELD_MAPPING
 
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor, file_writer)
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
         attributes = {'data_format': data_format,
                       'log_format': 'REGEX',
@@ -1150,19 +1150,19 @@ def test_directory_origin_configuration_retain_original_line(sdc_builder, sdc_ex
                       'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
                       'retain_original_line': retain_original_line,
                       'regular_expression': '(\S+) (\S+) (\S+) (\S+) (\S+) (.*)'}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         output_records = snapshot[directory].output
 
-        assert output_records[0].field['/date'] == '2019-04-30'
-        assert output_records[0].field['/time'] == '08:23:59'
-        assert output_records[0].field['/file'] == '[streamsets.sdk.sdc]'
-        assert output_records[0].field['/message'] == 'Waiting for status [\'RUNNING\', \'FINISHED\'] ...'
+        fieldValue = {'/time': '08:23:59', '/date': '2019-04-30', '/timehalf': 'AM', '/info': '[INFO]',
+                      '/message': "Waiting for status ['RUNNING', 'FINISHED'] ...", '/file': '[streamsets.sdk.sdc]'}
         if retain_original_line:
-            assert (output_records[0].field['originalLine'] ==
-                    "2019-04-30 08:23:59 AM [INFO] [streamsets.sdk.sdc] Waiting for status ['RUNNING', 'FINISHED'] ...")
+            fieldValue['originalLine'] = file_content
+            assert output_records[0].field ==  fieldValue
+        else:
+            assert output_records[0].field == fieldValue
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
