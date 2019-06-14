@@ -640,10 +640,34 @@ def test_directory_origin_configuration_extra_column_prefix(sdc_builder, sdc_exe
 
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('log_format', ['REGEX'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_field_path_to_regex_group_mapping(sdc_builder, sdc_executor,
-                                                                          data_format, log_format):
-    pass
+def test_directory_origin_configuration_field_path_to_regex_group_mapping(sdc_builder, sdc_executor, data_format,
+                                                                          log_format, shell_executor, file_writer):
+    """Check if the file regex group mapping for the log format works properly.
+    Here we consider logs from DC as our test data.
+    We provide the DC with regex that groups data in date, time, timehalf, info, file and message fields.
+    """
+    file_name = 'custom_log_data.log'
+    file_content = """2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).
+2019-04-30 08:23:57 AM [INFO] [streamsets.sdk.sdc] Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...
+2019-04-30 08:23:59 AM [INFO] [streamsets.sdk.sdc_api] Waiting for status ['RUNNING', 'FINISHED'] ..."""
+    field_path_to_regex_group_mapping = LOG_FIELD_MAPPING
+
+    try:
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
+
+        attributes = {'data_format': data_format,
+                      'log_format': log_format,
+                      'files_directory': files_directory,
+                      'file_name_pattern_mode': 'GLOB',
+                      'file_name_pattern': '*.log',
+                      'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
+                      'regular_expression': '(\S+) (\S+) (\S+) (\S+) (\S+) (.*)'}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+
+        execute_and_verify_log_regex_output(sdc_executor, directory, pipeline)
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('file_name_pattern', ['pattern_check_processing_1.txt', '*.txt', 'pattern_*', '*_check_*'])
