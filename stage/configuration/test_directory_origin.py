@@ -1139,30 +1139,20 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
     try:
         files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
-        attributes = {'data_format':data_format,
-                      'log_format':log_format,
-                      'files_directory':files_directory,
-                      'file_name_pattern_mode':'GLOB',
-                      'file_name_pattern':'*.log',
-                      'field_path_to_regex_group_mapping':field_path_to_regex_group_mapping,
-                      'regular_expression':regular_expression}
+        attributes = {'data_format': data_format,
+                      'log_format': log_format,
+                      'files_directory': files_directory,
+                      'file_name_pattern_mode': 'GLOB',
+                      'file_name_pattern': '*.log',
+                      'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
+                      'regular_expression': regular_expression}
         directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = snapshot[directory].output
-
         if regular_expression == '(\S+)(\W+)(\S+)\[(\W+)\](\S+)(\W+)':
+            output_records = execute_pipeline(sdc_executor, directory, pipeline)
             assert not output_records
         else:
-            assert (output_records[0].field == {'/time': '08:23:53', '/date': '2019-04-30', '/timehalf': 'AM',
-                                                '/info': '[INFO]',
-                                                '/message': 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).',
-                                                '/file': '[streamsets.sdk.sdc_api]'})
-            assert (output_records[1].field == {'/time': '08:23:57', '/date': '2019-04-30', '/timehalf': 'AM',
-                                                '/info': '[INFO]',
-                                                '/message': 'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...',
-                                                '/file': '[streamsets.sdk.sdc]'})
+            execute_and_verify_log_regex_output(sdc_executor, directory, pipeline)
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
@@ -1428,9 +1418,7 @@ def snapshot_content(snapshot, directory):
 
 
 def execute_and_verify_log_regex_output(sdc_executor, directory, pipeline):
-    sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    output_records = snapshot[directory].output
+    output_records = execute_pipeline(sdc_executor, directory, pipeline)
     assert (output_records[0].field == {'/time': '08:23:53', '/date': '2019-04-30', '/timehalf': 'AM',
                                         '/info': '[INFO]',
                                         '/message': 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).',
@@ -1512,3 +1500,9 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
     elif data_format == 'SDC_JSON':
         assert output_records[0].field == json_data[0]
 
+
+def execute_pipeline(sdc_executor, directory, pipeline):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    output_records = snapshot[directory].output
+    return output_records
