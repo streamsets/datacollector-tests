@@ -1597,7 +1597,7 @@ def test_directory_origin_configuration_record_generation_mode(sdc_builder, sdc_
 @pytest.mark.parametrize('data_format', ['LOG'])
 @pytest.mark.parametrize('log_format', ['REGEX'])
 @pytest.mark.parametrize('regular_expression',
-                         ['(\S+) (\S+) (\S+) (\S+) (\S+) (.*)', '(\S+)(\W+)(\S+)\[(\W+)\](\S+)(\W+)'])
+                         [r'(\S+) (\S+) (\S+) (\S+) (\S+) (.*)', r'(\S+)(\W+)(\S+)\[(\W+)\](\S+)(\W+)'])
 def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_executor, data_format,
                                                            log_format, shell_executor, file_writer, regular_expression):
     """Check if the regular expression configuration works. Here we consider logs from DC as our test data.
@@ -1622,7 +1622,7 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
                       'regular_expression': regular_expression}
         directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
-        if regular_expression == '(\S+)(\W+)(\S+)\[(\W+)\](\S+)(\W+)':
+        if regular_expression == r'(\S+)(\W+)(\S+)\[(\W+)\](\S+)(\W+)':
             output_records = execute_pipeline(sdc_executor, directory, pipeline)
             assert not output_records
         else:
@@ -1975,7 +1975,6 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
         assert output_records[0].field == json_data[0]
 
 
-<<<<<<< HEAD
 def generate_excel_file():
     """Builds excel file in memory, later bind this data to BINARY file.
     """
@@ -2000,10 +1999,10 @@ def generate_excel_file():
     sheet.write(2, 2, 'สนาม23')
     workbook.save(file_excel)
     return file_excel
-=======
+
+
 def execute_pipeline(sdc_executor, directory, pipeline):
     sdc_executor.add_pipeline(pipeline)
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     output_records = snapshot[directory].output
     return output_records
->>>>>>> 81cc7ca... SDC-11382 Add test case for Directory origin's Regular Expression configuration.
