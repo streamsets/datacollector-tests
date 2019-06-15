@@ -1104,9 +1104,8 @@ def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executo
             [f('{quote_character}Field{delimiter_character}21{quote_character}'), 'Field22', 'Field23']]
 
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(file_name, data, shell_executor,
-                                                                      delimited_file_writer,
-                                                                      delimiter_format_type, delimiter_character)
+        files_directory = create_file_and_directory(file_name, data, shell_executor, delimited_file_writer,
+                                                    delimiter_format_type, delimiter_character)
 
         attributes = {'data_format': data_format,
                       'files_directory': files_directory,
@@ -1115,16 +1114,16 @@ def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executo
                       'delimiter_format_type': delimiter_format_type,
                       'delimiter_character': delimiter_character,
                       'quote_character': quote_character}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
 
         expected_output = [map(f1, data[0]), map(f1, data[1])]
-        DirectoryOriginCommon.verify_delimited_output(output_records, expected_output)
+        verify_delimited_output(output_records, expected_output)
     finally:
+        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
