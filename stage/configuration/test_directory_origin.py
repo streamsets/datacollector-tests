@@ -1510,7 +1510,7 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
 
 def get_csv_records(with_header=False):
     if with_header:
-        csv_data = [['column1', 'column2', 'column3'], ['Field11', 'Field12', 'Field13'],
+        csv_data = [['header1', 'header2', 'header3'], ['Field11', 'Field12', 'Field13'],
                     ['Field21', 'Field22', 'Field23']]
     else:
         csv_data = [['Field11', 'Field12', 'Field13'], ['Field21', 'Field22', 'Field23']]
