@@ -730,26 +730,24 @@ def test_directory_origin_configuration_grok_pattern_definition(sdc_builder, sdc
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('header_line', ['IGNORE_HEADER', 'NO_HEADER', 'WITH_HEADER'])
 def test_directory_origin_configuration_header_line(sdc_builder, sdc_executor, data_format,
-                                                    header_line, shell_executor, file_writer):
+                                                    header_line, shell_executor, delimited_file_writer):
     """Test for header line configuration.
     i) For IGNORE_HEADER - Should ignore header of delimited file. Record should be with integers as key e.g. 0,1,2
     ii) NO_HEADER - For delimited file with no header.
     iii) WITH_HEADER - Should produce records with header fileds as column names.
     """
     file_name = '{random_string}.{extension}'.format(random_string=get_random_string(), extension='csv')
-    csv_data = DirectoryOriginCommon.get_csv_records(with_header=(header_line in ['WITH_HEADER', 'IGNORE_HEADER']))
-    file_content = '\n'.join([','.join(record) for record in csv_data])
+    csv_data = get_csv_records(with_header=(header_line in ['WITH_HEADER', 'IGNORE_HEADER']))
 
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
-                                                                      file_writer)
+        files_directory = create_file_and_directory(file_name, csv_data, shell_executor, delimited_file_writer, 'CSV')
 
         attributes = {'data_format':data_format,
                       'files_directory':files_directory,
                       'file_name_pattern':'*.csv',
                       'file_name_pattern_mode':'GLOB',
                       'header_line':header_line}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -1512,7 +1510,7 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
 
 def get_csv_records(with_header=False):
     if with_header:
-        csv_data = [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'Field13'],
+        csv_data = [['column1', 'column2', 'column3'], ['Field11', 'Field12', 'Field13'],
                     ['Field21', 'Field22', 'Field23']]
     else:
         csv_data = [['Field11', 'Field12', 'Field13'], ['Field21', 'Field22', 'Field23']]
