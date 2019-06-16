@@ -819,10 +819,9 @@ def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executo
     extension = 'txt' if data_format == 'TEXT' else 'log'
     file_name = 'sample_input_file.{extension}'.format(extension=extension)
     file_content = '2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).'
-    field_path_to_regex_group_mapping = DirectoryOriginCommon.get_log_field_mapping()
+    field_path_to_regex_group_mapping = LOG_FIELD_MAPPING
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
-                                                                      file_writer)
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
         attributes = {'data_format': data_format,
                       'file_name_pattern': 'sample_input_*',
@@ -832,7 +831,7 @@ def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executo
                       'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
                       'regular_expression': '(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
                       'log_format': 'REGEX'}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
