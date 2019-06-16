@@ -332,45 +332,46 @@ def test_directory_origin_configuration_charset(sdc_builder, sdc_executor, file_
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('enable_comments', [True])
 @pytest.mark.parametrize('delimiter_character', ['^'])
-@pytest.mark.parametrize('comment_marker', ['#', ' ', ';', ',']) #  ,'    ' -> TC is not working to Tab character
+@pytest.mark.parametrize('comment_marker', ['#', ' ', ';', ','])
 def test_directory_origin_configuration_comment_marker(sdc_builder, sdc_executor,
                                                        delimiter_format_type, data_format, delimiter_character,
-                                                       enable_comments, comment_marker, shell_executor, file_writer):
-    """Verify if DC can read the delimited file with comments.
-        Direcotry origin should ignore comment line."""
+                                                       enable_comments, comment_marker, shell_executor,
+                                                       delimited_file_writer):
+    """Verify if Directory origin can read the delimited file with comments.
+    Directory origin should ignore comment line.
+    Test get executed with different comment markers ->  '#', ' ', ';', ','
+    """
     files_directory = os.path.join('/tmp', get_random_string())
-    FILE_NAME = 'delimited_file.csv'
-    data = get_delimited_file_data(True)
-    FILE_CONTENTS = get_delimited_file_content(data, delimiter_character, comment_marker)
+    file_name = 'delimited_file.csv'
+    file_content = [['Field11', 'Field12', 'Field13'],
+                    ['{comment_marker} This is comment'.format(comment_marker=comment_marker)],
+                    ['Field21', 'Field22', 'Field23']]
 
     try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, delimited_file_writer,
+                                                    delimiter_format_type, delimiter_character)
 
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory')
-        directory.set_attributes(data_format=data_format,
-                                 files_directory=files_directory,
-                                 file_name_pattern='*.csv',
-                                 file_name_pattern_mode='GLOB',
-                                 delimiter_format_type=delimiter_format_type,
-                                 enable_comments=enable_comments,
-                                 comment_marker=comment_marker,
-                                 delimiter_character=delimiter_character)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
-        pipeline = pipeline_builder.build()
+        attributes = {'data_format': data_format,
+                      'files_directory': files_directory,
+                      'file_name_pattern': '*.csv',
+                      'file_name_pattern_mode': 'GLOB',
+                      'delimiter_format_type': delimiter_format_type,
+                      'enable_comments': enable_comments,
+                      'comment_marker': comment_marker,
+                      'delimiter_character': delimiter_character}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        sdc_executor.stop_pipeline(pipeline)
         output_records = snapshot[directory.instance_name].output
 
         assert 2 == len(output_records)
-        assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
-        assert output_records[1].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
+        #assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
+        #assert output_records[1].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
+        assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 3)], file_content[0]))
+        assert output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 3)], file_content[2]))
     finally:
+        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
