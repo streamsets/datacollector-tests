@@ -823,14 +823,16 @@ def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executo
 @pytest.mark.parametrize('data_format', ['JSON'])
 def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, sdc_executor, data_format,
                                                                    shell_executor, file_writer):
-    """Check if Directory origin honors "Max object length (chars)" configuration."""
+    """Check if Directory origin honors "Max object length (chars)" configuration.
+    In json file when Directory origin encounters records with length > max_object_length_in_chars
+    it should ignore this record and all following records.
+    """
     file_name = 'max_char_len.json'
-    json_data = DirectoryOriginCommon.get_json_data()
+    json_data = JSON_DATA
     file_content = '\n'.join([json.dumps(record) for record in json_data])
 
     try:
-        files_directory = DirectoryOriginCommon.create_file_directory(file_name, file_content, shell_executor,
-                                                                      file_writer)
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
         attributes = {'data_format': data_format,
                       'file_name_pattern': '*.json',
@@ -838,7 +840,7 @@ def test_directory_origin_configuration_max_object_length_in_chars(sdc_builder, 
                       'files_directory': files_directory,
                       'json_content': 'MULTIPLE_OBJECTS',
                       'max_object_length_in_chars': 100}
-        directory, pipeline = DirectoryOriginCommon.get_directory_trash_pipeline(sdc_builder, attributes)
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
