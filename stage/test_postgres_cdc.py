@@ -46,8 +46,6 @@ KIND_FOR_DELETE = 'delete'
 
 CHECK_REP_SLOT_QUERY = 'select slot_name from pg_replication_slots;'
 
-BATCH_SIZE = 10
-SNAPSHOT_TIMEOUT = 60
 POLL_INTERVAL = "${1 * SECONDS}"
 
 def _create_table_in_database(table_name, database):
@@ -138,8 +136,8 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
-                                       max_batch_size_in_records=BATCH_SIZE,
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+                                       max_batch_size_in_records=1,
                                        poll_interval=POLL_INTERVAL,
                                        replication_slot=replication_slot_name)
     trash = pipeline_builder.add_stage('Trash')
@@ -160,7 +158,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
         expected_operations_data += _update(connection=connection, table=table)
         expected_operations_data += _delete(connection=connection, table=table)
 
-        snapshot = snapshot_command.wait_for_finished(SNAPSHOT_TIMEOUT).snapshot
+        snapshot = snapshot_command.wait_for_finished().snapshot
 
         # Verify snapshot data is received in exact order as expected.
         operation_index = 0
@@ -216,9 +214,9 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
 
-    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                        replication_slot=replication_slot_name,
-                                       max_batch_size_in_records=BATCH_SIZE,
+                                       max_batch_size_in_records=1,
                                        poll_interval=POLL_INTERVAL,
                                        tables=[{'schema': 'public',
                                                'excludePattern': table_name_deny,
@@ -249,7 +247,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
         actual_operations_data += _update(connection=connection, table=table_deny)
         actual_operations_data += _delete(connection=connection, table=table_deny)
 
-        snapshot = snapshot_command.wait_for_finished(SNAPSHOT_TIMEOUT).snapshot
+        snapshot = snapshot_command.wait_for_finished().snapshot
 
         # Verify snapshot data is received in exact order as expected.
         operation_index = 0
@@ -311,7 +309,7 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
     postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
-                                       max_batch_size_in_records=BATCH_SIZE,
+                                       max_batch_size_in_records=1,
                                        poll_interval=POLL_INTERVAL,
                                        replication_slot=replication_slot)
     trash = pipeline_builder.add_stage('Trash')
@@ -332,7 +330,7 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
         expected_operations_data += _update(connection=connection, table=table)
         expected_operations_data += _delete(connection=connection, table=table)
 
-        snapshot = snapshot_command.wait_for_finished(SNAPSHOT_TIMEOUT).snapshot
+        snapshot = snapshot_command.wait_for_finished().snapshot
 
         # Timeout is set as without SDC-11252, pipeline will get stuck in 'STOPPING' state forever
         sdc_executor.stop_pipeline(pipeline=pipeline).wait_for_stopped(timeout_sec=60)
