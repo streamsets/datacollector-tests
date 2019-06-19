@@ -27,6 +27,7 @@ logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SNAPSHOT_TIMEOUT_SEC = 120
+SDC_RPC_LISTENING_PORT = 20000
 
 
 @pytest.fixture(autouse=True)
@@ -155,6 +156,155 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
 
 
+# SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.6.0')
+def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
+    """Check that retrieving messages from Kafka using Kafka Multitopic Consumer respects both the Batch Max Wait Time
+    and the Max Batch Size. Batches are sent when the first of the two conditions is met. This test is checking that
+    the Max Batch Size condition is first met.
+
+    Kafka Multitopic Consumer Origin pipeline with standalone mode:
+        kafka_multitopic_consumer >> trash
+    """
+
+    messages = [f'message{i}' for i in range(1, 21)]
+    expected = [f'message{i}' for i in range(1, 21)]
+
+    num_batches = 2
+    kafka_consumer_group = get_random_string(string.ascii_letters, 10)
+
+    # Build the Kafka consumer pipeline with Standalone mode.
+    builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(builder, cluster)
+
+    produce_kafka_messages_list(kafka_multitopic_consumer.topic_list[0], cluster, messages, 'TEXT')
+
+    kafka_multitopic_consumer.set_attributes(auto_offset_reset='EARLIEST',
+                                             consumer_group=kafka_consumer_group,
+                                             max_batch_size_in_records=10,
+                                             batch_wait_time_in_ms=30000)
+
+    trash = builder.add_stage(label='Trash')
+    kafka_multitopic_consumer >> trash
+    kafka_consumer_pipeline = builder.build(title='Kafka Multitopic pipeline Maximum batch size threshold')\
+        .configure_for_environment(cluster)
+    kafka_consumer_pipeline.configuration['shouldRetry'] = False
+    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(kafka_consumer_pipeline)
+
+    try:
+        # First test checking Max Batch Size is reached
+        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Start Pipeline.
+        snapshot = sdc_executor.capture_snapshot(kafka_consumer_pipeline,
+                                                 start_pipeline=True,
+                                                 batches=num_batches,
+                                                 batch_size=10).snapshot
+        records_fields = []
+
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[kafka_consumer_pipeline[0].instance_name].output_lanes.values():
+                for record in value:
+                    records_fields.append(str(record.field['text']))
+
+        assert expected == records_fields
+
+    finally:
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline, force=True)
+
+
+# SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.6.0')
+def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
+    """Check that retrieving messages from Kafka using Kafka Multitopic Consumer respects both the Batch Max Wait Time
+    and the Max Batch Size. Batches are sent when the first of the two conditions is met. This test is checking that
+    the Batch Max Wait Time condition is first met.
+
+    Kafka Multitopic Consumer Origin pipeline with standalone connected to an rpc destination which is read in another
+    pipeline:
+        kafka_multitopic_consumer >> sdc_rpc_destination
+        sdc_rpc_origin >> trash
+    """
+
+    messages = [f'message{i}' for i in range(1, 21)]
+    expected = [f'message{i}' for i in range(1, 21)]
+
+    kafka_consumer_group = get_random_string(string.ascii_letters, 10)
+
+    sdc_rpc_id = get_random_string(string.ascii_letters, 10)
+
+    # Build the Kafka consumer pipeline with Standalone mode.
+    builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(builder, cluster)
+
+    produce_kafka_messages_list(kafka_multitopic_consumer.topic_list[0], cluster, messages, 'TEXT')
+
+    kafka_multitopic_consumer.set_attributes(auto_offset_reset='EARLIEST',
+                                             consumer_group=kafka_consumer_group,
+                                             max_batch_size_in_records=100,
+                                             batch_wait_time_in_ms=10)
+
+    sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
+    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_LISTENING_PORT))
+    sdc_rpc_destination.sdc_rpc_id = sdc_rpc_id
+
+    kafka_multitopic_consumer >> sdc_rpc_destination
+
+    kafka_consumer_pipeline = builder.build(title='Kafka Multitopic pipeline Maximum batch wait time threshold')\
+        .configure_for_environment(cluster)
+    kafka_consumer_pipeline.configuration['shouldRetry'] = False
+    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    # Build the rpc origin pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
+    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
+    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_id
+
+    trash = builder.add_stage(label='Trash')
+
+    sdc_rpc_origin >> trash
+
+    rpc_origin_pipeline = builder.build('SDC RPC origin pipeline for kafka Max Batch Wait Time')
+
+    sdc_executor.add_pipeline(rpc_origin_pipeline, kafka_consumer_pipeline)
+
+    try:
+        sdc_executor.start_pipeline(rpc_origin_pipeline)
+        start_kafka_pipeline_command = sdc_executor.start_pipeline(kafka_consumer_pipeline)
+        snapshot_command = sdc_executor.capture_snapshot(rpc_origin_pipeline,
+                                                         start_pipeline=False,
+                                                         batch_size=100,
+                                                         wait=False)
+        start = time.time()
+        start_kafka_pipeline_command.wait_for_pipeline_batch_count(20)
+        end = time.time()
+        total_time = (end - start)
+        assert total_time < 5.0
+
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        records_fields = []
+
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[rpc_origin_pipeline[0].instance_name].output_lanes.values():
+                for record in value:
+                    records_fields.append(str(record.field['text']))
+
+        assert expected == records_fields
+
+    finally:
+        status = sdc_executor.get_pipeline_status(kafka_consumer_pipeline).response.json().get('status')
+        if status != 'STOPPED':
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline, force=True)
+        status = sdc_executor.get_pipeline_status(rpc_origin_pipeline).response.json().get('status')
+        if status != 'STOPPED':
+            sdc_executor.stop_pipeline(rpc_origin_pipeline, force=True)
+
+
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     cluster_version = cluster.version[3:]
@@ -188,6 +338,21 @@ def produce_kafka_messages(topic, cluster, message, data_format):
     # Write records into Kafka depending on the data_format.
     if data_format in basic_data_formats:
         producer.send(topic, message)
+
+    producer.flush()
+
+
+def produce_kafka_messages_list(topic, cluster, message_list, data_format):
+    """Send basic messages from a list to Kafka"""
+    # Get Kafka producer
+    producer = cluster.kafka.producer()
+
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'TEXT', 'JSON']
+
+    # Write records into Kafka depending on the data_format.
+    if data_format in basic_data_formats:
+        for message in message_list:
+            producer.send(topic, message.encode())
 
     producer.flush()
 
