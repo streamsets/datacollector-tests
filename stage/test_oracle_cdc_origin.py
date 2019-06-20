@@ -27,6 +27,9 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+# SQL Parser processor was renamed in SDC-10697, so we need to reference it by name.
+SQL_PARSER_STAGE_NAME = 'com_streamsets_pipeline_stage_processor_parser_sql_SqlParserDProcessor'
+
 PRIMARY_KEY = 'ID'
 OTHER_COLUMN = 'NAME'
 BATCH_SIZE = 10  # Max limit imposed by SDC for snapshots
@@ -141,7 +144,7 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
         oracle_cdc_client >> trash
         instance_name = oracle_cdc_client.instance_name
     else:
-        sql_parser = pipeline_builder.add_stage('SQL Parser')
+        sql_parser = pipeline_builder.add_stage(name=SQL_PARSER_STAGE_NAME)
         sql_parser.set_attributes(sql_field='/sql',
                                   target_field='/',
                                   resolve_schema_from_db=True,

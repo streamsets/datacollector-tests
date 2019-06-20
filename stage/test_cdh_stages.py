@@ -27,6 +27,9 @@ from streamsets.testframework.utils import get_random_string, Version
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+# Spark executor was renamed in SDC-10697, so we need to reference it by name.
+SPARK_EXECUTOR_STAGE_NAME = 'com_streamsets_datacollector_pipeline_executor_spark_SparkDExecutor'
+
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
@@ -914,7 +917,7 @@ def test_spark_executor(sdc_builder, sdc_executor, cluster):
                                                                                   raw_data='dummy')
     record_deduplicator = builder.add_stage('Record Deduplicator')
     trash = builder.add_stage('Trash')
-    spark_executor = builder.add_stage('Spark Executor', type='executor')
+    spark_executor = builder.add_stage(name=SPARK_EXECUTOR_STAGE_NAME)
     spark_executor.set_attributes(cluster_manager='YARN',
                                   minimum_number_of_worker_nodes=1,
                                   maximum_number_of_worker_nodes=1,
