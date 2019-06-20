@@ -28,93 +28,19 @@ logger.setLevel(logging.DEBUG)
 # Specify a port for SDC RPC stages to use.
 SNAPSHOT_TIMEOUT_SEC = 120
 
+
+@pytest.fixture(autouse=True)
+def kafka_check(cluster):
+    if isinstance(cluster, ClouderaManagerCluster) and not hasattr(cluster, 'kafka'):
+        pytest.skip('Kafka tests require Kafka to be installed on the cluster')
+
+
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
 
     return hook
-
-def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
-    """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
-    cluster_version = cluster.version[3:]
-    stages_library = cluster.kafka.standalone_stage_lib
-    if isinstance(cluster, ClouderaManagerCluster):
-        cdh_version_tuple = tuple(int(i) for i in cluster_version.split('.'))
-        if cdh_version_tuple >= cloudera.EARLIEST_CDH_VERSION_WITH_KAFKA:
-            stages_library = cluster.sdc_stage_libs[0]
-
-    # Default on error action.
-    pipeline_builder.add_error_stage('Discard')
-
-    kafka_multitopic_consumer = pipeline_builder.add_stage('Kafka Multitopic Consumer',
-                                                type='origin',
-                                                library=stages_library)
-    # Default stage configuration.
-    kafka_multitopic_consumer.set_attributes(data_format='TEXT',
-                                  batch_wait_time_in_ms=20000,
-                                  topic_list=[get_random_string(string.ascii_letters, 10)])
-
-    return kafka_multitopic_consumer
-
-
-def produce_kafka_messages(topic, cluster, message, data_format):
-    """Send basic messages to Kafka"""
-    # Get Kafka producer
-    producer = cluster.kafka.producer()
-
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'TEXT', 'JSON']
-
-    # Write records into Kafka depending on the data_format.
-    if data_format in basic_data_formats:
-        producer.send(topic, message)
-
-    producer.flush()
-
-
-def produce_kafka_messages_in_different_timestamp(topic, cluster, messages, data_format, num_messages_to_send_first):
-    """send num_messages_to_send_first messages, sleep 30 seconds, then send the rest of the messages and return the
-    timestamp value after the 30 seconds sleep (<= timestamp of first message in second batch and >= last message in
-    first batch)
-    """
-    timestamp = -1
-    if num_messages_to_send_first < len(messages):
-        # Send first batch of messages.
-        for i in range(0, num_messages_to_send_first):
-            message = messages[i]
-            produce_kafka_messages(topic, cluster, message.encode(), data_format)
-
-        # Sleep for 30 seconds.
-        time.sleep(30)
-        timestamp = int(time.time() * 1000)
-
-        # Send second batch of messages.
-        for j in range(num_messages_to_send_first, len(messages)):
-            message = messages[j]
-            produce_kafka_messages(topic, cluster, message.encode(), data_format)
-
-    return timestamp
-
-
-def verify_kafka_origin_results_timestamp(kafka_multitopic_consumer_pipeline, sdc_executor, message, data_format):
-    """Start, stop pipeline and verify results using snapshot"""
-
-    # Start Pipeline.
-    snapshot_pipeline_command = sdc_executor.capture_snapshot(kafka_multitopic_consumer_pipeline,
-                                                              start_pipeline=True,
-                                                              wait=False)
-
-    logger.debug('Finish the snapshot and verify')
-    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
-    snapshot = snapshot_command.snapshot
-
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
-
-    # Verify snapshot data.
-    if data_format in basic_data_formats:
-        record_field = [record.field for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
-        assert message == [str(record_field[0]), str(record_field[1])]
-
 
 
 @cluster('cdh', 'kafka')
@@ -227,3 +153,84 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
 
     finally:
         sdc_executor.stop_pipeline(pipeline)
+
+
+def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
+    """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
+    cluster_version = cluster.version[3:]
+    stages_library = cluster.kafka.standalone_stage_lib
+    if isinstance(cluster, ClouderaManagerCluster):
+        cdh_version_tuple = tuple(int(i) for i in cluster_version.split('.'))
+        if cdh_version_tuple >= cloudera.EARLIEST_CDH_VERSION_WITH_KAFKA:
+            stages_library = cluster.sdc_stage_libs[0]
+
+    # Default on error action.
+    pipeline_builder.add_error_stage('Discard')
+
+    kafka_multitopic_consumer = pipeline_builder.add_stage('Kafka Multitopic Consumer',
+                                                type='origin',
+                                                library=stages_library)
+    # Default stage configuration.
+    kafka_multitopic_consumer.set_attributes(data_format='TEXT',
+                                  batch_wait_time_in_ms=20000,
+                                  topic_list=[get_random_string(string.ascii_letters, 10)])
+
+    return kafka_multitopic_consumer
+
+
+def produce_kafka_messages(topic, cluster, message, data_format):
+    """Send basic messages to Kafka"""
+    # Get Kafka producer
+    producer = cluster.kafka.producer()
+
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'TEXT', 'JSON']
+
+    # Write records into Kafka depending on the data_format.
+    if data_format in basic_data_formats:
+        producer.send(topic, message)
+
+    producer.flush()
+
+
+def produce_kafka_messages_in_different_timestamp(topic, cluster, messages, data_format, num_messages_to_send_first):
+    """send num_messages_to_send_first messages, sleep 30 seconds, then send the rest of the messages and return the
+    timestamp value after the 30 seconds sleep (<= timestamp of first message in second batch and >= last message in
+    first batch)
+    """
+    timestamp = -1
+    if num_messages_to_send_first < len(messages):
+        # Send first batch of messages.
+        for i in range(0, num_messages_to_send_first):
+            message = messages[i]
+            produce_kafka_messages(topic, cluster, message.encode(), data_format)
+
+        # Sleep for 30 seconds.
+        time.sleep(30)
+        timestamp = int(time.time() * 1000)
+
+        # Send second batch of messages.
+        for j in range(num_messages_to_send_first, len(messages)):
+            message = messages[j]
+            produce_kafka_messages(topic, cluster, message.encode(), data_format)
+
+    return timestamp
+
+
+def verify_kafka_origin_results_timestamp(kafka_multitopic_consumer_pipeline, sdc_executor, message, data_format):
+    """Start, stop pipeline and verify results using snapshot"""
+
+    # Start Pipeline.
+    snapshot_pipeline_command = sdc_executor.capture_snapshot(kafka_multitopic_consumer_pipeline,
+                                                              start_pipeline=True,
+                                                              wait=False)
+
+    logger.debug('Finish the snapshot and verify')
+    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
+    snapshot = snapshot_command.snapshot
+
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
+
+    # Verify snapshot data.
+    if data_format in basic_data_formats:
+        record_field = [record.field for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
+        assert message == [str(record_field[0]), str(record_field[1])]
