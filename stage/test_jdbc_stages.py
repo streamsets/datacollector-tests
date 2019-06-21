@@ -1875,6 +1875,9 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
 
     This is a test for SDC-10053
     """
+    if database.type == 'Oracle':
+        pytest.skip("This test depends on proper case for column names that Oracle auto-uppers.")
+
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
     table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
 
