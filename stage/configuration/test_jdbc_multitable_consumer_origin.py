@@ -1,4 +1,30 @@
+import copy
+import json
+import logging
+import math
+import random
+import string
+import time
+
 import pytest
+import sqlalchemy
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Dima'},
+    {'id': 2, 'name': 'Jarcec'},
+    {'id': 3, 'name': 'Arvind'}
+]
+ROWS_TO_UPDATE = [
+    {'id': 2, 'name': 'Eddie'},
+    {'id': 4, 'name': 'Jarcec'}
+]
+LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
+RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -155,11 +181,56 @@ def test_jdbc_multitable_consumer_origin_configuration_per_batch_strategy(sdc_bu
 def test_jdbc_multitable_consumer_origin_configuration_queries_per_second(sdc_builder, sdc_executor):
     pass
 
-
+@database
 @pytest.mark.parametrize('quote_character', ['BACKTICK', 'DOUBLE_QUOTES', 'NONE'])
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_builder, sdc_executor, quote_character):
-    pass
+def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_builder, sdc_executor, database,
+                                                                       quote_character):
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{src_table_prefix}%'}],
+                                            quote_character=quote_character)
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(table_name,
+                             metadata,
+                             sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                             sqlalchemy.Column('name', sqlalchemy.String(32)))
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+
+        tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
+        rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[1])
+                              for record in snapshot[pipeline[0].instance_name].output]
+
+        print('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+        print('snapshot')
+        print(snapshot[pipeline[0].instance_name].output)
+        print('Len----------------------------------------')
+        print(len(rows_from_snapshot))
+        print(rows_from_snapshot)
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        sdc_executor.stop_pipeline(pipeline)
+        table.drop(database.engine)
 
 
 @pytest.mark.parametrize('per_batch_strategy', ['SWITCH_TABLES'])
