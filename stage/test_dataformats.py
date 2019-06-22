@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import logging
+import pytest
 from decimal import Decimal
-from streamsets.testframework.markers import sdc_min_version
 
 from streamsets.testframework.markers import sdc_min_version
 
@@ -295,3 +295,40 @@ def test_avro_decimal_field_attributes_for_typed_null(sdc_builder, sdc_executor)
 
     assert snapshot[parser].output[0].get_field_data('/decimal').attributes['scale'] == '2'
     assert snapshot[parser].output[1].get_field_data('/decimal').attributes['scale'] == '2'
+
+
+# SDC-11869: Add ability to specify quote mode when generating CSV data
+@sdc_min_version('3.10.0')
+@pytest.mark.parametrize('quote_mode,expected', [
+    ('ALL', '"a"|"b"|" c"\r\n'),
+    ('MINIMAL', 'a|b|" c"\r\n'),
+    ('NONE', 'a|b| c\r\n')
+])
+def test_delimited_quote_mode(sdc_builder, sdc_executor, quote_mode, expected):
+    """Ensure that delimited quote mode works properly."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'DELIMITED'
+    source.header_line = 'WITH_HEADER'
+    source.raw_data = 'a,b,c\na,b, c'
+
+    generator = builder.add_stage('Data Generator')
+    generator.data_format = 'DELIMITED'
+    generator.delimiter_format = 'CUSTOM'
+    generator.quote_mode = quote_mode
+    generator.output_type = 'STRING'
+    # Due to STF-833
+    generator.target_field = '/target'
+
+    trash = builder.add_stage('Trash')
+
+    source >> generator >> trash
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    assert len(snapshot[generator].output) == 1
+    assert snapshot[generator].output[0].get_field_data('/target') == expected
