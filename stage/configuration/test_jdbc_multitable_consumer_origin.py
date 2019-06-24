@@ -109,7 +109,7 @@ def test_jdbc_multitable_consumer_origin_configuration_max_batch_size_in_records
 
         attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}],
                       'max_batch_size_in_records': max_batch_size_in_records}
-        pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes)
+        jdbc_multitable_consumer,pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes)
         snapshot = execute_pipeline(sdc_executor, pipeline)
         # Column names are converted to lower case since Oracle database column names are in upper case.
         tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
@@ -251,21 +251,18 @@ def create_table(database, columns, table_name):
 
 def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes):
     pipeline_builder = sdc_builder.get_pipeline_builder()
-
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
     jdbc_multitable_consumer.set_attributes(**attributes)
-
     trash = pipeline_builder.add_stage('Trash')
-
     jdbc_multitable_consumer >> trash
-
     pipeline = pipeline_builder.build().configure_for_environment(database)
-    return pipeline
+    return jdbc_multitable_consumer, pipeline
 
 
-def execute_pipeline(sdc_executor, pipeline):
+def execute_pipeline(sdc_executor, pipeline, number_of_batches=1, snapshot_batch_size=10):
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=number_of_batches,
+                                             batch_size=snapshot_batch_size).snapshot
     return snapshot
 
 
@@ -273,3 +270,13 @@ def insert_data_in_table(database, table, rows_to_insert):
     logger.info('Adding three rows into %s database ...', database.type)
     connection = database.engine.connect()
     connection.execute(table.insert(), rows_to_insert)
+
+
+def snapshot_content(snapshot, jdbc_multitable_consumer):
+    """This is common function can be used at in many TCs to get snapshot content."""
+    processed_data = []
+    for snapshot_batch in snapshot.snapshot_batches:
+        for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+            for record in value:
+                processed_data.append(record)
+    return processed_data
