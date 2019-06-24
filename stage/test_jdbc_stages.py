@@ -25,6 +25,7 @@ import sqlalchemy
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
 from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from streamsets.sdk.utils import Version
 
 logger = logging.getLogger(__name__)
 
@@ -547,7 +548,8 @@ def test_jdbc_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_m
 
 
 @database
-def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('enable_parallel_execution', [True, False])
+def test_jdbc_query_executor(sdc_builder, sdc_executor, database, enable_parallel_execution):
     """Simple JDBC Query Executor test.
     Pipeline will insert records into database and then using sqlalchemy, the verification will happen
     that correct data is inserted into database.
@@ -573,6 +575,11 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
     jdbc_query_executor.set_attributes(sql_query=query_str)
+
+    if enable_parallel_execution:
+        if Version(sdc_builder.version) < Version('3.10.0'):
+            pytest.skip('This test does not run with enable_parallel_execution for SDC versions < 3.10.0')
+        jdbc_query_executor.set_attributes(parallel=enable_parallel_execution)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> record_deduplicator >> jdbc_query_executor
