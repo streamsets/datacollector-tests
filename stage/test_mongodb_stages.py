@@ -335,7 +335,7 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'data': decimal128.Decimal128(record.field['data'])}
+        rows_from_snapshot = [{'data': decimal128.Decimal128(str(record.field['data']))}
                               for record in snapshot[mongodb_origin].output]
 
         assert rows_from_snapshot == ORIG_BINARY_DOCS
