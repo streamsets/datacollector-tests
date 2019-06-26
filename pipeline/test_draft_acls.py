@@ -53,11 +53,8 @@ def pipeline(sdc_executor):
 
 
 def test_draft_pipeline(sdc_executor, pipeline):
-    sdc_executor.dump_log_on_error = False
-    with pytest.raises(InternalServerError) as exception_info:
-        sdc_executor.get_pipeline(pipeline)
-    sdc_executor.dump_log_on_error = True
-    assert ERROR_CODE_PIPELINE_NOT_FOUND in exception_info.value.text
+    """ Pipelines in draft mode are not added to the SDC store. """
+    assert len(sdc_executor.pipelines) == 0
 
 
 def test_draft_pipeline_acl(sdc_executor, pipeline):
