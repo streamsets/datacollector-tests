@@ -860,3 +860,83 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+@pytest.mark.parametrize('records_per_file', [10, 1000, 10000])
+def test_s3_origin_timestamp_last_file_offset(sdc_builder, sdc_executor, aws, records_per_file):
+    """Test that the last file offset (-1) is properly committed. When using TIMESTAMP ordering, last file
+    is duplicated when restarting the pipeline.
+
+    The pipeline looks like:
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+        s3_origin >= pipeline_finished_executor
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    # Create test data files
+    data_file_first_filename = 'data-file-first.txt'
+    with open(data_file_first_filename, 'w+') as file_first:
+        for i in range(records_per_file):
+            file_first.write(f'First Message {i}\n')
+
+    data_file_second_filename = 'data-file-second.txt'
+    with open(data_file_second_filename, 'w+') as file_second:
+        for i in range(records_per_file):
+            file_second.write(f'Second Message {i}\n')
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+    s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format='TEXT',
+                             prefix_pattern=f'{s3_key}/*',
+                             max_batch_size=1000,
+                             read_order='TIMESTAMP')
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
+
+    s3_origin_pipeline = builder.build(title='Amazon S3 origin multithreaded pipeline').configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.upload_file(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_first_filename}',
+                           Filename=data_file_first_filename)
+        client.upload_file(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_second_filename}',
+                           Filename=data_file_second_filename)
+
+        # Read files once
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+
+        # Verify read data
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == records_per_file*2
+
+        # Start pipeline again, wait some time and assert that no duplicated data has been read
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=30)
+
+        # If no files have been processed we need to stop the pipeline, otherwise it will be finished
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(s3_origin_pipeline, force=True).wait_for_finished()
+
+        # Assert no more data has been read on the second run
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 0
+
+    finally:
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
