@@ -273,12 +273,15 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(rpc_origin_pipeline, kafka_consumer_pipeline)
 
     try:
-        sdc_executor.start_pipeline(rpc_origin_pipeline)
-        start_kafka_pipeline_command = sdc_executor.start_pipeline(kafka_consumer_pipeline)
         snapshot_command = sdc_executor.capture_snapshot(rpc_origin_pipeline,
-                                                         start_pipeline=False,
-                                                         batch_size=100,
+                                                         start_pipeline=True,
+                                                         batch_size=20,
                                                          wait=False)
+
+        sdc_executor.get_pipeline_status(rpc_origin_pipeline).wait_for_status('RUNNING')
+
+        start_kafka_pipeline_command = sdc_executor.start_pipeline(kafka_consumer_pipeline)
+
         start = time.time()
         start_kafka_pipeline_command.wait_for_pipeline_batch_count(20)
         end = time.time()
