@@ -1,4 +1,30 @@
+import copy
+import json
+import logging
+import math
+import random
+import string
+import time
+
 import pytest
+import sqlalchemy
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Dima'},
+    {'id': 2, 'name': 'Jarcec'},
+    {'id': 3, 'name': 'Arvind'}
+]
+ROWS_TO_UPDATE = [
+    {'id': 2, 'name': 'Eddie'},
+    {'id': 4, 'name': 'Jarcec'}
+]
+LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
+RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -185,8 +211,64 @@ def test_jdbc_multitable_consumer_origin_configuration_use_credentials(sdc_build
     pass
 
 
-@pytest.mark.parametrize('use_credentials', [True])
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, use_credentials):
-    pass
+@database
+@pytest.mark.parametrize('number_of_threads', [1, 2])
+def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, number_of_threads):
+    """When number_of_threads = 1 irrespective of how many tables SDC is reading, snapshot content present in the
+        single batch.
+        When number_of_threads = 2, for example SDC is reading 2 tables one thread will be assigned to one table and
+        next thread will be assigned to 2nd table.
+        """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name_1 = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    table_name_2 = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{src_table_prefix}%'}],
+                                            number_of_threads=number_of_threads, maximum_pool_size=number_of_threads)
+    trash = pipeline_builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table_1 = sqlalchemy.Table(table_name_1,
+                               metadata,
+                               sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                               sqlalchemy.Column('name', sqlalchemy.String(32)))
+    table_2 = sqlalchemy.Table(table_name_2,
+                               metadata,
+                               sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                               sqlalchemy.Column('name', sqlalchemy.String(32)))
+    try:
+        rows_in_database_for_table_1 = [{'id': i, 'name': str(i)} for i in range(1, 5)]
+        rows_in_database_for_table_2 = [{'id': i, 'name': f'{str(i)} 2nd_table'} for i in range(1, 3)]
+        logger.info('Creating table %s in %s database ...', table_name_1, database.type)
+        table_1.create(database.engine)
+        table_2.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+
+        connection = database.engine.connect()
+        connection.execute(table_1.insert(), rows_in_database_for_table_1)
+        connection.execute(table_2.insert(), rows_in_database_for_table_2)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True,
+                                                 batches=2, batch_size=30).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        max_threads = 0  # Maximum number of threads are being used.
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+                for record in value:
+                    max_threads = max(max_threads, int(record.header.values['jdbc.threadNumber']))
+        assert number_of_threads == max_threads + 1
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name_1, database.type)
+        table_1.drop(database.engine)
+        table_2.drop(database.engine)
 
