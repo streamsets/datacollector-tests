@@ -302,10 +302,10 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     finally:
         status = sdc_executor.get_pipeline_status(kafka_consumer_pipeline).response.json().get('status')
         if status != 'STOPPED':
-            sdc_executor.stop_pipeline(kafka_consumer_pipeline, force=True)
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         status = sdc_executor.get_pipeline_status(rpc_origin_pipeline).response.json().get('status')
         if status != 'STOPPED':
-            sdc_executor.stop_pipeline(rpc_origin_pipeline, force=True)
+            sdc_executor.stop_pipeline(rpc_origin_pipeline)
 
 
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
