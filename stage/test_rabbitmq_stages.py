@@ -16,7 +16,9 @@ import logging
 import string
 
 import pika
-from streamsets.testframework.markers import rabbitmq
+import pytest
+import time
+from streamsets.testframework.markers import rabbitmq, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -138,3 +140,71 @@ def test_rabbitmq_producer_target(sdc_builder, sdc_executor, rabbitmq):
     logger.debug('Number of messages received from RabbitMQ = %d', (len(msgs_received)))
 
     assert msgs_received == [raw_str] * msgs_sent_count
+
+
+@rabbitmq
+@sdc_min_version('3.10.0')
+@pytest.mark.parametrize('set_expiration', [True, False])
+def test_rabbitmq_producer_msg_expiration(sdc_builder, sdc_executor, rabbitmq, set_expiration):
+    """Test expiration time in the messages sent by RabbitMQ Producer.
+
+    In SDC 3.10.0 the "Set Expiration" option is introduced, which allows SDC users to enable/disable the
+    Expiration Time in the AMQP Message Properties. Prior to that version, users were forced to set an Expiration
+    Time when AMQP Message Properties were actived. This test checks that messages will be expired within the
+    configured milliseconds only when the "Set Expiration" is enabled.
+
+    Pipeline:
+        dev_raw_data_source >> rabbitmq_producer
+
+    """
+    queue_name = get_random_string(string.ascii_letters, 10)
+    exchange_name = get_random_string(string.ascii_letters, 10)
+    input_str = 'Hello World!'
+    expiration_ms = 2000
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=input_str)
+
+    rabbitmq_producer = builder.add_stage('RabbitMQ Producer')
+    rabbitmq_producer.set_attributes(name=queue_name, data_format='TEXT',
+                                     set_amqp_message_properties=True,
+                                     set_expiration=set_expiration,
+                                     expiration=expiration_ms,
+                                     bindings=[dict(name=exchange_name,
+                                                    type='DIRECT',
+                                                    durable=False,
+                                                    autoDelete=True)])
+
+    dev_raw_data_source >> rabbitmq_producer
+    pipeline = builder.build().configure_for_environment(rabbitmq)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Set up RabbitMQ client to consume messages sent by SDC
+    connection = rabbitmq.blocking_connection
+    channel = connection.channel()
+
+    try:
+        # Send a message and consume it within `expiration_ms` milliseconds.
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        msg_read = channel.basic_get(queue_name, False)[2].decode().replace('\n', '')
+        assert msg_read == input_str
+
+        # Send a message, wait `expiration_ms` milliseconds, and consume RabbitMQ queue. If the "Set Expiration"
+        # option is enabled, the queue will be empty and no message will be consumed.
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        time.sleep(expiration_ms * 0.001)
+        msg_read = channel.basic_get(queue_name, False)[2]
+        if set_expiration:
+            assert msg_read == None
+        else:
+            assert msg_read.decode().replace('\n', '') == input_str
+
+    finally:
+        channel.queue_delete(queue_name)
+        channel.close()
+        connection.close()
