@@ -1,30 +1,20 @@
 import copy
-import json
 import logging
-import math
-import random
 import string
-import time
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
+from sqlalchemy import Column, Integer, String, CHAR
 from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__file__)
 
 ROWS_IN_DATABASE = [
-    {'id': 1, 'name': 'Dima'},
-    {'id': 2, 'name': 'Jarcec'},
-    {'id': 3, 'name': 'Arvind'}
+    {'id': 1, 'name': 'Manish'},
+    {'id': 2, 'name': 'Shravan'},
+    {'id': 3, 'name': 'Shubham'}
 ]
-ROWS_TO_UPDATE = [
-    {'id': 2, 'name': 'Eddie'},
-    {'id': 4, 'name': 'Jarcec'}
-]
-LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
-RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -212,63 +202,105 @@ def test_jdbc_multitable_consumer_origin_configuration_use_credentials(sdc_build
 
 
 @database
-@pytest.mark.parametrize('number_of_threads', [1, 2])
-def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, number_of_threads):
-    """When number_of_threads = 1 irrespective of how many tables SDC is reading, snapshot content present in the
-        single batch.
-        When number_of_threads = 2, for example SDC is reading 2 tables one thread will be assigned to one table and
-        next thread will be assigned to 2nd table.
-        """
+@pytest.mark.parametrize('use_credentials', [False, True])
+def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, database, use_credentials):
+    """When use_credentials is False OR username or password are not correct then exception occurs, in assert
+    catch the exception.
+    When use_credentials is True AND username and password are correct then check for the data in table.
+    """
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
-    table_name_1 = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
-    table_name_2 = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-
-    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
-    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{src_table_prefix}%'}],
-                                            number_of_threads=number_of_threads, maximum_pool_size=number_of_threads)
-    trash = pipeline_builder.add_stage('Trash')
-
-    jdbc_multitable_consumer >> trash
-
-    pipeline = pipeline_builder.build().configure_for_environment(database)
-
-    metadata = sqlalchemy.MetaData()
-    table_1 = sqlalchemy.Table(table_name_1,
-                               metadata,
-                               sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-                               sqlalchemy.Column('name', sqlalchemy.String(32)))
-    table_2 = sqlalchemy.Table(table_name_2,
-                               metadata,
-                               sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-                               sqlalchemy.Column('name', sqlalchemy.String(32)))
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    columns = [sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+               sqlalchemy.Column('name', sqlalchemy.String(32))]
+    rows_in_table = [{'id': i, 'name': str(i)} for i in range(1, 5)]
+    connections_map = {'MySQL': {'jdbc_connection_string': 'jdbc:mysql://mysql_5.7.cluster:3306/default',
+                       'use_credentials': use_credentials, 'username': 'mysql', 'password': 'wrong'},
+                       'PostgreSQL': {'jdbc_connection_string': 'jdbc:postgresql://postgres.cluster:5432/default',
+                                      'use_credentials': use_credentials, 'username': 'postgres', 'password': 'wrong'}}
     try:
-        rows_in_database_for_table_1 = [{'id': i, 'name': str(i)} for i in range(1, 5)]
-        rows_in_database_for_table_2 = [{'id': i, 'name': f'{str(i)} 2nd_table'} for i in range(1, 3)]
-        logger.info('Creating table %s in %s database ...', table_name_1, database.type)
-        table_1.create(database.engine)
-        table_2.create(database.engine)
+        table = create_table(database, columns, table_name)
+        insert_data_in_table(database, table, rows_in_table)
 
-        logger.info('Adding three rows into %s database ...', database.type)
+        raise_exception_flag = False
+        attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}]}
 
-        connection = database.engine.connect()
-        connection.execute(table_1.insert(), rows_in_database_for_table_1)
-        connection.execute(table_2.insert(), rows_in_database_for_table_2)
+        if database.type == 'MySQL':
+            attributes.update(connections_map[database.type])
+            if connections_map[database.type]['username'] != 'mysql' or \
+                    connections_map[database.type]['password'] != 'mysql':
+                raise_exception_flag = True
+        elif database.type == 'PostgreSQL':
+            attributes.update(connections_map[database.type])
+            if connections_map[database.type]['username'] != 'postgres' or \
+                    connections_map[database.type]['password'] != 'postgres':
+                raise_exception_flag = True
 
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True,
-                                                 batches=2, batch_size=30).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        # Build the pipeline
+        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                            attributes, configure_for_environment_flag=False)
+        if not use_credentials or raise_exception_flag:
+            with pytest.raises(Exception):
+                snapshot = execute_pipeline(sdc_executor, pipeline)
+        else:
+            snapshot = execute_pipeline(sdc_executor, pipeline)
+            # Column names are converted to lower case since Oracle database column names are in upper case.
+            tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
+            snapshot_contents = snapshot_content(snapshot, jdbc_multitable_consumer)
+            rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[1])
+                                  for record in snapshot_contents]
 
-        max_threads = 0  # Maximum number of threads are being used.
-        for snapshot_batch in snapshot.snapshot_batches:
-            for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
-                for record in value:
-                    max_threads = max(max_threads, int(record.header.values['jdbc.threadNumber']))
-        assert number_of_threads == max_threads + 1
+            assert rows_from_snapshot == [('name', row['name']) for row in rows_in_table]
+            sdc_executor.stop_pipeline(pipeline)  # In this TC exception may occur, that's the reason, keeping in else.
     finally:
-        logger.info('Dropping table %s in %s database...', table_name_1, database.type)
-        table_1.drop(database.engine)
-        table_2.drop(database.engine)
+        table.drop(database.engine)
 
+
+# Util functions
+
+
+def create_table(database, columns, table_name):
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        *columns
+    )
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
+
+
+def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes, configure_for_environment_flag=True):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(**attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+    if configure_for_environment_flag:
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+    else:
+        pipeline = pipeline_builder.build()
+    return jdbc_multitable_consumer, pipeline
+
+
+def execute_pipeline(sdc_executor, pipeline, number_of_batches=1, snapshot_batch_size=10):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=number_of_batches,
+                                             batch_size=snapshot_batch_size).snapshot
+    return snapshot
+
+
+def insert_data_in_table(database, table, rows_to_insert):
+    logger.info('Adding three rows into %s database ...', database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), rows_to_insert)
+
+
+def snapshot_content(snapshot, jdbc_multitable_consumer):
+    """This is common function can be used at in many TCs to get snapshot content."""
+    processed_data = []
+    for snapshot_batch in snapshot.snapshot_batches:
+        for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+            for record in value:
+                processed_data.append(record)
+    return processed_data
