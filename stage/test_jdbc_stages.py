@@ -2082,3 +2082,148 @@ def test_jdbc_multitable_mysql_types(sdc_builder, sdc_executor, database, use_ta
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('3.0.0.0')
+@database('postgresql')
+# https://www.postgresql.org/docs/11/datatype.html
+# Not testing 'serial' family explicitly as that is just an alias
+# Not supporting tsvector tsquery as that doesn't seem fit for us
+# bit(n) is not supported
+# xml is not supported
+# domain types (as a category are not supported)
+# pg_lsn not supported
+@pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
+    ('smallint','-32768', 'SHORT', -32768),
+    ('integer','2147483647', 'INTEGER', '2147483647'),
+    ('bigint','-9223372036854775808', 'LONG', '-9223372036854775808'),
+    ('decimal(5,2)','5.20', 'DECIMAL', '5.20'),
+    ('numeric(5,2)','5.20', 'DECIMAL', '5.20'),
+    ('real','5.20', 'FLOAT', '5.2'),
+    ('double precision','5.20', 'DOUBLE', '5.2'),
+    ('money','12.34', 'DOUBLE', '12.34'),
+    ('char(5)',"'Hello'", 'STRING', 'Hello'),
+    ('varchar(5)',"'Hello'", 'STRING', 'Hello'),
+    ('text',"'Hello'", 'STRING', 'Hello'),
+    ('bytea',"'\\xDEADBEEF'", 'BYTE_ARRAY', '3q2+7w=='),
+    ('timestamp', "'2003-04-12 04:05:06'", 'DATETIME', 1050145506000),
+    ('timestamp with time zone', "'2003-04-12 04:05:06 America/New_York'", 'DATETIME', 1050134706000), # For PostgreSQL, we don't create ZONED_DATETIME
+    ('date',"'2019-01-01'", 'DATE', 1546329600000),
+    ('time',"'5:00:00'", 'TIME', 46800000),
+    ('time with time zone',"'04:05:06-08:00'", 'TIME', 43506000),
+    ('interval',"INTERVAL '1' YEAR", 'STRING', '1 years 0 mons 0 days 0 hours 0 mins 0.00 secs'),
+    ('boolean', "true", 'BOOLEAN', True),
+    ('ai', "'sad'", 'STRING', 'sad'),
+    ('point', "'(1, 1)'", 'STRING', '(1.0,1.0)'),
+    ('line', "'{1, 1, 1}'", 'STRING', '{1.0,1.0,1.0}'),
+    ('lseg', "'((1,1)(2,2))'", 'STRING', '[(1.0,1.0),(2.0,2.0)]'),
+    ('box', "'(1,1)(2,2)'", 'STRING', '(2.0,2.0),(1.0,1.0)'),
+    ('path', "'((1,1),(2,2))'", 'STRING', '((1.0,1.0),(2.0,2.0))'),
+    ('polygon', "'((1,1),(2,2))'", 'STRING', '((1.0,1.0),(2.0,2.0))'),
+    ('circle', "'<(1,1),5>'", 'STRING', '<(1.0,1.0),5.0>'),
+    ('inet', "'127.0.0.1/16'", 'STRING', '127.0.0.1/16'),
+    ('cidr', "'127.0.0.0/16'", 'STRING', '127.0.0.0/16'),
+    ('macaddr', "'08:00:2b:01:02:03'", 'STRING', '08:00:2b:01:02:03'),
+    ('macaddr8', "'08:00:2b:01:02:03'", 'STRING', '08:00:2b:ff:fe:01:02:03'),
+#    ('bit(8)', "b'10101010'", 'BYTE_ARRAY', '08:00:2b:ff:fe:01:02:03'), # Doesn't work at all today
+    ('bit varying(3)', "b'101'", 'STRING', '101'),
+    ('uuid', "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", 'STRING', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'),
+#    ('xml', "'<foo>bar</foo>'", 'STRING', ''), # Doesn't work properly today
+    ("json", "'{\"a\":\"b\"}'", 'STRING', '{"a":"b"}'),
+    ("jsonb", "'{\"a\":\"b\"}'", 'STRING', '{"a": "b"}'),
+    ("integer[3][3]", "'{{1,2,3},{4,5,6},{7,8,9}}'", 'STRING', '{{1,2,3},{4,5,6},{7,8,9}}'),
+    ("ct", "ROW(1, 2)", 'STRING', '(1,2)'),
+    ("int4range", "'[1,2)'", 'STRING', '[1,2)'),
+    ("int8range", "'[1,2)'", 'STRING', '[1,2)'),
+    ("numrange", "'[1,2)'", 'STRING', '[1,2)'),
+    ("tsrange", "'[2010-01-01 14:30, 2010-01-01 15:30)'", 'STRING', '["2010-01-01 14:30:00","2010-01-01 15:30:00")'),
+    ("tstzrange", "'[2010-01-01 14:30 America/New_York, 2010-01-01 15:30 America/New_York)'", 'STRING', '["2010-01-01 11:30:00-08","2010-01-01 12:30:00-08")'),
+    ("daterange", "'[2010-01-01, 2010-01-02)'", 'STRING', '[2010-01-01,2010-01-02)'),
+])
+@pytest.mark.parametrize('use_table_origin', [True, False])
+def test_jdbc_postgresql_types(sdc_builder, sdc_executor, database, use_table_origin, sql_type, insert_fragment, expected_type, expected_value):
+    """Test all feasible PostgreSQL types."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    try:
+        # Create enum type conditionally
+        connection.execute(f"""
+            DO
+            $$
+            BEGIN
+              IF NOT EXISTS (SELECT * FROM pg_type typ
+                                      INNER JOIN pg_namespace nsp ON nsp.oid = typ.typnamespace
+                                      WHERE nsp.nspname = current_schema() AND typ.typname = 'ai') THEN
+                CREATE TYPE ai AS ENUM ('sad', 'ok', 'happy');
+              END IF;
+            END;
+            $$
+            LANGUAGE plpgsql;        
+        """)
+
+        # Create enum complex type conditionally
+        connection.execute(f"""
+            DO
+            $$
+            BEGIN
+              IF NOT EXISTS (SELECT * FROM pg_type typ
+                                      INNER JOIN pg_namespace nsp ON nsp.oid = typ.typnamespace
+                                      WHERE nsp.nspname = current_schema() AND typ.typname = 'ct') THEN
+                CREATE TYPE ct AS (a int, b int);
+              END IF;
+            END;
+            $$
+            LANGUAGE plpgsql;        
+        """)
+
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                id int primary key,
+                data_column {sql_type} NULL
+            )
+        """)
+
+        # And insert a row with actual value
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+        # And a null
+        connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        if use_table_origin:
+            origin = builder.add_stage('JDBC Multitable Consumer')
+            origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+            origin.on_unknown_type = 'CONVERT_TO_STRING'
+        else:
+            origin = builder.add_stage('JDBC Query Consumer')
+            origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
+            origin.incremental_mode = False
+            origin.on_unknown_type = 'CONVERT_TO_STRING'
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot[origin].output) == 2
+        record = snapshot[origin].output[0]
+        null_record = snapshot[origin].output[1]
+
+        # Since we are controlling types, we want to check explicit values inside the record rather the the python
+        # wrappers.
+        # TLKT-177: Add ability for field to return raw value
+
+        assert record.field['data_column'].type == expected_type
+        assert null_record.field['data_column'].type == expected_type
+
+        assert record.field['data_column']._data['value'] == expected_value
+        assert null_record.field['data_column'] == None
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
