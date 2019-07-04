@@ -93,11 +93,8 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
 
 
 @database
-def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
-    """
-    This test case uses the JDBC Query origin.
-    Test that Pipeline Finisher works.
-    """
+def test_jdbc_consumer_offset_resume(sdc_builder, sdc_executor, database):
+    """Ensure that the Query consumer can resume where it ended and stop the pipeline when it reads all the data."""
     metadata = sqlalchemy.MetaData()
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = sqlalchemy.Table(
@@ -109,29 +106,38 @@ def test_jdbc_query_no_more_data(sdc_builder, sdc_executor, database):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    jdbc_query_consumer = pipeline_builder.add_stage('JDBC Query Consumer')
-    jdbc_query_consumer.configuration['isIncrementalMode'] = False
-    jdbc_query_consumer.sql_query = 'SELECT * FROM {0}'.format(table_name)
+    origin = pipeline_builder.add_stage('JDBC Query Consumer')
+    origin.incremental_mode = True
+    origin.sql_query = 'SELECT * FROM {0} WHERE '.format(table_name) + 'id > ${OFFSET} ORDER BY id'
+    origin.initial_offset = '0'
+    origin.offset_column = 'id'
 
     trash = pipeline_builder.add_stage('Trash')
-    jdbc_query_consumer >> trash
+    origin >> trash
 
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
-    jdbc_query_consumer >= finisher
+    origin >= finisher
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
 
     try:
-        logger.info('Jdbc No More Data: Creating table %s in %s database ...', table_name, database.type)
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
         table.create(database.engine)
-
         connection = database.engine.connect()
-        connection.execute(table.insert(), ROWS_IN_DATABASE)
 
-        pipeline = pipeline_builder.build().configure_for_environment(database)
-        sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        for i in range(len(ROWS_IN_DATABASE)):
+            # Insert one row to the database
+            connection.execute(table.insert(), [ROWS_IN_DATABASE[i]])
 
+            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+            assert len(snapshot[origin].output) == 1
+            assert snapshot[origin].output[0].get_field_data('/id') == i + 1
+
+            # TLKT-249: Add wait_for_finished to get_status object
+            sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
     finally:
-        logger.info('Jdbc No More Data: Dropping table %s in %s database...', table_name, database.type)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
 
