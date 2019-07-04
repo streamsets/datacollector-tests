@@ -27,7 +27,7 @@ logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SNAPSHOT_TIMEOUT_SEC = 120
-SDC_RPC_LISTENING_PORT = 20000
+SDC_RPC_LISTENING_PORT = 21512
 
 
 @pytest.fixture(autouse=True)
