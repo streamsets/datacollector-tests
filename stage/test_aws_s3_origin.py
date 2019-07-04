@@ -1129,3 +1129,60 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+# SDC-11924: Better handling of various error header states in Excel parser
+@aws('s3')
+@sdc_min_version('3.10.0')
+def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
+    """Ensure that incomplete header won't cause pipeline failure."""
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    # Create the Excel file on the fly
+    file_excel = io.BytesIO()
+    workbook = Workbook()
+    sheet = workbook.add_sheet('A')
+    sheet.write(0, 0, 'A')
+    # Second column is completely missing for header row
+    sheet.write(0, 2, 'C')
+    sheet.write(1, 0, 'a')
+    sheet.write(1, 1, 'b')
+    sheet.write(1, 2, 'c')
+    workbook.save(file_excel)
+    file_excel.seek(0)
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+    s3_origin.bucket = s3_bucket
+    s3_origin.data_format = 'EXCEL'
+    s3_origin.prefix_pattern = f'{s3_key}*'
+    s3_origin.excel_header_option = 'WITH_HEADER'
+
+    trash = builder.add_stage('Trash')
+
+    s3_origin >> trash
+
+    pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
+
+        # Snapshot the pipeline and compare the records.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot[s3_origin].output) == 1
+        assert snapshot[s3_origin].output[0].get_field_data('/A') == 'a'
+        assert snapshot[s3_origin].output[0].get_field_data('/C') == 'c'
+
+    finally:
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
