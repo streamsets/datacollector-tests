@@ -1,4 +1,25 @@
+import copy
+import logging
+import string
+
 import pytest
+import sqlalchemy
+from sqlalchemy import Column, Integer, String, CHAR, ForeignKey
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__file__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Manish'},
+    {'id': 2, 'name': 'Shravan'},
+    {'id': 3, 'name': 'Shubham'}
+]
+ROWS_IN_DATABASE_FOREIGN = [
+    {'id': 1, 'user_id': 3, 'mobile_number': '1111122222'},
+    {'id': 2, 'user_id': 1, 'mobile_number': '2222233333'},
+    {'id': 3, 'user_id': 2, 'mobile_number': '3333344444'}
+]
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -62,9 +83,56 @@ def test_jdbc_multitable_consumer_origin_configuration_init_query(sdc_builder, s
 
 
 @pytest.mark.parametrize('initial_table_order_strategy', ['ALPHABETICAL', 'NONE', 'REFERENTIAL_CONSTRAINTS'])
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_initial_table_order_strategy(sdc_builder, sdc_executor, initial_table_order_strategy):
-    pass
+@database
+def test_jdbc_multitable_consumer_origin_configuration_initial_table_order_strategy(sdc_builder, sdc_executor,
+                                                                                    initial_table_order_strategy,
+                                                                                    database):
+    """Check if Initial Table Order Strategy parameter works properly OF jdbc Multitable consumer works.
+    Case:
+        a) `ALPHABETICAL` - Origin should read all matched tables in alphabetical orders.
+        b) `NONE` - Origin should read all matched tables as it appears in database server
+        c) `REFERENTIAL_CONSTRAINTS` - Origin should parent table first and then child table.
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = 'b2_{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    table_name_child = 'a1_{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+
+    try:
+        # Create table and isert data
+        columns = [Column('id', Integer, primary_key=True), Column('name', String(32))]
+        table = create_table(database, columns, table_name)
+        insert_data_in_table(database, table, ROWS_IN_DATABASE)
+        columns_child = [Column('id', Integer, primary_key=True),
+                         Column('user_id', Integer, ForeignKey(table.c.id), nullable=False, primary_key=True),
+                         Column('mobile_number', String(32))]
+        table_child = create_table(database, columns_child, table_name_child)
+        insert_data_in_table(database, table_child, ROWS_IN_DATABASE_FOREIGN)
+
+        # Build the pipeline
+        attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}],
+                      'initial_table_order_strategy': initial_table_order_strategy}
+        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                                                            attributes)
+
+        # Execute pipeline and get the snapshot
+        snapshot = execute_pipeline(sdc_executor, pipeline, 2)
+        snapshot_data = snapshot_content(snapshot, jdbc_multitable_consumer)
+
+        # Column names are converted to lower case since Oracle database column names are in upper case.
+        tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
+        rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[-1])
+                              for record in snapshot_data]
+        output_data = []
+        if initial_table_order_strategy in ['ALPHABETICAL', 'NONE']:
+            output_data = ([('mobile_number', row['mobile_number']) for row in ROWS_IN_DATABASE_FOREIGN] +
+                           [('name', row['name']) for row in ROWS_IN_DATABASE])
+        else:
+            output_data = ([('name', row['name']) for row in ROWS_IN_DATABASE] +
+                           [('mobile_number', row['mobile_number']) for row in ROWS_IN_DATABASE_FOREIGN])
+        assert rows_from_snapshot == output_data
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        delete_table([table_child, table], database)
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -190,3 +258,58 @@ def test_jdbc_multitable_consumer_origin_configuration_use_credentials(sdc_build
 def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, use_credentials):
     pass
 
+
+# Util functions
+
+def create_table(database, columns, table_name):
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        *columns
+    )
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
+
+
+def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes, configure_for_environment_flag=True):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(**attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+    if configure_for_environment_flag:
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+    else:
+        pipeline = pipeline_builder.build()
+    return jdbc_multitable_consumer, pipeline
+
+
+def execute_pipeline(sdc_executor, pipeline, number_of_batches=1, snapshot_batch_size=10):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=number_of_batches,
+                                             batch_size=snapshot_batch_size).snapshot
+    return snapshot
+
+
+def insert_data_in_table(database, table, rows_to_insert):
+    logger.info('Adding three rows into %s database ...', database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), rows_to_insert)
+
+
+def snapshot_content(snapshot, jdbc_multitable_consumer):
+    """This is common function can be used at in many TCs to get snapshot content."""
+    processed_data = []
+    for snapshot_batch in snapshot.snapshot_batches:
+        for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+            for record in value:
+                processed_data.append(record)
+    return processed_data
+
+
+def delete_table(tables, database):
+    for table in tables:
+        logger.info('Dropping table %s in %s database...', table.name, database.type)
+        table.drop(database.engine)
