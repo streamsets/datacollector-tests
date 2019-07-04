@@ -236,3 +236,39 @@ def test_sdc_record(sdc_builder, sdc_executor):
     assert len(records) == 1
     assert 'new-value' == records[0].field['new']
     assert 'attr-value' == records[0].get_field_data('/old').attributes['attr']
+
+
+def test_event_creation(sdc_builder, sdc_executor):
+    """Ensure that the process is able to create events."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.stop_after_first_batch = True
+
+    groovy = builder.add_stage('Groovy Evaluator')
+    groovy.init_script = ''
+    groovy.destroy_script = ''
+    groovy.script =  """
+event = sdcFunctions.createEvent("event", 1)
+event.value = sdcFunctions.createMap(true)
+event.value['value'] = "secret"
+sdcFunctions.toEvent(event)
+"""
+
+    # TLKT-248: Add ability to directly read events from snapshots
+    identity = builder.add_stage('Dev Identity')
+    event_trash = builder.add_stage('Trash')
+
+    trash = builder.add_stage('Trash')
+
+    origin >> groovy >> trash
+    groovy >= identity
+    identity >> event_trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert len(snapshot[identity].output) == 1
+    assert snapshot[identity].output[0].get_field_data('/value') == 'secret'
