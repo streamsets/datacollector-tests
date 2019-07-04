@@ -741,3 +741,52 @@ def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
         if queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
             client.delete_queue(QueueUrl=queue_url)
+
+
+@aws('s3')
+def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
+    """Test simple scenario of moving files from source to target using WHOLE_FILE_FORMAT."""
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+    s3_dest_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+    data = 'Completely random string that is transfered as whole file format.'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
+                          prefix_pattern=f'{s3_key}/*',
+                          max_batch_size_in_records=100)
+
+    target = builder.add_stage('Amazon S3', type='destination')
+    target.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE', partition_prefix=s3_dest_key, file_name_expression='output.txt')
+
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    origin >> target
+    origin >= finisher
+
+    pipeline = builder.build().configure_for_environment(aws)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt', Body=data.encode('ascii'))
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # We should have exactly one file on the destination side
+        list_s3_objs = client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_dest_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # With our secret message
+        s3_obj_key = client.get_object(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert s3_contents == data
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
