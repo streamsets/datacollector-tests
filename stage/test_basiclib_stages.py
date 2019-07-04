@@ -402,3 +402,40 @@ sdcFunctions.toEvent(event)
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     assert len(snapshot[identity].output) == 1
     assert snapshot[identity].output[0].get_field_data('/value') == 'secret'
+
+
+def test_expression_evaluator(sdc_builder, sdc_executor):
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.data_format = 'JSON'
+    source.raw_data = '{"a" : "b"}'
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [{
+        "fieldToSet" : "/new_field",
+        "expression" : "Secret 1"
+    }]
+    expression.header_attribute_expressions = [{
+        "attributeToSet" : "new header",
+        "headerAttributeExpression" : "Secret 2"
+    }]
+    expression.field_attribute_expressions = [{
+        "fieldToSet" : "/a",
+        "attributeToSet" : "new field header",
+        "fieldAttributeExpression" : "Secret 3"
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    source >> expression >> trash
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    assert len(snapshot[expression].output) == 1
+    assert snapshot[expression].output[0].get_field_data('/new_field') == 'Secret 1'
+    assert snapshot[expression].output[0].header['values']['new header'] == 'Secret 2'
+    assert snapshot[expression].output[0].get_field_data('/a').attributes['new field header'] == 'Secret 3'
