@@ -266,8 +266,15 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms):
                                       server_side_encryption_option='KMS',
                                       aws_kms_key_arn=aws.kms_key_arn)
 
+    # TLKT-248: Add ability to directly read events from snapshots
+    identity = builder.add_stage('Dev Identity')
+    trash = builder.add_stage('Trash')
+
     dev_raw_data_source >> record_deduplicator >> s3_destination
     record_deduplicator >> to_error
+
+    s3_destination >= identity
+    identity >> trash
 
     s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(s3_dest_pipeline)
@@ -275,8 +282,13 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms):
     client = aws.s3
     try:
         # start pipeline and capture pipeline messages to assert
-        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_pipeline_output_records_count(1)
+        snapshot = sdc_executor.capture_snapshot(s3_dest_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(s3_dest_pipeline)
+
+        # Validate event generation
+        assert len(snapshot[identity].output) == 1
+        assert snapshot[identity].output[0].get_field_data('/bucket') == aws.s3_bucket_name
+        assert snapshot[identity].output[0].get_field_data('/recordCount') == 1
 
         # assert record count to S3 the size of the objects put
         list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
@@ -762,11 +774,17 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
     target = builder.add_stage('Amazon S3', type='destination')
     target.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE', partition_prefix=s3_dest_key, file_name_expression='output.txt')
 
+    # TLKT-248: Add ability to directly read events from snapshots
+    identity = builder.add_stage('Dev Identity')
+    trash = builder.add_stage('Trash')
+
     finisher = builder.add_stage('Pipeline Finisher Executor')
     finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
     origin >> target
     origin >= finisher
+    target >= identity
+    identity >> trash
 
     pipeline = builder.build().configure_for_environment(aws)
     pipeline.configuration['shouldRetry'] = False
@@ -775,7 +793,12 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt', Body=data.encode('ascii'))
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # Validate event generation
+        assert len(snapshot[identity].output) == 1
+        assert snapshot[identity].output[0].get_field_data('/targetFileInfo/bucket') == aws.s3_bucket_name
+        assert snapshot[identity].output[0].get_field_data('/targetFileInfo/objectKey') == f'{s3_dest_key}sdc-output.txt'
 
         # We should have exactly one file on the destination side
         list_s3_objs = client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_dest_key)
