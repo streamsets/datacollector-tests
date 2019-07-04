@@ -142,6 +142,55 @@ def test_jdbc_consumer_offset_resume(sdc_builder, sdc_executor, database):
 
 
 @database
+def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database):
+    """Ensure that the Query consumer works properly in non-incremental mode."""
+    metadata = sqlalchemy.MetaData()
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32))
+    )
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    origin = pipeline_builder.add_stage('JDBC Query Consumer')
+    origin.incremental_mode = False
+    origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
+
+    trash = pipeline_builder.add_stage('Trash')
+    origin >> trash
+
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+    origin >= finisher
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        # Run the pipeline N times, it should always read the same
+        for i in range(3):
+            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+            assert len(snapshot[origin].output) == len(ROWS_IN_DATABASE)
+
+            assert snapshot[origin].output[0].get_field_data('/id') == 1
+            assert snapshot[origin].output[1].get_field_data('/id') == 2
+            assert snapshot[origin].output[2].get_field_data('/id') == 3
+
+            # TLKT-249: Add wait_for_finished to get_status object
+            sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+    finally:
+        logger.info('Jdbc No More Data: Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
 def test_jdbc_multitable_consumer_with_finisher(sdc_builder, sdc_executor, database):
     """
     Test reading with Multi-table JDBC, output to trash.
