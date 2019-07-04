@@ -2227,3 +2227,97 @@ def test_jdbc_postgresql_types(sdc_builder, sdc_executor, database, use_table_or
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('3.0.0.0')
+@database('sqlserver')
+# https://docs.microsoft.com/en-us/sql/t-sql/data-types/data-types-transact-sql?view=sql-server-2017
+# hiearchyid types not supported
+@pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
+    ('DATE', "'2019-01-01'", 'DATE', 1546329600000),
+    ('DATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085347510000),
+    ('DATETIME2', "'2004-05-23T14:25:10'", 'DATETIME', 1085347510000),
+    ('DATETIMEOFFSET', "'2004-05-23T14:25:10'", 'STRING', '2004-05-23 14:25:10 +00:00'),
+    ('SMALLDATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085347500000),
+    ('TIME', "'14:25:10'", 'TIME', 80710000),
+    ('BIT', "1", 'BOOLEAN', True),
+    ('DECIMAL(5,2)','5.20', 'DECIMAL', '5.20'),
+    ('NUMERIC(5,2)','5.20', 'DECIMAL', '5.20'),
+    ('REAL','5.20', 'FLOAT', '5.2'),
+    ('FLOAT','5.20', 'DOUBLE', '5.2'),
+    ('TINYINT','255', 'SHORT', 255),
+    ('SMALLINT','-32768', 'SHORT', -32768),
+    ('INT','-2147483648', 'INTEGER', '-2147483648'),
+    ('BIGINT','-9223372036854775807', 'LONG', '-9223372036854775807'),
+    ('MONEY','255.60', 'DECIMAL', '255.6000'),
+    ('SMALLMONEY','255.60', 'DECIMAL', '255.6000'),
+    ('BINARY(5)',"CAST('Hello' AS BINARY(5))", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('VARBINARY(5)',"CAST('Hello' AS VARBINARY(5))", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('CHAR(5)',"'Hello'", 'STRING', 'Hello'),
+    ('VARCHAR(5)',"'Hello'", 'STRING', 'Hello'),
+    ('NCHAR(5)',"'Hello'", 'STRING', 'Hello'),
+    ('NVARCHAR(5)',"'Hello'", 'STRING', 'Hello'),
+    ('TEXT',"'Hello'", 'STRING', 'Hello'),
+    ('NTEXT',"'Hello'", 'STRING', 'Hello'),
+    ('IMAGE',"CAST('Hello' AS IMAGE)", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('GEOGRAPHY',"geography::STGeomFromText('LINESTRING(-122.360 47.656, -122.343 47.656 )', 4326)", 'BYTE_ARRAY', '5hAAAAEUhxbZzvfTR0DXo3A9CpdewIcW2c7300dAy6FFtvOVXsA='),
+    ('GEOMETRY',"geometry::STGeomFromText('LINESTRING (100 100, 20 180, 180 180)', 0)", 'BYTE_ARRAY', 'AAAAAAEEAwAAAAAAAAAAAFlAAAAAAAAAWUAAAAAAAAA0QAAAAAAAgGZAAAAAAACAZkAAAAAAAIBmQAEAAAABAAAAAAEAAAD/////AAAAAAI='),
+    ('XML', "'<a></a>'", 'STRING', '<a/>')
+])
+@pytest.mark.parametrize('use_table_origin', [True, False])
+def test_jdbc_sqlserver_types(sdc_builder, sdc_executor, database, use_table_origin, sql_type, insert_fragment, expected_type, expected_value):
+    """Test all feasible SQL Server types."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                id int primary key,
+                data_column {sql_type} NULL
+            )
+        """)
+
+        # And insert a row with actual value
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+        # And a null
+        connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        if use_table_origin:
+            origin = builder.add_stage('JDBC Multitable Consumer')
+            origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+            origin.on_unknown_type = 'CONVERT_TO_STRING'
+        else:
+            origin = builder.add_stage('JDBC Query Consumer')
+            origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
+            origin.incremental_mode = False
+            origin.on_unknown_type = 'CONVERT_TO_STRING'
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot[origin].output) == 2
+        record = snapshot[origin].output[0]
+        null_record = snapshot[origin].output[1]
+
+        # Since we are controlling types, we want to check explicit values inside the record rather the the python
+        # wrappers.
+        # TLKT-177: Add ability for field to return raw value
+
+        assert record.field['data_column'].type == expected_type
+        assert null_record.field['data_column'].type == expected_type
+
+        assert record.field['data_column']._data['value'] == expected_value
+        assert null_record.field['data_column'] == None
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
