@@ -1003,3 +1003,66 @@ def test_s3_restart_with_file_offset(sdc_builder, sdc_executor, aws, read_order)
                                    client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
+# SDC-11925: Allow specifying subset of sheets to import when reading Excel files
+@aws('s3')
+@sdc_min_version('3.10.0')
+@pytest.mark.parametrize('read_all_sheets', [True, False])
+def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheets):
+    """Ensure that configuring subset of sheets to import properly works."""
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    # Create the Excel file on the fly
+    file_excel = io.BytesIO()
+    workbook = Workbook()
+    sheet = workbook.add_sheet('A')
+    sheet.write(0, 0, 'A')
+    sheet.write(1, 0, 'a')
+    sheet = workbook.add_sheet('B')
+    sheet.write(0, 0, 'B')
+    sheet.write(1, 0, 'b')
+    workbook.save(file_excel)
+    file_excel.seek(0)
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+    s3_origin.bucket = s3_bucket
+    s3_origin.data_format = 'EXCEL'
+    s3_origin.prefix_pattern = f'{s3_key}*'
+    s3_origin.excel_header_option = 'WITH_HEADER'
+    s3_origin.read_all_sheets = read_all_sheets
+    s3_origin.import_sheets = ['A']
+
+    trash = builder.add_stage('Trash')
+
+    s3_origin >> trash
+
+    pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
+
+        # Snapshot the pipeline and compare the records.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        if read_all_sheets:
+            assert len(snapshot[s3_origin].output) == 2
+        else:
+            assert len(snapshot[s3_origin].output) == 1
+
+        assert snapshot[s3_origin].output[0].get_field_data('/A') == 'a'
+        if read_all_sheets:
+            assert snapshot[s3_origin].output[1].get_field_data('/B') == 'b'
+
+    finally:
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
