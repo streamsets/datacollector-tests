@@ -1987,3 +1987,98 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
+
+@sdc_min_version('3.0.0.0')
+@database('mysql')
+# https://dev.mysql.com/doc/refman/8.0/en/data-types.html
+@pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
+    ('TINYINT','-128', 'SHORT', -128),
+    ('TINYINT UNSIGNED','255', 'SHORT', 255),
+    ('SMALLINT','-32768', 'SHORT', -32768),
+    ('SMALLINT UNSIGNED','65535', 'SHORT', -1), # Support for unsigned isn't entirely correct!
+    ('MEDIUMINT','-8388608', 'INTEGER', '-8388608'),
+    ('MEDIUMINT UNSIGNED','16777215', 'INTEGER', '16777215'),
+    ('INT','-2147483648', 'INTEGER', '-2147483648'),
+    ('INT UNSIGNED','4294967295', 'INTEGER', '-1'), # Support for unsigned isn't entirely correct!
+    ('BIGINT','-9223372036854775807', 'LONG', '-9223372036854775807'),
+    ('BIGINT UNSIGNED','18446744073709551615', 'LONG', '-1'), # Support for unsigned isn't entirely correct!
+    ('DECIMAL(5, 2)','5.20', 'DECIMAL', '5.20'),
+    ('NUMERIC(5, 2)','5.20', 'DECIMAL', '5.20'),
+    ('FLOAT','5.2', 'FLOAT', '5.2'),
+    ('DOUBLE','5.2', 'DOUBLE', '5.2'),
+    ('BIT(8)',"b'01010101'", 'BYTE_ARRAY', 'VQ=='),
+    ('DATE',"'2019-01-01'", 'DATE', 1546329600000),
+    ('DATETIME',"'2019-01-01 5:00:00'", 'DATETIME', 1546347600000),
+    ('TIMESTAMP',"'2019-01-01 5:00:00'", 'DATETIME', 1546347600000),
+    ('TIME',"'5:00:00'", 'TIME', 46800000),
+    ('YEAR',"'2019'", 'DATE', 1546329600000),
+    ('CHAR(5)',"'Hello'", 'STRING', 'Hello'),
+    ('VARCHAR(5)',"'Hello'", 'STRING', 'Hello'),
+    ('BINARY(5)',"'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('VARBINARY(5)',"'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('BLOB',"'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('TEXT',"'Hello'", 'STRING', 'Hello'),
+    ("ENUM('a', 'b')", "'a'", 'STRING', 'a'),
+    ("set('a', 'b')", "'a,b'", 'STRING', 'a,b'),
+    ("POINT", "POINT(1, 1)", 'BYTE_ARRAY', 'AAAAAAEBAAAAAAAAAAAA8D8AAAAAAADwPw=='),
+    ("LINESTRING", "GeomFromText('LINESTRING(0 0, 10 10, 20 25, 50 60)')", 'BYTE_ARRAY', 'AAAAAAECAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkQAAAAAAAACRAAAAAAAAANEAAAAAAAAA5QAAAAAAAAElAAAAAAAAATkA='),
+    ("POLYGON", "GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0),(5 5,7 5,7 7,5 7, 5 5))')", 'BYTE_ARRAY', 'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
+    ("JSON", "'{\"a\":\"b\"}'", 'BYTE_ARRAY', 'eyJhIjogImIifQ=='),
+])
+@pytest.mark.parametrize('use_table_origin', [True, False])
+def test_jdbc_multitable_mysql_types(sdc_builder, sdc_executor, database, use_table_origin, sql_type, insert_fragment, expected_type, expected_value):
+    """Test all feasible Mysql types."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                id int primary key,
+                data_column {sql_type} NULL
+            )
+        """)
+
+        # And insert a row with actual value
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+        # And a null
+        connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        if use_table_origin:
+            origin = builder.add_stage('JDBC Multitable Consumer')
+            origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+            origin.on_unknown_type = 'CONVERT_TO_STRING'
+        else:
+            origin = builder.add_stage('JDBC Query Consumer')
+            origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
+            origin.incremental_mode = False
+            origin.on_unknown_type = 'CONVERT_TO_STRING'
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot[origin].output) == 2
+        record = snapshot[origin].output[0]
+        null_record = snapshot[origin].output[1]
+
+        # Since we are controlling types, we want to check explicit values inside the record rather the the python
+        # wrappers.
+        # TLKT-177: Add ability for field to return raw value
+
+        assert record.field['data_column'].type == expected_type
+        assert null_record.field['data_column'].type == expected_type
+
+        assert record.field['data_column']._data['value'] == expected_value
+        assert null_record.field['data_column'] == None
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
