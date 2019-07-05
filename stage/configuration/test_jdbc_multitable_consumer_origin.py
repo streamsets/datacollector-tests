@@ -98,11 +98,10 @@ def test_jdbc_multitable_consumer_origin_configuration_jdbc_connection_string(sd
         table = create_table(database, columns, table_name)
         insert_data_in_table(database, table, rows_in_table)
         attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}]}
-
+        # Build the pipeline
+        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                                                            attributes)
         if connection_string == 'VALID':
-            # Build the pipeline
-            jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
-                                                                                                attributes)
             snapshot = execute_pipeline(sdc_executor, pipeline)
             # Column names are converted to lower case since Oracle database column names are in upper case.
             tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
@@ -112,13 +111,7 @@ def test_jdbc_multitable_consumer_origin_configuration_jdbc_connection_string(sd
             assert rows_from_snapshot == [('name', row['name']) for row in rows_in_table]
             sdc_executor.stop_pipeline(pipeline)
         elif connection_string == 'INVALID':
-            connection_map_invalid = {'jdbc_connection_string': 'jdbc:mysql://mysql_<invalid>cluster:3306/default',
-                                      'use_credentials': True, 'username': 'mysql', 'password': 'wrong'}
-            attributes.update(connection_map_invalid)
-            # Build the pipeline
-            jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
-                                                                                                attributes,
-                                                                                                configure_for_environment_flag=False)
+            jdbc_multitable_consumer.jdbc_connection_string = 'jdbc:mysql://mysql_<invalid>cluster:3306/default'
             with pytest.raises(Exception):
                 snapshot = execute_pipeline(sdc_executor, pipeline)
     finally:
@@ -258,16 +251,13 @@ def create_table(database, columns, table_name):
     return table
 
 
-def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes, configure_for_environment_flag=True):
+def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
     jdbc_multitable_consumer.set_attributes(**attributes)
     trash = pipeline_builder.add_stage('Trash')
     jdbc_multitable_consumer >> trash
-    if configure_for_environment_flag:
-        pipeline = pipeline_builder.build().configure_for_environment(database)
-    else:
-        pipeline = pipeline_builder.build()
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     return jdbc_multitable_consumer, pipeline
 
 
