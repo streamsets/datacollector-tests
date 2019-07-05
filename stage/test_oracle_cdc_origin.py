@@ -756,7 +756,8 @@ def _setup_table(database, table_name, create_primary_key=True):
 
 
 def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder,
-                                 buffer_locally, src_table_name, batch_size=BATCH_SIZE):
+                                 buffer_locally, src_table_name, batch_size=BATCH_SIZE,
+                                 dictionary_source='DICT_FROM_ONLINE_CATALOG'):
     oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
     start = _get_current_oracle_time(connection=connection)
     start_date = start.strftime('%d-%m-%Y %H:%M:%S')
@@ -777,7 +778,7 @@ def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bu
 
     return oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
                                             db_time_zone='UTC',
-                                            dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                            dictionary_source=dictionary_source,
                                             initial_change='DATE',
                                             logminer_session_window='${10 * MINUTES}',
                                             max_batch_size_in_records=batch_size,
@@ -935,6 +936,52 @@ def test_all_types(sdc_builder, sdc_executor, database, sql_type, insert_fragmen
 
         assert record.field['DATA_COLUMN']._data['value'] == expected_value
         assert null_record.field['DATA_COLUMN'] == None
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('3.0.0.0')
+@database('oracle')
+def test_event_startup(sdc_builder, sdc_executor, database):
+    """Verify that we create at least one event - STARTUP - in the origin. We don't check all types as that requires
+       additional configuration on the shared database server (redo logs dictionary source).
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    try:
+        builder = sdc_builder.get_pipeline_builder()
+        origin = _get_oracle_cdc_client_origin(connection=connection,
+                                               database=database,
+                                               sdc_builder=sdc_builder,
+                                               pipeline_builder=builder,
+                                               buffer_locally=True,
+                                               src_table_name=table_name)
+        trash = builder.add_stage('Trash')
+        # TLKT-248: Add ability to directly read events from snapshots
+        identity = builder.add_stage('Dev Identity')
+        event_trash = builder.add_stage('Trash')
+        origin >> trash
+        origin >= identity
+        identity >> event_trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Create table & insert one row
+        connection.execute(f"""CREATE TABLE {table_name}(id number primary key)""")
+        txn = connection.begin()
+        connection.execute(f"INSERT INTO {table_name} VALUES(1)")
+        txn.commit()
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        assert len(snapshot[identity].output) == 1
+        assert snapshot[identity].output[0].header['values']['sdc.event.type'] == 'STARTUP'
+
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
