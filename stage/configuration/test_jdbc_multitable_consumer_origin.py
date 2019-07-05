@@ -122,14 +122,19 @@ def test_jdbc_multitable_consumer_origin_configuration_initial_table_order_strat
         tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
         rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[-1])
                               for record in snapshot_data]
-        output_data = []
-        if initial_table_order_strategy in ['ALPHABETICAL', 'NONE']:
-            output_data = ([('mobile_number', row['mobile_number']) for row in ROWS_IN_DATABASE_FOREIGN] +
+
+        # Assert differently for different values of initial_table_order_strategy
+        if initial_table_order_strategy == 'ALPHABETICAL':
+            input_data = ([('mobile_number', row['mobile_number']) for row in ROWS_IN_DATABASE_FOREIGN] +
                            [('name', row['name']) for row in ROWS_IN_DATABASE])
-        else:
-            output_data = ([('name', row['name']) for row in ROWS_IN_DATABASE] +
-                           [('mobile_number', row['mobile_number']) for row in ROWS_IN_DATABASE_FOREIGN])
-        assert rows_from_snapshot == output_data
+            assert rows_from_snapshot == input_data
+        elif initial_table_order_strategy == 'REFERENTIAL_CONSTRAINTS':
+            input_data = ([('name', row['name']) for row in ROWS_IN_DATABASE] +
+                          [('mobile_number', row['mobile_number']) for row in ROWS_IN_DATABASE_FOREIGN])
+            assert rows_from_snapshot == input_data
+        # For initial_table_order_strategy == NONE consumer is not following any order while reading
+        # data from DB. Thats why we check total number of records and not exact records.
+        assert len(rows_from_snapshot) == 6
     finally:
         sdc_executor.stop_pipeline(pipeline)
         delete_table([table_child, table], database)
