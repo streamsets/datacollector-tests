@@ -41,3 +41,12 @@ def test_frame_options(sdc_executor, endpoint):
 
     resp = h1.getresponse()
     assert 'DENY' == resp.getheader('X-Frame-Options')
+
+
+# SDC-11914: Disable directory listing for static resources
+def test_directory_listing(sdc_executor):
+    h1 = http.client.HTTPConnection(sdc_executor.api_client.server_url.split('://')[-1])
+    h1.request('GET', '/asserts')
+
+    resp = h1.getresponse()
+    assert 404 == resp.status
