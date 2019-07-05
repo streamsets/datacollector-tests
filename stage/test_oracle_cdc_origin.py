@@ -857,3 +857,85 @@ def _select_from_table(db_engine, dest_table):
     target_result_list = target_result.fetchall()
     target_result.close()
     return target_result_list
+
+
+@sdc_min_version('3.0.0.0')
+@database('oracle')
+# https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm#CNCPT1821
+# We don't support UriType (requires difficult workaround in JDBC)
+# We don't support timezone types
+# We don't suppport float/double
+# And general LOB things (clob, blob, long, nclob)
+@pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
+    ('number','1', 'DECIMAL', '1'),
+    ('char(2)', "'AB'", 'STRING', 'AB'),
+    ('varchar(4)', "'ABCD'", 'STRING', 'ABCD'),
+    ('varchar2(4)', "'NVAR'", 'STRING', 'NVAR'),
+    ('nchar(3)',"'NCH'", 'STRING', 'NCH'),
+    ('nvarchar2(4)', "'NVAR'", 'STRING', 'NVAR'),
+#    ('binary_float', '1.0', 'FLOAT', '1.0'),
+#    ('binary_double', '2.0', 'DOUBLE', '2.0'),
+    ('date', "TO_DATE('1998-1-1 6:22:33', 'YYYY-MM-DD HH24:MI:SS')", 'DATETIME', 883664553000),
+    ('timestamp', "TIMESTAMP'1998-1-2 6:00:00'", 'DATETIME', 883749600000),
+#    ('timestamp with time zone', "TIMESTAMP'1998-1-3 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-03T06:00:00-05:00'),
+#    ('timestamp with local time zone', "TIMESTAMP'1998-1-4 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-04T07:00:00Z'),
+#    ('long', "'LONG'", 'STRING', 'LONG'),
+#    ('blob', "utl_raw.cast_to_raw('BLOB')", 'BYTE_ARRAY', 'QkxPQg=='),
+#    ('clob', "'CLOB'", 'STRING', 'CLOB'),
+#    ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
+#    ('XMLType', "xmltype('<a></a>')", 'STRING', '<a></a>')
+])
+def test_all_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value):
+    """Test all feasible Oracle types in the CDC origin."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                id number primary key,
+                data_column {sql_type} NULL
+            )
+        """)
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = _get_oracle_cdc_client_origin(connection=connection,
+                                               database=database,
+                                               sdc_builder=sdc_builder,
+                                               pipeline_builder=builder,
+                                               buffer_locally=True,
+                                               src_table_name=table_name)
+        trash = builder.add_stage('Trash')
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # And insert a row with actual value
+        txn = connection.begin()
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+        connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
+        txn.commit()
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        assert len(snapshot[origin].output) == 2
+        record = snapshot[origin].output[0]
+        null_record = snapshot[origin].output[1]
+
+        # Since we are controlling types, we want to check explicit values inside the record rather the the python
+        # wrappers.
+        # TLKT-177: Add ability for field to return raw value
+
+        assert record.field['DATA_COLUMN'].type == expected_type
+        assert null_record.field['DATA_COLUMN'].type == expected_type
+
+        assert record.field['DATA_COLUMN']._data['value'] == expected_value
+        assert null_record.field['DATA_COLUMN'] == None
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
+
