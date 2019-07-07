@@ -654,6 +654,63 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
+@database
+@sdc_min_version('3.10.0')
+@pytest.mark.parametrize('enable_parallel_execution', [True, False])
+def test_jdbc_query_executor_parallel_query_execution(sdc_builder, sdc_executor, database, enable_parallel_execution):
+    """Test JDBC Query Executor's parallel query execution mode.
+
+    Pipeline will insert records into database, then update the records.
+    Using sqlalchemy, we verify that correct data was inserted (and updated) in the database.
+
+    Pipeline configuration:
+        dev_raw_data_source >> jdbc_query_executor
+    """
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_table(table_name, database)
+
+    # first, the inserts - they will run in parallel,
+    # then all the updates will run sequentially
+    # net result is all records should get updated to the (last) new value.
+    # otherwise we've failed.
+    statements = []
+    for rec in ROWS_IN_DATABASE:
+        statements.extend([f"INSERT INTO {table_name} (name, id) VALUES ('{rec['name']}', {rec['id']})",
+                           f"UPDATE {table_name} SET name = 'bob' WHERE id = {rec['id']}",
+                           f"UPDATE {table_name} SET name = 'Merrick' WHERE id = {rec['id']}"])
+    # convert to string - Dev Raw Data Source Data Format tab does not seem
+    # to "unroll" the array into newline-terminated records.
+    statements = "\n".join(statements)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=statements)
+
+    jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
+    jdbc_query_executor.set_attributes(sql_query="${record:value('/text')}",
+                                       enable_parallel_queries=enable_parallel_execution,
+                                       maximum_pool_size=2,
+                                       minimum_idle_connections=2)
+
+    dev_raw_data_source >> jdbc_query_executor
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(ROWS_IN_DATABASE)*3)
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1]) # order by id
+        result.close()
+        assert data_from_database == [('Merrick', record['id']) for record in ROWS_IN_DATABASE]
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
 def _create_jdbc_producer_pipeline(pipeline_builder, pipeline_title, raw_data, table_name, operation):
     """Helper function to create and return a pipeline with JDBC Producer
     The Deduplicator assures there is only one ingest to database. The pipeline looks like:
