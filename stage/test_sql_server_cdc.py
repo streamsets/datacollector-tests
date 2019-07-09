@@ -28,13 +28,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_SCHEMA_NAME = 'dbo'
 
 
-def setup_table(connection, schema_name, table_name, sample_data=None):
+def setup_table(connection, schema_name, table_name, sample_data=None, capture_instance_name=None):
     """Create table and insert the sample data into the table"""
     table = create_table(connection, schema_name, table_name)
 
+    if capture_instance_name is None:
+      capture_instance_name = f'{schema_name}_{table_name}'
+
     logger.info('Enabling CDC on %s.%s...', schema_name, table_name)
     connection.execute(f'exec sys.sp_cdc_enable_table @source_schema=\'{schema_name}\', '
-                       f'@source_name=\'{table_name}\', @supports_net_changes=1, @role_name=NULL')
+                       f'@source_name=\'{table_name}\', '
+                       f'@capture_instance=\'{capture_instance_name}\', '
+                       f'@supports_net_changes=1, @role_name=NULL')
 
     if sample_data is not None:
         add_data_to_table(connection, table, sample_data)
@@ -732,6 +737,77 @@ def test_sql_server_cdc_no_more_events(sdc_builder, sdc_executor, database):
         if table is not None:
             logger.info('Dropping table %s in %s database...', table, database.type)
             table.drop(database.engine)
+
+        if connection is not None:
+            connection.close()
+
+
+@database('sqlserver')
+@pytest.mark.timeout(180)
+def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor, database):
+    """Test for SQL Server CDC origin stage puts the source table in a record header attribute,
+        * jdbc.cdc.source_schema_name = <source schema>
+        * jdbc.cdc.source_name = <source table>
+
+    The pipeline looks like:
+        sql_server_cdc_origin >> trash
+    """
+    table = None
+    connection = None
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    try:
+        connection = database.engine.connect()
+        total_no_of_records = 1
+
+        rows_in_database = setup_sample_data(total_no_of_records)
+
+        table_name = get_random_string(string.ascii_lowercase, 20)
+        schema_name = get_random_string(string.ascii_lowercase, 3)
+        capture_instance_name = get_random_string(string.ascii_lowercase, 20)
+
+        # create schema & table
+        connection.execute(f'CREATE SCHEMA {schema_name}')
+        table = setup_table(connection, schema_name, table_name,
+            rows_in_database[0:1], capture_instance_name)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(fetch_size=1,
+            max_batch_size_in_records=1,
+            table_configs=[{'capture_instance': capture_instance_name}]
+        )
+
+        trash = pipeline_builder.add_stage('Trash')
+
+        sql_server_cdc >> trash
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # wait for data captured by cdc jobs in sql server before capturing the pipeline
+        ct_table_name = f'{capture_instance_name}_CT'
+        wait_for_data_in_ct_table(ct_table_name, total_no_of_records/2, database)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # assert all the data captured have the same raw_data
+        for record in snapshot.snapshot_batches[0][sql_server_cdc.instance_name].output:
+            assert record.field['id'] == rows_in_database[0].get('id')
+            assert record.field['name'] == rows_in_database[0].get('name')
+            assert record.field['dt'] == rows_in_database[0].get('dt')
+            assert record.header['values']['jdbc.cdc.source_schema_name'] == schema_name
+            assert record.header['values']['jdbc.cdc.source_name'] == table_name
+    finally:
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table, database.type)
+            table.drop(database.engine)
+
+        if schema_name is not None:
+            logger.info('Dropping schema %s in %s database...', schema_name, database.type)
+            connection.execute(f'drop schema {schema_name}')
 
         if connection is not None:
             connection.close()
