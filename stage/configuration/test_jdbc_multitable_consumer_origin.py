@@ -1,4 +1,30 @@
+import copy
+import logging
+import string
+
 import pytest
+import sqlalchemy
+from sqlalchemy import Column, Integer, String, CHAR
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__file__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Manish'},
+    {'id': 2, 'name': 'Shravan'},
+    {'id': 3, 'name': 'Shubham'}
+]
+DEPT_DATA = [
+    {'dept_id': 101, 'name': 'Sales'},
+    {'dept_id': 102, 'name': 'Marketing'},
+    {'dept_id': 103, 'name': 'IT'}
+]
+NO_OFFSET_DATA = [
+    {'region': 'North', 'branch_city': 'Delhi'},
+    {'region': 'West', 'branch_city': 'Mumbai'},
+    {'region': 'East', 'branch_city': 'Kolkata'}
+]
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -168,9 +194,82 @@ def test_jdbc_multitable_consumer_origin_configuration_result_set_cache_size(sdc
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_table_configs(sdc_builder, sdc_executor):
-    pass
+@database
+def test_jdbc_multitable_consumer_origin_configuration_table_configs(sdc_builder, sdc_executor, database):
+    """Check if JDBC Multi table consumer honours differnt configurations.
+    Configuration:
+        a) `tablePattern` : Stage should read all tables matching this string
+        b) `tableExclusionPattern`: Stage should exclude all tables matching this pattern
+        c) `offsetColumnToInitialOffsetValue`: All records with offset value later than this value should be read
+        d) `offsetColumns`: Offset column other than primary key
+        e) `extraOffsetColumnConditions`: Filter out record with offset value matching this condition
+        f) `enableNonIncremental`: For tables not having any column with incremental values
+    Tables:
+        a) a_<suffix> - Should be read from offset value 10 onwards (not including 10)
+        b) exclude_<suffix> - Should be ignored
+        c) dept_<suffix> - Records from 101 to 103 should be read and all others should be ignored
+        d) no_offset_<suffix> - All records should be read by stage.
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = 'a_{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    table_name_exclude = 'exclude_{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    src_table_prefix_dept = get_random_string(string.ascii_lowercase, 6)
+    table_name_dept = 'dept_{}_{}'.format(src_table_prefix_dept, get_random_string(string.ascii_lowercase, 20))
+    src_table_prefix_no_offset = get_random_string(string.ascii_lowercase, 6)
+    table_name_no_offset = 'no_offset_{}_{}'.format(src_table_prefix_no_offset,
+                                                    get_random_string(string.ascii_lowercase, 20))
+    rows_in_database = [{'id': 0, 'name': 'Skip'}] + copy.deepcopy(ROWS_IN_DATABASE)
+    rows_in_database = [{'id': int(d['id'])+10, 'name': d['name']} for d in rows_in_database]
+    dept_table_data = [{'dept_id': 100, 'name': 'Initial offset should skip this record.'}] + DEPT_DATA
+    dept_table_data = dept_table_data + [{'dept_id': 104, 'name': 'Condition'}]
+    no_offset_data = NO_OFFSET_DATA
+    try:
+        # Create tables needed for table and insert data
+        columns = [Column('id', Integer, primary_key=True), Column('name', String(32))]
+        table = create_table(database, columns, table_name)
+        insert_data_in_table(database, table, rows_in_database)
+
+        columns_exclude = [Column('id', Integer, primary_key=True), Column('name', String(32))]
+        table_exclude = create_table(database, columns_exclude, table_name_exclude)
+        insert_data_in_table(database, table_exclude, rows_in_database)
+
+        columns_dept = [Column('dept_id', Integer), Column('name', String(64))]
+        table_dept = create_table(database, columns_dept, table_name_dept)
+        insert_data_in_table(database, table_dept, dept_table_data)
+
+        columns_no_offset = [Column('region', String(32)), Column('branch_city', String(32))]
+        table_no_offset = create_table(database, columns_no_offset, table_name_no_offset)
+        insert_data_in_table(database, table_no_offset, no_offset_data)
+
+        # Build the pipeline
+        attributes = {'table_configs': [{'tablePattern': f'%{src_table_prefix}%',
+                                         'tableExclusionPattern': 'exclude.*',
+                                         'offsetColumnToInitialOffsetValue': [{'key': 'id', 'value': '10'}]},
+                                        {'tablePattern': f'%dept_{src_table_prefix_dept}%',
+                                         'overrideDefaultOffsetColumns': True,
+                                         'offsetColumns': ['dept_id'],
+                                         'offsetColumnToInitialOffsetValue': [{'key': 'dept_id', 'value': '100'}],
+                                         'extraOffsetColumnConditions': 'dept_id < 104'
+                                         },
+                                        {'tablePattern': f'%{src_table_prefix_no_offset}%',
+                                         'enableNonIncremental': True}],
+                      'initial_table_order_strategy': 'ALPHABETICAL'}
+        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                                                            attributes)
+
+        # Execute pipeline and get the snapshot
+        snapshot = execute_pipeline(sdc_executor, pipeline, 3)
+
+        # Column names are converted to lower case since Oracle database column names are in upper case.
+        tuples_to_lower_name = lambda tup: (tup[0].lower(), str(tup[1]))
+        rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[1])
+                              for record in snapshot_content(snapshot, jdbc_multitable_consumer)]
+        assert rows_from_snapshot == ([('name', row['name']) for row in rows_in_database][1:] +
+                                      [('name', row['name']) for row in dept_table_data][1:4] +
+                                      [('branch_city', row['branch_city']) for row in no_offset_data])
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        delete_table([table, table_exclude, table_dept, table_no_offset], database)
 
 
 @pytest.mark.parametrize('transaction_isolation', ['DEFAULT', 'TRANSACTION_READ_COMMITTED', 'TRANSACTION_READ_UNCOMMITTED', 'TRANSACTION_REPEATABLE_READ', 'TRANSACTION_SERIALIZABLE'])
@@ -190,3 +289,58 @@ def test_jdbc_multitable_consumer_origin_configuration_use_credentials(sdc_build
 def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, use_credentials):
     pass
 
+
+# Util functions
+
+def create_table(database, columns, table_name):
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        *columns
+    )
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
+
+
+def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes, configure_for_environment_flag=True):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(**attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+    if configure_for_environment_flag:
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+    else:
+        pipeline = pipeline_builder.build()
+    return jdbc_multitable_consumer, pipeline
+
+
+def execute_pipeline(sdc_executor, pipeline, number_of_batches=1, snapshot_batch_size=10):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=number_of_batches,
+                                             batch_size=snapshot_batch_size).snapshot
+    return snapshot
+
+
+def insert_data_in_table(database, table, rows_to_insert):
+    logger.info('Adding three rows into %s database ...', database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), rows_to_insert)
+
+
+def snapshot_content(snapshot, jdbc_multitable_consumer):
+    """This is common function can be used at in many TCs to get snapshot content."""
+    processed_data = []
+    for snapshot_batch in snapshot.snapshot_batches:
+        for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+            for record in value:
+                processed_data.append(record)
+    return processed_data
+
+
+def delete_table(tables, database):
+    for table in tables:
+        logger.info('Dropping table %s in %s database...', table.name, database.type)
+        table.drop(database.engine)
