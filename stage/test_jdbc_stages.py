@@ -2237,6 +2237,7 @@ def test_jdbc_postgresql_types(sdc_builder, sdc_executor, database, use_table_or
 @database('sqlserver')
 # https://docs.microsoft.com/en-us/sql/t-sql/data-types/data-types-transact-sql?view=sql-server-2017
 # hiearchyid types not supported
+# Geometry and geography not supported
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
     ('DATE', "'2019-01-01'", 'DATE', 1546300800000),
     ('DATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085322310000),
@@ -2264,8 +2265,8 @@ def test_jdbc_postgresql_types(sdc_builder, sdc_executor, database, use_table_or
     ('TEXT',"'Hello'", 'STRING', 'Hello'),
     ('NTEXT',"'Hello'", 'STRING', 'Hello'),
     ('IMAGE',"CAST('Hello' AS IMAGE)", 'BYTE_ARRAY', 'SGVsbG8='),
-    ('GEOGRAPHY',"geography::STGeomFromText('LINESTRING(-122.360 47.656, -122.343 47.656 )', 4326)", 'BYTE_ARRAY', '5hAAAAEUhxbZzvfTR0DXo3A9CpdewIcW2c7300dAy6FFtvOVXsA='),
-    ('GEOMETRY',"geometry::STGeomFromText('LINESTRING (100 100, 20 180, 180 180)', 0)", 'BYTE_ARRAY', 'AAAAAAEEAwAAAAAAAAAAAFlAAAAAAAAAWUAAAAAAAAA0QAAAAAAAgGZAAAAAAACAZkAAAAAAAIBmQAEAAAABAAAAAAEAAAD/////AAAAAAI='),
+#    ('GEOGRAPHY',"geography::STGeomFromText('LINESTRING(-122.360 47.656, -122.343 47.656 )', 4326)", 'BYTE_ARRAY', '5hAAAAEUhxbZzvfTR0DXo3A9CpdewIcW2c7300dAy6FFtvOVXsA='),
+#    ('GEOMETRY',"geometry::STGeomFromText('LINESTRING (100 100, 20 180, 180 180)', 0)", 'BYTE_ARRAY', 'AAAAAAEEAwAAAAAAAAAAAFlAAAAAAAAAWUAAAAAAAAA0QAAAAAAAgGZAAAAAAACAZkAAAAAAAIBmQAEAAAABAAAAAAEAAAD/////AAAAAAI='),
     ('XML', "'<a></a>'", 'STRING', '<a/>')
 ])
 @pytest.mark.parametrize('use_table_origin', [True, False])
