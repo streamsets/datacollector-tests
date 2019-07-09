@@ -17,6 +17,7 @@ import io
 import json
 import logging
 import string
+import random
 
 import avro
 import pytest
@@ -47,6 +48,9 @@ SCHEMA = {
     ]
 }
 
+@pytest.fixture(scope='function')
+def port():
+    return random.randrange(20000, 25000)
 
 @pytest.fixture(autouse=True)
 def kafka_check(cluster):
@@ -55,7 +59,7 @@ def kafka_check(cluster):
 
 
 @cluster('cdh')
-def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
     Because cluster mode pipelines don't support snapshots, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
@@ -80,7 +84,7 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka String pipeline').configure_for_environment(cluster)
@@ -91,7 +95,7 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
 
@@ -109,7 +113,7 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, cluster):
+def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, cluster, port):
     """Write simple text messages into Kafka multiple partitions and confirm that Kafka successfully reads them.
     Because cluster mode pipelines don't support snapshots, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
@@ -134,7 +138,7 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
     builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster partitions pipeline').configure_for_environment(cluster)
@@ -145,7 +149,7 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
@@ -163,7 +167,7 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
 
 
 @cluster('cdh')
-def test_kafka_origin_multiple_json_objects_single_record_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_origin_multiple_json_objects_single_record_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write json objects messages into Kafka and confirm that Kafka successfully reads them.
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
@@ -174,11 +178,11 @@ def test_kafka_origin_multiple_json_objects_single_record_cluster(sdc_builder, s
     message = {'Alex': 'Developer', 'Xavi': 'Developer'}
     expected = '{\'Alex\': Developer, \'Xavi\': Developer}'
 
-    json_test(sdc_builder, sdc_executor, cluster, message, expected)
+    json_test(sdc_builder, sdc_executor, cluster, message, expected, port)
 
 
 @cluster('cdh')
-def test_kafka_origin_multiple_json_objects_multiple_records_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_origin_multiple_json_objects_multiple_records_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write json objects messages into Kafka and confirm that Kafka successfully reads them.
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
@@ -190,11 +194,11 @@ def test_kafka_origin_multiple_json_objects_multiple_records_cluster(sdc_builder
     message = [{'Alex': 'Developer'}, {'Xavi': 'Developer'}]
     expected = '[{\'Alex\': Developer}, {\'Xavi\': Developer}]'
 
-    json_test(sdc_builder, sdc_executor, cluster, message, expected)
+    json_test(sdc_builder, sdc_executor, cluster, message, expected, port)
 
 
 @cluster('cdh')
-def test_kafka_origin_json_array_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_origin_json_array_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write json array messages into Kafka and confirm that Kafka successfully reads them.
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
@@ -206,11 +210,11 @@ def test_kafka_origin_json_array_cluster(sdc_builder, sdc_executor, cluster):
     message = ['Alex', 'Xavi']
     expected = '[Alex, Xavi]'
 
-    json_test(sdc_builder, sdc_executor, cluster, message, expected)
+    json_test(sdc_builder, sdc_executor, cluster, message, expected, port)
 
 
 @cluster('cdh')
-def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple XML messages into Kafka and confirm that Kafka successfully reads them.
 
     Kafka Consumer Origin pipeline with cluster mode:
@@ -233,7 +237,7 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster):
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
     kafka_consumer.set_attributes(data_format='XML')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka XML pipeline').configure_for_environment(cluster)
@@ -244,7 +248,7 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster kafka XML Snapshot pipeline')
@@ -261,7 +265,7 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple XML messages into Kafka and confirm that Kafka successfully reads them.
 
     Kafka Consumer Origin pipeline with cluster mode:
@@ -284,7 +288,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
     kafka_consumer.set_attributes(data_format='XML', delimiter_element="developer")
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka XML pipeline').configure_for_environment(cluster)
@@ -295,7 +299,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster kafka XML Snapshot pipeline')
@@ -313,7 +317,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
 
 
 @cluster('cdh')
-def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple csv messages into Kafka and confirm that Kafka successfully reads them.
 
     Kafka Consumer Origin pipeline with cluster mode:
@@ -336,7 +340,7 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster):
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
     kafka_consumer.set_attributes(data_format='DELIMITED')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka CSV pipeline').configure_for_environment(cluster)
@@ -347,7 +351,7 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster kafka CSV Snapshot pipeline')
@@ -364,7 +368,7 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple binary messages into Kafka and confirm that Kafka successfully reads them.
 
     Kafka Consumer Origin pipeline with cluster mode:
@@ -387,7 +391,7 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster):
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
     kafka_consumer.set_attributes(data_format='BINARY')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka BINARY pipeline').configure_for_environment(cluster)
@@ -398,7 +402,7 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster kafka BINARY snapshot')
@@ -415,7 +419,7 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
+def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster, port):
     """Write avro text messages into Kafka multiple partitions and confirm that Kafka successfully reads them.
     Because cluster mode pipelines don't support snapshots, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
@@ -442,7 +446,7 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
     kafka_consumer.set_attributes(data_format='AVRO', avro_schema_location='INLINE', avro_schema=json.dumps(SCHEMA))
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka AVRO pipeline').configure_for_environment(cluster)
@@ -453,7 +457,7 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
@@ -470,7 +474,7 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster):
+def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster, port):
     """Write avro text messages into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
     Because cluster mode pipelines don't support snapshots, we do this verification using a
@@ -499,7 +503,7 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster)
 
     kafka_consumer.set_attributes(data_format='AVRO', avro_schema_location='SOURCE')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka AVRO pipeline').configure_for_environment(cluster)
@@ -510,7 +514,7 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster)
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
@@ -528,7 +532,7 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster)
 
 
 @cluster('cdh')
-def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
+def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster, port):
     """Write a text message using UDP datagram mode SYSLOG
     into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
@@ -564,7 +568,7 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
     # Override default configuration.
     kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_packet_format='SYSLOG')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka SYSLOG pipeline').configure_for_environment(cluster)
@@ -575,7 +579,7 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
@@ -593,7 +597,7 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
+def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster, port):
     """Write a text message using UDP datagram mode NETFLOW
     into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
@@ -631,7 +635,7 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
     # Override default configuration.
     kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_data_format='NETFLOW')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka NETFLOW pipeline').configure_for_environment(cluster)
@@ -642,7 +646,7 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
@@ -660,7 +664,7 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster):
+def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster, port):
     """Write a text message using UDP datagram mode COLLECTD
     into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
@@ -711,7 +715,7 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster):
     # Override default configuration.
     kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_data_format='COLLECTD')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka COLLECTD pipeline').configure_for_environment(cluster)
@@ -722,7 +726,7 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
@@ -740,7 +744,7 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh')
-def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster):
+def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple log messages into Kafka and confirm that Kafka successfully reads them.
 
     Kafka Consumer Origin pipeline with cluster mode:
@@ -768,7 +772,7 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster):
                                   retain_original_line=True,
                                   on_parse_error='INCLUDE_AS_STACK_TRACE')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka BINARY pipeline').configure_for_environment(cluster)
@@ -779,7 +783,7 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster kafka BINARY snapshot')
@@ -817,10 +821,10 @@ def get_kafka_consumer_stage(sdc_version, pipeline_builder, cluster):
     return kafka_consumer
 
 
-def get_rpc_origin(builder, sdc_rpc_destination):
+def get_rpc_origin(builder, sdc_rpc_destination, port):
     """Create and return rpc origin stage with basic configuration"""
     sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
-    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_PORT
+    sdc_rpc_origin.sdc_rpc_listening_port = port
     sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
 
     # Since YARN jobs take a while to get going, set RPC origin batch wait time to MAX_BATCH_WAIT_TIME (30s).
@@ -829,10 +833,10 @@ def get_rpc_origin(builder, sdc_rpc_destination):
     return sdc_rpc_origin
 
 
-def get_rpc_destination(builder, sdc_executor):
+def get_rpc_destination(builder, sdc_executor, port):
     """Create and return rpc destination stage with basic configuration"""
     sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT))
+    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, port))
     sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     return sdc_rpc_destination
@@ -913,7 +917,7 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
         assert message[1] in str(record_field)
 
 
-def json_test(sdc_builder, sdc_executor, cluster, message, expected):
+def json_test(sdc_builder, sdc_executor, cluster, message, expected, port):
     """Generic method to tests using JSON format"""
 
     if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
@@ -926,7 +930,7 @@ def json_test(sdc_builder, sdc_executor, cluster, message, expected):
     kafka_consumer = get_kafka_consumer_stage(sdc_builder.version, builder, cluster)
     kafka_consumer.set_attributes(data_format='JSON')
 
-    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor)
+    sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
     kafka_consumer_pipeline = builder.build(title='Cluster kafka JSON pipeline').configure_for_environment(cluster)
@@ -937,7 +941,7 @@ def json_test(sdc_builder, sdc_executor, cluster, message, expected):
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination)
+    sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     trash = builder.add_stage(label='Trash')
     sdc_rpc_origin >> trash
     snapshot_pipeline = builder.build(title='Cluster kafka JSON Snapshot pipeline')
