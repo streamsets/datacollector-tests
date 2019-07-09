@@ -2010,11 +2010,11 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
     ('FLOAT','5.2', 'FLOAT', '5.2'),
     ('DOUBLE','5.2', 'DOUBLE', '5.2'),
     ('BIT(8)',"b'01010101'", 'BYTE_ARRAY', 'VQ=='),
-    ('DATE',"'2019-01-01'", 'DATE', 1546329600000),
-    ('DATETIME',"'2019-01-01 5:00:00'", 'DATETIME', 1546347600000),
-    ('TIMESTAMP',"'2019-01-01 5:00:00'", 'DATETIME', 1546347600000),
-    ('TIME',"'5:00:00'", 'TIME', 46800000),
-    ('YEAR',"'2019'", 'DATE', 1546329600000),
+    ('DATE',"'2019-01-01'", 'DATE', 1546300800000),
+    ('DATETIME',"'2019-01-01 5:00:00'", 'DATETIME', 1546318800000),
+    ('TIMESTAMP',"'2019-01-01 5:00:00'", 'DATETIME', 1546318800000),
+    ('TIME',"'5:00:00'", 'TIME', 18000000),
+    ('YEAR',"'2019'", 'DATE', 1546300800000),
     ('CHAR(5)',"'Hello'", 'STRING', 'Hello'),
     ('VARCHAR(5)',"'Hello'", 'STRING', 'Hello'),
     ('BINARY(5)',"'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
@@ -2109,10 +2109,10 @@ def test_jdbc_multitable_mysql_types(sdc_builder, sdc_executor, database, use_ta
     ('varchar(5)',"'Hello'", 'STRING', 'Hello'),
     ('text',"'Hello'", 'STRING', 'Hello'),
     ('bytea',"'\\xDEADBEEF'", 'BYTE_ARRAY', '3q2+7w=='),
-    ('timestamp', "'2003-04-12 04:05:06'", 'DATETIME', 1050145506000),
-    ('timestamp with time zone', "'2003-04-12 04:05:06 America/New_York'", 'DATETIME', 1050134706000), # For PostgreSQL, we don't create ZONED_DATETIME
-    ('date',"'2019-01-01'", 'DATE', 1546329600000),
-    ('time',"'5:00:00'", 'TIME', 46800000),
+    ('timestamp', "'2003-04-12 04:05:06'", 'DATETIME', 1050120306000),
+    ('timestamp with time zone', "'2003-04-12 04:05:06 America/New_York'", 'DATETIME', 1050120306000), # For PostgreSQL, we don't create ZONED_DATETIME
+    ('date',"'2019-01-01'", 'DATE', 1546300800000),
+    ('time',"'5:00:00'", 'TIME', 18000000),
     ('time with time zone',"'04:05:06-08:00'", 'TIME', 43506000),
     ('interval',"INTERVAL '1' YEAR", 'STRING', '1 years 0 mons 0 days 0 hours 0 mins 0.00 secs'),
     ('boolean', "true", 'BOOLEAN', True),
@@ -2140,7 +2140,7 @@ def test_jdbc_multitable_mysql_types(sdc_builder, sdc_executor, database, use_ta
     ("int8range", "'[1,2)'", 'STRING', '[1,2)'),
     ("numrange", "'[1,2)'", 'STRING', '[1,2)'),
     ("tsrange", "'[2010-01-01 14:30, 2010-01-01 15:30)'", 'STRING', '["2010-01-01 14:30:00","2010-01-01 15:30:00")'),
-    ("tstzrange", "'[2010-01-01 14:30 America/New_York, 2010-01-01 15:30 America/New_York)'", 'STRING', '["2010-01-01 11:30:00-08","2010-01-01 12:30:00-08")'),
+    ("tstzrange", "'[2010-01-01 14:30 America/New_York, 2010-01-01 15:30 America/New_York)'", 'STRING', '["2010-01-01 19:30:00+00","2010-01-01 20:30:00+00")'),
     ("daterange", "'[2010-01-01, 2010-01-02)'", 'STRING', '[2010-01-01,2010-01-02)'),
 ])
 @pytest.mark.parametrize('use_table_origin', [True, False])
@@ -2237,12 +2237,12 @@ def test_jdbc_postgresql_types(sdc_builder, sdc_executor, database, use_table_or
 # https://docs.microsoft.com/en-us/sql/t-sql/data-types/data-types-transact-sql?view=sql-server-2017
 # hiearchyid types not supported
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
-    ('DATE', "'2019-01-01'", 'DATE', 1546329600000),
-    ('DATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085347510000),
-    ('DATETIME2', "'2004-05-23T14:25:10'", 'DATETIME', 1085347510000),
+    ('DATE', "'2019-01-01'", 'DATE', 1546300800000),
+    ('DATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085322310000),
+    ('DATETIME2', "'2004-05-23T14:25:10'", 'DATETIME', 1085322310000),
     ('DATETIMEOFFSET', "'2004-05-23T14:25:10'", 'STRING', '2004-05-23 14:25:10 +00:00'),
-    ('SMALLDATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085347500000),
-    ('TIME', "'14:25:10'", 'TIME', 80710000),
+    ('SMALLDATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085322300000),
+    ('TIME', "'14:25:10'", 'TIME', 51910000),
     ('BIT', "1", 'BOOLEAN', True),
     ('DECIMAL(5,2)','5.20', 'DECIMAL', '5.20'),
     ('NUMERIC(5,2)','5.20', 'DECIMAL', '5.20'),
