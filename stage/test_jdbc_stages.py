@@ -2111,7 +2111,7 @@ def test_jdbc_multitable_mysql_types(sdc_builder, sdc_executor, database, use_ta
     ('text',"'Hello'", 'STRING', 'Hello'),
     ('bytea',"'\\xDEADBEEF'", 'BYTE_ARRAY', '3q2+7w=='),
     ('timestamp', "'2003-04-12 04:05:06'", 'DATETIME', 1050120306000),
-    ('timestamp with time zone', "'2003-04-12 04:05:06 America/New_York'", 'DATETIME', 1050120306000), # For PostgreSQL, we don't create ZONED_DATETIME
+    ('timestamp with time zone', "'2003-04-12 04:05:06 America/New_York'", 'DATETIME', 1050134706000), # For PostgreSQL, we don't create ZONED_DATETIME
     ('date',"'2019-01-01'", 'DATE', 1546300800000),
     ('time',"'5:00:00'", 'TIME', 18000000),
     ('time with time zone',"'04:05:06-08:00'", 'TIME', 43506000),
@@ -2128,7 +2128,7 @@ def test_jdbc_multitable_mysql_types(sdc_builder, sdc_executor, database, use_ta
     ('inet', "'127.0.0.1/16'", 'STRING', '127.0.0.1/16'),
     ('cidr', "'127.0.0.0/16'", 'STRING', '127.0.0.0/16'),
     ('macaddr', "'08:00:2b:01:02:03'", 'STRING', '08:00:2b:01:02:03'),
-    ('macaddr8', "'08:00:2b:01:02:03'", 'STRING', '08:00:2b:ff:fe:01:02:03'),
+#    ('macaddr8', "'08:00:2b:01:02:03'", 'STRING', '08:00:2b:ff:fe:01:02:03'),
 #    ('bit(8)', "b'10101010'", 'BYTE_ARRAY', '08:00:2b:ff:fe:01:02:03'), # Doesn't work at all today
     ('bit varying(3)', "b'101'", 'STRING', '101'),
     ('uuid', "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", 'STRING', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'),
