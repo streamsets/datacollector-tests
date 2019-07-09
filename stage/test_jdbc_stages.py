@@ -1994,6 +1994,7 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
 @sdc_min_version('3.0.0.0')
 @database('mysql')
 # https://dev.mysql.com/doc/refman/8.0/en/data-types.html
+# We don't support BIT generally (the driver is doing funky 'random' mappings on certain versions)
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
     ('TINYINT','-128', 'SHORT', -128),
     ('TINYINT UNSIGNED','255', 'SHORT', 255),
@@ -2009,7 +2010,7 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
     ('NUMERIC(5, 2)','5.20', 'DECIMAL', '5.20'),
     ('FLOAT','5.2', 'FLOAT', '5.2'),
     ('DOUBLE','5.2', 'DOUBLE', '5.2'),
-    ('BIT(8)',"b'01010101'", 'BYTE_ARRAY', 'VQ=='),
+#    ('BIT(8)',"b'01010101'", 'BYTE_ARRAY', 'VQ=='),
     ('DATE',"'2019-01-01'", 'DATE', 1546300800000),
     ('DATETIME',"'2019-01-01 5:00:00'", 'DATETIME', 1546318800000),
     ('TIMESTAMP',"'2019-01-01 5:00:00'", 'DATETIME', 1546318800000),
@@ -2024,9 +2025,9 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
     ("ENUM('a', 'b')", "'a'", 'STRING', 'a'),
     ("set('a', 'b')", "'a,b'", 'STRING', 'a,b'),
     ("POINT", "POINT(1, 1)", 'BYTE_ARRAY', 'AAAAAAEBAAAAAAAAAAAA8D8AAAAAAADwPw=='),
-    ("LINESTRING", "GeomFromText('LINESTRING(0 0, 10 10, 20 25, 50 60)')", 'BYTE_ARRAY', 'AAAAAAECAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkQAAAAAAAACRAAAAAAAAANEAAAAAAAAA5QAAAAAAAAElAAAAAAAAATkA='),
-    ("POLYGON", "GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0),(5 5,7 5,7 7,5 7, 5 5))')", 'BYTE_ARRAY', 'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
-    ("JSON", "'{\"a\":\"b\"}'", 'BYTE_ARRAY', 'eyJhIjogImIifQ=='),
+    ("LINESTRING", "LineString(Point(0,0), Point(10,10), Point(20,25), Point(50,60))", 'BYTE_ARRAY', 'AAAAAAECAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkQAAAAAAAACRAAAAAAAAANEAAAAAAAAA5QAAAAAAAAElAAAAAAAAATkA='),
+    ("POLYGON", "Polygon(LineString(Point(0,0),Point(10,0),Point(10,10),Point(0,10),Point(0,0)),LineString(Point(5,5),Point(7,5),Point(7,7),Point(5,7),Point(5,5)))", 'BYTE_ARRAY', 'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
+    ("JSON", "'{\"a\":\"b\"}'", 'STRING', '{\"a\": \"b\"}'),
 ])
 @pytest.mark.parametrize('use_table_origin', [True, False])
 def test_jdbc_multitable_mysql_types(sdc_builder, sdc_executor, database, use_table_origin, sql_type, insert_fragment, expected_type, expected_value):
@@ -2063,7 +2064,7 @@ def test_jdbc_multitable_mysql_types(sdc_builder, sdc_executor, database, use_ta
 
         origin >> trash
 
-        pipeline = builder.build().configure_for_environment(database)
+        pipeline = builder.build(f"MySQL Type {sql_type} with value {insert_fragment}").configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
