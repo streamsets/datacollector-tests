@@ -95,6 +95,9 @@ def test_jdbc_multitable_consumer_origin_simple(sdc_builder, sdc_executor, datab
 @database
 def test_jdbc_consumer_offset_resume(sdc_builder, sdc_executor, database):
     """Ensure that the Query consumer can resume where it ended and stop the pipeline when it reads all the data."""
+    if isinstance(database, OracleDatabase):
+        pytest.skip('This test does not support oracle and its upper casing of column names.')
+
     metadata = sqlalchemy.MetaData()
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = sqlalchemy.Table(
