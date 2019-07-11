@@ -147,6 +147,9 @@ def test_jdbc_consumer_offset_resume(sdc_builder, sdc_executor, database):
 @database
 def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database):
     """Ensure that the Query consumer works properly in non-incremental mode."""
+    if database.type == 'Oracle':
+        pytest.skip("This test depends on proper case for column names that Oracle auto-uppers.")
+
     metadata = sqlalchemy.MetaData()
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = sqlalchemy.Table(
