@@ -22,6 +22,7 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+
 # pylint: disable=pointless-statement, too-many-locals
 
 
@@ -49,7 +50,7 @@ def test_directory_origin(sdc_builder, sdc_executor):
     files_pipeline = pipeline_builder.build('Generate files pipeline')
     sdc_executor.add_pipeline(files_pipeline)
 
-    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10) # generate some batches/files
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10)  # generate some batches/files
     sdc_executor.stop_pipeline(files_pipeline)
 
     # 2nd pipeline which reads the files using File Tail stage
@@ -78,3 +79,89 @@ def test_directory_origin(sdc_builder, sdc_executor):
         for record in value:
             if 'text' in record.field:
                 assert raw_data == record.field['text'].value
+
+
+def test_file_tale_origin_stop_continue(sdc_builder, sdc_executor):
+    """Test File Tail Origin. We test by making sure files are pre-created using Local FS destination stage pipeline
+    and then have the File Tail Origin read those files. The pipelines looks like:
+
+        dev_raw_data_source >> local_fs
+
+        file_tail >> trash
+    """
+    raw_data = 'Hello!\n' * 10
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    # 1st pipeline which generates the required files for Directory Origin
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT', directory_template=tmp_directory,
+                            files_prefix='sdc-', max_records_in_file=100)
+
+    dev_raw_data_source >> local_fs
+    files_pipeline = pipeline_builder.build('Generate file for start-stop')
+    sdc_executor.add_pipeline(files_pipeline)
+    sdc_executor.start_pipeline(files_pipeline)
+
+    # 2nd pipeline which reads the files using File Tail stage
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    file_tail = pipeline_builder.add_stage('File Tail', type='origin')
+    file_tail.set_attributes(data_format='TEXT',
+                             file_to_tail=[{
+                                 'fileRollMode': 'ALPHABETICAL',
+                                 'fileFullPath': f'{tmp_directory}/*'
+                             }])
+    trash_1 = pipeline_builder.add_stage('Trash')
+    trash_2 = pipeline_builder.add_stage('Trash')
+
+    file_tail >> trash_1
+    file_tail >> trash_2
+
+    file_tail_pipeline = pipeline_builder.build('File Tail Origin pipeline')
+    sdc_executor.add_pipeline(file_tail_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(file_tail_pipeline)
+
+    # assert all the data captured have the same raw_data
+    # the snapshot output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
+    # by checking a Record having a key called 'text'
+
+    size_output = 0
+
+    for value in snapshot.snapshot_batches[0][file_tail.instance_name].output_lanes.values():
+        for record in value:
+            if 'text' in record.field:
+                assert 'Hello!' == record.field['text'].value
+                size_output += 1
+
+    assert size_output == 10
+
+    raw_data = 'Bye!\n' * 10
+    # 2n pipeline which generates the required files for Directory Origin
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT', directory_template=tmp_directory,
+                            files_prefix='sdc-', max_records_in_file=100)
+
+    dev_raw_data_source >> local_fs
+    files_pipeline_2 = pipeline_builder.build('Generate file for start-stop 2')
+    sdc_executor.add_pipeline(files_pipeline_2)
+    sdc_executor.start_pipeline(files_pipeline_2).wait_for_finished()
+
+    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(file_tail_pipeline)
+
+    size_output = 0
+
+    for value in snapshot.snapshot_batches[0][file_tail.instance_name].output_lanes.values():
+        for record in value:
+            if 'text' in record.field:
+                assert 'Bye!' == record.field['text'].value
+                size_output += 1
+
+    assert size_output == 10
