@@ -165,19 +165,22 @@ def test_jdbc_multitable_consumer_origin_configuration_password(sdc_builder, sdc
 @pytest.mark.parametrize('per_batch_strategy', ['PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE', 'SWITCH_TABLES'])
 def test_jdbc_multitable_consumer_origin_configuration_per_batch_strategy(sdc_builder, sdc_executor,
                                                                           database, per_batch_strategy):
-    """When 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE' is taken as 'per_batch_strategy', records in the snapshot present
-    as same order as rows in the table.
-    In case of 'SWITCH_TABLES' order of the records in one batch records are guaranteed but order of the records in
-    table are not guaranteed, because threads switch tables.
+    """Here we are creating 4 tables with 10 records each. JDBC stage will use 2 threads to read this table.
+    When 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE' is taken as 'per_batch_strategy'
+    So, thread 1 will read data from table 1 and thread 2 will read data from table 2. thread1 and 2 will read complete
+    data from table1 and table2, resp. moving on to table 3 and table 4.
+    In case of 'SWITCH_TABLES' each thread will read data from more than 2 tables.
     """
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
     tables = []
+    number_of_rows_in_table = 100
+    number_of_tables = 4
     try:
-        # Create 4 tables and insert 10 records
+        # Create 4 tables
         id_count = 1
-        for table_number in range(0, 4):
-            rows_in_table = [i for i in range(id_count, id_count + 10)]
-            id_count += 10
+        for table_number in range(0, number_of_tables):
+            rows_in_table = [i for i in range(id_count, id_count + number_of_rows_in_table)]
+            id_count += number_of_rows_in_table
             columns = [sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)]
             table = create_table(database, columns, f'{src_table_prefix}_{table_number}')
             insert_data_in_table(database, table, [{'id': id} for id in rows_in_table])
@@ -185,32 +188,31 @@ def test_jdbc_multitable_consumer_origin_configuration_per_batch_strategy(sdc_bu
         # Build the pipeline
         attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}],
                       'per_batch_strategy': per_batch_strategy, 'batches_from_result_set': 5,
-                      'number_of_threads': 2, 'maximum_pool_size': 2
+                      'number_of_threads': 2, 'maximum_pool_size': 2, 'result_set_cache_size': 50
                       }
         jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
                                                                                             attributes)
-        # Execute pipeline and get the snapshot
-        batch_size = 5
-        snapshot = execute_pipeline(sdc_executor, pipeline, 8, batch_size)
+        pipeline.delivery_guarantee = 'AT_MOST_ONCE'
 
-        # Column names are converted to lower case since Oracle database column names are in upper case.
-        tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
-        snapshot_contents = snapshot_content(snapshot, jdbc_multitable_consumer)
-        rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[0])
-                              for record in snapshot_contents]
+        batch_size = 10
+        snapshot = execute_pipeline(sdc_executor, pipeline, 40, batch_size)
 
-        rows_from_snapshot_records = [i[1].value for i in list(rows_from_snapshot)]
+        threads_tables = {}
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+                for record in value:
+                    record_header = record.header.values
+                    if record_header['jdbc.threadNumber'] not in threads_tables:
+                        threads_tables[record_header['jdbc.threadNumber']] = {record_header['jdbc.tables']}
+                    else:
+                        threads_tables[record_header['jdbc.threadNumber']].add(record_header['jdbc.tables'])
 
         if per_batch_strategy == 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE':
-            batch_size += batch_size
-
-        record_count = 0
-        for snapshot_records_batch in range(len(rows_from_snapshot_records)//batch_size):
-            for record_number in range(batch_size - 1):
-                if not rows_from_snapshot_records[record_count]+1 == rows_from_snapshot_records[record_count+1]:
-                    assert False
-                record_count += 1
-            record_count += 1
+            assert len(threads_tables['0']) == 2
+            assert len(threads_tables['1']) == 2
+        else:
+            assert len(threads_tables['0']) >= 2
+            assert len(threads_tables['1']) >= 2
     finally:
         sdc_executor.stop_pipeline(pipeline)
         for table in tables:
