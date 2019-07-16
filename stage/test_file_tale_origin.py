@@ -165,3 +165,70 @@ def test_file_tale_origin_stop_continue(sdc_builder, sdc_executor):
                 size_output += 1
 
     assert size_output == 10
+
+
+def test_directory_origin_with_finisher(sdc_builder, sdc_executor):
+    """Test File Tail Origin. We test by making sure files are pre-created using Local FS destination stage pipeline
+    and then have the File Tail Origin read those files. A finisher stops the pipeline when the first batch is
+    processed checking the event triggered is START.
+    The pipelines looks like:
+
+        dev_raw_data_source >> local_fs
+
+        file_tail >> trash_1
+        file_tail >> trash_2
+        file_tail >= finisher
+    """
+    raw_data = 'Hello!\n' * 10
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    # 1st pipeline which generates the required files for Directory Origin
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT', directory_template=tmp_directory,
+                            files_prefix='sdc-', max_records_in_file=100)
+
+    dev_raw_data_source >> local_fs
+
+    files_pipeline = pipeline_builder.build('Generate files pipeline')
+    sdc_executor.add_pipeline(files_pipeline)
+    sdc_executor.start_pipeline(files_pipeline).wait_for_finished()
+
+    # 2nd pipeline which reads the files using File Tail stage
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    file_tail = pipeline_builder.add_stage('File Tail', type='origin')
+    file_tail.set_attributes(data_format='TEXT',
+                             file_to_tail=[{
+                                 'fileRollMode': 'ALPHABETICAL',
+                                 'fileFullPath': f'{tmp_directory}/*'
+                             }])
+    trash_1 = pipeline_builder.add_stage('Trash')
+    trash_2 = pipeline_builder.add_stage('Trash')
+
+    # The event checked is START
+    finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'START'}"])
+
+    file_tail >> trash_1
+    file_tail >> trash_2
+    file_tail >= finisher
+
+    file_tail_pipeline = pipeline_builder.build('File Tail Origin with Finisher')
+    sdc_executor.add_pipeline(file_tail_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
+    sdc_executor.get_pipeline_status(file_tail_pipeline).wait_for_status(status='FINISHED')
+
+    # assert all the data captured have the same raw_data
+    # the snapshot output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
+    # by checking a Record having a key called 'text'
+    for value in snapshot.snapshot_batches[0][file_tail.instance_name].output_lanes.values():
+        for record in value:
+            if 'text' in record.field:
+                assert 'Hello!' == record.field['text'].value
+
+    # assert the event generated is start
+    assert len(snapshot[file_tail].event_records) == 1
+    assert snapshot[file_tail].event_records[0].get_field_data('/event') == 'START'
