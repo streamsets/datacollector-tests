@@ -1,4 +1,21 @@
+import copy
+import logging
+import string
+
 import pytest
+import sqlalchemy
+from sqlalchemy import Column, Integer, String, CHAR
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+from sqlalchemy.orm import sessionmaker
+
+logger = logging.getLogger(__file__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Manish'},
+    {'id': 2, 'name': 'Shravan'},
+    {'id': 3, 'name': 'Shubham'}
+]
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -173,10 +190,47 @@ def test_jdbc_multitable_consumer_origin_configuration_table_configs(sdc_builder
     pass
 
 
-@pytest.mark.parametrize('transaction_isolation', ['DEFAULT', 'TRANSACTION_READ_COMMITTED', 'TRANSACTION_READ_UNCOMMITTED', 'TRANSACTION_REPEATABLE_READ', 'TRANSACTION_SERIALIZABLE'])
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_transaction_isolation(sdc_builder, sdc_executor, transaction_isolation):
-    pass
+@database
+@pytest.mark.parametrize('transaction_isolation', ['DEFAULT', 'TRANSACTION_READ_COMMITTED',
+                                                   'TRANSACTION_READ_UNCOMMITTED',
+                                                   'TRANSACTION_REPEATABLE_READ', 'TRANSACTION_SERIALIZABLE'])
+def test_jdbc_multitable_consumer_origin_configuration_transaction_isolation(sdc_builder, sdc_executor,
+                                                                             transaction_isolation, database):
+    """Default transaction isolation level, the origin might not read new rows that are created in MySQL as the pipeline
+       is running.
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    columns = [sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+               sqlalchemy.Column('name', sqlalchemy.String(32))]
+    extra_rows_in_database = [{'id': 4, 'name': 'Ram'}]
+    attributes = {'table_configs': [{'tablePattern': f'{table_name}'}],
+                  'transaction_isolation': transaction_isolation}
+
+    table = create_table(database, columns, table_name)
+    session_maker = sessionmaker(bind=database.engine, autocommit=False)
+    session1 = session_maker()
+    jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                                                        attributes)
+    session1.execute(table.insert(), ROWS_IN_DATABASE)  # Insert 3 rows
+    if transaction_isolation == 'TRANSACTION_SERIALIZABLE':
+        with pytest.raises(Exception):
+            snapshot = execute_pipeline(sdc_executor, pipeline)
+    else:
+        session1.commit()
+        snapshot = execute_pipeline(sdc_executor, pipeline)
+        session1.execute(table.insert(), extra_rows_in_database)  # Insert 1 row
+        if transaction_isolation == 'TRANSACTION_REPEATABLE_READ' or transaction_isolation == 'DEFAULT':
+            session1.commit()
+        sdc_executor.stop_pipeline(pipeline)
+        history = sdc_executor.get_pipeline_history(pipeline)
+        records_received_count = history.latest.metrics.counter('stage.Trash_01.inputRecords.counter').count
+        session1.commit()
+
+        if transaction_isolation in ['DEFAULT', 'TRANSACTION_READ_COMMITTED', 'TRANSACTION_REPEATABLE_READ']:
+            assert records_received_count == 3
+        elif transaction_isolation == 'TRANSACTION_READ_UNCOMMITTED':
+            assert records_received_count == 4
 
 
 @pytest.mark.parametrize('use_credentials', [False, True])
@@ -190,3 +244,52 @@ def test_jdbc_multitable_consumer_origin_configuration_use_credentials(sdc_build
 def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, use_credentials):
     pass
 
+
+# Util functions
+
+def create_table(database, columns, table_name):
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        *columns
+    )
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
+
+
+def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes, configure_for_environment_flag=True):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(**attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+    if configure_for_environment_flag:
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+    else:
+        pipeline = pipeline_builder.build()
+    return jdbc_multitable_consumer, pipeline
+
+
+def execute_pipeline(sdc_executor, pipeline, number_of_batches=1, snapshot_batch_size=10):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=number_of_batches,
+                                             batch_size=snapshot_batch_size).snapshot
+    return snapshot
+
+
+def insert_data_in_table(database, table, rows_to_insert):
+    logger.info('Adding three rows into %s database ...', database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), rows_to_insert)
+
+
+def snapshot_content(snapshot, jdbc_multitable_consumer):
+    """This is common function can be used at in many TCs to get snapshot content."""
+    processed_data = []
+    for snapshot_batch in snapshot.snapshot_batches:
+        for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+            for record in value:
+                processed_data.append(record)
+    return processed_data
