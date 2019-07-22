@@ -232,3 +232,4 @@ def test_directory_origin_with_finisher(sdc_builder, sdc_executor):
     # assert the event generated is start
     assert len(snapshot[file_tail].event_records) == 1
     assert snapshot[file_tail].event_records[0].get_field_data('/event') == 'START'
+    assert str(snapshot[file_tail].event_records[0].get_field_data('/fileName'))[0:20] == f'{tmp_directory}/sdc-'

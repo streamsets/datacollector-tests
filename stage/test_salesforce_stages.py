@@ -14,10 +14,13 @@
 
 import copy
 import logging
+import string
+
 
 import pytest
 import requests
 from streamsets.testframework.markers import salesforce, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,7 @@ DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': 'User1',
                            {'FirstName': 'Test3', 'LastName': 'User3',
                             'Email': 'xtes3@example.comFROM', 'LeadSource': 'Web'}]
 CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
+
 
 ACCOUNTS_FOR_SUBQUERY = 5
 CONTACTS_FOR_SUBQUERY = 5
@@ -326,7 +330,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=60).snapshot
 
-        rows_from_snapshot = [record.field
+        rows_from_snapshot = [record.value['value']
                               for record in snapshot[salesforce_origin].output]
 
         inserted_ids = [dict([(rec['sqpath'].strip('/'), rec['value'])
@@ -349,7 +353,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         sdc_executor.stop_pipeline(pipeline)
 
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=60).snapshot
-        rows_from_snapshot = [record.field
+        rows_from_snapshot = [record.value['value']
                               for record in snapshot[salesforce_origin].output]
 
         assert len(rows_from_snapshot) == 0
@@ -774,3 +778,129 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         logger.info('Deleting records ...')
         if (inserted_ids):
             client.bulk.Contact.delete(inserted_ids)
+
+
+def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
+    """
+    Create data using Salesforce client, stop the pipeline
+    and then check if Salesforce origin receives them using snapshot.
+    Insert more data and check again.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+
+
+    """
+
+    aux_email= get_random_string(string.ascii_letters, 10).lower()
+
+    DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName': 'User1',
+                       'Email': f'{aux_email}1@example.com', 'LeadSource': 'Advertisement'},
+                      {'FirstName': 'Test2', 'LastName': 'User2', 'Email': f'{aux_email}2@example.com',
+                       'LeadSource': 'Partner'},
+                      {'FirstName': 'Test3', 'LastName': 'User3', 'Email': f'{aux_email}3@example.com', 'LeadSource': 'Web'}]
+
+    DATA_TO_INSERT_2 = [{'FirstName': 'XTest1', 'LastName': 'XUser2',
+                         'Email': f'{aux_email}4@example.com', 'LeadSource': 'Advertisement'},
+                        {'FirstName': 'XTest2', 'LastName': 'XUser2', 'Email': f'{aux_email}5@example.com',
+                         'LeadSource': 'Partner'},
+                        {'FirstName': 'XTest3', 'LastName': 'XUser3', 'Email': f'{aux_email}6@example.com',
+                         'LeadSource': 'Web'}]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    query = ("SELECT Contact.Id, Contact.FirstName, Contact.LastName, Contact.Email, Contact.LeadSource "
+             "FROM Contact WHERE Id > '000000000000000' AND Email LIKE '"+ aux_email + "%' ORDER BY Id")
+
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    # Changing " with ' and vice versa in following string makes the query execution fail.
+    salesforce_origin.set_attributes(soql_query=query,
+                                     subscribe_for_notifications=False, generate_events=True)
+
+    trash = pipeline_builder.add_stage('Trash')
+    trash_2 = pipeline_builder.add_stage('Trash')
+
+    salesforce_origin >> trash
+    salesforce_origin >= trash_2
+
+    pipeline = pipeline_builder.build(title='Salesforce Origin').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+
+    client = salesforce.client
+    inserted_ids_1 = None
+    inserted_ids_2 = None
+
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        client.bulk.Contact.insert(DATA_TO_INSERT)
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        rows_from_snapshot = [record.value['value']
+                              for record in snapshot[salesforce_origin].output]
+
+        inserted_ids_1 = [dict([(rec['sqpath'].strip('/'), rec['value'])
+                              for rec in item if rec['sqpath'] == '/Id'])
+                        for item in rows_from_snapshot]
+
+        # Verify correct rows are received using snaphot.
+        data_from_snapshot = [dict([(rec['sqpath'].strip('/'), rec['value'])
+                                    for rec in item if rec['sqpath'] != '/Id' and rec['sqpath'] != '/SystemModstamp'])
+                              for item in rows_from_snapshot]
+
+        data_from_snapshot = sorted(data_from_snapshot, key=lambda k: k['FirstName'])
+
+        assert data_from_snapshot == DATA_TO_INSERT
+
+        # Stage should produce events.
+        assert len(snapshot[salesforce_origin].event_records) == 0
+        # assert snapshot[salesforce_origin].event_records[0].get_field_data('/event') == 'no-more-data'
+
+
+
+        # Pipeline stops, but if it changes in a future version
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+
+        # Using Salesforce client, create new rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        client.bulk.Contact.insert(DATA_TO_INSERT_2)
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot_2 = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        rows_from_snapshot_2 = [record.value['value']
+                              for record in snapshot_2[salesforce_origin].output]
+
+        inserted_ids_2 = [dict([(rec['sqpath'].strip('/'), rec['value'])
+                              for rec in item if rec['sqpath'] == '/Id'])
+                        for item in rows_from_snapshot_2]
+
+        # Verify correct rows are received using snaphot.
+        data_from_snapshot_2 = [dict([(rec['sqpath'].strip('/'), rec['value'])
+                                    for rec in item if rec['sqpath'] != '/Id' and rec['sqpath'] != '/SystemModstamp'])
+                              for item in rows_from_snapshot_2]
+
+        data_from_snapshot_2 = sorted(data_from_snapshot_2, key=lambda k: k['FirstName'])
+
+        assert data_from_snapshot_2 == DATA_TO_INSERT + DATA_TO_INSERT_2
+
+        # stage should produce events.
+        assert len(snapshot[salesforce_origin].event_records) == 0
+        # assert snapshot[salesforce_origin].event_records[0].get_field_data('/event') == 'START'
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+            logger.info('Deleting records ...')
+            if (inserted_ids_1):
+                client.bulk.Contact.delete(inserted_ids_1)
+            if (inserted_ids_2):
+                client.bulk.Contact.delete(inserted_ids_2)
