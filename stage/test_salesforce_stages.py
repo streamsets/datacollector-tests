@@ -779,7 +779,7 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         if (inserted_ids):
             client.bulk.Contact.delete(inserted_ids)
 
-
+@salesforce
 def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
     """
     Create data using Salesforce client, stop the pipeline
