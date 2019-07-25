@@ -556,7 +556,6 @@ def test_hbase_write_wrong_column(sdc_builder, sdc_executor, cluster):
             assert 'HBASE_10' == stage.error_records[0].header['errorCode']
         except Exception as e:
             assert 'HBASE_02' in e.response['message']
-            assert 'HBASE_26' in e.response['message']
 
     finally:
         # Delete table.
