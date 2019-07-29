@@ -79,6 +79,52 @@ def test_field_flattener(sdc_builder, sdc_executor):
     assert f'home{name_separator}zipcode' in new_value['newcontact']['address']
 
 
+def test_field_flattener_all(sdc_builder, sdc_executor):
+    """Test field flattener processor. The pipeline would look like:
+
+        dev_raw_data_source >> field_flattener >> trash
+
+    With given raw_data below, all elements will be flattened and use '_._' as the separator
+    """
+    name_separator = '_._'
+    raw_data = """
+        {
+          "contact": {
+             "name": "Jane Smith",
+             "id": "557",
+             "address": {
+               "home": {
+                 "state": "NC",
+                 "zipcode": "27023"
+                  }
+              }
+          }
+        }
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    field_flattener = pipeline_builder.add_stage('Field Flattener')
+    field_flattener.set_attributes(flatten='ENTIRE_RECORD', name_separator=name_separator)
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_flattener >> trash
+    pipeline = pipeline_builder.build('Field Flattener (all) pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    new_value = snapshot[field_flattener.instance_name].output[0].field
+    # assert everything has been flattened and there's no extra fields
+    assert new_value[f'contact{name_separator}name'] == 'Jane Smith'
+    assert new_value[f'contact{name_separator}id'] == '557'
+    assert new_value[f'contact{name_separator}address{name_separator}home{name_separator}state'] == 'NC'
+    assert new_value[f'contact{name_separator}address{name_separator}home{name_separator}zipcode'] == '27023'
+    assert len(new_value) == 4
+
+
 def test_field_hasher(sdc_builder, sdc_executor):
     """Test field hasher. The pipeline would look like:
 
