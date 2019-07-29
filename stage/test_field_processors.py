@@ -567,9 +567,10 @@ def test_field_splitter(sdc_builder, sdc_executor):
 
         dev_raw_data_source >> field_splitter >> trash
 
-    With given config to process 2 records, the first record's /error/text value will split into /error/code and
+    With given config to process 3 records, the first record's /error/text value will split into /error/code and
     /error/message based on separator (,). The second record's /error/text value will split similarly but since it has
-    too many split, the extra splits will go into new field called /error/etcMessages.
+    too many split, the extra splits will go into new field called /error/etcMessages.  The third record's /error/text
+    value doesn't have enough splits, so /error/message will be null
     """
     raw_data = """
         [ { "error": {
@@ -578,6 +579,10 @@ def test_field_splitter(sdc_builder, sdc_executor):
           },
           { "error": {
                 "text": "ME-3042,message about error,additional information from server,network error,driver error"
+            }
+          },
+          { "error": {
+                "text": "RK-42 there's no separator here"
             }
           }
         ]
@@ -607,20 +612,26 @@ def test_field_splitter(sdc_builder, sdc_executor):
 
     record_1 = snapshot[field_splitter.instance_name].output[0].field['error']
     record_2 = snapshot[field_splitter.instance_name].output[1].field['error']
-    # assert we got expected number of splits
+    record_3 = snapshot[field_splitter.instance_name].output[2].field['error']
+    # assert we got expected number of splits in record 1
     assert len(raw_list[0]['error']['text'].split(separator)) == len(record_1)
-    # assert record data
+    # assert record 1 data
     raw_record_data = raw_list[0]['error']['text'].split(separator)
     for value in record_1.values():
         assert value.value in raw_record_data
-    # assert field_for_remaining_splits
+    # assert field_for_remaining_splits in record 2
     raw_record_data = raw_list[1]['error']['text'].split(separator)
-    # etc_sub_field will only have a subset of splits and hence need to take out (subtract) the remaining
+    # etc_sub_field will only have a subset of splits and hence need to take out (subtract) the remaining in record 2
     assert len(record_2[etc_sub_field]) == len(raw_record_data) - len(split_fields)
     for data in record_2[etc_sub_field]:
         assert data.value in raw_record_data
+    # assert record 3 data
+    assert len(record_3) == 2
+    assert raw_list[2]['error']['text'] == record_3['code']
+    # record 3's message field will be null because there was nothing to put into it
+    assert record_3['message'] == None
     # assert original_field being removed
-    assert source_sub_field not in record_1 and source_sub_field not in record_2
+    assert source_sub_field not in record_1 and source_sub_field not in record_2 and source_sub_field not in record_3
 
 
 def test_field_type_converter(sdc_builder, sdc_executor):
