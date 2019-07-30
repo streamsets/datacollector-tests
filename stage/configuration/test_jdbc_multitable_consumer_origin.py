@@ -1,9 +1,67 @@
+import copy
+import logging
+import string
+
 import pytest
+import sqlalchemy
+from sqlalchemy import Column, Integer, String, CHAR
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
+logger = logging.getLogger(__file__)
 
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_additional_jdbc_configuration_properties(sdc_builder, sdc_executor):
-    pass
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Manish'},
+    {'id': 2, 'name': 'Shravan'},
+    {'id': 3, 'name': 'Shubham'}
+]
+
+@database('postgresql')
+@pytest.mark.parametrize('postgres_target_server', ['master', 'slave'])
+def test_jdbc_multitable_consumer_origin_configuration_additional_jdbc_configuration_properties(sdc_builder,
+                                                                                                sdc_executor,
+                                                                                                database,
+                                                                                                postgres_target_server):
+    """Here we are testing disableColumnSanitiser and targetServerType parameter. Setting it to false should convert
+    columns in result set to lower case. targetServerType - Should connect successfully if server is of
+    targetServerType is master. The master/slave distinction is currently done by observing if the server allows
+    writes. If targetServerTypeis slave it should raise error as server we are connecting to allows writes
+    i.e. its of type master.
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+
+    try:
+        columns = [Column('id', Integer, primary_key=True), Column('NAME', String(32))]
+        properties = [{'key': 'disableColumnSanitiser', 'value': 'false'},
+                      {'key': 'targetServerType', 'value': postgres_target_server}]
+        rows_in_database = [{'id': row['id'], 'NAME': row['name']} for row in ROWS_IN_DATABASE]
+        table = create_table(database, columns, table_name)
+        insert_data_in_table(database, table, rows_in_database)
+
+        #Build the pipeline
+        attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}],
+                      'additional_jdbc_configuration_properties': properties}
+        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                                                            attributes)
+
+        #Execute pipeline and check result.
+        sdc_executor.add_pipeline(pipeline)
+        if postgres_target_server == 'slave':
+            with pytest.raises(Exception):
+                sdc_executor.start_pipeline().wait_for_status('FINISHED')
+        else:
+            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+
+            # Column names are converted to lower case since database table columns are in upper case.
+            tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
+            rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[1])
+                                  for record in snapshot[pipeline[0].instance_name].output]
+            assert rows_from_snapshot == [('name', row['NAME']) for row in rows_in_database]
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        delete_table([table], database)
 
 
 @pytest.mark.parametrize('auto_commit', [False, True])
@@ -63,7 +121,8 @@ def test_jdbc_multitable_consumer_origin_configuration_init_query(sdc_builder, s
 
 @pytest.mark.parametrize('initial_table_order_strategy', ['ALPHABETICAL', 'NONE', 'REFERENTIAL_CONSTRAINTS'])
 @pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_initial_table_order_strategy(sdc_builder, sdc_executor, initial_table_order_strategy):
+def test_jdbc_multitable_consumer_origin_configuration_initial_table_order_strategy(sdc_builder, sdc_executor,
+                                                                                    initial_table_order_strategy):
     pass
 
 
@@ -190,3 +249,42 @@ def test_jdbc_multitable_consumer_origin_configuration_use_credentials(sdc_build
 def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, use_credentials):
     pass
 
+
+# Util functions
+
+def create_table(database, columns, table_name):
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        *columns
+    )
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
+
+
+def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes,
+                                                   configure_for_environment_flag=True):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(**attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+    if configure_for_environment_flag:
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+    else:
+        pipeline = pipeline_builder.build()
+    return jdbc_multitable_consumer, pipeline
+
+
+def insert_data_in_table(database, table, rows_to_insert):
+    logger.info('Adding three rows into %s database ...', database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), rows_to_insert)
+
+
+def delete_table(tables, database):
+    for table in tables:
+        logger.info('Dropping table %s in %s database...', table.name, database.type)
+        table.drop(database.engine)
