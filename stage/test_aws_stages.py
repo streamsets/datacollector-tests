@@ -19,6 +19,7 @@ import string
 import time
 
 from streamsets.sdk.models import Configuration
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -27,6 +28,8 @@ logger.setLevel(logging.DEBUG)
 
 # Sandbox prefix for S3 bucket
 S3_SANDBOX_PREFIX = 'sandbox'
+
+MIN_SDC_VERSION_WITH_EXECUTOR_EVENTS = Version('3.4.0')
 
 
 @aws('kinesis')
@@ -428,18 +431,20 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
     """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 executor
     sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
     been created by the pipeline. We use a record deduplicator processor in between dev raw data source origin
-    and S3 destination in order to limit number of objects to one. The pipeline looks like the following:
+    and S3 destination in order to limit number of objects to one.
+
+    For recent SDC versions we also check that the corresponding 'file-created' event is generated.
 
     S3 Destination pipeline:
         dev_raw_data_source >> record_deduplicator >> s3_executor
                                                    >> to_error
     """
-    # setup test static
+    # Setup test static.
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
     raw_str = f'{{"bucket": "{s3_bucket}", "company": "StreamSets Inc."}}'
 
-    # Build the pipeline
+    # Build the pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
@@ -462,23 +467,94 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
 
     client = aws.s3
     try:
-        # start pipeline and capture pipeline messages to assert
-        sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_pipeline_output_records_count(1)
+        # Start pipeline and stop after processing the record.
+        snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True, batch_size=1).snapshot
         sdc_executor.stop_pipeline(s3_exec_pipeline)
 
-        # assert record count to S3 the size of the objects put
+        # Assert record count to S3 the size of the objects put.
         list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
         assert len(list_s3_objs['Contents']) == 1
 
-        # read data from S3 to assert it is what got ingested into the pipeline
+        # Read data from S3 to assert it is what got ingested into the pipeline.
         s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
                        for s3_content in list_s3_objs['Contents']]
 
         assert s3_contents[0] == 'StreamSets Inc.'
+
+        # Check if the 'file-created' event was generated (only for recent sdc versions).
+        if Version(sdc_builder.version) >= MIN_SDC_VERSION_WITH_EXECUTOR_EVENTS:
+            events = snapshot[s3_executor.instance_name].event_records
+            assert len(events) == 1
+            assert events[0].header.values['sdc.event.type'] == 'file-created'
+
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+@sdc_min_version('3.4.0')
+def test_s3_executor_copy_object(sdc_builder, sdc_executor, aws):
+    """Test the copy action of S3 executor stage and its corresponding event. We configure the S3 executor stage
+    to copy S3 objects according to the 'key_src' and 'key_dst' values provided in the record. We use the S3
+    client to create an S3 object with key 'key_src' and check that the stage copies that object into the
+    'key_dst' key and generate the corresponding event.
+
+    Pipeline:
+        dev_raw_data_source >> s3_executor
+
+    """
+    object_content = get_random_string(string.ascii_letters, 10)
+    key_suffix = get_random_string(string.ascii_letters, 10)
+    s3_key_src = f'{S3_SANDBOX_PREFIX}/src_{key_suffix}'
+    s3_key_dst = f'{S3_SANDBOX_PREFIX}/dst_{key_suffix}'
+    s3_bucket = aws.s3_bucket_name
+    input_data = {'bucket': s3_bucket, 'key_src': s3_key_src, 'key_dst': s3_key_dst}
+
+    # Build the pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=json.dumps(input_data))
+
+    s3_executor = builder.add_stage('Amazon S3', type='executor')
+    s3_executor.set_attributes(bucket='${record:value("/bucket")}',
+                               task='COPY_OBJECT',
+                               object='${record:value("/key_src")}',
+                               new_object_path='${record:value("/key_dst")}')
+
+    dev_raw_data_source >> s3_executor
+
+    pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # Create source object in S3 bucket.
+        client.put_object(Body=object_content, Bucket=s3_bucket, Key=s3_key_src)
+
+        # Start pipeline and stop after processing the record.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=1).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Check if there exists an object with the destination key.
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key_dst)
+        assert 'Contents' in list_s3_objs  # If no object was found, there is no 'Contents' key
+        assert len(list_s3_objs['Contents']) == 1
+
+        # Check if the content matches that of the input data.
+        s3_content = client.get_object(Bucket=s3_bucket, Key=s3_key_dst)['Body'].read().decode().strip()
+        assert s3_content == object_content
+
+        # Check if the 'file-moved' event was generated.
+        events = snapshot[s3_executor.instance_name].event_records
+        assert len(events) == 1
+        assert events[0].header.values['sdc.event.type'] == 'file-moved'
+
+    finally:
+        client.delete_object(Bucket=s3_bucket, Key=s3_key_src)
+        client.delete_object(Bucket=s3_bucket, Key=s3_key_dst)
 
 
 @aws('s3')
@@ -487,7 +563,9 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
     """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 destination
     sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
     been created by the pipeline. We use a record deduplicator processor in between dev raw data source origin
-    and S3 destination in order to limit number of objects to one. The pipeline looks like the following:
+    and S3 destination in order to limit number of objects to one.
+
+    For recent SDC versions we also check that the corresponding 'file-changed' event is generated.
 
     S3 Destination pipeline:
         dev_raw_data_source >> record_deduplicator >> s3_executor
@@ -497,7 +575,7 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
     raw_str = f'{{"bucket": "{s3_bucket}", "key": "{s3_key}"}}'
 
-    # Build the pipeline
+    # Build the pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
@@ -520,15 +598,21 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
 
     client = aws.s3
     try:
-        # Pre-create the object so that it exists
+        # Pre-create the object so that it exists.
         client.put_object(Body='Secret Data', Bucket=s3_bucket, Key=s3_key)
 
-        # And run the pipeline for at least one record (rest will be removed by the de-dup)
-        sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_pipeline_output_records_count(1)
+        # And run the pipeline for at least one record (rest will be removed by the de-dup).
+        snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True, batch_size=1).snapshot
         sdc_executor.stop_pipeline(s3_exec_pipeline)
 
         tags = client.get_object_tagging(Bucket=s3_bucket, Key=s3_key)['TagSet']
         assert len(tags) == 1
+
+        # Check if the 'file-created' event was generated (only for recent sdc versions).
+        if Version(sdc_builder.version) >= MIN_SDC_VERSION_WITH_EXECUTOR_EVENTS:
+            events = snapshot[s3_executor.instance_name].event_records
+            assert len(events) == 1
+            assert events[0].header.values['sdc.event.type'] == 'file-changed'
 
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
