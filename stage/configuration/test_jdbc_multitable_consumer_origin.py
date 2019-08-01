@@ -1,4 +1,20 @@
+import logging
+import math
 import pytest
+import string
+import sqlalchemy
+from sqlalchemy import Column, Integer, String
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+import time
+logger = logging.getLogger(__file__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Manish'},
+    {'id': 2, 'name': 'Shravan'},
+    {'id': 3, 'name': 'Shubham'}
+]
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -112,9 +128,47 @@ def test_jdbc_multitable_consumer_origin_configuration_new_table_discovery_inter
     pass
 
 
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_no_more_data_event_generation_delay_in_seconds(sdc_builder, sdc_executor):
-    pass
+@database
+@pytest.mark.parametrize('no_more_data_event_generation_delay_in_seconds', [30])
+def test_jdbc_multitable_consumer_origin_configuration_no_more_data_event_generation_delay_in_seconds(sdc_builder,
+                                                sdc_executor, database, no_more_data_event_generation_delay_in_seconds):
+    """Check if Jdbc Multi-table Origin generates no_more_data event record when the origin completes processing all
+    data returned by the queries for all tables.The event record is delayed by
+    no_more_data_event_generation_delay_in_seconds seconds.
+    Destination is Trash.
+    Verify input and output (via snapshot).
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    try:
+        columns = [Column('id', Integer, primary_key=True), Column('name', String(32))]
+        table = create_table(database, columns, table_name)
+        insert_data_in_table(database, table, ROWS_IN_DATABASE)
+
+        attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}],
+                      'no_more_data_event_generation_delay_in_seconds': no_more_data_event_generation_delay_in_seconds}
+        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                                                            attributes)
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
+        time.sleep(no_more_data_event_generation_delay_in_seconds)
+        event_snapshot = snapshot_command.wait_for_finished().snapshot
+
+        # Column names are converted to lower case since Oracle database column names are in upper case.
+        tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
+        rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[1])
+                              for record in snapshot[pipeline[0].instance_name].output]
+        assert rows_from_snapshot == [('name', row['name']) for row in ROWS_IN_DATABASE]
+
+        # For no-more-data event record verification
+        event_records = event_snapshot[pipeline[0].instance_name].event_records
+        event_headers = [event_record._data for event_record in event_records]
+        assert event_headers[0]['header']['values']['sdc.event.type'] == 'no-more-data'
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -190,3 +244,49 @@ def test_jdbc_multitable_consumer_origin_configuration_use_credentials(sdc_build
 def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, use_credentials):
     pass
 
+
+# Util functions
+
+def create_table(database, columns, table_name):
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        *columns
+    )
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
+
+
+def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(**attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    return jdbc_multitable_consumer, pipeline
+
+
+def execute_pipeline(sdc_executor, pipeline, number_of_batches=1, snapshot_batch_size=10):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=number_of_batches,
+                                             batch_size=snapshot_batch_size).snapshot
+    return snapshot
+
+
+def insert_data_in_table(database, table, rows_to_insert):
+    logger.info('Adding three rows into %s database ...', database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), rows_to_insert)
+
+
+def snapshot_content(snapshot, jdbc_multitable_consumer):
+    """This is common function can be used at in many TCs to get snapshot content."""
+    processed_data = []
+    for snapshot_batch in snapshot.snapshot_batches:
+        for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+            for record in value:
+                processed_data.append(record)
+    return processed_data
