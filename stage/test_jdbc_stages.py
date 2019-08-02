@@ -645,10 +645,222 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(RAW_DATA) - 1)
         sdc_executor.stop_pipeline(pipeline)
 
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+
         result = database.engine.execute(table.select())
         data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
         result.close()
         assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+@database
+def test_jdbc_query_executor_successful_query_event(sdc_builder, sdc_executor, database):
+    """Simple JDBC Query Executor test for successful-query event type.
+    Pipeline will insert records into database and then using sqlalchemy, the verification will happen
+    that correct data is inserted into database. Event records are verified for successful-query event type.
+
+    This is achieved by using a deduplicator which assures us that there is only one ingest to database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_query_executor >= trash1
+                               record_deduplicator >> trash2
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_table(table_name, database)
+
+    DATA = ['id,name'] + [','.join(str(item) for item in rec.values()) for rec in ROWS_IN_DATABASE]
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(DATA))
+
+    query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
+
+    jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
+    jdbc_query_executor.set_attributes(sql_query=query_str)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    trash1 = pipeline_builder.add_stage('Trash')
+    trash2 = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> record_deduplicator >> jdbc_query_executor >= trash1
+    record_deduplicator >> trash2
+    pipeline = pipeline_builder.build(title='JDBC Query Executor').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        event_records = snapshot[jdbc_query_executor.instance_name].event_records
+        assert len(event_records) == 3
+        assert 'successful-query' == event_records[0].header['values']['sdc.event.type']
+
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+@database
+def test_jdbc_query_executor_insert_query_result_count(sdc_builder, sdc_executor, database):
+    """Simple JDBC Query Executor test for successful-query event type and query result count enabled.
+    Pipeline will insert records into database and then using sqlalchemy, the verification will happen
+    that correct data is inserted into database. Event records are verified for successful-query event type
+    and query-result field for the insert query.
+
+    This is achieved by using a deduplicator which assures us that there is only one ingest to database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_query_executor >= trash1
+                               record_deduplicator >> trash2
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_table(table_name, database)
+
+    DATA = ['id,name'] + [','.join(str(item) for item in rec.values()) for rec in ROWS_IN_DATABASE]
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(DATA))
+
+    query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
+
+    jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
+    jdbc_query_executor.set_attributes(sql_query=query_str, query_result_count=True)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    trash1 = pipeline_builder.add_stage('Trash')
+    trash2 = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> record_deduplicator >> jdbc_query_executor >= trash1
+    record_deduplicator >> trash2
+    pipeline = pipeline_builder.build(title='JDBC Query Executor').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        event_records = snapshot[jdbc_query_executor.instance_name].event_records
+        assert len(event_records) == 3
+        assert 'successful-query' == event_records[0].header['values']['sdc.event.type']
+        assert '1 row(s) affected' == event_records[0].value['value']['query-result']['value']
+
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+@database
+def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor, database):
+    """Simple JDBC Query Executor test for successful-query event type and query result count enabled.
+    Pipeline will insert records into database and then using sqlalchemy, the verification will happen
+    that correct data is inserted into database and then the same data is queried. Event records are
+    verified for successful-query event type and query-result field for the select query.
+
+    This is achieved by using a deduplicator which assures us that there is only one ingest to database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_query_executor1 >= jdbc_query_executor2 >= trash1
+                               record_deduplicator >> trash2
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_table(table_name, database)
+
+    DATA = ['id,name'] + [','.join(str(item) for item in rec.values()) for rec in ROWS_IN_DATABASE]
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(DATA))
+
+    query_str1 = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
+    query_str2 = f"SELECT * FROM {table_name} LIMIT 2"
+
+    jdbc_query_executor1 = pipeline_builder.add_stage('JDBC Query', type='executor')
+    jdbc_query_executor1.set_attributes(sql_query=query_str1)
+    jdbc_query_executor2 = pipeline_builder.add_stage('JDBC Query', type='executor')
+    jdbc_query_executor2.set_attributes(sql_query=query_str2, query_result_count=True)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    trash1 = pipeline_builder.add_stage('Trash')
+    trash2 = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> record_deduplicator >> jdbc_query_executor1 >= jdbc_query_executor2 >= trash1
+    record_deduplicator >> trash2
+    pipeline = pipeline_builder.build(title='JDBC Query Executor').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        event_records = snapshot[jdbc_query_executor2.instance_name].event_records
+        assert len(event_records) == 3
+        assert 'successful-query' == event_records[0].header['values']['sdc.event.type']
+        assert '2 row(s) returned' == event_records[0].value['value']['query-result']['value']
+
+        result = database.engine.execute(table.select())
+        result.close()
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+@database
+def test_jdbc_query_executor_failed_query_event(sdc_builder, sdc_executor, database):
+    """Simple JDBC Query Executor test for failed-query event type.
+    Pipeline will try to insert records into a non-existing table and the query would fail.
+    Event records are verified for failed-query event type.
+
+    This is achieved by using a deduplicator which assures us that there is only one ingest to database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_query_executor >= trash1
+                               record_deduplicator >> trash2
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_table(table_name, database)
+
+    DATA = ['id,name'] + [','.join(str(item) for item in rec.values()) for rec in ROWS_IN_DATABASE]
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(DATA))
+    invalid_table = "INVALID_TABLE"
+    query_str = f"INSERT INTO {invalid_table} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
+
+    jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
+    jdbc_query_executor.set_attributes(sql_query=query_str)
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    trash1 = pipeline_builder.add_stage('Trash')
+    trash2 = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> record_deduplicator >> jdbc_query_executor >= trash1
+    record_deduplicator >> trash2
+    pipeline = pipeline_builder.build(title='JDBC Query Executor').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        event_records = snapshot[jdbc_query_executor.instance_name].event_records
+        assert len(event_records) == 3
+        assert 'failed-query' == event_records[0].header['values']['sdc.event.type']
+
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert data_from_database == []
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
