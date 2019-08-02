@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import string
 
@@ -89,6 +90,72 @@ def test_kafka_destination(sdc_builder, sdc_executor, cluster):
     logger.debug('Verifying messages with Kafka consumer client ...')
     assert msgs_sent_count == len(msgs_received)
     assert msgs_received == [dev_raw_data_source.raw_data] * msgs_sent_count
+
+
+@cluster('cdh', 'kafka')
+def test_kafka_destination_topic_resolution(sdc_builder, sdc_executor, cluster):
+    """Test topic resolution in Kafka destination. We configure a pipeline which sends messages to the Kafka topic
+    specified by the record field 'topic'. Then we check that the number of messages available in Kafka topics
+    matches the total number of records processed by the pipeline, and that messages are delivered to the
+    correct topic.
+
+    Pipeline: dev_raw_data_source >> kafka_destination
+
+    """
+    # Input data.
+    topic1 = f'stf_{get_random_string(string.ascii_letters, 10)}'
+    topic2 = f'stf_{get_random_string(string.ascii_letters, 10)}'
+    topic3 = f'stf_{get_random_string(string.ascii_letters, 10)}'
+    text1 = get_random_string(string.ascii_letters, 10)
+    text2 = get_random_string(string.ascii_letters, 10)
+    text3 = get_random_string(string.ascii_letters, 10)
+    raw_data = [{'topic': topic1, 'text': text1},
+                {'topic': topic2, 'text': text2},
+                {'topic': topic3, 'text': text3}]
+
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data='\n'.join(json.dumps(rec) for rec in raw_data))
+
+    kafka_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                          library=cluster.kafka.standalone_stage_lib)
+    kafka_destination.set_attributes(runtime_topic_resolution=True,
+                                     topic_expression='${record:value("/topic")}',
+                                     data_format='TEXT',
+                                     text_field_path='/text')
+
+    dev_raw_data_source >> kafka_destination
+    pipeline = builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Setup Kafka consumers, one for each topic. Specify timeout so that iteration of consumer is stopped
+    # after that time and specify auto_offset_reset to get messages from beginning.
+    consumer1 = cluster.kafka.consumer(consumer_timeout_ms=1000, auto_offset_reset='earliest')
+    consumer2 = cluster.kafka.consumer(consumer_timeout_ms=1000, auto_offset_reset='earliest')
+    consumer3 = cluster.kafka.consumer(consumer_timeout_ms=1000, auto_offset_reset='earliest')
+    consumer1.subscribe([topic1])
+    consumer2.subscribe([topic2])
+    consumer3.subscribe([topic3])
+
+    # Run pipeline.
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(10)
+    sdc_executor.stop_pipeline(pipeline)
+
+    # Check each topic receives the expected messages and number of records matches total of messages
+    # consumed by Kafka clients.
+    history = sdc_executor.get_pipeline_history(pipeline)
+    record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+    messages1 = [msg.value.decode().strip() for msg in consumer1]
+    messages2 = [msg.value.decode().strip() for msg in consumer2]
+    messages3 = [msg.value.decode().strip() for msg in consumer3]
+
+    assert all(msg == text1 for msg in messages1)
+    assert all(msg == text2 for msg in messages2)
+    assert all(msg == text3 for msg in messages3)
+    assert record_count == len(messages1) + len(messages2) + len(messages3)
 
 
 @cluster('cdh', 'kafka')
