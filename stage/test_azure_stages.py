@@ -83,6 +83,70 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
 
 @azure('eventhub')
 @sdc_min_version('2.7.1.0')
+def test_azure_event_hub_consumer_resume_offset(sdc_builder, sdc_executor, azure):
+    """Test for Azure IoT/Event Hub consumer origin stage. We do so by publishing data to a test event hub Azure client
+    and having a pipeline which reads that data using Azure IoT/Event Hub consumer origin stage. Data is then asserted
+    for what is published at Azure client and what we read in the pipeline snapshot. We then create more data, restart
+    the pipeline, and take another snapshot to ensure that the stage properly resumes from where the offset left off.
+    The pipeline looks like:
+
+    azure_iot_event_hub_consumer >> trash
+    """
+    # Azure container names are lowercased. Ref. http://tinyurl.com/ya9y9mm6
+    container_name = get_random_string(string.ascii_lowercase, 10)
+    event_hub_name = get_random_string(string.ascii_letters, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    azure_iot_event_hub_consumer = builder.add_stage(name=AZURE_IOT_EVENT_HUB_STAGE_NAME)
+    azure_iot_event_hub_consumer.set_attributes(container_name=container_name, data_format='JSON',
+                                                event_hub_name=event_hub_name)
+    trash = builder.add_stage('Trash')
+
+    azure_iot_event_hub_consumer >> trash
+
+    consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    try:
+        eh_service_bus = azure.event_hubs.service_bus
+
+        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
+        assert azure.storage.create_blob_container(container_name)
+
+        logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
+        assert eh_service_bus.create_event_hub(event_hub_name)
+
+        send_records = [{'Body': f'Event {msg}'} for msg in range(10)]
+        eh_service_bus.send_event(event_hub_name, json.dumps(send_records))
+
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=True)
+
+        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].field
+        results = [{key: value for key, value in record.items()} for record in result_record]
+        assert results == send_records
+
+        # Try adding more data and resuming from the offset
+        send_records2 = [{'Body': f'Event {msg}'} for msg in range(10, 20)]
+        eh_service_bus.send_event(event_hub_name, json.dumps(send_records2))
+
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
+
+        result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].field
+        results = [{key: value for key, value in record.items()} for record in result_record]
+        assert results == send_records2
+    finally:
+        logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
+        eh_service_bus.delete_event_hub(event_hub_name)
+
+        logger.info('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
+        azure.storage.delete_blob_container(container_name)
+
+
+@azure('eventhub')
+@sdc_min_version('2.7.1.0')
 def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
     """Test for Azure Event Hub producer destination stage. We do so by using two pipelines. The 1st, Event Hub
     producer pipeline which publishes data which is captured by 2nd, Event Hub consumer. We then assert data at

@@ -16,6 +16,7 @@
 
 import json
 import logging
+import os
 import string
 from collections import namedtuple
 from operator import itemgetter
@@ -199,7 +200,7 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
 
     try:
         # Create a file with the raw data messages
-        with open('test-data.txt', 'w+') as file:
+        with open(file_name, 'w+') as file:
             for message in messages:
                 file.write(f'{message}\n')
 
@@ -208,6 +209,7 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
 
         dl_fs.mkdir(f'/{directory_name}')
         dl_fs.put(file_name, f'/{directory_name}/{file_name}')
+        os.remove(file_name)
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
         trash = builder.add_stage('Trash')
@@ -228,6 +230,81 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
 
         # assert Data Lake files generated
         assert messages == output_records
+    finally:
+        dl_files = dl_fs.ls(directory_name)
+        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        for dl_file in dl_files:
+            dl_fs.rm(dl_file)
+        dl_fs.rmdir(directory_name)
+
+
+@azure('datalake')
+@sdc_min_version('3.9.0')
+def test_datalake_origin_resume_offset(sdc_builder, sdc_executor, azure):
+    """ Test for Data Lake Store origin stage. We do so by creating a file in Azure Data Lake Storage using the
+    STF client, then reading the file using the ALDS Gen1 Origin Stage, to assert data ingested by the pipeline
+    is the expected data from the file. We then create more data, restart the pipeline, and take another snapshot to
+    ensure that the stage properly resumes from where the offset left off. The pipeline looks like:
+
+    azure_data_lake_store_origin >> trash
+    """
+    adls_version = ADLS_GEN1  # There is no Origin stage for legacy-gen1.
+    directory_name = get_random_string(string.ascii_letters, 10)
+    file_name = 'test-data.txt'
+    file2_name = 'test-data2.txt'
+    messages = [f'message{i}' for i in range(1, 10)]
+    messages2 = [f'message{i}' for i in range(11, 20)]
+
+    try:
+        # Create a file with the raw data messages
+        with open(file_name, 'w+') as file:
+            for message in messages:
+                file.write(f'{message}\n')
+
+        # Create a second file with more raw data messages
+        with open(file2_name, 'w+') as file:
+            for message in messages2:
+                file.write(f'{message}\n')
+
+        # Put files in the azure storage file system
+        dl_fs = azure.datalake.file_system
+
+        dl_fs.mkdir(f'/{directory_name}')
+        dl_fs.put(file_name, f'/{directory_name}/{file_name}')
+        os.remove(file_name)
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        trash = builder.add_stage('Trash')
+        azure_data_lake_store_origin = builder.add_stage(name=ADLS_GEN_STAGELIBS[adls_version].source_stagelib)
+        azure_data_lake_store_origin.set_attributes(data_format='TEXT',
+                                                    files_directory=f'/{directory_name}',
+                                                    file_name_pattern='*')
+        azure_data_lake_store_origin >> trash
+
+        datalake_origin_pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(datalake_origin_pipeline)
+
+        # start pipeline and read file in ADLS
+        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.stop_pipeline(datalake_origin_pipeline, wait=True)
+        output_records = [record.field['text']
+                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+
+        # assert Data Lake files generated
+        assert messages == output_records
+
+        # Try adding the second file and resuming from the offset
+        dl_fs.put(file2_name, f'/{directory_name}/{file2_name}')
+        os.remove(file2_name)
+
+        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.stop_pipeline(datalake_origin_pipeline, wait=False)
+        output_records = [record.field['text']
+                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+
+        # assert Data Lake files generated
+        assert messages2 == output_records
     finally:
         dl_files = dl_fs.ls(directory_name)
         # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
