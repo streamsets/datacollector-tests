@@ -154,8 +154,7 @@ def test_delete_header_attribute(sdc_builder, sdc_executor):
     records = snapshot[groovy].output
 
     assert len(records) == 1
-    # STF-797: Please add a way how to detect that given header attribute doesn't exists
-    assert 'remove' not in records[0].header._data
+    assert 'remove' not in records[0].header
 
 
 # SDC-11546: Expose the underlying Data Collector Record in Scripting processors
