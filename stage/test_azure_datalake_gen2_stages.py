@@ -26,7 +26,6 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-
 SOURCE_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_datalake_gen2_DataLakeGen2DSource'
 TARGET_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_datalake_gen2_DataLakeGen2DTarget'
 
@@ -44,7 +43,8 @@ def test_datalake_destination(sdc_builder, sdc_executor, azure):
     destination with its provided account FQDN and then reading Data Lake Store using STF client to assert data
     between the client to what has been ingested by the pipeline. We use a record deduplicator processor in
     between dev raw data source origin and Data Lake Store destination in order to determine exactly what has
-    been ingested. The pipeline looks like:
+    been ingested.
+    The pipeline looks like:
 
     Data Lake Store Destination pipeline:
         dev_raw_data_source >> record_deduplicator >> azure_data_lake_store_destination
@@ -110,12 +110,14 @@ def test_datalake_destination(sdc_builder, sdc_executor, azure):
 
 @azure('datalake')
 @sdc_min_version('3.9.0')
-def test_datalake_destination_max_records(sdc_builder, sdc_executor, azure):
+def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azure):
     """Test for Data Lake Store target stage setting max number of records per file as 1.
+       Azure_data_lake_store_destination produces events.
+
        The pipeline looks like:
 
         Data Lake Store Destination pipeline:
-            dev_data_generator >> azure_data_lake_store_destination
+            dev_data_generator >> azure_data_lake_store_destination >= trash
     """
     directory_name = get_random_string(string.ascii_letters, 10)
     files_prefix = get_random_string(string.ascii_letters, 10)
@@ -140,15 +142,17 @@ def test_datalake_destination_max_records(sdc_builder, sdc_executor, azure):
                                          directory_template=f'/{directory_name}',
                                          files_prefix=files_prefix,
                                          files_suffix=files_suffix,
-                                         max_records_in_file=1)
-    dev_raw_data_source >> azure_data_lake_store
+                                         max_records_in_file=1,
+                                         generate_events=True)
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> azure_data_lake_store >= trash
 
     pipeline = pipeline_builder.build().configure_for_environment(azure)
     sdc_executor.add_pipeline(pipeline)
     dl_fs = azure.datalake.file_system
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1).wait_for_finished().snapshot
 
         paths = dl_fs.ls(directory_name).response.json()['paths']
         dl_files = [item['name'] for item in paths] if paths else []
@@ -159,6 +163,11 @@ def test_datalake_destination_max_records(sdc_builder, sdc_executor, azure):
         dl_file_contents = [json.loads(dl_fs.cat(dl_file).response.content.decode()) for dl_file in dl_files]
 
         assert sorted(dl_file_contents, key=itemgetter('id')) == sorted(raw_data, key=itemgetter('id'))
+
+        assert len(snapshot[azure_data_lake_store].event_records) == 10
+        for index in range(0, 9):
+            assert snapshot[azure_data_lake_store].event_records[index].header['values'][
+                       'sdc.event.type'] == 'file-closed'
     finally:
         paths = dl_fs.ls(directory_name).response.json()['paths']
         dl_files = [item['name'] for item in paths] if paths else []
@@ -210,6 +219,149 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
 
         # assert Data Lake files generated
         assert messages == output_records
+    finally:
+        paths = dl_fs.ls(directory_name).response.json()['paths']
+        dl_files = [item['name'] for item in paths] if paths else []
+        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        for dl_file in dl_files:
+            dl_fs.rm(dl_file)
+        dl_fs.rmdir(directory_name)
+
+
+@azure('datalake')
+@sdc_min_version('3.9.0')
+def test_datalake_origin_stop_go(sdc_builder, sdc_executor, azure):
+    """ Test for Data Lake Store origin stage. We do so by creating a file in Azure Data Lake Storage using the
+    STF client, then reading the file using the ALDS Gen2 Origin Stage, to assert data ingested by the pipeline
+    is the expected data from the file.
+    The pipeline looks like:
+
+    azure_data_lake_store_origin >> trash
+
+    We stop the pipeline, insert more data and check the offset worked.
+    """
+    directory_name = get_random_string(string.ascii_letters, 10)
+    file_name = 'test-data-1.txt'
+    messages = [f'message{i}' for i in range(1, 10)]
+
+    try:
+        # Put files in the azure storage file system
+        dl_fs = azure.datalake.file_system
+
+        dl_fs.mkdir({directory_name})
+        dl_fs.touch(f'{directory_name}/{file_name}')
+        dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        trash = builder.add_stage('Trash')
+        azure_data_lake_store_origin = builder.add_stage(name=SOURCE_STAGE_NAME)
+        azure_data_lake_store_origin.set_attributes(data_format='TEXT',
+                                                    files_directory=f'/{directory_name}',
+                                                    file_name_pattern='*')
+        azure_data_lake_store_origin >> trash
+
+        datalake_origin_pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(datalake_origin_pipeline)
+
+        # start pipeline and read file in ADLS
+        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.stop_pipeline(datalake_origin_pipeline)
+        output_records = [record.field['text']
+                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+
+        # assert Data Lake files generated
+        assert messages == output_records
+
+        messages = [f'message{i}' for i in range(11, 20)]
+        file_name = 'test-data-2.txt'
+
+        dl_fs.touch(f'{directory_name}/{file_name}')
+        dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
+
+        # Put files in the azure storage file system
+        dl_fs = azure.datalake.file_system
+
+        # start pipeline and read file in ADLS
+        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.stop_pipeline(datalake_origin_pipeline)
+        output_records = [record.field['text']
+                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+
+        # assert Data Lake files generated
+        assert messages == output_records
+
+
+
+    finally:
+        paths = dl_fs.ls(directory_name).response.json()['paths']
+        dl_files = [item['name'] for item in paths] if paths else []
+        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        for dl_file in dl_files:
+            dl_fs.rm(dl_file)
+        dl_fs.rmdir(directory_name)
+
+
+@azure('datalake')
+@sdc_min_version('3.9.0')
+def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
+    """ Test for Data Lake Store origin stage. We do so by creating a file in Azure Data Lake Storage using the
+    STF client, then reading the file using the ALDS Gen2 Origin Stage, to assert data ingested by the pipeline
+    is the expected data from the file.
+    The origin produce events. A pipeline finisher is connected to the origin. It stops the pipeline.
+    We assert the events are the expected ones.
+    The pipeline looks like:
+
+    azure_data_lake_store_origin >> trash
+    azure_data_lake_store_origin >= finisher
+
+    """
+    directory_name = get_random_string(string.ascii_letters, 10)
+    file_name = 'test-data.txt'
+    messages = [f'message{i}' for i in range(1, 10)]
+
+    try:
+        # Put files in the azure storage file system
+        dl_fs = azure.datalake.file_system
+
+        dl_fs.mkdir({directory_name})
+        dl_fs.touch(f'{directory_name}/{file_name}')
+        dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        trash = builder.add_stage('Trash')
+        azure_data_lake_store_origin = builder.add_stage(name=SOURCE_STAGE_NAME)
+        azure_data_lake_store_origin.set_attributes(data_format='TEXT',
+                                                    files_directory=f'/{directory_name}',
+                                                    produce_events=True,
+                                                    file_name_pattern='*')
+
+        pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finisher_executor.set_attributes(
+            stage_record_preconditions=["${record:eventType() == 'finished-file'}"])
+
+        azure_data_lake_store_origin >> trash
+        azure_data_lake_store_origin >= pipeline_finisher_executor
+
+        datalake_origin_pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(datalake_origin_pipeline)
+
+        # start pipeline and read file in ADLS
+        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.get_pipeline_status(datalake_origin_pipeline).wait_for_status(status='FINISHED')
+        output_records = [record.field['text']
+                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+
+        # assert Data Lake files generated
+        assert messages == output_records
+
+        assert len(snapshot[azure_data_lake_store_origin].event_records) == 2
+        assert snapshot[azure_data_lake_store_origin].event_records[0].header['values'][
+                   'sdc.event.type'] == 'new-file'
+        assert snapshot[azure_data_lake_store_origin].event_records[1].header['values'][
+                   'sdc.event.type'] == 'finished-file'
+
     finally:
         paths = dl_fs.ls(directory_name).response.json()['paths']
         dl_files = [item['name'] for item in paths] if paths else []
