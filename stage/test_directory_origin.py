@@ -20,6 +20,7 @@ import random
 import string
 import tempfile
 import time
+import csv
 
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -468,6 +469,64 @@ def test_directory_origin_avro_produce_less_file(sdc_builder, sdc_executor):
     assert output_records[0].get_field_data('/age') == avro_records[0].get('age')
     assert output_records[0].get_field_data('/emails') == avro_records[0].get('emails')
     assert output_records[0].get_field_data('/boss') == avro_records[0].get('boss')
+
+
+@sdc_min_version('3.8.0')
+def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read(sdc_builder, sdc_executor):
+    """Test that directory origin with more than one threads read all data from all the files in a folder before
+    sending no more data event.
+
+    The pipelines looks like:
+
+        directory >> trash
+        directory >= pipeline finisher executor
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED', header_line='WITH_HEADER', file_name_pattern='*.csv',
+                             file_name_pattern_mode='GLOB', file_post_processing='NONE',
+                             files_directory='/resources/directory_origin', read_order='LEXICOGRAPHICAL',
+                             batch_size_in_recs=10, batch_wait_time_in_secs=60, produce_events=True,
+                             number_of_threads=3, on_record_error='STOP_PIPELINE')
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+
+    pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher_executor.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'],
+                                              on_record_error='DISCARD')
+
+    directory >= pipeline_finisher_executor
+
+    directory_pipeline = pipeline_builder.build(
+        title='test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read')
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10,
+                                             batches=13, wait_for_statuses=['FINISHED'], timeout_sec=120).snapshot
+
+    # assert all the data captured have the same raw_data
+    output_records = [record for i in range(len(snapshot.snapshot_batches)) for record in
+                      snapshot.snapshot_batches[i][directory.instance_name].output]
+
+    assert 125 == len(output_records)
+
+    output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
+                                  output_records]
+
+    data_from_csv_files = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
+    temp_data_from_csv_file = [f'{row[0]},{row[1]},{row[2]}' for row in data_from_csv_files]
+    data_from_csv_files = (read_csv_file('./resources/directory_origin/test5.csv', ',', True))
+    for row in data_from_csv_files:
+        temp_data_from_csv_file.append(f'{row[0]},{row[1]},{row[2]}')
+    data_from_csv_files = (read_csv_file('./resources/directory_origin/test6.csv', ',', True))
+    for row in data_from_csv_files:
+        temp_data_from_csv_file.append(f'{row[0]},{row[1]},{row[2]}')
+    data_from_csv_files = temp_data_from_csv_file
+
+    assert len(data_from_csv_files) == len(output_records_text_fields)
+    assert sorted(data_from_csv_files) == sorted(output_records_text_fields)
 
 
 @sdc_min_version('3.0.0.0')
@@ -1100,3 +1159,15 @@ def setup_dilimited_file(sdc_executor, tmp_directory, csv_records):
     sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
 
     return csv_records
+
+
+def read_csv_file(file_path, delimiter, remove_header=False):
+    """ Reads a csv file with records separated by delimiter"""
+    rows = []
+    with open(file_path) as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=delimiter)
+        for row in csv_reader:
+            rows.append(row)
+    if remove_header:
+        rows = rows[1:]
+    return rows
