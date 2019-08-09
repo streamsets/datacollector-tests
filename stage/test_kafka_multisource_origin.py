@@ -156,6 +156,62 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
 
 
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.8.3')
+def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
+    """ Above SDC-10501 introduced a bug which does not commit offset when the number of records
+    is less than the max batch size. This process 5 records for the 1st run, stop pipeline, and
+    run again to process 3 records for the 2nd run. 2nd run should process 3 records as the offset
+    should be saved after the 1st run.
+
+    Kafka Multitopic Origin >> Trash (Run twice)
+    """
+    topic = get_random_string(string.ascii_letters, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(builder, cluster)
+    kafka_multitopic_consumer.topic_list = [topic]
+    kafka_multitopic_consumer.auto_offset_reset = 'EARLIEST'
+    kafka_multitopic_consumer.consumer_group = get_random_string(string.ascii_letters, 10)
+    kafka_multitopic_consumer.batch_wait_time_in_ms = 100
+
+    trash = builder.add_stage(label='Trash')
+
+    kafka_multitopic_consumer >> trash
+
+    pipeline = builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(pipeline)
+
+    # Produce 5 messages
+    messages = [f'message{i}' for i in range(0, 5)]
+    produce_kafka_messages_list(kafka_multitopic_consumer.topic_list[0], cluster, messages, 'TEXT')
+
+    try:
+        # Start the pipeline, read one batch and stop.
+        snapshot1 = sdc_executor.capture_snapshot(pipeline, batches=1, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        # Check if the pipeline processed 5 records
+        records = snapshot1[kafka_multitopic_consumer].output
+        assert len(records) == 5
+
+        # Produce another 3 messages
+        messages2 = [f'message{i}' for i in range(5, 8)]
+        produce_kafka_messages_list(kafka_multitopic_consumer.topic_list[0], cluster, messages2, 'TEXT')
+
+        # Run the pipeline second time
+        snapshot2 = sdc_executor.capture_snapshot(pipeline, batches=1, start_pipeline=True).snapshot
+        #  2nd run should processed only 3 records
+        records2 = snapshot2[kafka_multitopic_consumer].output
+        assert len(records2) == 3
+
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
 # SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
 @cluster('cdh', 'kafka')
 @sdc_min_version('3.6.0')
@@ -217,7 +273,7 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
 
 # SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
 @cluster('cdh', 'kafka')
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.9.1')
 def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     """Check that retrieving messages from Kafka using Kafka Multitopic Consumer respects both the Batch Max Wait Time
     and the Max Batch Size. Batches are sent when the first of the two conditions is met. This test is checking that
