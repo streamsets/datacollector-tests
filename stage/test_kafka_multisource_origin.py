@@ -157,7 +157,6 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh', 'kafka')
-@sdc_min_version('3.8.3')
 def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
     """ Above SDC-10501 introduced a bug which does not commit offset when the number of records
     is less than the max batch size. This process 5 records for the 1st run, stop pipeline, and
