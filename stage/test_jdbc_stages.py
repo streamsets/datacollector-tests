@@ -787,7 +787,7 @@ def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor
                                        raw_data='\n'.join(DATA))
 
     query_str1 = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
-    query_str2 = f"SELECT * FROM {table_name} LIMIT 2"
+    query_str2 = f"SELECT * FROM {table_name}"
 
     jdbc_query_executor1 = pipeline_builder.add_stage('JDBC Query', type='executor')
     jdbc_query_executor1.set_attributes(sql_query=query_str1)
@@ -813,9 +813,9 @@ def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor
         assert 'successful-query' == event_records[1].header['values']['sdc.event.type']
         assert 'successful-query' == event_records[2].header['values']['sdc.event.type']
 
-        assert '2 row(s) returned' == event_records[0].value['value']['query-result']['value']
-        assert '2 row(s) returned' == event_records[1].value['value']['query-result']['value']
-        assert '2 row(s) returned' == event_records[2].value['value']['query-result']['value']
+        assert '3 row(s) returned' == event_records[0].value['value']['query-result']['value']
+        assert '3 row(s) returned' == event_records[1].value['value']['query-result']['value']
+        assert '3 row(s) returned' == event_records[2].value['value']['query-result']['value']
 
         result = database.engine.execute(table.select())
         result.close()
