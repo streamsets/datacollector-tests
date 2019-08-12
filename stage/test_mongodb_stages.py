@@ -290,7 +290,7 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
         mongodb.engine.drop_database(mongodb_origin.database)
 
 @mongodb
-@sdc_min_version('3.8.2')
+@sdc_min_version('3.8.3')
 def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
     """
     Validate that we properly process decimal type.
