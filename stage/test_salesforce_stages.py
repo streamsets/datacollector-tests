@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import copy
 import logging
 import string
-
 
 import pytest
 import requests
@@ -904,3 +904,53 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
                 client.bulk.Contact.delete(inserted_ids_1)
             if (inserted_ids_2):
                 client.bulk.Contact.delete(inserted_ids_2)
+
+# Test SDC-12041
+@salesforce
+def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    salesforce_origin.set_attributes(soql_query="SELECT Id, Body FROM Document",
+                                     disable_query_validation=True,
+                                     subscribe_for_notifications=False)
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    inserted_id = None
+    try:
+        # We need to put our document somewhere - get the Shared Documents folder id
+        result = client.query("SELECT Id FROM Folder WHERE Name = 'Shared Documents'")
+        folder_id = result['records'][0]['Id']
+
+        # Some content for our document
+        body = 'The quick brown fox jumps over the lazy dog'.encode("utf-8")
+
+        # Salesforce API wants base64-encoded Body
+        data_to_insert = [{'Name':' TestDoc',
+                           'FolderId': folder_id,
+                           'Body': base64.b64encode(body).decode("utf-8")}]
+
+        logger.info('Creating Document records using Salesforce client ...')
+        ret = client.bulk.Document.insert(data_to_insert)
+        inserted_id = ret[0]['id']
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # There should be a single row with Id and Body fields
+        assert len(snapshot[salesforce_origin].output) == 1
+        assert snapshot[salesforce_origin].output[0].get_field_data('/Id') == inserted_id
+        assert snapshot[salesforce_origin].output[0].get_field_data('/Body') == body
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if (inserted_id):
+            client.bulk.Document.delete([{'Id': inserted_id}])
