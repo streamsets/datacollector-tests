@@ -129,6 +129,90 @@ def test_google_bigquery_destination(sdc_builder, sdc_executor, gcp):
         bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
 
 
+
+
+@gcp
+@sdc_min_version('2.7.2.0')
+def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, gcp):
+    """Simple big query destination test with INSERT operation.
+    The pipeline inserts 1000 records of multiple types.
+    A type converter is included to transform decimal to float.
+    The pipeline should look like:
+        dev_data_generator >> field_type_converter >> google_bigquery
+
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.fields_to_generate = [
+        {'field': 'field1', 'type': 'STRING'},
+        {'field': 'field2', 'type': 'DATETIME'},
+        {'field': 'field3', 'type': 'INTEGER'},
+        {'field': 'field4', 'precision': 10, 'scale': 2, 'type': 'DECIMAL'},
+        {'field': 'field5', 'type': 'DOUBLE'}
+
+    ]
+    batch_size = 10000
+    dev_data_generator.set_attributes(delay_between_batches=0, batch_size=batch_size)
+
+
+    dataset_name = get_random_string(ascii_letters, 5)
+    table_name = get_random_string(ascii_letters, 5)
+    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery.set_attributes(dataset=dataset_name,
+                                   table_name=table_name,
+                                   stage_on_record_error='TO_ERROR')
+
+    # Create Field Type Converter
+    conversions = [{'fields': ['/field4'],
+                    'targetType': 'FLOAT'}]
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter.set_attributes(conversion_method='BY_FIELD',
+                                        field_type_converter_configs=conversions)
+
+    dev_data_generator >> field_type_converter >> google_bigquery
+
+    pipeline = pipeline_builder.build(title="BigQuery Destination multiple types")
+
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(gcp))
+
+    #FLOAT64 is used because there is a bug with NUMERIC, in bigquery Client
+    bigquery_client = gcp.bigquery_client
+    schema = [SchemaField('field1', 'STRING', mode='required'),
+              SchemaField('field2', 'DATETIME', mode='required'),
+              SchemaField('field3', 'INTEGER', mode='required'),
+              SchemaField('field4', 'FLOAT64', mode='required'),
+              SchemaField('field5', 'FLOAT', mode='required')
+              ]
+    dataset_ref = Dataset(bigquery_client.dataset(dataset_name))
+
+    try:
+        logger.info('Creating dataset %s using Google BigQuery client ...', dataset_name)
+        dataset = bigquery_client.create_dataset(dataset_ref)
+        table = bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=schema))
+
+        logger.info('Starting BigQuery Destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batch_size, timeout_sec=3600)
+        snapshot = sdc_executor.capture_snapshot(pipeline).snapshot
+
+
+        logger.info('Stopping BigQuery Destination pipeline and getting the count of records produced in total ...')
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Verify by reading records using Google BigQuery client
+        data_from_bigquery = [row for row in bigquery_client.list_rows(table)]
+        assert len(data_from_bigquery) > batch_size
+        stage = snapshot[google_bigquery.instance_name]
+        assert len(stage.error_records) == 0
+
+    finally:
+        logger.info('Dropping table %s in Google Big Query database ...', table_name)
+        bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
+
+
+
+
 @gcp
 @sdc_min_version('2.7.0.0')
 def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
@@ -579,5 +663,120 @@ def test_google_storage_destination(sdc_builder, sdc_executor, gcp):
         # Strip out the lines which are empty (essentially the last line)
         lines = [line for line in contents.split('\n') if len(line) > 0]
         assert lines == data
+    finally:
+        created_bucket.delete(force=True)
+
+@gcp
+@sdc_min_version('3.0.0.0')
+def test_google_storage_destination_error(sdc_builder, sdc_executor, gcp):
+    """
+    Send data to Google cloud storage from Dev Raw Data Source
+    bucket is not created and
+    confirm that ten error records are generated.
+
+    The pipeline looks like:
+        dev_raw_data_source >> google_cloud_storage
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+
+
+
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
+
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       stop_after_first_batch=True,
+                                       raw_data='\n'.join(data))
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='destination')
+
+    google_cloud_storage.set_attributes(bucket='X',
+                                        common_prefix='gcs-test',
+                                        partition_prefix='${YYYY()}/${MM()}/${DD()}/${hh()}/${mm()}',
+                                        data_format='TEXT',
+                                        file_suffix='txt',
+                                        stage_on_record_error='TO_ERROR')
+
+    dev_raw_data_source >> google_cloud_storage
+
+    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    logger.info('Starting GCS Destination pipeline and waiting for it to produce records'
+                ' and transition to finished...')
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+
+    stage = snapshot[google_cloud_storage.instance_name]
+    assert len(stage.error_records) == 10
+    for _ in range(0,10):
+        assert 'CONTAINER_0001' == stage.error_records[_].header['errorCode']
+
+
+@gcp
+@sdc_min_version('3.0.0.0')
+def test_google_storage_origin_stop_resume(sdc_builder, sdc_executor, gcp):
+    """
+    Write data to Google cloud storage using Storage Client
+    and then check if Google Storage Origin receives them using snapshot.
+    Stop the pipeline, add more data, resume the pipline and check the new data.
+
+    The pipeline looks like:
+        google_cloud_storage_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT')
+    trash = pipeline_builder.add_stage('Trash')
+
+    google_cloud_storage >> trash
+
+    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = storage_client.create_bucket(bucket_name)
+    try:
+        data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
+        blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test-1.txt')
+        blob.upload_from_string('\n'.join(data))
+
+        logger.info('Starting GCS Origin pipeline and waiting for it to produce a snapshot ...')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        rows_from_snapshot = [record.field['text']
+                              for record in snapshot[google_cloud_storage].output]
+
+        logger.debug(rows_from_snapshot)
+        assert rows_from_snapshot == data
+
+        data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
+        blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test-1.txt')
+        blob.upload_from_string('\n'.join(data))
+
+        logger.info('Starting Second Time GCS Origin pipeline and waiting for it to produce a snapshot ...')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        rows_from_snapshot = [record.field['text']
+                              for record in snapshot[google_cloud_storage].output]
+
+        logger.debug(rows_from_snapshot)
+        assert rows_from_snapshot == data
+
+
     finally:
         created_bucket.delete(force=True)
