@@ -14,6 +14,7 @@
 
 import base64
 import copy
+import json
 import logging
 import string
 
@@ -905,6 +906,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
             if (inserted_ids_2):
                 client.bulk.Contact.delete(inserted_ids_2)
 
+
 # Test SDC-12041
 @salesforce
 def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
@@ -954,3 +956,71 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
         logger.info('Deleting records ...')
         if (inserted_id):
             client.bulk.Document.delete([{'Id': inserted_id}])
+
+
+# Test SDC-12193
+@salesforce
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_destination_datetime(sdc_builder, sdc_executor, salesforce, api):
+    # Create an Event record as this is one of the few standard objects with a settable Datetime
+    event_data = {
+        "IsAllDayEvent": False,
+        "DurationInMinutes": 10,
+        "Location": "Casa Pat",
+        "Description": "This is a test event"
+    }
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json.dumps(event_data))
+
+    # Use an Expression Evaluator to create a datetime value that we can write to Salesforce
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.field_expressions = [
+        dict(fieldToSet='/ActivityDateTime',
+             expression="${time:now()}")]
+
+    salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
+    field_mapping = [{'sdcField': '/ActivityDateTime', 'salesforceField': 'ActivityDateTime'},
+                     {'sdcField': '/IsAllDayEvent', 'salesforceField': 'IsAllDayEvent'},
+                     {'sdcField': '/DurationInMinutes', 'salesforceField': 'DurationInMinutes'},
+                     {'sdcField': '/Description', 'salesforceField': 'Description'},
+                     {'sdcField': '/Location', 'salesforceField': 'Location'}]
+    salesforce_destination.set_attributes(default_operation='INSERT',
+                                          field_mapping=field_mapping,
+                                          sobject_type='Event',
+                                          use_bulk_api=(api == 'bulk'))
+
+    dev_raw_data_source >> expression_evaluator >> salesforce_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+    read_ids = None
+
+    client = salesforce.client
+    try:
+        logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        query_str = ('SELECT Id, ActivityDateTime, IsAllDayEvent, DurationInMinutes, Description, Location '
+                     f'FROM Event WHERE Location = \'{event_data["Location"]}\'')
+        result = client.query(query_str)
+
+        read_ids = [{'Id': item['Id']} for item in result['records']]
+
+        # Raw data source typically produces multiple records event if we only want one
+        assert len(result['records']) > 0
+        assert event_data['IsAllDayEvent'] == result['records'][0]['IsAllDayEvent']
+        assert event_data['DurationInMinutes'] == result['records'][0]['DurationInMinutes']
+        assert event_data['Location'] == result['records'][0]['Location']
+        assert event_data['Description'] == result['records'][0]['Description']
+
+    finally:
+        logger.info('Deleting records ...')
+        if read_ids:
+            client.bulk.Event.delete(read_ids)
