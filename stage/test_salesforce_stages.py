@@ -97,6 +97,67 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
         client.bulk.Contact.delete(read_ids)
 
 
+@salesforce
+@sdc_min_version('3.11.0')
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, salesforce, api):
+    """
+    Send text to Salesforce destination from Dev Raw Data Source and
+    confirm that Salesforce destination successfully reads them using Salesforce client.
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_destination
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Replace field names in raw data, map them back in destination
+    data_to_insert = [item.replace('Email', 'em').replace('LeadSource', 'ls') for item in CSV_DATA_TO_INSERT]
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, data_to_insert)
+
+    salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
+    # FirstName and LastName should be mapped by default
+    field_mapping = [{'sdcField': '/em', 'salesforceField': 'Email'},
+                     {'sdcField': '/ls', 'salesforceField': 'LeadSource'}]
+    salesforce_destination.set_attributes(default_operation='INSERT',
+                                          field_mapping=field_mapping,
+                                          use_bulk_api=(api == 'bulk'),
+                                          sobject_type='Contact')
+
+    dev_raw_data_source >> salesforce_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+    read_ids = None
+
+    client = salesforce.client
+    try:
+        # Produce Salesforce records using pipeline.
+        logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Using Salesforce connection, read the contents in the Salesforce destination.
+        # Changing " with ' and vice versa in following string makes the query execution fail.
+        query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
+                     "FROM Contact WHERE Email LIKE 'xtest%' ORDER BY Id")
+        result = client.query(query_str)
+
+        read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]},{item["LeadSource"]}'
+                     for item in result['records']]
+        # Following is used later to delete these records.
+        read_ids = [{'Id': item['Id']} for item in result['records']]
+
+        # Read data should match the original data, before we changed the field names
+        assert CSV_DATA_TO_INSERT[1:] == read_data
+
+    finally:
+        logger.info('Deleting records ...')
+        client.bulk.Contact.delete(read_ids)
+
+
 # Testing of SDC-10475
 @salesforce
 def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor, salesforce):
