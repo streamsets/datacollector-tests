@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import base64
+import json
 import logging
 import math
 import time
@@ -36,25 +37,58 @@ SNAPSHOT_TIMEOUT_SEC = 120
 bytes_column = base64.b64encode("dataAsBytes".encode('utf-8'))
 
 ROWS_TO_INSERT = [(None, 'null ID', 12.3456, '99999999999999999999999999999.999999999', True,
-                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', '08:39:01.123',
+                   bytes_column),
                   (1, 'full record', 12.3456, '99999999999999999999999999999.999999999', True,
-                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', '08:39:01.123',
+                   bytes_column),
                   (2, 'null float', None, '99999999999999999999999999999.999999999', True,
-                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', '08:39:01.123',
+                   bytes_column),
                   (3, 'null numeric', 12.3456, None, True,
-                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', '08:39:01.123',
+                   bytes_column),
                   (4, 'null boolean', 12.3456, '99999999999999999999999999999.999999999', None,
-                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', '08:39:01.123',
+                   bytes_column),
                   (5, 'null date', 12.3456, '99999999999999999999999999999.999999999', True,
-                   None, '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                   None, '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', '08:39:01.123', bytes_column),
                   (6, 'null datetime', 12.3456, '99999999999999999999999999999.999999999', True,
-                   '2019-02-05', None, '2007-05-28 07:52:31.123 UTC','08:39:01.123', bytes_column),
+                   '2019-02-05', None, '2007-05-28 07:52:31.123 UTC', '08:39:01.123', bytes_column),
                   (7, 'null timestamp', 12.3456, '99999999999999999999999999999.999999999', True,
-                   '2019-02-05', '2019-02-05 23:59:59.999', None,'08:39:01.123', bytes_column),
+                   '2019-02-05', '2019-02-05 23:59:59.999', None, '08:39:01.123', bytes_column),
                   (8, 'null time', 12.3456, '99999999999999999999999999999.999999999', True,
                    '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', None, bytes_column),
                   (9, 'null bytes', 12.3456, '99999999999999999999999999999.999999999', True,
-                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC','08:39:01.123', None)]
+                   '2019-02-05', '2019-02-05 23:59:59.999', '2007-05-28 07:52:31.123 UTC', '08:39:01.123', None)]
+
+ROWS_TO_INSERT_2 = [(11, 'full record 2', 12.3456, '99999999999999999999999999999.999999995', True,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column),
+                    (12, 'full record 3', None, '99999999999999999999999999999.999999995', True,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column),
+                    (13, 'full record 4', 12.3456, '99999999999999999999999999999.999999995', True,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column),
+                    (14, 'full record 5', 12.3456, '99999999999999999999999999999.999999995', False,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column),
+                    (15, 'full record 6', 12.3456, '99999999999999999999999999999.999999995', True,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column),
+                    (16, 'full record 7', 12.3456, '99999999999999999999999999999.999999995', True,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column),
+                    (17, 'full record 8', 12.3456, '99999999999999999999999999999.999999995', True,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column),
+                    (18, 'full record 9', 12.3456, '99999999999999999999999999999.999999995', True,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column),
+                    (19, 'full record 10', 12.3456, '99999999999999999999999999999.999999995', True,
+                     '2019-02-05', '2019-02-05 23:59:59.995', '2007-05-28 07:52:31.125 UTC', '08:39:01.125',
+                     bytes_column)]
 
 ROWS_EXPECTED = [('Cristiano Ronaldo', 32),
                  ('David Beckham', 32),
@@ -129,8 +163,6 @@ def test_google_bigquery_destination(sdc_builder, sdc_executor, gcp):
         bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
 
 
-
-
 @gcp
 @sdc_min_version('2.7.2.0')
 def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, gcp):
@@ -156,7 +188,6 @@ def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, g
     batch_size = 10000
     dev_data_generator.set_attributes(delay_between_batches=0, batch_size=batch_size)
 
-
     dataset_name = get_random_string(ascii_letters, 5)
     table_name = get_random_string(ascii_letters, 5)
     google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
@@ -177,7 +208,7 @@ def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, g
 
     sdc_executor.add_pipeline(pipeline.configure_for_environment(gcp))
 
-    #FLOAT64 is used because there is a bug with NUMERIC, in bigquery Client
+    # FLOAT64 is used because there is a bug with NUMERIC, in bigquery Client
     bigquery_client = gcp.bigquery_client
     schema = [SchemaField('field1', 'STRING', mode='required'),
               SchemaField('field2', 'DATETIME', mode='required'),
@@ -196,7 +227,6 @@ def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, g
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batch_size, timeout_sec=3600)
         snapshot = sdc_executor.capture_snapshot(pipeline).snapshot
 
-
         logger.info('Stopping BigQuery Destination pipeline and getting the count of records produced in total ...')
         sdc_executor.stop_pipeline(pipeline)
 
@@ -209,8 +239,6 @@ def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, g
     finally:
         logger.info('Dropping table %s in Google Big Query database ...', table_name)
         bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
-
-
 
 
 @gcp
@@ -230,7 +258,6 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
     google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='origin')
     query_str = f'SELECT * FROM {dataset_name}.{table_name} ORDER BY id'
     google_bigquery.set_attributes(query=query_str)
-
 
     trash = pipeline_builder.add_stage('Trash')
     google_bigquery >> trash
@@ -266,25 +293,136 @@ def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
             sdc_executor.stop_pipeline(pipeline)
         get_value_by_index = lambda x: list(x[0].field.values())[x[1]].value
         rows_from_snapshot = [(int(get_value_by_index((record, 0)))
-                                   if get_value_by_index((record, 0)) is not None else None,
+                               if get_value_by_index((record, 0)) is not None else None,
                                get_value_by_index((record, 1)),
                                float(get_value_by_index((record, 2)))
-                                   if get_value_by_index((record, 2)) is not None else None,
+                               if get_value_by_index((record, 2)) is not None else None,
                                str(get_value_by_index((record, 3)))
-                                   if get_value_by_index((record, 3)) is not None else None,
+                               if get_value_by_index((record, 3)) is not None else None,
                                get_value_by_index((record, 4)),
                                get_value_by_index((record, 5)).strftime("%Y-%m-%d")
-                                   if get_value_by_index((record, 5)) is not None else None,
+                               if get_value_by_index((record, 5)) is not None else None,
                                get_value_by_index((record, 6)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                                   if get_value_by_index((record, 6)) is not None else None,
+                               if get_value_by_index((record, 6)) is not None else None,
                                '{} UTC'.format(get_value_by_index((record, 7)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
-                                   if get_value_by_index((record, 7)) is not None else None,
+                               if get_value_by_index((record, 7)) is not None else None,
                                get_value_by_index((record, 8)).strftime('%H:%M:%S.%f')[:-3]
-                                   if get_value_by_index((record, 8)) is not None else None,
+                               if get_value_by_index((record, 8)) is not None else None,
                                get_value_by_index((record, 9)) if get_value_by_index((record, 9)) is not None else None)
                               for record in snapshot[google_bigquery].output]
 
         assert rows_from_snapshot == ROWS_TO_INSERT
+
+
+    finally:
+        bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
+
+
+@gcp
+@sdc_min_version('2.7.0.0')
+def test_google_bigquery_origin_stop_resume(sdc_builder, sdc_executor, gcp):
+    """
+    Create data using Google BigQuery client
+    and then check if Google BigQuery origin receives them using snapshot.
+    Stop the pipeline, add more data, and check the second batch.
+
+    The pipeline looks like:
+        google_bigquery >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dataset_name = get_random_string(ascii_letters, 5)
+    table_name = get_random_string(ascii_letters, 5)
+    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='origin')
+    query_str = f'SELECT * FROM {dataset_name}.{table_name} ORDER BY id'
+    google_bigquery.set_attributes(query=query_str)
+
+    trash = pipeline_builder.add_stage('Trash')
+    google_bigquery >> trash
+    pipeline = pipeline_builder.build(title='Google BigQuery').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    bigquery_client = gcp.bigquery_client
+    schema = [SchemaField('id', 'INTEGER', mode='NULLABLE'),
+              SchemaField('name', 'STRING', mode='NULLABLE'),
+              SchemaField('floatVal', 'FLOAT', mode='NULLABLE'),
+              SchemaField('numericVal', 'NUMERIC', mode='NULLABLE'),
+              SchemaField('booleanVal', 'BOOLEAN', mode='NULLABLE'),
+              SchemaField('dateVal', 'DATE', mode='NULLABLE'),
+              SchemaField('datetimeVal', 'DATETIME', mode='NULLABLE'),
+              SchemaField('timestampVal', 'TIMESTAMP', mode='NULLABLE'),
+              SchemaField('timeVal', 'TIME', mode='NULLABLE'),
+              SchemaField('bytesVal', 'BYTES', mode='NULLABLE')]
+
+    dataset_ref = Dataset(bigquery_client.dataset(dataset_name))
+
+    try:
+        # Using Google bigquery client, create dataset, table and data inside table
+        logger.info('Creating dataset %s using Google bigquery client ...', dataset_name)
+        dataset = bigquery_client.create_dataset(dataset_ref)
+        table = bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=schema))
+        errors = bigquery_client.insert_rows(table, ROWS_TO_INSERT)
+        assert not errors
+
+        # Start pipeline and verify correct rows are received using snaphot.
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        get_value_by_index = lambda x: list(x[0].field.values())[x[1]].value
+        rows_from_snapshot = [(int(get_value_by_index((record, 0)))
+                               if get_value_by_index((record, 0)) is not None else None,
+                               get_value_by_index((record, 1)),
+                               float(get_value_by_index((record, 2)))
+                               if get_value_by_index((record, 2)) is not None else None,
+                               str(get_value_by_index((record, 3)))
+                               if get_value_by_index((record, 3)) is not None else None,
+                               get_value_by_index((record, 4)),
+                               get_value_by_index((record, 5)).strftime("%Y-%m-%d")
+                               if get_value_by_index((record, 5)) is not None else None,
+                               get_value_by_index((record, 6)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                               if get_value_by_index((record, 6)) is not None else None,
+                               '{} UTC'.format(get_value_by_index((record, 7)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                               if get_value_by_index((record, 7)) is not None else None,
+                               get_value_by_index((record, 8)).strftime('%H:%M:%S.%f')[:-3]
+                               if get_value_by_index((record, 8)) is not None else None,
+                               get_value_by_index((record, 9))
+                               if get_value_by_index((record, 9)) is not None else None)
+                              for record in snapshot[google_bigquery].output]
+
+        assert rows_from_snapshot == ROWS_TO_INSERT
+
+        errors = bigquery_client.insert_rows(table, ROWS_TO_INSERT_2)
+        assert not errors
+
+        snapshot_2 = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
+        if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        get_value_by_index = lambda x: list(x[0].field.values())[x[1]].value
+
+        rows_from_snapshot = [(int(get_value_by_index((record, 0)))
+                               if get_value_by_index((record, 0)) is not None else None,
+                               get_value_by_index((record, 1)),
+                               float(get_value_by_index((record, 2)))
+                               if get_value_by_index((record, 2)) is not None else None,
+                               str(get_value_by_index((record, 3)))
+                               if get_value_by_index((record, 3)) is not None else None,
+                               get_value_by_index((record, 4)),
+                               get_value_by_index((record, 5)).strftime("%Y-%m-%d")
+                               if get_value_by_index((record, 5)) is not None else None,
+                               get_value_by_index((record, 6)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                               if get_value_by_index((record, 6)) is not None else None,
+                               '{} UTC'.format(get_value_by_index((record, 7)).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3])
+                               if get_value_by_index((record, 7)) is not None else None,
+                               get_value_by_index((record, 8)).strftime('%H:%M:%S.%f')[:-3]
+                               if get_value_by_index((record, 8)) is not None else None,
+                               get_value_by_index((record, 9))
+                               if get_value_by_index((record, 9)) is not None else None)
+                              for batch in snapshot_2.snapshot_batches
+                              for record in batch.stage_outputs[google_bigquery.instance_name].output]
+
+        assert rows_from_snapshot == ROWS_TO_INSERT + ROWS_TO_INSERT_2
+
     finally:
         bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
 
@@ -564,6 +702,87 @@ def test_google_bigtable_destination(sdc_builder, sdc_executor, gcp):
 
 
 @gcp
+@sdc_min_version('2.7.2.0')
+def test_google_bigtable_destination_multiple_types(sdc_builder, sdc_executor, gcp):
+    """Simple big table destination test with INSERT operation.
+    The pipeline inserts 1000 records of multiple types.
+    The pipeline should look like:
+        dev_data_generator >> record_deduplicator >> google_bigquery
+        record_deduplicator >> trash
+
+    record_deduplicator is added to avoid duplications
+
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.fields_to_generate = [
+        {'field': 'field1', 'type': 'STRING'},
+        {'field': 'field2', 'type': 'INTEGER'}
+    ]
+    batch_size = 10000
+    dev_data_generator.set_attributes(delay_between_batches=0, batch_size=batch_size)
+
+    dataset_name = get_random_string(ascii_letters, 5)
+    table_name = get_random_string(ascii_letters, 5)
+
+    google_bigtable = pipeline_builder.add_stage('Google Bigtable', type='destination')
+    # Field paths, name of columns, storage types
+    fields_list = [{'source': '/field1', 'storageType': 'TEXT', 'column': 'field1'},
+                   {'source': '/field2', 'storageType': 'BINARY', 'column': 'field2'}
+                   ]
+
+    google_bigtable.set_attributes(create_table_and_column_families=True,
+                                   default_column_family_name=DEFAULT_COLUMN_FAMILY_NAME,
+                                   explicit_column_family_mapping=False,
+                                   fields=fields_list,
+                                   row_key='/field1',
+                                   table_name=table_name)
+
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    record_deduplicator.set_attributes(compare='SPECIFIED_FIELDS',
+                                       fields_to_compare = ['/field1'])
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_data_generator >> record_deduplicator >> google_bigtable
+    record_deduplicator >> trash
+
+    pipeline = pipeline_builder.build(title='Google Bigtable Mult Types').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+    pipeline.rate_limit = 1
+
+    instance = gcp.bigtable_instance
+    table = instance.table(table_name)
+
+    try:
+        # Produce Google Bigtable records using pipeline.
+        logger.info('Starting Big table pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batch_size, timeout_sec=3600)
+
+
+        snapshot = sdc_executor.capture_snapshot(pipeline).snapshot
+
+        logger.info('Stopping Big tabñe Destination pipeline and getting the count of records produced in total ...')
+        sdc_executor.stop_pipeline(pipeline)
+
+        logger.info('Reading contents from table %s ...', table_name)
+        partial_rows = table.read_rows()
+        partial_rows.consume_all()
+        read_data = [row for row in partial_rows.rows.items()]
+
+        # Verify quantity of records greater than batch_size
+        assert len(read_data) > batch_size
+        # Verify no errors were generated
+        stage = snapshot[google_bigtable.instance_name]
+        assert len(stage.error_records) == 0
+
+    finally:
+        table.delete()
+
+@gcp
 @sdc_min_version('3.0.0.0')
 def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
     """
@@ -666,6 +885,7 @@ def test_google_storage_destination(sdc_builder, sdc_executor, gcp):
     finally:
         created_bucket.delete(force=True)
 
+
 @gcp
 @sdc_min_version('3.0.0.0')
 def test_google_storage_destination_error(sdc_builder, sdc_executor, gcp):
@@ -678,10 +898,6 @@ def test_google_storage_destination_error(sdc_builder, sdc_executor, gcp):
         dev_raw_data_source >> google_cloud_storage
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
-
-
-
-
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
 
@@ -713,8 +929,109 @@ def test_google_storage_destination_error(sdc_builder, sdc_executor, gcp):
 
     stage = snapshot[google_cloud_storage.instance_name]
     assert len(stage.error_records) == 10
-    for _ in range(0,10):
+    for _ in range(0, 10):
         assert 'CONTAINER_0001' == stage.error_records[_].header['errorCode']
+
+
+@gcp
+@sdc_min_version('3.0.0.0')
+def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc_executor, gcp):
+    """
+    Send data to Google cloud storage from Dev Raw Data Source
+    bucket is not created and
+    confirm that ten error records are generated.
+    Send the errors to google PUB SUB.
+    Retrieve the messages and check the code error.
+
+    The pipeline looks like:
+        dev_raw_data_source >> google_cloud_storage
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    subscription_id = get_random_string(ascii_letters, 5)
+    topic_name = get_random_string(ascii_letters, 5)
+
+    pubsub_subscriber_client = gcp.pubsub_subscriber_client
+    pubsub_publisher_client = gcp.pubsub_publisher_client
+    project_id = gcp.project_id
+
+    topic_path = pubsub_publisher_client.topic_path(project_id, topic_name)
+    subscription_path = pubsub_subscriber_client.subscription_path(project_id, subscription_id)
+
+    # Using Google pub/sub client, create topic and subscription
+    logger.info('Creating topic %s using Google pub/sub client ...', topic_name)
+    topic = pubsub_publisher_client.create_topic(topic_path)
+
+    subscription = pubsub_subscriber_client.create_subscription(subscription_path, topic_path)
+
+    # Pipeline error configured to google pub sub topic and project
+    write_to_google_pub_sub = pipeline_builder.add_error_stage('Write to Google Pub Sub')
+    write_to_google_pub_sub.set_attributes(topic_id=topic_name,
+                                           project_id=project_id)
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       stop_after_first_batch=True,
+                                       raw_data='\n'.join(data))
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='destination')
+
+    bucket_name = get_random_string(ascii_letters, 5)
+    # Bucket name does not exists.
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        partition_prefix='${YYYY()}/${MM()}/${DD()}/${hh()}/${mm()}',
+                                        data_format='TEXT',
+                                        file_suffix='txt',
+                                        stage_on_record_error='TO_ERROR')
+
+    dev_raw_data_source >> google_cloud_storage
+
+    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    logger.info('Starting GCS Destination pipeline and waiting for it to produce records'
+                ' and transition to finished...')
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+
+    stage = snapshot[google_cloud_storage.instance_name]
+    assert len(stage.error_records) == 10
+    for _ in range(0, 10):
+        assert 'CONTAINER_0001' == stage.error_records[_].header['errorCode']
+
+    msgs_to_be_received = 10
+    results = []
+
+    def callback(message):
+        nonlocal msgs_to_be_received
+        msgs_to_be_received = msgs_to_be_received - 1
+        results.append(message)
+        message.ack()
+
+    # Open the subscription, passing the callback.
+    future = pubsub_subscriber_client.subscribe(subscription_path, callback)
+
+    timeout = 5  # in seconds
+    start_time = time.time()
+    while time.time() < start_time + timeout and msgs_to_be_received > 0:
+        sleep(0.5)
+        logger.info('To be received messages %d...', msgs_to_be_received)
+
+    future.cancel()  # cancel the feature there by stopping subscribers
+
+    # Verify
+    msgs_received = [json.loads(message.data.decode(encoding='UTF-8', errors='ignore'))['header']['errorCode'] for
+                     message in results]
+
+    assert msgs_received == ['CONTAINER_0001'] * 10
+
+    pubsub_subscriber_client.delete_subscription(subscription_path)
+    pubsub_publisher_client.delete_topic(topic_path)
 
 
 @gcp
