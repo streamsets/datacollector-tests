@@ -764,6 +764,56 @@ def test_jdbc_query_executor_insert_query_result_count(sdc_builder, sdc_executor
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+
+@database
+def test_jdbc_query_executor_lifecycle_events(sdc_builder, sdc_executor, database):
+    """Verify that the JDBC Query Executor will work properly when used inside pipeline lifecycle stages."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(table_name,
+                             metadata,
+                             sqlalchemy.Column('user', sqlalchemy.String(50)),
+                             sqlalchemy.Column('event', sqlalchemy.String(50)))
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+
+    query = f"INSERT INTO {table_name} VALUES ('${{record:value('/user')}}', '${{record:attribute('sdc.event.type')}}')"
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'TEXT'
+    source.raw_data='SOMETHING'
+
+    trash = builder.add_stage('Trash')
+
+    start_stage = builder.add_start_event_stage('JDBC Query')
+    start_stage.set_attributes(sql_query=query)
+
+    stop_stage = builder.add_stop_event_stage('JDBC Query')
+    stop_stage.set_attributes(sql_query=query)
+
+    source >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        result = database.engine.execute(table.select())
+        db = sorted(result.fetchall(), key=lambda row: row[1])
+        result.close()
+
+        assert db[0][0] == 'admin'
+        assert db[0][1] == 'pipeline-start'
+        assert db[1][0] == ''
+        assert db[1][1] == 'pipeline-stop'
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
 @database
 def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor, database):
     """Simple JDBC Query Executor test for successful-query event type and query result count enabled.
