@@ -18,6 +18,7 @@ import json
 import logging
 import string
 import time
+from uuid import uuid4
 
 import pytest
 import requests
@@ -858,8 +859,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
 
     The pipeline looks like:
         salesforce_origin >> trash
-
-
+        salesforce_origin >= trash_2
     """
 
     aux_email= get_random_string(string.ascii_letters, 10).lower()
@@ -1527,3 +1527,63 @@ def test_salesforce_destination_polymorphic(sdc_builder, sdc_executor, salesforc
         logger.info('Deleting records ...')
         if (case_id):
             client.Case.delete(case_id)
+
+
+@salesforce
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_datetime_in_history(sdc_builder, sdc_executor, salesforce, api):
+    """
+    Test SDC-12334 - field history data is untyped in the Salesforce schema, since OldValue and NewValue depend on the
+    field that changed. For some datatypes, the XML holds type information in an xmltype attribute. We were using this
+    to create the correct SDC field type, but not handling datetimes, throwing a FORCE_04 error.
+
+    ActivatedDate on Contract is one of the few datetime fields that will show up in a standard object's field history.
+    """
+    client = salesforce.client
+
+    try:
+        # Create an account
+        acc = client.Account.create({'Name': str(uuid4())})
+
+        # Create a contract for that account
+        con = client.Contract.create({'AccountId': acc['id']})
+
+        # Update the contract status - this will have the side effect of updating ActivatedDate
+        client.Contract.update(con['id'], {'Status': 'Activated'})
+
+        query = f"SELECT Id, NewValue FROM ContractHistory WHERE Field = 'ActivatedDate' AND ContractId = '{con['id']}'"
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        salesforce_origin.set_attributes(soql_query=query,
+                                         disable_query_validation=True,
+                                         use_bulk_api=(api == 'bulk'),
+                                         subscribe_for_notifications=False)
+        trash = pipeline_builder.add_stage('Trash')
+        salesforce_origin >> trash
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        print(snapshot[salesforce_origin].output[0].field['NewValue'])
+
+        # There should be a single row with Id and NewValue fields. For SOAP API, NewValue should be a DATETIME, for
+        # Bulk API it's a STRING
+        assert len(snapshot[salesforce_origin].output) == 1
+        assert snapshot[salesforce_origin].output[0].field['Id']
+        if api == 'soap':
+            assert snapshot[salesforce_origin].output[0].field['NewValue'].type == 'DATETIME'
+        else:
+            assert snapshot[salesforce_origin].output[0].field['NewValue'].type == 'STRING'
+
+    finally:
+        if con and con['id']:
+            client.Contract.delete(con['id'])
+        if acc and acc['id']:
+            client.Account.delete(acc['id'])
