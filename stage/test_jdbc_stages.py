@@ -654,6 +654,7 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 @database
+@sdc_min_version('3.11.0')
 def test_jdbc_query_executor_successful_query_event(sdc_builder, sdc_executor, database):
     """Simple JDBC Query Executor test for successful-query event type.
     Pipeline will insert records into database and then using sqlalchemy, the verification will happen
@@ -707,6 +708,7 @@ def test_jdbc_query_executor_successful_query_event(sdc_builder, sdc_executor, d
         table.drop(database.engine)
 
 @database
+@sdc_min_version('3.11.0')
 def test_jdbc_query_executor_insert_query_result_count(sdc_builder, sdc_executor, database):
     """Simple JDBC Query Executor test for successful-query event type and query result count enabled.
     Pipeline will insert records into database and then using sqlalchemy, the verification will happen
@@ -860,6 +862,7 @@ def test_jdbc_query_executor_failure_state(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 @database
+@sdc_min_version('3.11.0')
 def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor, database):
     """Simple JDBC Query Executor test for successful-query event type and query result count enabled.
     Pipeline will insert records into database and then using sqlalchemy, the verification will happen
@@ -919,6 +922,7 @@ def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor
         table.drop(database.engine)
 
 @database
+@sdc_min_version('3.11.0')
 def test_jdbc_query_executor_failed_query_event(sdc_builder, sdc_executor, database):
     """Simple JDBC Query Executor test for failed-query event type.
     Pipeline will try to insert records into a non-existing table and the query would fail.
