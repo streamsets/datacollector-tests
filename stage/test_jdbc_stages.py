@@ -813,6 +813,46 @@ def test_jdbc_query_executor_lifecycle_events(sdc_builder, sdc_executor, databas
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+@database
+def test_jdbc_query_executor_failure_state(sdc_builder, sdc_executor, database):
+    """Verify that the executor is properly called with the proper state on pipeline initialization failure."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(table_name,
+                             metadata,
+                             sqlalchemy.Column('reason', sqlalchemy.String(50)))
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+
+    query = f"INSERT INTO {table_name} VALUES ('${{record:value('/reason')}}')"
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('JDBC Multitable Consumer')
+    source.table_configs=[{"tablePattern": 'this_table_do_not_exists'}]
+
+    trash = builder.add_stage('Trash')
+
+    stop_stage = builder.add_stop_event_stage('JDBC Query')
+    stop_stage.set_attributes(sql_query=query)
+
+    source >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+    # Injecting failure - this URL won't exists, pipeline won't be able to start properly
+    source.jdbc_connection_string = "jdbc:mysql://this-do-not-exists:3306/awesome-db"
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline, wait=False).wait_for_status('START_ERROR', ignore_errors=True)
+
+        result = database.engine.execute(table.select())
+        db = result.fetchall()
+        result.close()
+
+        assert db[0][0] == 'FAILURE'
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
 
 @database
 def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor, database):
