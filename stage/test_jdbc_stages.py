@@ -768,6 +768,11 @@ def test_jdbc_query_executor_insert_query_result_count(sdc_builder, sdc_executor
 @database
 def test_jdbc_query_executor_lifecycle_events(sdc_builder, sdc_executor, database):
     """Verify that the JDBC Query Executor will work properly when used inside pipeline lifecycle stages."""
+    if isinstance(database, OracleDatabase):
+        pytest.skip('This test does not support Oracle')
+    elif type(database) == SQLServerDatabase:
+        pytest.skip('This test does not support SQL Server')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     metadata = sqlalchemy.MetaData()
     table = sqlalchemy.Table(table_name,
