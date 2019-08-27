@@ -486,7 +486,7 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='DELIMITED', header_line='WITH_HEADER', file_name_pattern='*.csv',
                              file_name_pattern_mode='GLOB', file_post_processing='NONE',
-                             files_directory='/resources/directory_origin', read_order='LEXICOGRAPHICAL',
+                             files_directory='resources/directory_origin', read_order='LEXICOGRAPHICAL',
                              batch_size_in_recs=10, batch_wait_time_in_secs=60, produce_events=True,
                              number_of_threads=3, on_record_error='STOP_PIPELINE')
     trash = pipeline_builder.add_stage('Trash')
