@@ -282,7 +282,7 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "originFieldPath",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "resultFieldPath",
         "value" : "xyz"

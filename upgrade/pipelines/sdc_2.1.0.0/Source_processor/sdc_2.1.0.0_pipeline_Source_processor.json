@@ -330,10 +330,10 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "originFieldPath",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "resultFieldPath",
-        "value" : "xyz"
+        "value" : "/xyz"
       }, {
         "name" : "stageOnRecordError",
         "value" : "TO_ERROR"
@@ -386,10 +386,10 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "originFieldPath",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "resultFieldPath",
-        "value" : "xyz"
+        "value" : "/xyz"
       }, {
         "name" : "urlSafe",
         "value" : false
@@ -697,7 +697,7 @@
       "stageVersion" : "2",
       "configuration" : [ {
         "name" : "fieldPath",
-        "value" : "1000"
+        "value" : "/1000"
       }, {
         "name" : "fieldPathsForSplits",
         "value" : [ "/fieldSplit1", "/fieldSplit2" ]
@@ -1131,7 +1131,7 @@
         "value" : false
       }, {
         "name" : "conf.outputField",
-        "value" : "1000"
+        "value" : "/1000"
       }, {
         "name" : "conf.headerOutputLocation",
         "value" : "HEADER"
@@ -1461,7 +1461,7 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "fieldPathToParse",
-        "value" : "1000"
+        "value" : "/1000"
       }, {
         "name" : "removeCtrlChars",
         "value" : false
@@ -1526,7 +1526,7 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "listPath",
-        "value" : "1000"
+        "value" : "/1000"
       }, {
         "name" : "copyFields",
         "value" : true
@@ -1817,7 +1817,7 @@
       "stageVersion" : "2",
       "configuration" : [ {
         "name" : "fromField",
-        "value" : "1000"
+        "value" : "/1000"
       }, {
         "name" : "recordDelimiter",
         "value" : null
@@ -1866,7 +1866,7 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "configs.fieldPathToParse",
-        "value" : "1000"
+        "value" : "/1000"
       }, {
         "name" : "configs.charset",
         "value" : "UTF-8"
@@ -1878,7 +1878,7 @@
         "value" : null
       }, {
         "name" : "configs.parsedFieldPath",
-        "value" : "1000"
+        "value" : "/1000"
       }, {
         "name" : "stageOnRecordError",
         "value" : "TO_ERROR"

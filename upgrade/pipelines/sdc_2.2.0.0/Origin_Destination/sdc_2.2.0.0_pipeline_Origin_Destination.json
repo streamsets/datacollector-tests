@@ -986,7 +986,7 @@
         "value" : false
       }, {
         "name" : "bigtableConfigBean.singleColumnRowKey",
-        "value" : "100"
+        "value" : "/100"
       }, {
         "name" : "bigtableConfigBean.rowKeyColumnMapping",
         "value" : [ {

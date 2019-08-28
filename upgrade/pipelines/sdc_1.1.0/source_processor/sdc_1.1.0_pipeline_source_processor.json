@@ -503,7 +503,7 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "fieldPath",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "separator",
         "value" : " "
@@ -630,7 +630,7 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "fieldPathToParse",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "removeCtrlChars",
         "value" : false

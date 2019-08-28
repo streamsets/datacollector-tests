@@ -390,7 +390,7 @@
         "value" : false
       }, {
         "name" : "conf.outputField",
-        "value" : "1000"
+        "value" : "/1000"
       }, {
         "name" : "conf.headerOutputLocation",
         "value" : "HEADER"
