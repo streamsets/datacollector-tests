@@ -486,7 +486,7 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='DELIMITED', header_line='WITH_HEADER', file_name_pattern='*.csv',
                              file_name_pattern_mode='GLOB', file_post_processing='NONE',
-                             files_directory='resources/directory_origin', read_order='LEXICOGRAPHICAL',
+                             files_directory='/resources/resources/directory_origin', read_order='LEXICOGRAPHICAL',
                              batch_size_in_recs=10, batch_wait_time_in_secs=60, produce_events=True,
                              number_of_threads=3, on_record_error='STOP_PIPELINE')
     trash = pipeline_builder.add_stage('Trash')
@@ -504,26 +504,23 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
     sdc_executor.add_pipeline(directory_pipeline)
 
     snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10,
-                                             batches=13, wait_for_statuses=['FINISHED'], timeout_sec=120).snapshot
+                                             batches=14, wait_for_statuses=['FINISHED'], timeout_sec=120).snapshot
 
     # assert all the data captured have the same raw_data
     output_records = [record for i in range(len(snapshot.snapshot_batches)) for record in
                       snapshot.snapshot_batches[i][directory.instance_name].output]
 
-    assert 125 == len(output_records)
-
     output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
                                   output_records]
 
-    data_from_csv_files = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
-    temp_data_from_csv_file = [f'{row[0]},{row[1]},{row[2]}' for row in data_from_csv_files]
-    data_from_csv_files = (read_csv_file('./resources/directory_origin/test5.csv', ',', True))
-    for row in data_from_csv_files:
-        temp_data_from_csv_file.append(f'{row[0]},{row[1]},{row[2]}')
-    data_from_csv_files = (read_csv_file('./resources/directory_origin/test6.csv', ',', True))
-    for row in data_from_csv_files:
-        temp_data_from_csv_file.append(f'{row[0]},{row[1]},{row[2]}')
-    data_from_csv_files = temp_data_from_csv_file
+    temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
+    data_from_csv_files = [f'{row[0]},{row[1]},{row[2]}' for row in temp_data_from_csv_file]
+    temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test5.csv', ',', True))
+    for row in temp_data_from_csv_file:
+        data_from_csv_files.append(f'{row[0]},{row[1]},{row[2]}')
+    temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test6.csv', ',', True))
+    for row in temp_data_from_csv_file:
+        data_from_csv_files.append(f'{row[0]},{row[1]},{row[2]}')
 
     assert len(data_from_csv_files) == len(output_records_text_fields)
     assert sorted(data_from_csv_files) == sorted(output_records_text_fields)
