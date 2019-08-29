@@ -580,6 +580,7 @@ def test_kerberos_ticket_expiration_hadoop_fs_destination(sdc_builder, sdc_execu
         logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
         cluster.hdfs.client.delete(hdfs_directory, recursive=True)
 
+
 @sdc_min_version('3.0.0')
 @cluster('cdh', 'hdp')
 def test_hadoop_fs_destination_sequence_files(sdc_builder, sdc_executor, cluster):
@@ -658,3 +659,65 @@ def test_hadoop_fs_destination_sequence_files(sdc_builder, sdc_executor, cluster
     finally:
         logger.info('Deleting Hadoop FS directory %s ...', hdfs_directory)
         cluster.hdfs.client.delete(hdfs_directory, recursive=True)
+
+
+@cluster('cdh', 'hdp')
+@pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
+def test_hadoop_fs_origin_standalone_simple_ordering(sdc_builder, sdc_executor, cluster, read_order):
+    """Write files into a Hadoop FS folder with a randomly-generated name and confirm that the Hadoop FS origin
+    successfully reads the expected number of records, for both lexicographical and timestamp ordering.
+    Specifically, this would look like:
+
+    Hadoop FS pipeline:
+        hadoop_fs_origin >> trash
+        hadoop_fs_origin >= finisher
+    """
+    hadoop_fs_folder = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+    filename = 'filename.txt'
+    number_of_files = 3
+    records_per_file = 1000
+
+    # Build the Hadoop FS pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
+    hadoop_fs.set_attributes(data_format='TEXT', files_directory=hadoop_fs_folder,
+                             file_name_pattern='*', read_order=read_order)
+
+    trash = builder.add_stage('Trash')
+
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    hadoop_fs >> trash
+    hadoop_fs >= finisher
+
+    hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
+    hadoop_fs_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(hadoop_fs_pipeline)
+
+    try:
+        lines_in_file = [f'Message {i}' for i in range(records_per_file)]
+
+        # Create files in hdfs
+        logger.debug('Writing file %s/file.txt to Hadoop FS ...', hadoop_fs_folder)
+        cluster.hdfs.client.makedirs(hadoop_fs_folder)
+        for i in range(number_of_files):
+            cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, f'{filename}_{i}'), data='\n'.join(lines_in_file))
+
+        # Run the pipeline until there is no more data
+        sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished(timeout_sec=180)
+
+        # Check history and assert all data has been read
+        history = sdc_executor.get_pipeline_history(hadoop_fs_pipeline)
+        input_records_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        output_records_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        assert input_records_count == number_of_files * records_per_file
+        assert output_records_count == number_of_files * records_per_file + 1
+
+    finally:
+        cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
+
