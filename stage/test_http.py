@@ -219,6 +219,105 @@ def test_http_processor_get(sdc_builder, sdc_executor, http_client):
 
 
 @http
+def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client):
+    """Test HTTP Lookup Processor for HTTP GET method and split the obtained result
+    in different records:
+
+        dev_raw_data_source >> http_client_processor >> trash
+    """
+    #The data returned by the HTTP mock server
+    dataArr = [{'A':i,'C':i+1,'G':i+2,'T':i+3} for i in range(10)]
+
+    expected_data = json.dumps(dataArr)
+    record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', http_method='GET',
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}',
+                                             target_field=f'/',
+                                             multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS')
+        trash = builder.add_stage('Trash')
+
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title='HTTP Lookup GET Processor Split Multiple Records pipeline')
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # ensure HTTP GET result has 10 different records
+        assert len(snapshot[http_client_processor.instance_name].output) == 10
+        # check each
+        for x in range(10):
+            assert snapshot[http_client_processor.instance_name].output[x].field[record_output_field]['A'] == x
+            assert snapshot[http_client_processor.instance_name].output[x].field[record_output_field]['C'] == x+1
+            assert snapshot[http_client_processor.instance_name].output[x].field[record_output_field]['G'] == x+2
+            assert snapshot[http_client_processor.instance_name].output[x].field[record_output_field]['T'] == x+3
+
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+def test_http_processor_list(sdc_builder, sdc_executor, http_client):
+    """Test HTTP Lookup Processor for HTTP GET method and split the obtained result
+    in different elements of the same list stored in just one record:
+
+        dev_raw_data_source >> http_client_processor >> trash
+    """
+    #The data returned by the HTTP mock server
+    dataArr = [{'A':i,'C':i+1,'G':i+2,'T':i+3} for i in range(10)]
+
+    expected_data = json.dumps(dataArr)
+    record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', http_method='GET',
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}',
+                                             target_field=f'/',
+                                             multiple_values_behavior='ALL_AS_LIST')
+        trash = builder.add_stage('Trash')
+
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title='HTTP Lookup GET Processor All As List pipeline')
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # ensure HTTP GET result has 1 record (The list containing the 10 elements)
+        assert len(snapshot[http_client_processor.instance_name].output) == 1
+        # check each element of the list
+        for x in range(10):
+            assert snapshot[http_client_processor.instance_name].output[0].field[record_output_field][x]['A'] == x+0
+            assert snapshot[http_client_processor.instance_name].output[0].field[record_output_field][x]['C'] == x+1
+            assert snapshot[http_client_processor.instance_name].output[0].field[record_output_field][x]['G'] == x+2
+            assert snapshot[http_client_processor.instance_name].output[0].field[record_output_field][x]['T'] == x+3
+
+    finally:
+        http_mock.delete_mock()
+
+@http
 @pytest.mark.parametrize(('method'), [
     'POST',
     # Testing of SDC-10809
