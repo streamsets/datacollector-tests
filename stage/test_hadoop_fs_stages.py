@@ -504,7 +504,7 @@ def test_hadoop_fs_origin_standalone_multi_thread(sdc_builder, sdc_executor, clu
         output_records_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
         assert input_records_count == hdfs_lines_per_file * hdfs_files_count
-        assert output_records_count == hdfs_lines_per_file * hdfs_files_count + hdfs_number_of_threads
+        assert output_records_count == hdfs_lines_per_file * hdfs_files_count + 1  # output + no more data event
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
 
