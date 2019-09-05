@@ -45,6 +45,75 @@ def sdc_common_hook():
 
 
 @aws('s3')
+def test_s3_origin_empty_origin_stop_when_nomoredata_received(sdc_builder, sdc_executor, aws):
+    """Test that an empty origin linked to a Pipeline Finisher Executor which ends the pipeline when
+    a no-more-data is received actually emits this event.
+
+    The pipeline looks like:
+        s3_origin >> trash
+        s3_origin >= pipeline_finisher_executor
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    # Just discard errors, we are not interested on them here
+    builder.add_error_stage('Discard')
+
+    # Declare and configure parts of the pipeline
+    s3_origin = builder.add_stage('Amazon S3', type = 'origin')
+
+    s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format=DEFAULT_DATA_FORMAT,
+                             prefix_pattern=f'{s3_key}/*', number_of_threads=MULTITHREADED,
+                             read_order=DEFAULT_READ_ORDER)
+
+    trash = builder.add_stage('Trash')
+
+    # Pipeline Finisher Executor, note the precondition
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    # Implement pipeline topology
+    s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
+
+    s3_origin_pipeline = builder.build(title='Amazon S3 origin multithreaded pipeline no data no more data event').\
+        configure_for_environment(aws)
+    # This is not supposed to fail under any context
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+
+    # Add built pipeline to the DC executor
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    try:
+        # Run the pipeline
+        # Do not continue until the pipeline finishes
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline = True).snapshot
+        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status = 'FINISHED', timeout_sec = 60)
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        # If we are here this means that a no-more-data was sent
+
+        # Check that the number of records is correct
+        input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        output_records = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+        assert input_records == 0, 'Observed %d input records (expected 0)' % input_records
+        assert output_records == 1, 'Observed %d output records (expected 1)' % output_records
+
+        # We have exactly one output record, check that it is a no-more-data event
+        num_event_records = len(snapshot[s3_origin.instance_name].event_records)
+        assert num_event_records == 1, 'Received %d event records (expected 1)' % num_event_records
+        event_record = snapshot[s3_origin.instance_name].event_records[0]
+        event_type = event_record.header.values['sdc.event.type']
+        assert event_type == 'no-more-data', 'Received %s as event type (expected no-more-data)' % event_type
+
+    finally:
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
+            raise AssertionError('Pipeline was still running after 60s')
+
+
+@aws('s3')
 @sdc_min_version('3.7.0')
 def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     """Test that using multithreaded pipeline we can start our pipeline multiple times adding more objects in between
