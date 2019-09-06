@@ -47,6 +47,7 @@ FOLDER_NAME = 'TestFolder'
 ACCOUNTS_FOR_SUBQUERY = 5
 CONTACTS_FOR_SUBQUERY = 5
 
+CONTACTS_FOR_NO_MORE_DATA = 100
 
 @salesforce
 def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
@@ -922,11 +923,9 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
 
         assert data_from_snapshot == DATA_TO_INSERT
 
-        # Stage should produce events.
-        assert len(snapshot[salesforce_origin].event_records) == 0
-        # assert snapshot[salesforce_origin].event_records[0].get_field_data('/event') == 'no-more-data'
-
-
+        # Stage should produce events, and it does, since the fix for SDC-12418
+        assert len(snapshot[salesforce_origin].event_records) == 1
+        assert snapshot[salesforce_origin].event_records[0].header.values['sdc.event.type'] == 'no-more-data'
 
         # Pipeline stops, but if it changes in a future version
         sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
@@ -957,9 +956,9 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
 
         assert data_from_snapshot_2 == DATA_TO_INSERT + DATA_TO_INSERT_2
 
-        # stage should produce events.
-        assert len(snapshot[salesforce_origin].event_records) == 0
-        # assert snapshot[salesforce_origin].event_records[0].get_field_data('/event') == 'START'
+        # stage should produce events...
+        assert len(snapshot[salesforce_origin].event_records) == 1
+        assert snapshot[salesforce_origin].event_records[0].header.values['sdc.event.type'] == 'no-more-data'
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -1312,7 +1311,6 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
 
             status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
             assert 'RUN_ERROR' == status
-
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')
@@ -1322,3 +1320,75 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
             client.PushTopic.delete(push_topic['id'])
         if contact:
             client.contact.delete(contact['id'])
+
+
+@salesforce
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, api):
+    """
+    Test for SDC-12418 - Salesforce origin should only generate no-more-data if query returns zero rows. Queries with
+    a LIMIT clause were generating a no-more-data event after a single query ran, instead of repeating the query
+    until no rows are returned
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Constrain the size of the result set with LIMIT clause; pipeline should still retrieve all the data before
+    # triggering no-more-data
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    salesforce_origin.set_attributes(soql_query="SELECT Id, Name FROM Contact WHERE Id > '${OFFSET}' ORDER BY Id LIMIT 10",
+                                     repeat_query='INCREMENTAL',
+                                     query_interval='${1 * SECONDS}',
+                                     subscribe_for_notifications=False,
+                                     use_bulk_api=(api == 'bulk'))
+
+    finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    salesforce_origin >= finisher
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    contact_ids = None
+    try:
+        # Make a load of Contacts
+        data_to_insert = []
+        for _ in range(CONTACTS_FOR_NO_MORE_DATA):
+            data_to_insert.append({'FirstName': get_random_string(string.ascii_letters, 10).lower(),
+                                   'LastName': get_random_string(string.ascii_letters, 10).lower(),
+                                   'Email': f'{get_random_string(string.ascii_letters, 10).lower()}@example.com'})
+
+        logger.info('Creating Contact records using Salesforce client ...')
+        result = client.bulk.Contact.insert(data_to_insert)
+        contact_ids = [{'Id': item['id']}
+                       for item in result]
+
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline)
+
+        logger.info('Waiting for pipeline to finish')
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status = 'FINISHED', timeout_sec = 120)
+
+        logger.info('Getting pipeline history')
+        history = sdc_executor.get_pipeline_history(pipeline)
+
+        # We should see all the records we created as input, and all of them plus the event record as output
+        input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        output_records = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+        error_records = history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count
+        assert input_records == CONTACTS_FOR_NO_MORE_DATA, f'Observed {input_records} input records (expected {CONTACTS_FOR_NO_MORE_DATA})'
+        assert output_records == CONTACTS_FOR_NO_MORE_DATA + 1, f'Observed {output_records} output records (expected {CONTACTS_FOR_NO_MORE_DATA + 1})'
+        assert error_records == 0, f'Observed {error_records} error records (expected 0)'
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if (contact_ids):
+            client.bulk.Contact.delete(contact_ids)
