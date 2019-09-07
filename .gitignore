@@ -17,6 +17,7 @@
 .cache
 _build
 .idea
+*.iml
 .gitreview
 .python-version
 maintain-boss.pid
