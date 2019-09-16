@@ -242,6 +242,53 @@ def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, g
 
 
 @gcp
+@sdc_min_version('3.11.0')
+def test_google_bigquery_destination_empty_table_name_error(sdc_builder, sdc_executor, gcp):
+    """Test that BigQuery API does not return a NullPointerException if asked for an empty table name
+
+    Pipeline:
+
+
+        dev_raw_data_source >> google_bigquery
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    json_data = {'table': ''}
+
+    # Dev Raw Data Source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format = 'JSON',
+        raw_data = json.dumps(json_data),
+        stop_after_first_batch = True
+    )
+
+    # Google BigQuery Destination
+    dataset_name = 'dont_care'
+    table_name = '${record:value(\'/table\')}'
+    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type = 'destination')
+    google_bigquery.set_attributes(dataset = dataset_name,
+                                   table_name = table_name,
+                                   stage_on_record_error = 'TO_ERROR')
+
+    # Implement pipeline topology
+    dev_raw_data_source >> google_bigquery
+
+    pipeline = pipeline_builder.build(title="BigQuery Destination empty table name")
+
+    sdc_executor.add_pipeline(pipeline.configure_for_environment(gcp))
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline = True).snapshot
+
+    stage = snapshot[google_bigquery.instance_name]
+
+    # Verify that we have exactly one record
+    assert len(stage.error_records) == 1
+    # Verify that the error is indeed a BIGQUERY_18 (table name is empty or expression evaluates to empty)
+    assert stage.error_records[0].header['errorCode'] == 'BIGQUERY_18'
+
+
+@gcp
 @sdc_min_version('2.7.0.0')
 def test_google_bigquery_origin(sdc_builder, sdc_executor, gcp):
     """
