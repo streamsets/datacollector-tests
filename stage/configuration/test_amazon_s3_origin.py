@@ -1,4 +1,5 @@
 import logging
+from collections import OrderedDict
 
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version
@@ -227,6 +228,44 @@ def test_configurations_data_format_log(sdc_executor, sdc_builder, aws, data_for
         delete_aws_objects(client, aws, s3_key)
 
 
+@pytest.mark.parametrize('data_format', ['DELIMITED'])
+@pytest.mark.parametrize('max_record_length_in_chars', [20, 23, 30])
+def test_configuration_delimited_max_record_length_in_chars(sdc_builder, sdc_executor, aws,
+                                                            data_format, max_record_length_in_chars):
+    """
+    Case 1:   Record length > max_record_length | Expected outcome --> No records present in the snapshot
+    Case 2:   Record length = max_record_length | Expected outcome --> Record processed
+    Case 3:   Record length < max_record_length | Expected outcome --> Record processed
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    file_name = 'file.csv'
+    file_content = 'Field11,Field12,Field13'
+    EXPECTED_DATA = [{'0': 'Field11', '1': 'Field12', '2': 'Field13'}]
+
+    attributes = {'bucket': aws.s3_bucket_name,
+                  'data_format': data_format,
+                  'prefix_pattern': f'{s3_key}/{file_name}',
+                  'max_record_length_in_chars': max_record_length_in_chars}
+    pipeline = get_aws_origin_to_trash_pipeline(sdc_builder, attributes, aws)
+    amazon_s3_origin = pipeline.origin_stage
+    client = aws.s3
+    try:
+        client.put_object(Bucket=aws.s3_bucket_name, Key=amazon_s3_origin.prefix_pattern, Body=file_content)
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = [record.field for record in snapshot[amazon_s3_origin].output]
+
+        if len(file_content) > max_record_length_in_chars:
+            assert output_records == []
+        else:
+            assert output_records == EXPECTED_DATA
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        delete_aws_objects(client, aws, s3_key)
+
+
+# Util functions
 def get_aws_origin_to_trash_pipeline(sdc_builder, attributes, aws):
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
