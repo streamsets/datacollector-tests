@@ -1033,3 +1033,74 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
                                    for k in
                                    client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
+
+@aws('s3')
+@sdc_min_version('3.11.0')
+def test_s3_error_destination(sdc_builder, sdc_executor, aws):
+    """Test sending records to S3 error destination."""
+    s3_key = f'{S3_SANDBOX_PREFIX}/errDest-{get_random_string()}/'
+    random_string = get_random_string(string.ascii_letters, 10)
+    random_raw_json_str = '{{"text":"{0}"}}'.format(random_string)
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    s3_err = builder.add_error_stage('Write to Amazon S3')
+    s3_err.set_attributes(
+        bucket=aws.s3_bucket_name,
+        common_prefix=s3_key
+    )
+
+    origin = builder.add_stage('Dev Raw Data Source', type='origin')
+    origin.set_attributes(
+        data_format='JSON',
+        raw_data=random_raw_json_str,
+        stop_after_first_batch=True
+    )
+
+    target = builder.add_stage('To Error', type='destination')
+
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    origin >> target
+    origin >= finisher
+
+    pipeline = builder.build().configure_for_environment(aws)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # We should have exactly one file in the bucket
+        list_s3_objs = client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)
+        assert 'Contents' in list_s3_objs  # If no object was found, there is no 'Contents' key
+        assert len(list_s3_objs['Contents']) == 1
+
+        # Now we build and run another pipeline with an S3 Origin to read the data back
+        builder = sdc_builder.get_pipeline_builder()
+        s3_origin = builder.add_stage('Amazon S3', type='origin')
+        s3_origin.set_attributes(
+            bucket=aws.s3_bucket_name,
+            data_format='SDC_JSON',
+            prefix_pattern=f'{s3_key}*',
+            max_batch_size_in_records=100
+        )
+        trash = builder.add_stage('Trash')
+        finisher = builder.add_stage('Pipeline Finisher Executor')
+        finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+        s3_origin >> trash
+        s3_origin >= finisher
+        pipeline = builder.build().configure_for_environment(aws)
+        pipeline.configuration['shouldRetry'] = False
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        assert len(snapshot[s3_origin].output) == 1
+        assert snapshot[s3_origin].output[0].get_field_data('/text') == random_string
+
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
