@@ -1092,7 +1092,7 @@ def test_hbase_write_records_on_error_stop_pipeline(sdc_builder, sdc_executor, c
     hbase.table_name = random_table_name
     hbase.row_key = '/key'
 
-    hbase.fields = [dict(columnValue='[/cf:a]', columnStorageType='BINARY', columnName='cf:a'),
+    hbase.fields = [dict(columnValue='/non-existing', columnStorageType='BINARY', columnName='cf:a'),
                     dict(columnValue='/cf:b', columnStorageType='BINARY', columnName='cf:b'),
                     dict(columnValue='/cf:c', columnStorageType='TEXT', columnName='cf:c'),
                     dict(columnValue='/cf:d', columnStorageType='TEXT', columnName='cf:d')]
