@@ -50,8 +50,8 @@ FTP_ORIGIN_CLIENT_NAME = 'com_streamsets_pipeline_stage_origin_remote_RemoteDown
 FTP_DEST_CLIENT_NAME = 'com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget'
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_text_delete_subdirectory(sdc_builder, sdc_executor, ftp):
     """FTP origin test. We first create a two files on FTP server
     in root directory and in /TMP directore.
@@ -118,8 +118,8 @@ def test_ftp_origin_text_delete_subdirectory(sdc_builder, sdc_executor, ftp):
         client.quit()
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
     """Test FTP origin, message is in format XML. We first create a file on FTP server
     and have the FTP origin stage read it.
@@ -156,8 +156,8 @@ def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
         client.quit()
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_json(sdc_builder, sdc_executor, ftp):
     """Test FTP origin, message is in format JSON. We first create a file on FTP server
     and have the FTP origin stage read it.
@@ -196,8 +196,8 @@ def test_ftp_origin_json(sdc_builder, sdc_executor, ftp):
         client.quit()
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_avro(sdc_builder, sdc_executor, ftp):
     """Test FTP origin message is in format Avro. We first create a file on FTP server
     and have the FTP origin stage read it.
@@ -247,8 +247,8 @@ def test_ftp_origin_avro(sdc_builder, sdc_executor, ftp):
         client.quit()
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_delimited_with_finisher(sdc_builder, sdc_executor, ftp):
     """Test FTP origin, message is in format Delimited. We first create a file on FTP server
     and have the FTP origin stage read it.
@@ -373,8 +373,8 @@ def test_ftp_origin_wholefile_with_finisher(sdc_builder, sdc_executor, ftp):
         client.quit()
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_protobuf(sdc_builder, sdc_executor, ftp):
     """Test FTP origin message is in format Protobuf.
     The file is created used a first pipeline. dev_raw -> local_fs
@@ -424,8 +424,8 @@ def test_ftp_origin_protobuf(sdc_builder, sdc_executor, ftp):
         client.quit()
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_syslog(sdc_builder, sdc_executor, ftp):
     """Test FTP origin using syslog format.
     We first create a file on FTP server and have the FTP origin stage read it.
@@ -466,8 +466,8 @@ def test_ftp_origin_syslog(sdc_builder, sdc_executor, ftp):
         client.quit()
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_excel(sdc_builder, sdc_executor, ftp):
     """Test FTP origin using excel format.
     We first create a file on FTP server and have the FTP origin stage read it.
@@ -525,8 +525,8 @@ def test_ftp_origin_excel(sdc_builder, sdc_executor, ftp):
         os.remove(ftp_file_name)
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_origin_SDC_Record(sdc_builder, sdc_executor, ftp):
     """Test FTP origin message is in format SDC_Record.
     The file is created used a first pipeline. dev_raw -> local_fs
@@ -567,8 +567,8 @@ def test_ftp_origin_SDC_Record(sdc_builder, sdc_executor, ftp):
     assert snapshot[sftp_ftp_client].output[1].field == json_data[1]
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_destination(sdc_builder, sdc_executor, ftp):
     """Smoke test FTP destination. We first create a local file using Local FS destination stage and use that file
     for FTP destination stage to see if it gets successfully uploaded.
@@ -632,8 +632,8 @@ def test_ftp_destination(sdc_builder, sdc_executor, ftp):
         client.quit()
 
 
-@sdc_min_version('1.4.0.0')
 @ftp
+@sdc_min_version('3.9.0')
 def test_ftp_destination_create_path_pathrelative_finisher(sdc_builder, sdc_executor, ftp):
     """FTP destination. We first create a local file using Local FS destination stage and use that file
     for FTP destination stage to see if it gets successfully uploaded.
