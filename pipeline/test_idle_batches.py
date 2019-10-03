@@ -14,10 +14,11 @@
 
 import json
 import logging
+from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
 
-
+@sdc_min_version('3.2.0.0')
 def test_idle_batches_are_generated(sdc_builder, sdc_executor):
     """Validate that framework will properly create "idle batches" when runners are
     not used for the configured time."""
