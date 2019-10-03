@@ -768,6 +768,7 @@ def test_jdbc_query_executor_insert_query_result_count(sdc_builder, sdc_executor
 
 
 @database
+@sdc_min_version('3.0.0.0')
 def test_jdbc_query_executor_lifecycle_events(sdc_builder, sdc_executor, database):
     """Verify that the JDBC Query Executor will work properly when used inside pipeline lifecycle stages."""
     if isinstance(database, OracleDatabase):
@@ -2441,6 +2442,7 @@ def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_bu
 
 
 @database
+@sdc_min_version('3.0.0.0')
 def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc_executor, database):
     """
     Ensure that the multi-table JDBC origin can handle large gaps between offset columns in partitioned mode
