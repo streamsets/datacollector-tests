@@ -51,7 +51,7 @@ def storage_type_check(azure):
 
 
 @azure('datalake')
-@sdc_min_version('2.2.0.0')
+@sdc_min_version('3.9.0')
 @pytest.mark.parametrize('adls_version', [ADLS_LEGACY, ADLS_GEN1])
 def test_datalake_destination(sdc_builder, sdc_executor, azure, adls_version):
     """Test for Data Lake Store target stage. We do so by running a dev raw data source generator to Data Lake Store
@@ -123,7 +123,7 @@ def test_datalake_destination(sdc_builder, sdc_executor, azure, adls_version):
 
 
 @azure('datalake')
-@sdc_min_version('3.0.0.0')
+@sdc_min_version('3.9.0')
 @pytest.mark.parametrize('adls_version', [ADLS_LEGACY, ADLS_GEN1])
 def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azure, adls_version):
     """Test for Data Lake Store target stage setting max number of records per file as 1.
