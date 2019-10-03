@@ -663,6 +663,7 @@ def test_hadoop_fs_destination_sequence_files(sdc_builder, sdc_executor, cluster
 
 @cluster('cdh', 'hdp')
 @pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
+@sdc_min_version('3.2.0.0')
 def test_hadoop_fs_origin_standalone_simple_ordering(sdc_builder, sdc_executor, cluster, read_order):
     """Write files into a Hadoop FS folder with a randomly-generated name and confirm that the Hadoop FS origin
     successfully reads the expected number of records, for both lexicographical and timestamp ordering.
