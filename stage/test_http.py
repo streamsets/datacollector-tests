@@ -219,6 +219,7 @@ def test_http_processor_get(sdc_builder, sdc_executor, http_client):
 
 
 @http
+@sdc_min_version("3.11.0")
 def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client):
     """Test HTTP Lookup Processor for HTTP GET method and split the obtained result
     in different records:
@@ -269,6 +270,7 @@ def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client)
 
 
 @http
+@sdc_min_version("3.11.0")
 def test_http_processor_list(sdc_builder, sdc_executor, http_client):
     """Test HTTP Lookup Processor for HTTP GET method and split the obtained result
     in different elements of the same list stored in just one record:
