@@ -89,7 +89,7 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh', 'kafka')
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     """Check that timestamp and timestamp type are included in record header. Verifies that for previous versions of
     kafka (< 0.10), a validation issue is thrown.
@@ -132,7 +132,7 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh', 'kafka')
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, cluster):
     """Check that accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
     which timestamp >= Auto Offset Reset Timestamp configuration value.
