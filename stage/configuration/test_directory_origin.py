@@ -1553,11 +1553,11 @@ def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, sh
         shell_executor(f'rm -r {files_directory}')
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('parse_nulls', [True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_null_constant(sdc_builder, sdc_executor, data_format, parse_nulls):
-    pass
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'parse_nulls': True}])
+def test_null_constant(sdc_builder, sdc_executor, stage_attributes, keep_data, shell_executor, delimited_file_writer):
+    """Verify that the Null Constant configuration works as expected when Parse Nulls is enabled for delimited files."""
+    test_parse_nulls(sdc_builder, sdc_executor, stage_attributes, keep_data,
+                     shell_executor, delimited_file_writer, '\\N')
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -1646,11 +1646,44 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
         shell_executor(f'rm -r {files_directory}')
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('parse_nulls', [False, True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_parse_nulls(sdc_builder, sdc_executor, data_format, parse_nulls):
-    pass
+@pytest.mark.parametrize('null_constant', ['TEST_DATA'])
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'parse_nulls': False},
+                                              {'data_format': 'DELIMITED', 'parse_nulls': True}])
+def test_parse_nulls(sdc_builder, sdc_executor, stage_attributes, keep_data,
+                     shell_executor, delimited_file_writer, null_constant):
+    """Verify that Data Collector replaces the specified string constant with null values for delimited files."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = f'{get_random_string()}.csv'
+    FILE_CONTENTS = [['Field 1', null_constant, 'Field 3', 'Field 4']]
+    EXPECTED_OUTPUT = OrderedDict([('0', 'Field 1'),
+                                   ('1', None if stage_attributes['parse_nulls'] else null_constant),
+                                   ('2', 'Field 3'),
+                                   ('3', 'Field 4')])
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        delimited_file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS, 'CSV', ',')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory').set_attributes(files_directory=files_directory,
+                                                                           file_name_pattern='*.csv',
+                                                                           **stage_attributes)
+        if stage_attributes['parse_nulls']:
+            directory.null_constant = null_constant
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[directory].output]
+
+        assert records == [EXPECTED_OUTPUT]
+    finally:
+        if not keep_data:
+            shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('read_order', ['TIMESTAMP'])
