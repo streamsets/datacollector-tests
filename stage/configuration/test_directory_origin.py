@@ -737,13 +737,48 @@ def test_directory_origin_configuration_exclude_interval(sdc_builder, sdc_execut
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('allow_extra_columns', [True])
-@pytest.mark.parametrize('header_line', ['WITH_HEADER'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_extra_column_prefix(sdc_builder, sdc_executor,
-                                                            data_format, allow_extra_columns, header_line):
-    pass
+@pytest.mark.parametrize('extra_column_prefix', ['', '_extra_'])
+@pytest.mark.parametrize('stage_attributes', [{'allow_extra_columns': True,
+                                               'data_format': 'DELIMITED',
+                                               'header_line': 'WITH_HEADER'}])
+def test_extra_column_prefix(sdc_builder, sdc_executor, stage_attributes, keep_data,
+                             extra_column_prefix, shell_executor, file_writer):
+    """Test the Extra Column Prefix configuration when extra columns are seen in records.
+
+    In this test case, 3 comma-delimited lines are processed. The first, a header line, defines 3 fields.
+    The next has 5 fields and the last has 3 fields. The extra column prefix should be seen in the additional
+    lines in line two and nowhere else.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'file.csv'
+    DATA = [['c1', 'c2', 'c3'], ['f11', 'f12', 'f13', 'f14'],
+            ['f21', 'f22', 'f23']]
+    EXPECTED_OUTPUT = [{'c1': 'f11', 'c2': 'f12', 'c3': 'f13', f'{extra_column_prefix}01': 'f14'},
+                       {'c1': 'f21', 'c2': 'f22', 'c3': 'f23'}]
+
+    file_content = '\n'.join(','.join(line) for line in DATA)
+    try:
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), '\n'.join(','.join(line) for line in DATA))
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory').set_attributes(extra_column_prefix=extra_column_prefix,
+                                                                           files_directory=files_directory,
+                                                                           file_name_pattern=FILE_NAME,
+                                                                           **stage_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[directory].output]
+
+        assert records == EXPECTED_OUTPUT
+    finally:
+        if not keep_data:
+            shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
