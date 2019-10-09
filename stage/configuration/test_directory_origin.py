@@ -1186,9 +1186,39 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
 
 @pytest.mark.parametrize('data_format', ['JSON'])
 @pytest.mark.parametrize('json_content', ['ARRAY_OBJECTS', 'MULTIPLE_OBJECTS'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, data_format, json_content):
-    pass
+def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, shell_executor, data_format,
+                                                     file_writer, json_content):
+    """Verify Directory origin configurations for JSON contents type (i.e. ARRAY_OBJECT and MULTIPLE_OBJECTS)."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = f'{get_random_string()}.json'
+    records = [{f'Key{i}': f'Value{i}'} for i in range(3)]
+    raw_records = (json.dumps(records)
+                   if json_content == 'ARRAY_OBJECTS'
+                   else ''.join(json.dumps(record) for record in records))
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), raw_records)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="*.json",
+                                 file_name_pattern_mode='GLOB',
+                                 json_content=json_content)
+        trash = pipeline_builder.add_stage('Trash')
+        directory >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = snapshot[directory.instance_name].output
+
+        assert records == [record.field for record in output_records]
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
