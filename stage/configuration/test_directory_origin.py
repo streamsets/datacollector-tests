@@ -1289,16 +1289,42 @@ def test_directory_origin_configuration_max_files_soft_limit(sdc_builder, sdc_ex
     pass
 
 
-@pytest.mark.parametrize('data_format', ['TEXT'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executor, data_format):
-    pass
+@pytest.mark.parametrize('data_format', ['LOG', 'TEXT'])
+@pytest.mark.parametrize('max_line_length', [155, 82])
+def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executor, data_format,
+                                                        shell_executor, file_writer, max_line_length):
+    """Check how Directory origin read line in text and log file with Max Line Length set.
+    Case 1 Max Line Length > length of record -> Should read complete record
+    Case 2 Max Line Length < length of record -> Should truncate the record to Max Line Length value.
+    """
+    extension = 'txt' if data_format == 'TEXT' else 'log'
+    file_name = 'sample_input_file.{extension}'.format(extension=extension)
+    file_content = '2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).'
+    field_path_to_regex_group_mapping = LOG_FIELD_MAPPING
+    try:
+        files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
+        attributes = {'data_format': data_format,
+                      'file_name_pattern': 'sample_input_*',
+                      'file_name_pattern_mode': 'GLOB',
+                      'files_directory': files_directory,
+                      'max_line_length': max_line_length,
+                      'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
+                      'regular_expression': '(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
+                      'log_format': 'REGEX'}
+        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
-@pytest.mark.parametrize('data_format', ['LOG'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executor, data_format):
-    pass
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[directory].output[0]
+
+        if data_format == 'TEXT':
+            assert record.field['text'] == file_content[:max_line_length]
+        else:
+            assert record.field['/message'] == file_content[55:max_line_length]
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['JSON'])
