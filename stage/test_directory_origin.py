@@ -570,6 +570,53 @@ def test_directory_origin_avro_produce_full_file(sdc_builder, sdc_executor):
         assert output_records[i].get_field_data('/emails') == avro_records[i].get('emails')
         assert output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
 
+
+@sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('csv_record_type', ['LIST_MAP','LIST'])
+def test_directory_origin_bom_file(sdc_builder, sdc_executor, csv_record_type):
+    """ Test Directory Origin with file in CSV data format and containing BOM.
+    The file(file_with_bom.csv) is present in resources/directory_origin. To view the
+    BOM bytes, we can use "hexdump -C file_with_bom.csv". The first 3 bytes(ef bb bf)
+    are BOM.
+
+    The pipeline looks like:
+
+        directory >> trash
+
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+
+    directory.set_attributes(data_format='DELIMITED',
+                             file_name_pattern='file_with_bom.csv',
+                             file_name_pattern_mode='GLOB',
+                             files_directory='/resources/directory_origin',
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             root_field_type=csv_record_type)
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    output_records = snapshot[directory.instance_name].output
+
+    # contents of file_with_bom.csv: <BOM>abc,123,xyz
+    if csv_record_type == 'LIST_MAP':
+        assert 'abc' == output_records[0].get_field_data('/0')
+        assert '123' == output_records[0].get_field_data('/1')
+        assert 'xyz' == output_records[0].get_field_data('/2')
+    else:
+        assert 'abc' == output_records[0].get_field_data('/0').get('value')
+        assert '123' == output_records[0].get_field_data('/1').get('value')
+        assert 'xyz' == output_records[0].get_field_data('/2').get('value')
+
+
 @sdc_min_version('3.0.0.0')
 @pytest.mark.parametrize('csv_record_type', ['LIST_MAP', 'LIST'])
 def test_directory_origin_csv_produce_full_file(sdc_builder, sdc_executor, csv_record_type):
