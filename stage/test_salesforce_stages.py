@@ -1085,3 +1085,70 @@ def test_salesforce_destination_datetime(sdc_builder, sdc_executor, salesforce, 
         logger.info('Deleting records ...')
         if read_ids:
             client.bulk.Event.delete(read_ids)
+
+
+# Test SDC-12636
+@salesforce
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesforce, api):
+    """
+    Test that we can write to related external ID fields
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_destination
+    """
+    client = salesforce.client
+    inserted_ids = None
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        result = client.bulk.Contact.insert(DATA_TO_INSERT)
+        inserted_ids = [{'Id': item['id']}
+                        for item in result]
+
+        # Relate the created contacts to each other
+        # first contact reports to second contact; second contact reports to third
+        csv_data_to_insert = ['Id,ReportsTo.Email']
+        csv_data_to_insert.append(f'{inserted_ids[0]["Id"]},{DATA_TO_INSERT[1]["Email"]}')
+        csv_data_to_insert.append(f'{inserted_ids[1]["Id"]},{DATA_TO_INSERT[2]["Email"]}')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, csv_data_to_insert)
+
+        salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
+        field_mapping = [{'sdcField': '/Id', 'salesforceField': 'Id'},
+                         {'sdcField': '/ReportsTo.Email', 'salesforceField': 'ReportsTo.Email'}]
+        salesforce_destination.set_attributes(default_operation='UPDATE',
+                                              field_mapping=field_mapping,
+                                              sobject_type='Contact',
+                                              use_bulk_api=(api == 'bulk'))
+
+        dev_raw_data_source >> salesforce_destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Now the pipeline will make the contacts report to each other
+        logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Using Salesforce connection, read the contents in the Salesforce destination.
+        query_str = ("SELECT Id, Email, ReportsToId FROM Contact WHERE Email LIKE 'xtest%' ORDER BY Id")
+        result = client.query(query_str)
+
+        # The magic of external id fields - we knitted the contacts together via their emails
+        # Salesforce set the related record ids accordingly
+        assert result['records'][0]['ReportsToId'] == result['records'][1]['Id']
+        assert result['records'][1]['ReportsToId'] == result['records'][2]['Id']
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if (inserted_ids):
+            client.bulk.Contact.delete(inserted_ids)
