@@ -1986,12 +1986,45 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
         shell_executor(f'rm -r {files_directory}')
 
 
-@pytest.mark.parametrize('data_format', ['LOG'])
-@pytest.mark.parametrize('retain_original_line', [False, True])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_retain_original_line(sdc_builder, sdc_executor,
-                                                             data_format, retain_original_line):
-    pass
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'LOG', 'retain_original_line': False},
+                                              {'data_format': 'LOG', 'retain_original_line': True}])
+
+def test_retain_original_line(sdc_builder, sdc_executor, stage_attributes, file_writer):
+    """Verifies that the configuration properly includes the original log line as a record field, when enabled."""
+    FILE_NAME = 'custom_log_data.log'
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_CONTENT = "2019-04-30 08:23:59 AM [INFO] [streamsets.sdk.sdc] Waiting for status ['RUNNING', 'FINISHED'] ..."
+    EXPECTED_OUTPUT = {'/time': '08:23:59', '/date': '2019-04-30', '/timehalf': 'AM', '/info': '[INFO]',
+                       '/message': "Waiting for status ['RUNNING', 'FINISHED'] ...", '/file': '[streamsets.sdk.sdc]'}
+    field_path_to_regex_group_mapping = LOG_FIELD_MAPPING
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        sdc_executor.execute_shell(f'mkdir -p {files_directory}')
+        file_path = os.path.join(files_directory, FILE_NAME)
+        file_writer(file_path, FILE_CONTENT)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(field_path_to_regex_group_mapping=LOG_FIELD_MAPPING,
+                                 file_name_pattern='*.log',
+                                 files_directory=files_directory, log_format='REGEX',
+                                 regular_expression=r'(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
+                                 **stage_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = [record.field for record in snapshot[directory].output]
+
+        if stage_attributes['retain_original_line']:
+            EXPECTED_OUTPUT['originalLine'] = FILE_CONTENT
+        assert output_records == [EXPECTED_OUTPUT]
+    finally:
+        sdc_executor.execute_shell(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
