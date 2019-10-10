@@ -1070,11 +1070,49 @@ def test_grok_pattern_definition(sdc_builder, sdc_executor, stage_attributes, sh
             shell_executor(f'rm -r {files_directory}')
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('header_line', ['IGNORE_HEADER', 'NO_HEADER', 'WITH_HEADER'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_header_line(sdc_builder, sdc_executor, data_format, header_line):
-    pass
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'header_line': 'IGNORE_HEADER'},
+                                              {'data_format': 'DELIMITED', 'header_line': 'NO_HEADER'},
+                                              {'data_format': 'DELIMITED', 'header_line': 'WITH_HEADER'}])
+def test_header_line(sdc_builder, sdc_executor, stage_attributes, file_writer, keep_data):
+    """Test for Header Line configuration.
+
+    IGNORE_HEADER: Should ignore header of delimited file. Records should have integer field names.
+    NO_HEADER: For delimited file with no header.
+    WITH_HEADER: Should produce records with header values as field names.
+    """
+    FILE_NAME = 'file.csv'
+    files_directory = os.path.join('/tmp', get_random_string())
+
+    DATA_WITH_HEADER = '\n'.join(['header1,header2,header3', 'Field11,Field12,Field13', 'Field21,Field22,Field23'])
+    DATA_WITHOUT_HEADER = '\n'.join(['Field11,Field12,Field13', 'Field21,Field22,Field23'])
+    EXPECTED_OUTPUT_WITH_HEADER = [{'header1': 'Field11', 'header2': 'Field12', 'header3': 'Field13'},
+                                   {'header1': 'Field21', 'header2': 'Field22', 'header3': 'Field23'}]
+    EXPECTED_OUTPUT_WITHOUT_HEADER = [{'0': 'Field11', '1': 'Field12', '2': 'Field13'},
+                                      {'0': 'Field21', '1': 'Field22', '2': 'Field23'}]
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        sdc_executor.execute_shell(f'mkdir -p {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME),
+                    DATA_WITHOUT_HEADER if stage_attributes['header_line'] == 'NO_HEADER' else DATA_WITH_HEADER)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory').set_attributes(file_name_pattern='file.csv',
+                                                                           files_directory=files_directory,
+                                                                           **stage_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        output_records = [record.field for record in snapshot[directory.instance_name].output]
+        assert output_records == (EXPECTED_OUTPUT_WITH_HEADER
+                                  if stage_attributes['header_line'] == 'WITH_HEADER'
+                                  else EXPECTED_OUTPUT_WITHOUT_HEADER)
+    finally:
+        if not keep_data:
+            sdc_executor.execute_shell(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
