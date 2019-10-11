@@ -185,15 +185,13 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws):
         client.create_stream(StreamName=stream_name, ShardCount=1)
         aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
 
-        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        expected_messages = set('Message {0}'.format(i) for i in range(9))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
         client.put_records(Records=put_records, StreamName=stream_name)
 
-        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(10)
-
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline).snapshot
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         output_records = [record.field['text'].value
@@ -201,19 +199,19 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws):
 
         assert set(output_records) == expected_messages
 
-        expected_messages = set('Message B {0}'.format(i) for i in range(10))
+        expected_messages = set('Message B {0}'.format(i) for i in range(9))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
         client.put_records(Records=put_records, StreamName=stream_name)
 
-        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(10)
 
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline).snapshot
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline , start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         output_records = [record.field['text'].value
                           for record in snapshot[kinesis_consumer.instance_name].output]
+
 
         assert set(output_records) == expected_messages
 
