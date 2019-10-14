@@ -1,4 +1,20 @@
+import copy
+import logging
+import string
+
 import pytest
+import sqlalchemy
+from sqlalchemy import Column, Integer, String, CHAR
+from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__file__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Manish'},
+    {'id': 2, 'name': 'Shravan'},
+    {'id': 3, 'name': 'Shubham'}
+]
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -145,10 +161,63 @@ def test_jdbc_multitable_consumer_origin_configuration_password(sdc_builder, sdc
     pass
 
 
+@database
 @pytest.mark.parametrize('per_batch_strategy', ['PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE', 'SWITCH_TABLES'])
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_per_batch_strategy(sdc_builder, sdc_executor, per_batch_strategy):
-    pass
+def test_jdbc_multitable_consumer_origin_configuration_per_batch_strategy(sdc_builder, sdc_executor,
+                                                                          database, per_batch_strategy):
+    """Here we are creating 4 tables with 10 records each. JDBC stage will use 2 threads to read this table.
+    When 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE' is taken as 'per_batch_strategy'
+    So, thread 1 will read data from table 1 and thread 2 will read data from table 2. thread1 and 2 will read complete
+    data from table1 and table2, resp. moving on to table 3 and table 4.
+    In case of 'SWITCH_TABLES' each thread will read data from more than 2 tables.
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    tables = []
+    number_of_rows_in_table = 100
+    number_of_tables = 4
+    try:
+        # Create 4 tables
+        id_count = 1
+        for table_number in range(0, number_of_tables):
+            rows_in_table = [i for i in range(id_count, id_count + number_of_rows_in_table)]
+            id_count += number_of_rows_in_table
+            columns = [sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True)]
+            table = create_table(database, columns, f'{src_table_prefix}_{table_number}')
+            insert_data_in_table(database, table, [{'id': id} for id in rows_in_table])
+            tables.append(table)
+        # Build the pipeline
+        attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}],
+                      'per_batch_strategy': per_batch_strategy, 'batches_from_result_set': 5,
+                      'number_of_threads': 2, 'maximum_pool_size': 2, 'result_set_cache_size': 50
+                      }
+        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                                                            attributes)
+        pipeline.delivery_guarantee = 'AT_MOST_ONCE'
+
+        batch_size = 10
+        snapshot = execute_pipeline(sdc_executor, pipeline, 40, batch_size)
+
+        threads_tables = {}
+        for snapshot_batch in snapshot.snapshot_batches:
+            for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+                for record in value:
+                    record_header = record.header.values
+                    if record_header['jdbc.threadNumber'] not in threads_tables:
+                        threads_tables[record_header['jdbc.threadNumber']] = {record_header['jdbc.tables']}
+                    else:
+                        threads_tables[record_header['jdbc.threadNumber']].add(record_header['jdbc.tables'])
+
+        if per_batch_strategy == 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE':
+            assert len(threads_tables['0']) == 2
+            assert len(threads_tables['1']) == 2
+        else:
+            assert len(threads_tables['0']) >= 2
+            assert len(threads_tables['1']) >= 2
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        for table in tables:
+            logger.info('Dropping table %s in %s database...', table.name, database.type)
+            table.drop(database.engine)
 
 
 @pytest.mark.skip('Not yet implemented')
@@ -190,3 +259,52 @@ def test_jdbc_multitable_consumer_origin_configuration_use_credentials(sdc_build
 def test_jdbc_multitable_consumer_origin_configuration_username(sdc_builder, sdc_executor, use_credentials):
     pass
 
+
+# Util functions
+
+def create_table(database, columns, table_name):
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        *columns
+    )
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
+
+
+def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attributes, configure_for_environment_flag=True):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(**attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+    if configure_for_environment_flag:
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+    else:
+        pipeline = pipeline_builder.build()
+    return jdbc_multitable_consumer, pipeline
+
+
+def execute_pipeline(sdc_executor, pipeline, number_of_batches=1, snapshot_batch_size=10):
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=number_of_batches,
+                                             batch_size=snapshot_batch_size).snapshot
+    return snapshot
+
+
+def insert_data_in_table(database, table, rows_to_insert):
+    logger.info('Adding three rows into %s database ...', database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), rows_to_insert)
+
+
+def snapshot_content(snapshot, jdbc_multitable_consumer):
+    """This is common function can be used at in many TCs to get snapshot content."""
+    processed_data = []
+    for snapshot_batch in snapshot.snapshot_batches:
+        for value in snapshot_batch[jdbc_multitable_consumer.instance_name].output_lanes.values():
+            for record in value:
+                processed_data.append(record)
+    return processed_data
