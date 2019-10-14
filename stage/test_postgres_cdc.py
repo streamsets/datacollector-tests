@@ -191,6 +191,70 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
 
 
 @database('postgresql')
+@sdc_min_version('3.4.0')
+def test_postgres_cdc_max_poll_attempts(sdc_builder, sdc_executor, database):
+    """Test the delivery of a batch when the maximum poll attempts is reached.
+
+    The condition to generate a new batch in PostgreSQL CDC Origin is a) to reach the maximum batch size; or b) to
+    reach the maximum attempts to poll data from CDC. This test set a max batch size of 100 records and check a new
+    batch is generated with only a few records because of hitting the max poll attempts.
+
+    Pipeline:
+        postgres_cdc_client >> trash
+
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+                                       max_batch_size_in_records=100,
+                                       poll_interval=POLL_INTERVAL,
+                                       replication_slot=replication_slot_name)
+    trash = pipeline_builder.add_stage('Trash')
+    postgres_cdc_client >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Database operations done after pipeline start will be captured by CDC.
+        # Hence start the pipeline but do not wait for the capture to be finished.
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
+        # Create table, perform a few insertions, and then wait for the pipeline a period of time enough to hit the
+        # max poll attempts (max poll attempts == POLL_INTERVAL * 100).
+        table = _create_table_in_database(table_name, database)
+        connection = database.engine.connect()
+        expected_operations_data = _insert(connection=connection, table=table)
+        snapshot = snapshot_command.wait_for_finished(120).snapshot
+
+        # Verify snapshot data is received in exact order as expected.
+        for record in snapshot[postgres_cdc_client.instance_name].output:
+            # No need to worry about DDL related CDC records. e.g. table creation etc.
+            if record.get_field_data('/change'):
+                # Check that the CDC record change contains a list of 3 insertions.
+                for i in range(len(INSERT_ROWS)):
+                    expected = expected_operations_data[i]
+                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                    assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                    assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+
+    finally:
+        if pipeline:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        if table is not None:
+            table.drop(database.engine)
+            logger.info('Table: %s dropped.', table_name)
+
+
+@database('postgresql')
 @sdc_min_version('3.8.1')
 def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database):
     """
