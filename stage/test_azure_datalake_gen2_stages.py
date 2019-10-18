@@ -16,6 +16,7 @@
 
 import json
 import logging
+import os
 import string
 from operator import itemgetter
 
@@ -99,13 +100,8 @@ def test_datalake_destination(sdc_builder, sdc_executor, azure):
 
         assert raw_list == result_list
     finally:
-        paths = dl_fs.ls(directory_name).response.json()['paths']
-        dl_files = [item['name'] for item in paths] if paths else []
-        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
-        for dl_file in dl_files:
-            dl_fs.rm(dl_file)
-        dl_fs.rmdir(directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
 
 
 @azure('datalake')
@@ -169,13 +165,8 @@ def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azur
             assert snapshot[azure_data_lake_store].event_records[index].header['values'][
                        'sdc.event.type'] == 'file-closed'
     finally:
-        paths = dl_fs.ls(directory_name).response.json()['paths']
-        dl_files = [item['name'] for item in paths] if paths else []
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
-        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
-        for dl_file in dl_files:
-            dl_fs.rm(dl_file)
-        dl_fs.rmdir(directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
 
 
 @azure('datalake')
@@ -220,13 +211,8 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
         # assert Data Lake files generated
         assert messages == output_records
     finally:
-        paths = dl_fs.ls(directory_name).response.json()['paths']
-        dl_files = [item['name'] for item in paths] if paths else []
-        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
-        for dl_file in dl_files:
-            dl_fs.rm(dl_file)
-        dl_fs.rmdir(directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
 
 
 @azure('datalake')
@@ -291,16 +277,9 @@ def test_datalake_origin_stop_go(sdc_builder, sdc_executor, azure):
         # assert Data Lake files generated
         assert messages == output_records
 
-
-
     finally:
-        paths = dl_fs.ls(directory_name).response.json()['paths']
-        dl_files = [item['name'] for item in paths] if paths else []
-        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
-        for dl_file in dl_files:
-            dl_fs.rm(dl_file)
-        dl_fs.rmdir(directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
 
 
 @azure('datalake')
@@ -363,13 +342,8 @@ def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
                    'sdc.event.type'] == 'finished-file'
 
     finally:
-        paths = dl_fs.ls(directory_name).response.json()['paths']
-        dl_files = [item['name'] for item in paths] if paths else []
-        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
-        for dl_file in dl_files:
-            dl_fs.rm(dl_file)
-        dl_fs.rmdir(directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
 
 
 @azure('datalake')
@@ -429,10 +403,93 @@ def test_datalake_origin_resume_offset(sdc_builder, sdc_executor, azure):
         # assert Data Lake files generated
         assert messages2 == output_records
     finally:
-        paths = dl_fs.ls(directory_name).response.json()['paths']
-        dl_files = [item['name'] for item in paths] if paths else []
-        # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
-        for dl_file in dl_files:
-            dl_fs.rm(dl_file)
-        dl_fs.rmdir(directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
+
+
+@azure('datalake')
+@sdc_min_version('3.9.0')
+@pytest.mark.parametrize('process_subdirs', [True, False])
+@pytest.mark.parametrize('glob_pattern', ['', '*', '*/*', '*/*1', '*.txt'])
+def test_datalake_origin_glob_expansion(sdc_builder, sdc_executor, azure, process_subdirs, glob_pattern):
+    """Test glob expansion for the directory configuration in ADLS origin.
+
+    When the directory path configured in ADLS is a glob pattern, it is expanded to a list of matched
+    directories (note that file matches are discarded). For each matched directory, the origin processes files
+    inside: only on the top level if process_subdirectories = False, or at any level if process_subdirectories
+    = True. This test checks that the glob expansion is done properly, creating a directory tree in ADLS and
+    trying different glob patterns to filter the directories to scan for files. We verify that the files
+    processed matches those in the configuration, according to the test parameters 'process_subdirs' and
+    'glob_pattern'.
+
+    Pipeline:
+      azure_data_lake_store_origin >> trash
+
+    """
+    fs = azure.datalake.file_system
+
+    # Define the directory tree and the expected directories to be visited by ADLS origin. For the latter we
+    # use a dict where each entry correspond to a different glob pattern to test.
+    rootdir = '{}'.format(get_random_string(string.ascii_letters, 10))
+    subdirs = ['.', 'a', 'a/a1', 'a/a2', 'a/a3', 'b', 'b/b1', 'b/b2', 'b/b3']
+    if process_subdirs:
+        expected_walk = {
+            '': ['.', 'a', 'a/a1', 'a/a2', 'a/a3', 'b', 'b/b1', 'b/b2', 'b/b3'],
+            '*': ['a', 'a/a1', 'a/a2', 'a/a3', 'b', 'b/b1', 'b/b2', 'b/b3'],
+            '*/*': ['a/a1', 'a/a2', 'a/a3', 'b/b1', 'b/b2', 'b/b3'],
+            '*/*1': ['a/a1', 'b/b1'],
+            '*.txt': []  # Expands to a file, so no directory to walk through.
+        }
+    else:
+        expected_walk = {
+            '': ['.'],
+            '*': ['a', 'b'],
+            '*/*': ['a/a1', 'a/a2', 'a/a3', 'b/b1', 'b/b2', 'b/b3'],
+            '*/*1': ['a/a1', 'b/b1'],
+            '*.txt': []  # Expands to a file, so no directory to walk through.
+        }
+    expected_output = ['{}_file.txt'.format(exp.replace('/', '_'))
+                       for exp in expected_walk[glob_pattern]]
+
+    # Create the directory tree and populate with files. The content of each file is just the filename.
+    fs.mkdir(rootdir)
+    for d in subdirs:
+        if d != '.':
+            fs.mkdir(os.path.join(rootdir, d))
+        filename = '{}_file.txt'.format(d.replace('/', '_'))
+        filepath = os.path.join(rootdir, d, filename)
+        fs.touch(filepath)
+        fs.write(filepath, filename)
+
+    try:
+        # Build the pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        adls_origin = builder.add_stage(name=SOURCE_STAGE_NAME)
+        adls_origin.set_attributes(data_format='TEXT',
+                                   files_directory=f'/{os.path.join(rootdir, glob_pattern)}',
+                                   file_name_pattern='*',
+                                   read_order='TIMESTAMP',
+                                   process_subdirectories=process_subdirs)
+        trash = builder.add_stage('Trash')
+        adls_origin >> trash
+
+        pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Start pipeline and read files in ADLS.
+        num_batches = max(len(expected_walk[glob_pattern]), 1)
+        snapshot = sdc_executor.capture_snapshot(pipeline,
+                                                 start_pipeline=True,
+                                                 batches=num_batches,
+                                                 timeout_sec=120).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Verify all the expected records were produced by the origin.
+        actual_output = [record.field['text'].value
+                         for batch in snapshot
+                         for record in batch[adls_origin.instance_name].output]
+        assert sorted(actual_output) == sorted(expected_output)
+
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', rootdir)
+        fs.rmdir(rootdir, recursive=True)
