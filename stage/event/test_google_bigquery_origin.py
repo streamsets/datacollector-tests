@@ -1,5 +1,5 @@
-import pytest
+from streamsets.testframework.decorators import stub
 
-@pytest.mark.skip('Not yet implemented')
+@stub
 def test_big_query_success(sdc_builder, sdc_executor):
     pass
