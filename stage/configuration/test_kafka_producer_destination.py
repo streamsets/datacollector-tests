@@ -3,30 +3,32 @@ import pytest
 from streamsets.testframework.decorators import stub
 
 
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('avro_compression_codec', ['BZIP2', 'DEFLATE', 'NULL', 'SNAPPY'])
 @stub
-def test_avro_compression_codec(sdc_builder, sdc_executor, data_format, avro_compression_codec):
+@pytest.mark.parametrize('stage_attributes', [{'avro_compression_codec': 'BZIP2', 'data_format': 'AVRO'},
+                                              {'avro_compression_codec': 'DEFLATE', 'data_format': 'AVRO'},
+                                              {'avro_compression_codec': 'NULL', 'data_format': 'AVRO'},
+                                              {'avro_compression_codec': 'SNAPPY', 'data_format': 'AVRO'}])
+def test_avro_compression_codec(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('avro_schema_location', ['INLINE'])
-@pytest.mark.parametrize('data_format', ['AVRO'])
 @stub
-def test_avro_schema(sdc_builder, sdc_executor, avro_schema_location, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'avro_schema_location': 'INLINE', 'data_format': 'AVRO'}])
+def test_avro_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('avro_schema_location', ['HEADER', 'INLINE', 'REGISTRY'])
 @stub
-def test_avro_schema_location(sdc_builder, sdc_executor, data_format, avro_schema_location):
+@pytest.mark.parametrize('stage_attributes', [{'avro_schema_location': 'HEADER', 'data_format': 'AVRO'},
+                                              {'avro_schema_location': 'INLINE', 'data_format': 'AVRO'},
+                                              {'avro_schema_location': 'REGISTRY', 'data_format': 'AVRO'}])
+def test_avro_schema_location(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['BINARY'])
 @stub
-def test_binary_field_path(sdc_builder, sdc_executor, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'BINARY'}])
+def test_binary_field_path(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
@@ -35,93 +37,123 @@ def test_broker_uri(sdc_builder, sdc_executor):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED', 'JSON', 'TEXT'])
 @stub
-def test_charset(sdc_builder, sdc_executor, data_format, charset):
+def test_charset(sdc_builder, sdc_executor):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
-@pytest.mark.parametrize('include_checksum_in_events', [True])
-@pytest.mark.parametrize('checksum_algorithm', ['MD5', 'MURMUR3_128', 'MURMUR3_32', 'SHA1', 'SHA256', 'SHA512'])
 @stub
-def test_checksum_algorithm(sdc_builder, sdc_executor, data_format, include_checksum_in_events, checksum_algorithm):
+@pytest.mark.parametrize('stage_attributes', [{'checksum_algorithm': 'MD5',
+                                               'data_format': 'WHOLE_FILE',
+                                               'include_checksum_in_events': True},
+                                              {'checksum_algorithm': 'MURMUR3_128',
+                                               'data_format': 'WHOLE_FILE',
+                                               'include_checksum_in_events': True},
+                                              {'checksum_algorithm': 'MURMUR3_32',
+                                               'data_format': 'WHOLE_FILE',
+                                               'include_checksum_in_events': True},
+                                              {'checksum_algorithm': 'SHA1',
+                                               'data_format': 'WHOLE_FILE',
+                                               'include_checksum_in_events': True},
+                                              {'checksum_algorithm': 'SHA256',
+                                               'data_format': 'WHOLE_FILE',
+                                               'include_checksum_in_events': True},
+                                              {'checksum_algorithm': 'SHA512',
+                                               'data_format': 'WHOLE_FILE',
+                                               'include_checksum_in_events': True}])
+def test_checksum_algorithm(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['AVRO', 'BINARY', 'DELIMITED', 'JSON', 'PROTOBUF', 'SDC_JSON', 'TEXT', 'XML'])
 @stub
-def test_data_format(sdc_builder, sdc_executor, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'AVRO'},
+                                              {'data_format': 'BINARY'},
+                                              {'data_format': 'DELIMITED'},
+                                              {'data_format': 'JSON'},
+                                              {'data_format': 'PROTOBUF'},
+                                              {'data_format': 'SDC_JSON'},
+                                              {'data_format': 'TEXT'},
+                                              {'data_format': 'XML'}])
+def test_data_format(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('delimiter_format', ['CUSTOM'])
 @stub
-def test_delimiter_character(sdc_builder, sdc_executor, data_format, delimiter_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'delimiter_format': 'CUSTOM'}])
+def test_delimiter_character(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('delimiter_format', ['CSV', 'CUSTOM', 'EXCEL', 'MULTI_CHARACTER', 'MYSQL', 'POSTGRES_CSV', 'POSTGRES_TEXT', 'RFC4180', 'TDF'])
 @stub
-def test_delimiter_format(sdc_builder, sdc_executor, data_format, delimiter_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'delimiter_format': 'CSV'},
+                                              {'data_format': 'DELIMITED', 'delimiter_format': 'CUSTOM'},
+                                              {'data_format': 'DELIMITED', 'delimiter_format': 'EXCEL'},
+                                              {'data_format': 'DELIMITED', 'delimiter_format': 'MULTI_CHARACTER'},
+                                              {'data_format': 'DELIMITED', 'delimiter_format': 'MYSQL'},
+                                              {'data_format': 'DELIMITED', 'delimiter_format': 'POSTGRES_CSV'},
+                                              {'data_format': 'DELIMITED', 'delimiter_format': 'POSTGRES_TEXT'},
+                                              {'data_format': 'DELIMITED', 'delimiter_format': 'RFC4180'},
+                                              {'data_format': 'DELIMITED', 'delimiter_format': 'TDF'}])
+def test_delimiter_format(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('delimiter_format', ['CUSTOM'])
 @stub
-def test_escape_character(sdc_builder, sdc_executor, data_format, delimiter_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'delimiter_format': 'CUSTOM'}])
+def test_escape_character(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
-@pytest.mark.parametrize('file_exists', ['OVERWRITE', 'TO_ERROR'])
 @stub
-def test_file_exists(sdc_builder, sdc_executor, data_format, file_exists):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE', 'file_exists': 'OVERWRITE'},
+                                              {'data_format': 'WHOLE_FILE', 'file_exists': 'TO_ERROR'}])
+def test_file_exists(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
 @stub
-def test_file_name_expression(sdc_builder, sdc_executor, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE'}])
+def test_file_name_expression(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('header_line', ['IGNORE_HEADER', 'NO_HEADER', 'WITH_HEADER'])
 @stub
-def test_header_line(sdc_builder, sdc_executor, data_format, header_line):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'header_line': 'IGNORE_HEADER'},
+                                              {'data_format': 'DELIMITED', 'header_line': 'NO_HEADER'},
+                                              {'data_format': 'DELIMITED', 'header_line': 'WITH_HEADER'}])
+def test_header_line(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
-@pytest.mark.parametrize('include_checksum_in_events', [False, True])
 @stub
-def test_include_checksum_in_events(sdc_builder, sdc_executor, data_format, include_checksum_in_events):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE', 'include_checksum_in_events': False},
+                                              {'data_format': 'WHOLE_FILE', 'include_checksum_in_events': True}])
+def test_include_checksum_in_events(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('include_schema', [False, True])
 @stub
-def test_include_schema(sdc_builder, sdc_executor, data_format, include_schema):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'AVRO', 'include_schema': False},
+                                              {'data_format': 'AVRO', 'include_schema': True}])
+def test_include_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['TEXT'])
-@pytest.mark.parametrize('on_missing_field', ['IGNORE'])
-@pytest.mark.parametrize('insert_record_separator_if_no_text', [False, True])
 @stub
-def test_insert_record_separator_if_no_text(sdc_builder, sdc_executor, data_format, on_missing_field, insert_record_separator_if_no_text):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT',
+                                               'insert_record_separator_if_no_text': False,
+                                               'on_missing_field': 'IGNORE'},
+                                              {'data_format': 'TEXT',
+                                               'insert_record_separator_if_no_text': True,
+                                               'on_missing_field': 'IGNORE'}])
+def test_insert_record_separator_if_no_text(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['JSON'])
-@pytest.mark.parametrize('json_content', ['ARRAY_OBJECTS', 'MULTIPLE_OBJECTS'])
 @stub
-def test_json_content(sdc_builder, sdc_executor, data_format, json_content):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'JSON', 'json_content': 'ARRAY_OBJECTS'},
+                                              {'data_format': 'JSON', 'json_content': 'MULTIPLE_OBJECTS'}])
+def test_json_content(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
@@ -130,74 +162,81 @@ def test_kafka_configuration(sdc_builder, sdc_executor):
     pass
 
 
-@pytest.mark.parametrize('message_key_format', ['AVRO', 'STRING'])
 @stub
-def test_kafka_message_key(sdc_builder, sdc_executor, message_key_format):
+@pytest.mark.parametrize('stage_attributes', [{'message_key_format': 'AVRO'}, {'message_key_format': 'STRING'}])
+def test_kafka_message_key(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('message_key_format', ['AVRO'])
-@pytest.mark.parametrize('key_serializer', ['CONFLUENT', 'STRING'])
 @stub
-def test_key_serializer(sdc_builder, sdc_executor, message_key_format, key_serializer):
+@pytest.mark.parametrize('stage_attributes', [{'key_serializer': 'CONFLUENT', 'message_key_format': 'AVRO'},
+                                              {'key_serializer': 'STRING', 'message_key_format': 'AVRO'}])
+def test_key_serializer(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('avro_schema_location', ['REGISTRY'])
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('lookup_schema_by', ['ID', 'SUBJECT'])
 @stub
-def test_lookup_schema_by(sdc_builder, sdc_executor, avro_schema_location, data_format, lookup_schema_by):
+@pytest.mark.parametrize('stage_attributes', [{'avro_schema_location': 'REGISTRY',
+                                               'data_format': 'AVRO',
+                                               'lookup_schema_by': 'ID'},
+                                              {'avro_schema_location': 'REGISTRY',
+                                               'data_format': 'AVRO',
+                                               'lookup_schema_by': 'SUBJECT'}])
+def test_lookup_schema_by(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('message_key_format', ['AVRO', 'STRING'])
 @stub
-def test_message_key_format(sdc_builder, sdc_executor, message_key_format):
+@pytest.mark.parametrize('stage_attributes', [{'message_key_format': 'AVRO'}, {'message_key_format': 'STRING'}])
+def test_message_key_format(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['PROTOBUF'])
 @stub
-def test_message_type(sdc_builder, sdc_executor, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'PROTOBUF'}])
+def test_message_type(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('replace_new_line_characters', [True])
 @stub
-def test_new_line_character_replacement(sdc_builder, sdc_executor, data_format, replace_new_line_characters):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'replace_new_line_characters': True}])
+def test_new_line_character_replacement(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['TEXT'])
-@pytest.mark.parametrize('on_missing_field', ['ERROR', 'IGNORE'])
 @stub
-def test_on_missing_field(sdc_builder, sdc_executor, data_format, on_missing_field):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT', 'on_missing_field': 'ERROR'},
+                                              {'data_format': 'TEXT', 'on_missing_field': 'IGNORE'}])
+def test_on_missing_field(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('on_record_error', ['DISCARD', 'STOP_PIPELINE', 'TO_ERROR'])
 @stub
-def test_on_record_error(sdc_builder, sdc_executor, on_record_error):
+@pytest.mark.parametrize('stage_attributes', [{'on_record_error': 'DISCARD'},
+                                              {'on_record_error': 'STOP_PIPELINE'},
+                                              {'on_record_error': 'TO_ERROR'}])
+def test_on_record_error(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('one_message_per_batch', [False, True])
 @stub
-def test_one_message_per_batch(sdc_builder, sdc_executor, one_message_per_batch):
+@pytest.mark.parametrize('stage_attributes', [{'one_message_per_batch': False}, {'one_message_per_batch': True}])
+def test_one_message_per_batch(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('partition_strategy', ['DEFAULT', 'EXPRESSION'])
 @stub
-def test_partition_expression(sdc_builder, sdc_executor, partition_strategy):
+@pytest.mark.parametrize('stage_attributes', [{'partition_strategy': 'DEFAULT'}, {'partition_strategy': 'EXPRESSION'}])
+def test_partition_expression(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('partition_strategy', ['DEFAULT', 'EXPRESSION', 'RANDOM', 'ROUND_ROBIN'])
 @stub
-def test_partition_strategy(sdc_builder, sdc_executor, partition_strategy):
+@pytest.mark.parametrize('stage_attributes', [{'partition_strategy': 'DEFAULT'},
+                                              {'partition_strategy': 'EXPRESSION'},
+                                              {'partition_strategy': 'RANDOM'},
+                                              {'partition_strategy': 'ROUND_ROBIN'}])
+def test_partition_strategy(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
@@ -206,52 +245,66 @@ def test_preconditions(sdc_builder, sdc_executor):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['XML'])
-@pytest.mark.parametrize('pretty_format', [False, True])
 @stub
-def test_pretty_format(sdc_builder, sdc_executor, data_format, pretty_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'XML', 'pretty_format': False},
+                                              {'data_format': 'XML', 'pretty_format': True}])
+def test_pretty_format(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['PROTOBUF'])
 @stub
-def test_protobuf_descriptor_file(sdc_builder, sdc_executor, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'PROTOBUF'}])
+def test_protobuf_descriptor_file(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('delimiter_format', ['CUSTOM'])
 @stub
-def test_quote_character(sdc_builder, sdc_executor, data_format, delimiter_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'delimiter_format': 'CUSTOM'}])
+def test_quote_character(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('delimiter_format', ['CUSTOM'])
-@pytest.mark.parametrize('quote_mode', ['ALL', 'MINIMAL', 'NONE'])
 @stub
-def test_quote_mode(sdc_builder, sdc_executor, data_format, delimiter_format, quote_mode):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED',
+                                               'delimiter_format': 'CUSTOM',
+                                               'quote_mode': 'ALL'},
+                                              {'data_format': 'DELIMITED',
+                                               'delimiter_format': 'CUSTOM',
+                                               'quote_mode': 'MINIMAL'},
+                                              {'data_format': 'DELIMITED',
+                                               'delimiter_format': 'CUSTOM',
+                                               'quote_mode': 'NONE'}])
+def test_quote_mode(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['TEXT'])
 @stub
-def test_record_separator(sdc_builder, sdc_executor, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT'}])
+def test_record_separator(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('avro_schema_location', ['HEADER', 'INLINE'])
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('register_schema', [False, True])
 @stub
-def test_register_schema(sdc_builder, sdc_executor, avro_schema_location, data_format, register_schema):
+@pytest.mark.parametrize('stage_attributes', [{'avro_schema_location': 'HEADER',
+                                               'data_format': 'AVRO',
+                                               'register_schema': False},
+                                              {'avro_schema_location': 'HEADER',
+                                               'data_format': 'AVRO',
+                                               'register_schema': True},
+                                              {'avro_schema_location': 'INLINE',
+                                               'data_format': 'AVRO',
+                                               'register_schema': False},
+                                              {'avro_schema_location': 'INLINE',
+                                               'data_format': 'AVRO',
+                                               'register_schema': True}])
+def test_register_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['DELIMITED'])
-@pytest.mark.parametrize('replace_new_line_characters', [False, True])
 @stub
-def test_replace_new_line_characters(sdc_builder, sdc_executor, data_format, replace_new_line_characters):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'replace_new_line_characters': False},
+                                              {'data_format': 'DELIMITED', 'replace_new_line_characters': True}])
+def test_replace_new_line_characters(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
@@ -260,104 +313,99 @@ def test_required_fields(sdc_builder, sdc_executor):
     pass
 
 
-@pytest.mark.parametrize('send_response_to_origin', [True])
-@pytest.mark.parametrize('response_type', ['DESTINATION_RESPONSE', 'SUCCESS_RECORDS'])
 @stub
-def test_response_type(sdc_builder, sdc_executor, send_response_to_origin, response_type):
+@pytest.mark.parametrize('stage_attributes', [{'response_type': 'DESTINATION_RESPONSE',
+                                               'send_response_to_origin': True},
+                                              {'response_type': 'SUCCESS_RECORDS', 'send_response_to_origin': True}])
+def test_response_type(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('runtime_topic_resolution', [False, True])
 @stub
-def test_runtime_topic_resolution(sdc_builder, sdc_executor, runtime_topic_resolution):
+@pytest.mark.parametrize('stage_attributes', [{'runtime_topic_resolution': False}, {'runtime_topic_resolution': True}])
+def test_runtime_topic_resolution(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('avro_schema_location', ['REGISTRY'])
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('lookup_schema_by', ['ID'])
 @stub
-def test_schema_id(sdc_builder, sdc_executor, avro_schema_location, data_format, lookup_schema_by):
+@pytest.mark.parametrize('stage_attributes', [{'avro_schema_location': 'REGISTRY',
+                                               'data_format': 'AVRO',
+                                               'lookup_schema_by': 'ID'}])
+def test_schema_id(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('avro_schema_location', ['HEADER', 'INLINE'])
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('register_schema', [True])
 @stub
-def test_schema_registry_urls(sdc_builder, sdc_executor, avro_schema_location, data_format, register_schema):
+@pytest.mark.parametrize('stage_attributes', [{'avro_schema_location': 'HEADER',
+                                               'data_format': 'AVRO',
+                                               'register_schema': True},
+                                              {'avro_schema_location': 'INLINE',
+                                               'data_format': 'AVRO',
+                                               'register_schema': True},
+                                              {'avro_schema_location': 'REGISTRY', 'data_format': 'AVRO'}])
+def test_schema_registry_urls(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('avro_schema_location', ['REGISTRY'])
-@pytest.mark.parametrize('data_format', ['AVRO'])
 @stub
-def test_schema_registry_urls_when_schema_in_registry(sdc_builder, sdc_executor, avro_schema_location, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'avro_schema_location': 'REGISTRY',
+                                               'data_format': 'AVRO',
+                                               'lookup_schema_by': 'SUBJECT'},
+                                              {'avro_schema_location': 'HEADER',
+                                               'data_format': 'AVRO',
+                                               'register_schema': True},
+                                              {'avro_schema_location': 'INLINE',
+                                               'data_format': 'AVRO',
+                                               'register_schema': True}])
+def test_schema_subject(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('avro_schema_location', ['REGISTRY'])
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('lookup_schema_by', ['SUBJECT'])
 @stub
-def test_schema_subject_when_schema_in_registry(sdc_builder, sdc_executor, avro_schema_location, data_format, lookup_schema_by):
+@pytest.mark.parametrize('stage_attributes', [{'send_response_to_origin': False}, {'send_response_to_origin': True}])
+def test_send_response_to_origin(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('avro_schema_location', ['HEADER', 'INLINE'])
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('register_schema', [True])
 @stub
-def test_schema_subject(sdc_builder, sdc_executor, avro_schema_location, data_format, register_schema):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT'}])
+def test_text_field_path(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('send_response_to_origin', [False, True])
 @stub
-def test_send_response_to_origin(sdc_builder, sdc_executor, send_response_to_origin):
+@pytest.mark.parametrize('stage_attributes', [{'runtime_topic_resolution': False}])
+def test_topic(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['TEXT'])
 @stub
-def test_text_field_path(sdc_builder, sdc_executor, data_format):
+@pytest.mark.parametrize('stage_attributes', [{'runtime_topic_resolution': True}])
+def test_topic_expression(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('runtime_topic_resolution', [False])
 @stub
-def test_topic(sdc_builder, sdc_executor, runtime_topic_resolution):
+@pytest.mark.parametrize('stage_attributes', [{'runtime_topic_resolution': True}])
+def test_topic_white_list(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('runtime_topic_resolution', [True])
 @stub
-def test_topic_expression(sdc_builder, sdc_executor, runtime_topic_resolution):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'XML', 'validate_schema': False},
+                                              {'data_format': 'XML', 'validate_schema': True}])
+def test_validate_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('runtime_topic_resolution', [True])
 @stub
-def test_topic_white_list(sdc_builder, sdc_executor, runtime_topic_resolution):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'AVRO', 'value_serializer': 'CONFLUENT'},
+                                              {'data_format': 'AVRO', 'value_serializer': 'DEFAULT'}])
+def test_value_serializer(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('data_format', ['XML'])
-@pytest.mark.parametrize('validate_schema', [False, True])
 @stub
-def test_validate_schema(sdc_builder, sdc_executor, data_format, validate_schema):
-    pass
-
-
-@pytest.mark.parametrize('data_format', ['AVRO'])
-@pytest.mark.parametrize('value_serializer', ['CONFLUENT', 'DEFAULT'])
-@stub
-def test_value_serializer(sdc_builder, sdc_executor, data_format, value_serializer):
-    pass
-
-
-@pytest.mark.parametrize('data_format', ['XML'])
-@pytest.mark.parametrize('validate_schema', [True])
-@stub
-def test_xml_schema(sdc_builder, sdc_executor, data_format, validate_schema):
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'XML', 'validate_schema': True}])
+def test_xml_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
