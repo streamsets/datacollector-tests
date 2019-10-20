@@ -445,43 +445,6 @@ def test_http_destination(sdc_builder, sdc_executor, http_client, method, reques
 
 
 @http
-def test_http_client_source_simple(sdc_builder, sdc_executor, http_client):
-    """Test HTTP Client source basic (single batch, not streaming) HTTP server endpoint and
-    assert expected data. The pipeline looks like:
-
-        http_client_source >> trash
-    """
-    raw_data = '{"first:": 1}'
-    mock_path = get_random_string(string.ascii_letters, 10)
-    http_mock = http_client.mock()
-
-    try:
-        http_mock.when(f'GET /{mock_path}').reply(raw_data, times=FOREVER)
-        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
-
-        builder = sdc_builder.get_pipeline_builder()
-        http_client_source = builder.add_stage('HTTP Client', type='origin')
-        http_client_source.set_attributes(data_format='JSON', resource_url=mock_uri)
-
-        trash = builder.add_stage('Trash')
-
-        http_client_source >> trash
-
-        pipeline = builder.build(title='HTTP Client Simple')
-        sdc_executor.add_pipeline(pipeline)
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, batches=1, batch_size=1,
-                                                 start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-        origin_stage_output = snapshot[http_client_source.instance_name]
-
-        assert len(origin_stage_output.output) == 1
-        assert origin_stage_output.output[0].field == json.loads(raw_data)
-    finally:
-        http_mock.delete_mock()
-
-
-@http
 @sdc_min_version("3.8.0")
 def test_http_server_method_restriction(sdc_executor, http_server_pipeline):
     """HTTP Server Origin should actively disallow TRACE and TRACK HTTP request methods"""

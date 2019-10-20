@@ -1,6 +1,10 @@
-import pytest
+import json
 
+import pytest
+from pretenders.common.constants import FOREVER
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import http
+from streamsets.testframework.utils import get_random_string
 
 
 @stub
@@ -1114,9 +1118,33 @@ def test_request_transfer_encoding(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-def test_resource_url(sdc_builder, sdc_executor):
-    pass
+@http
+def test_resource_url(sdc_builder, sdc_executor, http_client):
+    DATA = dict(first=1)
+    mock_path = get_random_string()
+
+    try:
+        http_mock = http_client.mock()
+        http_mock.when(f'GET /{mock_path}').reply(json.dumps(DATA), times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        http_client_source = pipeline_builder.add_stage('HTTP Client', type='origin')
+        http_client_source.resource_url = mock_uri
+
+        trash = pipeline_builder.add_stage('Trash')
+
+        http_client_source >> trash
+
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[http_client_source].output[0]
+        assert record.field == DATA
+    finally:
+        http_mock.delete_mock()
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
