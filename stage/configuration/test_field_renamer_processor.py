@@ -1,11 +1,31 @@
-import pytest
+import json
 
+import pytest
 from streamsets.testframework.decorators import stub
 
 
-@stub
 def test_fields_to_rename(sdc_builder, sdc_executor):
-    pass
+    try:
+        DATA = dict(name='Al Gore', birthplace='Washington, D.C.')
+        EXPECTED_RENAMED_DATA = dict(internetInventor='Al Gore', birthplace='Washington, D.C.')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.raw_data = json.dumps(DATA)
+        field_renamer = pipeline_builder.add_stage('Field Renamer')
+        field_renamer.fields_to_rename = [{'fromFieldExpression': '/name', 'toFieldExpression': '/internetInventor'}]
+        trash = pipeline_builder.add_stage('Trash')
+
+        dev_raw_data_source >> field_renamer >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[field_renamer].output[0]
+        assert record.field == EXPECTED_RENAMED_DATA
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
