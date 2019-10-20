@@ -177,48 +177,6 @@ def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
 
 
 @http
-def test_http_processor_get(sdc_builder, sdc_executor, http_client):
-    """Test HTTP Lookup Processor for HTTP GET method. We do so by requesting to a pre-defined
-    HTTP server endpoint (testGetJsonEndpoint) and get as expected data. The pipeline looks like:
-
-        dev_raw_data_source >> http_client_processor >> trash
-    """
-    expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
-    expected_data = json.dumps(expected_dict)
-    record_output_field = 'result'
-    mock_path = get_random_string(string.ascii_letters, 10)
-    http_mock = http_client.mock()
-
-    try:
-        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
-        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
-
-        builder = sdc_builder.get_pipeline_builder()
-        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
-        http_client_processor = builder.add_stage('HTTP Client', type='processor')
-        http_client_processor.set_attributes(data_format='JSON', http_method='GET',
-                                             resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}')
-        trash = builder.add_stage('Trash')
-
-        dev_raw_data_source >> http_client_processor >> trash
-        pipeline = builder.build(title='HTTP Lookup GET Processor pipeline')
-        sdc_executor.add_pipeline(pipeline)
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-
-        # ensure HTTP GET result is only stored to one record and assert the data
-        assert len(snapshot[http_client_processor.instance_name].output) == 1
-        record = snapshot[http_client_processor.instance_name].output[0].field
-        assert record[record_output_field]['latitude'] == expected_dict['latitude']
-        assert record[record_output_field]['longitude'] == expected_dict['longitude']
-    finally:
-        http_mock.delete_mock()
-
-
-@http
 @sdc_min_version("3.11.0")
 def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client):
     """Test HTTP Lookup Processor for HTTP GET method and split the obtained result

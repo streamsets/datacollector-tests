@@ -1,6 +1,10 @@
-import pytest
+import json
 
+import pytest
+from pretenders.common.constants import FOREVER
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import http
+from streamsets.testframework.utils import get_random_string
 
 
 @stub
@@ -1080,9 +1084,35 @@ def test_required_fields(sdc_builder, sdc_executor):
     pass
 
 
-@stub
-def test_resource_url(sdc_builder, sdc_executor):
-    pass
+@http
+def test_resource_url(sdc_builder, sdc_executor, http_client):
+    DATA = dict(latitude='37.7576948', longitude='-122.4726194')
+    OUTPUT_FIELD = 'result'
+    mock_path = get_random_string()
+
+    try:
+        http_mock = http_client.mock()
+        http_mock.when(f'GET /{mock_path}').reply(json.dumps(DATA), times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                               raw_data='ok')
+        http_client = pipeline_builder.add_stage('HTTP Client',
+                                                 type='processor').set_attributes(resource_url=mock_uri,
+                                                                                  output_field=f'/{OUTPUT_FIELD}')
+        trash = pipeline_builder.add_stage('Trash')
+
+        dev_raw_data_source >> http_client >> trash
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        record = snapshot[http_client].output[0]
+        assert record.field[OUTPUT_FIELD] == DATA
+    finally:
+        http_mock.delete_mock()
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
