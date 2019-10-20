@@ -1310,7 +1310,7 @@ def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executo
                       'files_directory': files_directory,
                       'max_line_length': max_line_length,
                       'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
-                      'regular_expression': '(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
+                      'regular_expression': r'(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
                       'log_format': 'REGEX'}
         directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
