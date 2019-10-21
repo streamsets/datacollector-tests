@@ -15,6 +15,8 @@
 from datetime import datetime
 import json
 import logging
+import math
+import pytest
 import string
 import time
 
@@ -151,7 +153,8 @@ def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
 
 
 @aws('kinesis')
-def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws):
+@pytest.mark.parametrize('no_of_msg', [1, 5, 10, 20, 35])
+def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg):
     """Test for Kinesis consumer origin stage. We do so by publishing data to a test stream using Kinesis client and
     having a pipeline which reads that data using Kinesis consumer origin stage. Data is then asserted for what is
     published at Kinesis client and what we read in the pipeline snapshot. The pipeline looks like:
@@ -162,19 +165,14 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws):
     # build consumer pipeline
     application_name = get_random_string(string.ascii_letters, 10)
     stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
-
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
-
     kinesis_consumer = builder.add_stage('Kinesis Consumer')
     kinesis_consumer.set_attributes(application_name=application_name, data_format='TEXT',
                                     initial_position='TRIM_HORIZON',
                                     stream_name=stream_name)
-
     trash = builder.add_stage('Trash')
-
     kinesis_consumer >> trash
-
     consumer_origin_pipeline = builder.build(title='Kinesis Consumer Stop Resume').configure_for_environment(aws)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
@@ -185,34 +183,38 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws):
         client.create_stream(StreamName=stream_name, ShardCount=1)
         aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
 
-        expected_messages = set('Message {0}'.format(i) for i in range(9))
+        expected_messages = set('Message {0}'.format(i) for i in range(no_of_msg))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        # number of batches to be captured is the ceil of the number of messages divided by
+        # the size of the batch -10 by default-
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
+                                                 batches=math.ceil(no_of_msg/10), batch_size=10,
+                                                 timeout_sec=300).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
-
         output_records = [record.field['text'].value
-                          for record in snapshot[kinesis_consumer.instance_name].output]
-
+                          for batch in snapshot.snapshot_batches
+                          for record in batch.stage_outputs[kinesis_consumer.instance_name].output]
         assert set(output_records) == expected_messages
 
-        expected_messages = set('Message B {0}'.format(i) for i in range(9))
+        expected_messages = set('Message B {0}'.format(i) for i in range(no_of_msg))
         # not using PartitionKey logic and hence assign some temp key
         put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
         client.put_records(Records=put_records, StreamName=stream_name)
 
-
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline , start_pipeline=True).snapshot
+        # number of batches to be captured is the ceil of the number of messages divided by
+        # the size of the batch -10 by default-
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
+                                                 batches=math.ceil(no_of_msg /10), batch_size=10,
+                                                 timeout_sec=300).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
-
         output_records = [record.field['text'].value
-                          for record in snapshot[kinesis_consumer.instance_name].output]
-
-
+                          for batch in snapshot.snapshot_batches
+                          for record in batch.stage_outputs[kinesis_consumer.instance_name].output]
         assert set(output_records) == expected_messages
 
     finally:
