@@ -158,46 +158,6 @@ def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
 
 @ftp
 @sdc_min_version('3.9.0')
-def test_ftp_origin_json(sdc_builder, sdc_executor, ftp):
-    """Test FTP origin, message is in format JSON. We first create a file on FTP server
-    and have the FTP origin stage read it.
-    We then assert its snapshot. The pipeline looks like:
-        sftp_ftp_client >> trash
-    """
-
-    ftp_file_name = get_random_string(string.ascii_letters, 10)
-
-    raw_text_data = json.dumps([{'Alex': 'Developer'}, {'Xavi': 'Developer'}])
-    expected = [{'Alex': 'Developer'}, {'Xavi': 'Developer'}]
-
-    ftp.put_string(ftp_file_name, raw_text_data)
-
-    builder = sdc_builder.get_pipeline_builder()
-    sftp_ftp_client = builder.add_stage(name=FTP_ORIGIN_CLIENT_NAME)
-    sftp_ftp_client.set_attributes(file_name_pattern=ftp_file_name, data_format='JSON')
-
-    trash = builder.add_stage('Trash')
-
-    sftp_ftp_client >> trash
-    sftp_ftp_client_pipeline = builder.build('FTP Origin Pipeline JSON').configure_for_environment(ftp)
-    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
-
-    try:
-        assert len(snapshot[sftp_ftp_client].output) == 1
-        assert snapshot[sftp_ftp_client].output[0].field == expected
-
-    finally:
-        # Delete the test FTP origin file we created
-        client = ftp.client
-        client.delete(ftp_file_name)
-        client.quit()
-
-
-@ftp
-@sdc_min_version('3.9.0')
 def test_ftp_origin_avro(sdc_builder, sdc_executor, ftp):
     """Test FTP origin message is in format Avro. We first create a file on FTP server
     and have the FTP origin stage read it.

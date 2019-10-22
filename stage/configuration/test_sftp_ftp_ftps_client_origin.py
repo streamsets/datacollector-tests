@@ -1,6 +1,9 @@
-import pytest
+import json
 
+import pytest
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import ftp, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 
 @stub
@@ -166,6 +169,8 @@ def test_custom_log_format(sdc_builder, sdc_executor, stage_attributes):
 
 
 @stub
+@ftp
+@sdc_min_version('3.9.0')
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'AVRO'},
                                               {'data_format': 'DELIMITED'},
                                               {'data_format': 'EXCEL'},
@@ -176,8 +181,32 @@ def test_custom_log_format(sdc_builder, sdc_executor, stage_attributes):
                                               {'data_format': 'TEXT'},
                                               {'data_format': 'WHOLE_FILE'},
                                               {'data_format': 'XML'}])
-def test_data_format(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_data_format(sdc_builder, sdc_executor, stage_attributes, ftp):
+    DATA = [{'Alex': 'Developer'}, {'Xavi': 'Developer'}]
+    ftp_file_name = get_random_string()
+    try:
+        ftp.put_string(ftp_file_name, json.dumps(DATA))
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client',
+                                                          type='origin').set_attributes(file_name_pattern=ftp_file_name,
+                                                                                        **stage_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+
+        sftp_ftp_ftps_client >> trash
+        pipeline = pipeline_builder.build().configure_for_environment(ftp)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        if sftp_ftp_ftps_client.data_format == 'JSON':
+            assert records == DATA if sftp_ftp_ftps_client.json_content == 'ARRAY_OBJECTS' else [DATA]
+
+    finally:
+        client = ftp.client
+        client.delete(ftp_file_name)
+        client.quit()
+        sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
@@ -284,9 +313,13 @@ def test_field_path_to_regex_group_mapping(sdc_builder, sdc_executor, stage_attr
     pass
 
 
-@stub
-def test_file_name_pattern(sdc_builder, sdc_executor):
-    pass
+@ftp
+@sdc_min_version('3.9.0')
+def test_file_name_pattern(sdc_builder, sdc_executor, ftp):
+    """:py:func:`stage.configuration.test_sftp_ftp_ftps_client_origin.test_data_format` sets the file name pattern
+    to the exact file it has created, so we simply use its JSON case as a simple test.
+    """
+    test_data_format(sdc_builder, sdc_executor, stage_attributes=dict(data_format='JSON'), ftp=ftp)
 
 
 @stub
@@ -501,11 +534,15 @@ def test_include_field_xpaths(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@ftp
+@sdc_min_version('3.9.0')
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'JSON', 'json_content': 'ARRAY_OBJECTS'},
                                               {'data_format': 'JSON', 'json_content': 'MULTIPLE_OBJECTS'}])
-def test_json_content(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_json_content(sdc_builder, sdc_executor, stage_attributes, ftp):
+    """:py:func:`stage.configuration.test_sftp_ftp_ftps_client_origin.test_data_format` has been written to handle
+    ``json_content`` being set to either of its allowed values, which we take advantage of here.
+    """
+    test_data_format(sdc_builder, sdc_executor, stage_attributes, ftp)
 
 
 @stub
