@@ -67,14 +67,13 @@ def test_action(sdc_builder, sdc_executor, stage_attributes):
 def test_constant(sdc_builder, sdc_executor, stage_attributes):
     """:py:function:`stage.configuration.test_field_remover_processor.test_action` covers this case
     as we set the remover to remove all fields, but only provide a constant that matches one."""
-    pass
+    test_action(sdc_builder, sdc_executor, stage_attributes)
 
 
-@stub
 def test_fields(sdc_builder, sdc_executor):
     """:py:function:`stage.configuration.test_field_remover_processor.test_action` covers this case
     as we alternately set one field (when keeping or removing individual ones) or all of them."""
-    pass
+    test_action(sdc_builder, sdc_executor, dict(action='REMOVE'))
 
 
 @stub
