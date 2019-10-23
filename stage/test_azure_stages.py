@@ -19,11 +19,12 @@ import logging
 import string
 
 from azure import servicebus
+import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # To workaround the stage label tweak introduced in 3.0.1.0 (SDC-8077), we use the
 # Azure IoT/Event Hub Consumer stage's full name in tests.
@@ -149,7 +150,8 @@ def test_azure_event_hub_consumer_resume_offset(sdc_builder, sdc_executor, azure
 
 @azure('eventhub')
 @sdc_min_version('2.7.1.0')
-def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
+@pytest.mark.parametrize('destination_data_format', ['JSON', 'XML'])
+def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_data_format):
     """Test for Azure Event Hub producer destination stage. We do so by using two pipelines. The 1st, Event Hub
     producer pipeline which publishes data which is captured by 2nd, Event Hub consumer. We then assert data at
     the 2nd pipeline by doing a snapshot and comparing it to what was ingested at the 1st pipeline. We use a
@@ -163,8 +165,20 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
     # Note: Test will fail till SDC-7627 is addressed/fixed
     # Note: Cannot use Azure SDK https://github.com/Azure/azure-event-hubs-python as it requires native build,
     # specific for a platform.
-    raw_list = [dict(name='Jane Smith', phone=2124050000, zip_code=27023)]
-    raw_data = json.dumps(raw_list)
+
+    # Support for XML data format for Azure Event Hub producer is only available for SDC_VERSION >= 3.12
+    if destination_data_format == 'XML' and Version(sdc_builder.version) < Version("3.12.0"):
+        pytest.skip('XML data format for Azure Event Hub Producer not available for sdc_version {sdc_builder.version}.')
+
+    if destination_data_format == 'XML':
+        # XML Data conversion requires having a root element
+        # The example for destination_data_format = JSON has more than 1 root element
+        # Use a simpler single element dictionary instead for XML testcase
+       raw_data = '{"key":"value"}'
+       EXPECTED_XML_OUTPUT = ['<?xml version="1.0" encoding="UTF-8" standalone="no"?>','<key>value</key>']
+    else:
+        raw_list = [dict(name='Jane Smith', phone=2124050000, zip_code=27023)]
+        raw_data = json.dumps(raw_list)
 
     # Azure container names are lowercased. Ref. http://tinyurl.com/ya9y9mm6
     container_name = get_random_string(string.ascii_lowercase, 10)
@@ -174,14 +188,19 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, json_content='ARRAY_OBJECTS')
+
+    json_content_type = 'MULTIPLE_OBJECTS' if destination_data_format == 'XML' else 'ARRAY_OBJECTS'
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, json_content=json_content_type)
 
     record_deduplicator = builder.add_stage('Record Deduplicator')
     producer_trash = builder.add_stage('Trash')
 
     azure_event_hub_producer = builder.add_stage('Azure Event Hub Producer')
-    azure_event_hub_producer.set_attributes(data_format='JSON', event_hub_name=event_hub_name,
-                                            json_content='ARRAY_OBJECTS')
+    if destination_data_format == 'JSON':
+        azure_event_hub_producer.set_attributes(data_format='JSON', event_hub_name=event_hub_name,
+                                                json_content='ARRAY_OBJECTS')
+    elif destination_data_format == 'XML':
+        azure_event_hub_producer.set_attributes(data_format='XML', event_hub_name=event_hub_name)
 
     dev_raw_data_source >> record_deduplicator >> azure_event_hub_producer
     record_deduplicator >> producer_trash
@@ -191,9 +210,11 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
 
     # build Event Hub consumer
     builder = sdc_builder.get_pipeline_builder()
-
     azure_iot_event_hub_consumer = builder.add_stage(name=AZURE_IOT_EVENT_HUB_STAGE_NAME)
-    azure_iot_event_hub_consumer.set_attributes(container_name=container_name, data_format='JSON',
+
+    # Setting the Consumer Pipeline' data format as Text, so that the XML Header line can be verfied
+    consumer_data_format = 'TEXT' if destination_data_format == 'XML' else 'JSON'
+    azure_iot_event_hub_consumer.set_attributes(container_name=container_name, data_format=consumer_data_format,
                                                 event_hub_name=event_hub_name)
     consumer_trash = builder.add_stage('Trash')
 
@@ -212,21 +233,22 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure):
 
         # publish events and read through the consumer pipeline to assert
         sdc_executor.start_pipeline(producer_dest_pipeline)
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True, timeout_sec=120).snapshot
 
         sdc_executor.stop_pipeline(producer_dest_pipeline)
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
 
         result_records = snapshot[azure_iot_event_hub_consumer.instance_name].output
-        assert len(result_records) == 1
-        assert result_records[0].get_field_data('[0]/name') == 'Jane Smith'
-        assert result_records[0].get_field_data('[0]/phone') == 2124050000
-        assert result_records[0].get_field_data('[0]/zip_code') == 27023
+        if destination_data_format == 'JSON':
+            assert len(result_records) == 1
+            assert result_records[0].field == raw_list
+        elif destination_data_format == 'XML':
+            assert [record.field['text'] for record in result_records] == EXPECTED_XML_OUTPUT
     finally:
         logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         eh_service_bus.delete_event_hub(event_hub_name)
 
-        logger.info('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
+        logger.debug('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
         azure.storage.delete_blob_container(container_name)
 
 
