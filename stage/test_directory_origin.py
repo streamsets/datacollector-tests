@@ -590,7 +590,7 @@ def test_directory_origin_bom_file(sdc_builder, sdc_executor, csv_record_type):
     directory.set_attributes(data_format='DELIMITED',
                              file_name_pattern='file_with_bom.csv',
                              file_name_pattern_mode='GLOB',
-                             files_directory='/resources/directory_origin',
+                             files_directory='/resources/resources/directory_origin',
                              process_subdirectories=True,
                              read_order='TIMESTAMP',
                              root_field_type=csv_record_type)
