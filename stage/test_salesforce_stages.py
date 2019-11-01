@@ -30,6 +30,7 @@ DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName': 'User1',
                    'Email': 'xtest1@example.com', 'LeadSource': 'Advertisement'},
                   {'FirstName': 'Test2', 'LastName': 'User2', 'Email': 'xtest2@example.com', 'LeadSource': 'Partner'},
                   {'FirstName': 'Test3', 'LastName': 'User3', 'Email': 'xtest3@example.com', 'LeadSource': 'Web'}]
+
 # For testing of SDC-7548
 # Since email is used in WHERE clause in lookup processory query,
 # create data containing 'from' word in emails to verify the bug is fixed.
@@ -1392,3 +1393,71 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
         logger.info('Deleting records ...')
         if (contact_ids):
             client.bulk.Contact.delete(contact_ids)
+
+
+# Test SDC-12704
+@salesforce
+def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, salesforce):
+    """
+    Test that we can clear related external ID fields. Only applicable to SOAP API as Bulk API does not allow this
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_destination
+    """
+    client = salesforce.client
+    inserted_ids = None
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        result = client.bulk.Contact.insert(DATA_TO_INSERT)
+        inserted_ids = [{'Id': item['id']}
+                        for item in result]
+
+        # Link the records via ReportsToId
+        logger.info('Updating rows using Salesforce client ...')
+        data_for_update = [{'Id': inserted_ids[1]["Id"], 'ReportsToId': inserted_ids[0]["Id"]},
+                           {'Id': inserted_ids[2]["Id"], 'ReportsToId': inserted_ids[1]["Id"]}]
+        client.bulk.Contact.update(data_for_update)
+
+        # Now disconnect the created contacts from each other
+        csv_data_to_insert = ['Id,ReportsTo.Email']
+        csv_data_to_insert.append(f'{inserted_ids[1]["Id"]},')
+        csv_data_to_insert.append(f'{inserted_ids[2]["Id"]},')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, csv_data_to_insert)
+
+        salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
+        field_mapping = [{'sdcField': '/Id', 'salesforceField': 'Id'},
+                         {'sdcField': '/ReportsTo.Email', 'salesforceField': 'ReportsTo.Email'}]
+        salesforce_destination.set_attributes(default_operation='UPDATE',
+                                              field_mapping=field_mapping,
+                                              sobject_type='Contact',
+                                              use_bulk_api=False)
+
+        dev_raw_data_source >> salesforce_destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Now the pipeline will make the contacts report to each other
+        logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Using Salesforce connection, read the contents in the Salesforce destination.
+        query_str = ("SELECT Id, Email, ReportsToId FROM Contact WHERE Email LIKE 'xtest%'")
+        result = client.query(query_str)
+
+        # Nobody should report to anybody any more
+        assert None == result['records'][0]['ReportsToId']
+        assert None == result['records'][1]['ReportsToId']
+        assert None == result['records'][2]['ReportsToId']
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if (inserted_ids):
+            client.bulk.Contact.delete(inserted_ids)
