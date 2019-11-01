@@ -571,7 +571,7 @@ def test_directory_origin_avro_produce_full_file(sdc_builder, sdc_executor):
         assert output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
 
 
-@sdc_min_version('3.0.0.0')
+@sdc_min_version('3.12.0')
 @pytest.mark.parametrize('csv_record_type', ['LIST_MAP','LIST'])
 def test_directory_origin_bom_file(sdc_builder, sdc_executor, csv_record_type):
     """ Test Directory Origin with file in CSV data format and containing BOM.
