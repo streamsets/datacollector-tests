@@ -17,6 +17,7 @@ import copy
 import json
 import logging
 import string
+import time
 
 import pytest
 import requests
@@ -1152,3 +1153,151 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
         logger.info('Deleting records ...')
         if (inserted_ids):
             client.bulk.Contact.delete(inserted_ids)
+
+
+def create_push_topic(client):
+    push_topic_name = get_random_string(string.ascii_letters, 10).lower()
+    logger.info(f'Creating PushTopic {push_topic_name} in Salesforce')
+    push_topic = client.PushTopic.create({'Name': push_topic_name,
+                                          'Query': 'SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact',
+                                          'ApiVersion': '47.0',
+                                          'NotifyForOperationCreate': True,
+                                          'NotifyForOperationUpdate': True,
+                                          'NotifyForOperationUndelete': True,
+                                          'NotifyForOperationDelete': True,
+                                          'NotifyForFields': 'All'})
+    return push_topic, push_topic_name
+
+
+@salesforce
+def test_salesforce_streaming_api(sdc_builder, sdc_executor, salesforce):
+    """
+    Start pipeline, create data using Salesforce client
+    and then check if Salesforce origin receives data using snapshot.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+    """
+    client = salesforce.client
+
+    push_topic = None
+    contact = None
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        push_topic, push_topic_name = create_push_topic(client)
+
+        salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        salesforce_origin.set_attributes(query_existing_data=False,
+                                         subscribe_for_notifications=True,
+                                         subscription_type='PUSH_TOPIC',
+                                         push_topic=push_topic_name)
+
+        trash = pipeline_builder.add_stage('Trash')
+        salesforce_origin >> trash
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        logger.info('Starting pipeline')
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
+        # updates could flood a channel."
+        # REST API in Simple Salesforce can only create one record at a time, so just create one contact
+        logger.info('Creating record using Salesforce client...')
+        contact = client.Contact.create(DATA_TO_INSERT[0])
+
+        logger.info('Taking snapshot')
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        verify_snapshot(snapshot, salesforce_origin, [DATA_TO_INSERT[0]])
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if push_topic:
+            client.PushTopic.delete(push_topic['id'])
+        if contact:
+            client.contact.delete(contact['id'])
+
+
+# Test SDC-12771
+@salesforce
+@sdc_min_version('3.12.0')
+@pytest.mark.parametrize(('good_or_bad'), [
+    'good',
+    'bad'
+])
+def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, good_or_bad):
+    """
+    Testing that pipeline will fail if Streaming Buffer Size is too small, succeed if it is ample
+
+    Start pipeline with given buffer size, create data using Salesforce client,
+    check for error or correct snapshot as appropriate
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+    """
+    client = salesforce.client
+
+    push_topic = None
+    contact = None
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        push_topic, push_topic_name = create_push_topic(client)
+
+        # 1048576 is default buffer size
+        # 256 is big enough to connect, but not to receive data
+        salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        salesforce_origin.set_attributes(query_existing_data=False,
+                                         subscribe_for_notifications=True,
+                                         subscription_type='PUSH_TOPIC',
+                                         push_topic=push_topic_name,
+                                         streaming_buffer_size=(1048576 if good_or_bad == 'good' else 256))
+
+        trash = pipeline_builder.add_stage('Trash')
+        salesforce_origin >> trash
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        logger.info('Starting pipeline')
+
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
+        # updates could flood a channel."
+        # REST API in Simple Salesforce can only create one record at a time, so just create one contact
+        logger.info('Creating record using Salesforce client...')
+        contact = client.Contact.create(DATA_TO_INSERT[0])
+
+        logger.info('Taking snapshot')
+        if good_or_bad == 'good':
+            snapshot = snapshot_command.wait_for_finished().snapshot
+
+            verify_snapshot(snapshot, salesforce_origin, [DATA_TO_INSERT[0]])
+        else:
+            # Pipeline should stop with StageException
+            with pytest.raises(Exception):
+                snapshot_command.wait_for_finished().snapshot
+
+            status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+            assert 'RUN_ERROR' == status
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if push_topic:
+            client.PushTopic.delete(push_topic['id'])
+        if contact:
+            client.contact.delete(contact['id'])
