@@ -14,6 +14,7 @@
 
 import logging
 import string
+import time
 
 import pytest
 from elasticsearch_dsl import DocType, Index, Search as ESSearch
@@ -155,7 +156,16 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, addition
         elasticsearch.connect()
         es_search = ESSearch(index=es_index)
         es_response = es_search.execute()
-        es_meta = es_response[0].meta
+
+        # Basically retry for 3 times while es_response is empty. That was intended to avoid emptiness flaky errors
+        for i in range(3):
+            if not es_response:
+                time.sleep(5)
+                es_response = es_search.execute()
+            else:
+                es_meta = es_response[0].meta
+                break
+                
         # assert meta ingest
         assert es_meta['index'] == es_index and es_meta['doc_type'] == es_mapping and es_meta['id'] == es_doc_id
         # assert data ingest
