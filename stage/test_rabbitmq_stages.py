@@ -34,13 +34,13 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
     RabbitMQ Consumer pipeline:
         rabbitmq_consumer >> trash
     """
-    # build consumer pipeline
+    # Build consumer pipeline.
     name = get_random_string(string.ascii_letters, 10)
 
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
-    # we set to use default exchange and hence exchange does not need to be pre-created or given
+    # We set to use default exchange and hence exchange does not need to be pre-created or given.
     rabbitmq_consumer = builder.add_stage('RabbitMQ Consumer').set_attributes(name=name,
                                                                               data_format='TEXT',
                                                                               durable=True,
@@ -53,29 +53,30 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
     consumer_origin_pipeline = builder.build(title='RabbitMQ Consumer pipeline').configure_for_environment(rabbitmq)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
-    # run pipeline and capture snapshot
+    # Run pipeline and capture snapshot.
     expected_messages = set()
     connection = rabbitmq.blocking_connection
     channel = connection.channel()
-    try:
-        # https://www.rabbitmq.com/tutorials/amqp-concepts.html about default exchange routing
-        channel.queue_declare(queue=name, durable=True, exclusive=False, auto_delete=False)
-        channel.confirm_delivery()
-        for i in range(10):
-            expected_message = 'Message {0}'.format(i)
-            if channel.basic_publish(exchange="",
-                                     routing_key=name,  # routing key has to be same as queue name
-                                     body=expected_message,
-                                     properties=pika.BasicProperties(content_type='text/plain',
-                                                                     delivery_mode=1),
-                                     mandatory=True):
-                expected_messages.add(expected_message)
-            else:
-                logger.warning('Message %s could not be confirmed.', expected_message)
-    finally:
-        channel.close()
-        connection.close()
-    # messages are published, read through the pipeline and assert
+
+    # About default exchange routing: https://www.rabbitmq.com/tutorials/amqp-concepts.html
+    channel.queue_declare(queue=name, durable=True, exclusive=False, auto_delete=False)
+    channel.confirm_delivery()
+    for i in range(10):
+        expected_message = 'Message {0}'.format(i)
+        expected_messages.add(expected_message)
+        try:
+            channel.basic_publish(exchange="",
+                                  routing_key=name,  # Routing key has to be same as queue name.
+                                  body=expected_message,
+                                  properties=pika.BasicProperties(content_type='text/plain', delivery_mode=1),
+                                  mandatory=True)
+        except:
+            logger.warning('Message %s could not be sent.', expected_message)
+
+    channel.close()
+    connection.close()
+
+    # Messages are published, read through the pipeline and assert.
     snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(consumer_origin_pipeline)
     output_records = [record.field['text'].value
