@@ -228,6 +228,7 @@ def test_configurations_data_format_log(sdc_executor, sdc_builder, aws, data_for
         delete_aws_objects(client, aws, s3_key)
 
 
+@aws('s3')
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
 @pytest.mark.parametrize('max_record_length_in_chars', [20, 23, 30])
 def test_configuration_delimited_max_record_length_in_chars(sdc_builder, sdc_executor, aws,
