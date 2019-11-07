@@ -19,6 +19,7 @@ import math
 import random
 import string
 import time
+from collections import OrderedDict
 
 import pytest
 import sqlalchemy
@@ -2854,5 +2855,73 @@ def test_jdbc_sqlserver_types(sdc_builder, sdc_executor, database, use_table_ori
         assert record.field['data_column']._data['value'] == expected_value
         assert null_record.field['data_column'] == None
     finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('3.13.0')
+@database('sqlserver')
+@pytest.mark.parametrize('on_unknown_type_action', ['CONVERT_TO_STRING', 'STOP_PIPELINE'])
+def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, database, on_unknown_type_action):
+    """Test JDBC Multitable Consumer with MS-SQL server for the on_unknown_type action.
+        This is to verify SDC-12764.
+        When the 'On Unknown Type' action is set to STOP_PIPELINE,the pipeline should stop with a StageException Error since it cannot convert DATETIMEOFFSET field
+        When the 'On Unknown Type' action is set to CONVERT_TO_STRING, the pipeline should convert the unknown type to string and process next record
+        The pipeline will look like:
+            JDBC_Multitable_Consumer >> trash
+    """
+    column_type = 'DATETIMEOFFSET'
+    INPUT_DATE = "'2004-05-23T14:25:10'"
+    EXPECTED_OUTCOME = OrderedDict(id=1, date_offset='2004-05-23 14:25:10 +00:00')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Setup Origin with specified unknown type action
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{table_name}%'}],
+                                            on_unknown_type=on_unknown_type_action)
+
+    # Setup destination
+    trash=pipeline_builder.add_stage('Trash')
+
+    # Connect the pipeline stages
+    jdbc_multitable_consumer >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Create table and add a row
+    connection.execute(f"""
+        CREATE TABLE {table_name}(
+            id int primary key,
+            date_offset {column_type} NOT NULL
+        )
+    """)
+    connection.execute(f"INSERT INTO {table_name} VALUES(1, {INPUT_DATE})")
+
+    try:
+        if on_unknown_type_action == 'STOP_PIPELINE':
+            # Pipeline should stop with StageException
+            with pytest.raises(Exception):
+                sdc_executor.start_pipeline(pipeline)
+                sdc_executor.stop_pipeline(pipeline)
+
+            status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+            assert 'RUN_ERROR' == status
+        else:
+            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+            output_records = snapshot[jdbc_multitable_consumer].output
+
+            assert len(output_records) == 1
+            assert output_records[0].field == EXPECTED_OUTCOME
+
+    finally:
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        if status == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
