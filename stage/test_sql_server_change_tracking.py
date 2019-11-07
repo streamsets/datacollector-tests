@@ -15,10 +15,11 @@
 import json
 import logging
 import string
+from collections import OrderedDict
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -220,3 +221,58 @@ def test_sql_server_change_tracking_reserved_words(sdc_builder, sdc_executor, da
     finally:
         logger.info('Dropping table %s...', table_name)
         table.drop(database.engine)
+
+
+@database('sqlserver')
+@sdc_min_version('3.12.0')
+def test_sql_server_change_tracking_on_unknown_type_action(sdc_builder, sdc_executor, database):
+    """Set the 'On Unknown Type' action to CONVERT_TO_STRING in SQL Change Tracking origin
+    and verify that the DATETIMEOFFSET field(that is not handled in the JDBCUtil.Java as a valid type) is indeed converted to string
+    The pipeline will look like:
+        sqlserver_change_tracking >> trash
+    """
+    if not database.is_ct_enabled:
+        pytest.skip('Test only runs against SQL Server with CT enabled')
+
+    # Input and expected output
+    COLUMN_TYPE = 'DATETIMEOFFSET'
+    INPUT_DATE = "'2004-05-23T14:25:10'"
+    EXPECTED_OUTCOME = OrderedDict(id=1, date_offset='2004-05-23 14:25:10 +00:00')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    sql_server_change_tracking = pipeline_builder.add_stage('SQL Server Change Tracking Client')
+    sql_server_change_tracking.set_attributes(table_configs=[{'initialOffset': 0, 'schema': 'dbo', 'tablePattern': f'{table_name}'}],
+                                              on_unknown_type = 'CONVERT_TO_STRING')
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    sql_server_change_tracking >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create table with DATETIMEOFFSET column
+        connection.execute(f"""
+            CREATE TABLE {table_name} (
+                id INT PRIMARY KEY,
+                date_offset {COLUMN_TYPE} NOT NULL)
+        """)
+        # enable change tracking on table
+        connection.execute(f'ALTER TABLE {table_name} ENABLE change_tracking WITH (track_columns_updated = on)')
+        # Add DATETIMEOFFSET record to table
+        connection.execute(f"INSERT INTO {table_name} VALUES (1, {INPUT_DATE})")
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        output_records = snapshot[sql_server_change_tracking.instance_name].output
+        assert len(output_records) == 1
+        assert output_records[0].field == EXPECTED_OUTCOME
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
