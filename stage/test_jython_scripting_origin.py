@@ -13,7 +13,15 @@
 # limitations under the License.
 
 
+import pytest
 from streamsets.testframework.markers import sdc_min_version
+
+
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
+    return hook
 
 
 @sdc_min_version('3.10.0')
