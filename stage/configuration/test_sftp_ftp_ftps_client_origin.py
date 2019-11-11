@@ -3,6 +3,7 @@ import logging
 import os
 
 import pytest
+from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import ftp, sftp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -999,9 +1000,43 @@ def test_regular_expression(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-def test_resource_url(sdc_builder, sdc_executor):
-    pass
+@sftp
+@sdc_min_version('3.9.0')
+@pytest.mark.parametrize('resource_url_is_correct', [True, False])
+def test_resource_url(sdc_builder, sdc_executor, sftp, resource_url_is_correct, keep_data):
+    """Check if the SFTP/FTP/FTPS Client origin honors the Resource URL configuration.
+
+    A positive and negative test case is included to ensure an Exception is raised when the URL
+    is malformed.
+    """
+    DATA = {'name': 'Edward'}
+    file_name = get_random_string()
+    sftp.put_string(os.path.join(sftp.path, file_name), json.dumps(DATA))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+    sftp_ftp_ftps_client.file_name_pattern = file_name
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(sftp)
+    if not resource_url_is_correct:
+        sftp_ftp_ftps_client.resource_url = 'somecrazyurlthatwillnotwork'
+    transport, client = sftp.client
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        if resource_url_is_correct:
+            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+            assert records == [DATA]
+        else:
+            with pytest.raises(StartError):
+                sdc_executor.start_pipeline(pipeline)
+    finally:
+        if not keep_data:
+            client.remove(os.path.join(sftp.path, file_name))
+            client.close()
+            transport.close()
 
 
 @stub
