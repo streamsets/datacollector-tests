@@ -327,10 +327,35 @@ def test_file_name_pattern(sdc_builder, sdc_executor, ftp):
     test_data_format(sdc_builder, sdc_executor, stage_attributes=dict(data_format='JSON'), ftp=ftp)
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'file_name_pattern_mode': 'GLOB'}, {'file_name_pattern_mode': 'REGEX'}])
-def test_file_name_pattern_mode(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@sdc_min_version('3.8.0')
+@sftp
+@pytest.mark.parametrize('stage_attributes', [{'file_name_pattern_mode': 'GLOB'},
+                                              {'file_name_pattern_mode': 'REGEX'}])
+def test_file_name_pattern_mode(sdc_builder, sdc_executor, stage_attributes, sftp, keep_data):
+    """Test for the File Name Pattern Mode configuration (could be glob or regex)."""
+    DATA = {'name': 'Patrick Kane'}
+    file_name = f'{get_random_string()}.txt'
+    sftp.put_string(os.path.join(sftp.path, file_name), json.dumps(DATA))
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        file_name_pattern = '*.txt' if stage_attributes['file_name_pattern_mode'] == 'GLOB' else r'[A-Za-z]+\.txt'
+        sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+        sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name_pattern, **stage_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build().configure_for_environment(sftp)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        assert records == [DATA]
+    finally:
+        if not keep_data:
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, file_name))
+            client.close()
+            transport.close()
 
 
 @stub
