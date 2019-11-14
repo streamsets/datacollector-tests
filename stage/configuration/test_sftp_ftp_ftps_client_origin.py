@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import json
 import logging
 import os
@@ -504,12 +505,56 @@ def test_grok_pattern_definition(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@sftp
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'header_line': 'IGNORE_HEADER'},
                                               {'data_format': 'DELIMITED', 'header_line': 'NO_HEADER'},
                                               {'data_format': 'DELIMITED', 'header_line': 'WITH_HEADER'}])
-def test_header_line(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_header_line(sdc_builder, sdc_executor, stage_attributes, sftp, keep_data):
+    """Test if Header Line configuration is respected.
+
+    Cases:
+    1. IGNORE_HEADER: Should discard header of delimited file. Records should be list-maps with integer keys.
+    2. NO_HEADER:  Should interpret header line as records.
+    3. WITH_HEADER - Should produce records with header fields as field names.
+    """
+    file_name = get_random_string()
+
+    DATA = [['c1', 'c2', 'c3'], ['f11', 'f12', 'f13'], ['f21', 'f22', 'f23']]
+    EXPECTED_IGNORE_HEADER_OUTPUT = [OrderedDict([('0', 'f11'), ('1', 'f12'), ('2', 'f13')]),
+                                     OrderedDict([('0', 'f21'), ('1', 'f22'), ('2', 'f23')])]
+    EXPECTED_NO_HEADER_OUTPUT = [OrderedDict([('0', 'c1'), ('1', 'c2'), ('2', 'c3')]),
+                                 OrderedDict([('0', 'f11'), ('1', 'f12'), ('2', 'f13')]),
+                                 OrderedDict([('0', 'f21'), ('1', 'f22'), ('2', 'f23')])]
+    EXPECTED_WITH_HEADER_OUTPUT = [OrderedDict([('c1', 'f11'), ('c2', 'f12'), ('c3', 'f13')]),
+                                   OrderedDict([('c1', 'f21'), ('c2', 'f22'), ('c3', 'f23')])]
+    file_content = '\n'.join([','.join(line) for line in DATA])
+
+    try:
+        sftp.put_string(os.path.join(sftp.path, file_name), file_content)
+
+        builder = sdc_builder.get_pipeline_builder()
+        sftp_ftp_ftps_client = builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+        sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name, **stage_attributes)
+        trash = builder.add_stage('Trash')
+        pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+        sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+        pipeline = builder.build().configure_for_environment(sftp)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        if stage_attributes['header_line'] == 'IGNORE_HEADER':
+            assert records == EXPECTED_IGNORE_HEADER_OUTPUT
+        elif stage_attributes['header_line'] == 'NO_HEADER':
+            assert records == EXPECTED_NO_HEADER_OUTPUT
+        elif stage_attributes['header_line'] == 'WITH_HEADER':
+            assert records == EXPECTED_WITH_HEADER_OUTPUT
+    finally:
+        if not keep_data:
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, file_name))
+            client.close()
+            transport.close()
 
 
 @stub
