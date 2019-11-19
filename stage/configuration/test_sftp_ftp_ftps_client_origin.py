@@ -6,7 +6,7 @@ import os
 import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import ftp, sftp, sdc_min_version
+from streamsets.testframework.markers import ftp, sdc_min_version, sftp
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -591,15 +591,45 @@ def test_import_sheets(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@sftp
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT',
                                                'include_custom_delimiter': False,
                                                'use_custom_delimiter': True},
                                               {'data_format': 'TEXT',
                                                'include_custom_delimiter': True,
                                                'use_custom_delimiter': True}])
-def test_include_custom_delimiter(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_include_custom_delimiter(sdc_builder, sdc_executor, stage_attributes, sftp, keep_data):
+    """Test for whether the Include Custom Delimiter configuration is respected."""
+    file_name = get_random_string()
+    CUSTOM_DELIMITER = '@'
+    FILE_CONTENTS = f'f1{CUSTOM_DELIMITER}f2{CUSTOM_DELIMITER}f3'
+    EXPECTED_OUTPUT = ([{'text': f'f1{CUSTOM_DELIMITER}'}, {'text': f'f2{CUSTOM_DELIMITER}'}, {'text': 'f3'}]
+                       if stage_attributes['include_custom_delimiter']
+                       else [{'text': 'f1'}, {'text': 'f2'}, {'text': 'f3'}])
+
+
+    try:
+        sftp.put_string(os.path.join(sftp.path, file_name), FILE_CONTENTS)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+        sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name,
+                                            custom_delimiter=CUSTOM_DELIMITER,
+                                            **stage_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build().configure_for_environment(sftp)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        assert records == EXPECTED_OUTPUT
+    finally:
+        if not keep_data:
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, file_name))
+            client.close()
+            transport.close()
 
 
 @stub
