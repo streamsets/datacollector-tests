@@ -580,6 +580,82 @@ def test_datalake_origin_glob_expansion(sdc_builder, sdc_executor, azure, proces
         fs.rm(rootdir, recursive=True)
 
 
+@azure('datalake')
+@sdc_min_version('3.9.0')
+@pytest.mark.parametrize('action', ['ARCHIVE', 'DELETE'])
+@pytest.mark.parametrize('process_subdirectories', [True, False])
+def test_file_postprocessing(sdc_builder, sdc_executor, azure, action, process_subdirectories):
+    """Test file post-processing functionality in ADLS Gen1 origin.
+
+    The test creates a directory tree and populates it with files. Then it checks the files are ingested by
+    the pipeline and post-processed accordingly (either removing the file from ADLS when 'DELETE' is
+    configured or moving the files to the archive directory when 'ARCHIVE' is configured).
+
+    Pipeline:  adls_origin >> trash
+
+    """
+    fs = azure.datalake.file_system
+
+    # Variable `files` define the directory tree employed in the test. Keys are the directories and values are
+    # the list of files contained for each directory.
+    rootdir = '/stf_postprocessing_{}'.format(get_random_string(string.ascii_letters, 10))
+    archive_dir = '/stf_postprocessing_archive_{}'.format(get_random_string(string.ascii_letters, 10))
+    files = {'.': [get_random_string() for _ in range(3)],
+             os.path.join('a1'): [get_random_string() for _ in range(3)],
+             os.path.join('b1'): [get_random_string() for _ in range(3)],
+             os.path.join('a1', 'a2'): [get_random_string() for _ in range(3)],
+             os.path.join('b1', 'b2'): [get_random_string() for _ in range(3)]}
+    num_files = sum([len(files[d]) for d in files]) if process_subdirectories else len(files['.'])
+
+    # Create the directory tree according to `files`. The content of each file will be just the filename.
+    # Also generate the directory where files will be archived.
+    fs.mkdir(archive_dir)
+    for d in sorted(files.keys()):
+        fs.mkdir(os.path.join(rootdir, d))
+    for (folder, filenames) in files.items():
+        for f in filenames:
+            _adls_create_file(fs, f, os.path.join(rootdir, folder, f))
+
+    # Build the pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    adls_origin = builder.add_stage(name=ADLS_GEN_STAGELIBS[ADLS_GEN1].source_stagelib)
+    adls_origin.set_attributes(data_format='TEXT',
+                               files_directory=rootdir,
+                               file_name_pattern='*',
+                               read_order='TIMESTAMP',
+                               process_subdirectories=process_subdirectories,
+                               file_post_processing=action,
+                               archive_directory=archive_dir)
+    trash = builder.add_stage('Trash')
+    adls_origin >> trash
+
+    try:
+        # Run the pipeline and wait until all the files were ingested.
+        pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_files)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Check all the files were correctly post-processed.
+        if process_subdirectories:
+            for (folder, filenames) in files.items():
+                for f in filenames:
+                    assert not fs.exists(os.path.join(rootdir, folder, f))
+                    if action == 'ARCHIVE':
+                        assert fs.exists(os.path.join(archive_dir, folder, f))
+                        assert fs.cat(os.path.join(archive_dir, folder, f)) == f.encode()
+        else:
+            for f in files['.']:
+                assert not fs.exists(os.path.join(rootdir, f))
+                if action == 'ARCHIVE':
+                    assert fs.exists(os.path.join(archive_dir, f))
+                    assert fs.cat(os.path.join(archive_dir, f)) == f.encode()
+
+    finally:
+        fs.rm(rootdir, recursive=True)
+        fs.rm(archive_dir, recursive=True)
+
+
 def _adls_create_file(adls_client, file_content, file_path):
     """Create a file in ADLS with the specified content.  If the file already exist, it is truncated before
     writing `file_content`.
@@ -587,6 +663,6 @@ def _adls_create_file(adls_client, file_content, file_path):
     """
     tmp_file = 'tmp.txt'
     with open(tmp_file, 'w') as f:
-        f.write(f'{file_content}')
-    adls_client.put('tmp.txt', os.path.join(file_path))
+        f.write(file_content)
+    adls_client.put(tmp_file, os.path.join(file_path))
     os.remove(tmp_file)
