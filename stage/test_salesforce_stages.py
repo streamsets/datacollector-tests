@@ -19,11 +19,14 @@ import logging
 import string
 import time
 from uuid import uuid4
+from json.decoder import JSONDecodeError
+from datetime import datetime, timedelta
+from itertools import zip_longest
+from operator import itemgetter
+from time import sleep
 
 import pytest
 import requests
-from json.decoder import JSONDecodeError
-from simple_salesforce import Salesforce
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -1669,3 +1672,92 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
     sdc_executor.add_pipeline(pipeline)
 
     verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, DATA_TO_INSERT, salesforce)
+
+
+def find_dataset(client, name):
+    result = client.restful('wave/datasets')
+    for dataset in result['datasets']:
+        if dataset['name'] == name and 'currentVersionId' in dataset:
+            return dataset['id'], dataset['currentVersionId']
+
+    return None, None
+
+
+@salesforce
+def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
+    """
+    Basic test for Einstein Analytics destination. Write some data and check that it's there
+
+    The pipeline looks like:
+        dev_raw_data_source >> delay >> einstein_analytics_destination
+    """
+    client = salesforce.client
+
+    id = None
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, CSV_DATA_TO_INSERT)
+
+        # Delay so that we can stop the pipeline after a single batch is processed
+        delay = pipeline_builder.add_stage('Delay')
+        delay.delay_between_batches = 5*1000
+
+        analytics_destination = pipeline_builder.add_stage('Einstein Analytics', type='destination')
+        edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
+        # Explicitly set auth credentials since Salesforce environment doesn't know about Einstein Analytics destination
+        analytics_destination.set_attributes(edgemart_alias=edgemart_alias,
+                                             username=salesforce.username,
+                                             password=salesforce.password,
+                                             auth_endpoint='test.salesforce.com')
+
+        dev_raw_data_source >> delay >> analytics_destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Now the pipeline will write data to Einstein Analytics
+        logger.info('Starting Einstein Analytics destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Einstein Analytics data load is asynchronous, so poll until it's done
+        logger.info('Looking for dataset in Einstein Analytics')
+        end_time = datetime.now() + timedelta(seconds=60)
+        while not id and datetime.now() < end_time:
+            sleep(1)
+            id, currentVersionId = find_dataset(client, edgemart_alias)
+
+        # Make sure we found a dataset and didn't time out!
+        assert id != None
+
+        # Now query the data from Einstein Analytics using SAQL
+
+        # Build the load statement
+        load = f'q = load \"{id}/{currentVersionId}\";'
+
+        # Build the identity projection - e.g.
+        # q = foreach q generate Email as Email, FirstName as FirstName, LastName as LastName, LeadSource as LeadSource;
+        field_list = []
+        for key in DATA_TO_INSERT[0]:
+            field_list.append(f'{key} as {key}')
+        projection = 'q = foreach q generate ' + ', '.join(field_list) + ';'
+
+        # Ensure consistent ordering
+        order_key = 'Email'
+        ordering = f'q = order q by {order_key};'
+
+        logger.info('Querying Einstein Analytics')
+        response = client.restful('wave/query', method='POST', json={'query': load + projection + ordering})
+
+        assert sorted(DATA_TO_INSERT, key=itemgetter(order_key)) == response['results']['records']
+
+    finally:
+        if id:
+            # simple_salesforce assumes there will be a JSON response,
+            # but DELETE returns 204 with no response
+            # See https://github.com/simple-salesforce/simple-salesforce/issues/327
+            try:
+                logger.info('Deleting dataset in Einstein Analytics')
+                client.restful(f'wave/datasets/{id}', method='DELETE')
+            except JSONDecodeError:
+                pass
