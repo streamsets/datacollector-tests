@@ -31,6 +31,14 @@ def sdc_common_hook():
     return hook
 
 
+@pytest.fixture(autouse=True)
+def impersonation_check(sdc_executor):
+    if sdc_executor.sdc_configuration.get('stage.conf_com.streamsets.pipeline.stage.hive.'
+                                          'impersonate.current.user') != 'true':
+        pytest.skip('Hive impersonation requires stage.conf_com.streamsets.pipeline.stage.hive.'
+                    'impersonate.current.user to be set to true')
+
+
 @cluster('cdh')
 def test_hive_query_executor_impersonation(sdc_builder, sdc_executor, cluster):
     """Test Hive query executor stage for current user impersonation.
