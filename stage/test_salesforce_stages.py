@@ -41,6 +41,8 @@ DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': 'User1',
                             'Email': 'xtes3@example.comFROM', 'LeadSource': 'Web'}]
 CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
 
+# Folder for Documents
+FOLDER_NAME = 'TestFolder'
 
 ACCOUNTS_FOR_SUBQUERY = 5
 CONTACTS_FOR_SUBQUERY = 5
@@ -744,8 +746,9 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
     dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
 
     salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
-    # Changing " with ' and vice versa in following string makes the query execution fail.
-    query_str = ("SELECT COUNT(Id), MIN(LeadSource), MAX(LeadSource) FROM Contact "
+    # Can sort reliably on FirstName and LastName
+    # LeadSource ordering varies between org types!
+    query_str = ("SELECT COUNT(Id), MIN(FirstName), MAX(LastName) FROM Contact "
                  "WHERE FirstName LIKE '${record:value(\"/prefix\")}%'")
 
     field_mappings = [dict(dataType='STRING',
@@ -773,9 +776,9 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
 
         # There should be a single row with a /count field containing three strings
         assert len(snapshot[salesforce_lookup].output) == 1
-        assert snapshot[salesforce_lookup].output[0].get_field_data('/count') == '3'
-        assert snapshot[salesforce_lookup].output[0].get_field_data('/expr1') == 'Advertisement'
-        assert snapshot[salesforce_lookup].output[0].get_field_data('/expr2') == 'Web'
+        assert snapshot[salesforce_lookup].output[0].get_field_data('/count') == str(len(DATA_TO_INSERT))
+        assert snapshot[salesforce_lookup].output[0].get_field_data('/expr1') == DATA_TO_INSERT[0]['FirstName']
+        assert snapshot[salesforce_lookup].output[0].get_field_data('/expr2') == DATA_TO_INSERT[-1]['LastName']
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -962,11 +965,11 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(pipeline)
-            logger.info('Deleting records ...')
-            if (inserted_ids_1):
-                client.bulk.Contact.delete(inserted_ids_1)
-            if (inserted_ids_2):
-                client.bulk.Contact.delete(inserted_ids_2)
+        logger.info('Deleting records ...')
+        if (inserted_ids_1):
+            client.bulk.Contact.delete(inserted_ids_1)
+        if (inserted_ids_2):
+            client.bulk.Contact.delete(inserted_ids_2)
 
 
 # Test SDC-12041
@@ -974,8 +977,10 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
 def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
+    doc_name = get_random_string(string.ascii_letters, 10).lower()
+
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
-    salesforce_origin.set_attributes(soql_query="SELECT Id, Body FROM Document",
+    salesforce_origin.set_attributes(soql_query=f'SELECT Id, Body FROM Document WHERE Name = \'{doc_name}\'',
                                      disable_query_validation=True,
                                      subscribe_for_notifications=False)
 
@@ -986,22 +991,38 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
 
     client = salesforce.client
     inserted_id = None
+    folder_id = None
     try:
-        # We need to put our document somewhere - get the Shared Documents folder id
-        result = client.query("SELECT Id FROM Folder WHERE Name = 'Shared Documents'")
-        folder_id = result['records'][0]['Id']
+        # We need to put our document somewhere - create a folder if necessary
+        # NOTE - it is not possible to delete a Folder when an associated Document is in the Recycle Bin, we don't have
+        # the 'hard delete' permission by default and assigning that permission or emptying the recycle bin is not
+        # possible via simple_salesforce. So - create a folder with a well-known name if necessary
+        logger.info(f'Checking for Folder: {FOLDER_NAME}')
+        result = client.query(f'SELECT Id FROM Folder WHERE Name = \'{FOLDER_NAME}\'')
+        if (len(result['records']) > 0):
+            logger.info(f'Found Folder: {FOLDER_NAME}')
+            folder_id = result['records'][0]['Id']
+        else:
+            logger.info(f'Creating Folder: {FOLDER_NAME}')
+            result = client.Folder.create({
+                "Name": FOLDER_NAME,
+                "DeveloperName": FOLDER_NAME,
+                "Type": "Document",
+                "AccessType": "Public"
+            })
+            folder_id = result['id']
 
         # Some content for our document
         body = 'The quick brown fox jumps over the lazy dog'.encode("utf-8")
 
         # Salesforce API wants base64-encoded Body
-        data_to_insert = [{'Name':' TestDoc',
-                           'FolderId': folder_id,
-                           'Body': base64.b64encode(body).decode("utf-8")}]
+        data_to_insert = {'Name': doc_name,
+                          'FolderId': folder_id,
+                          'Body': base64.b64encode(body).decode("utf-8")}
 
-        logger.info('Creating Document records using Salesforce client ...')
-        ret = client.bulk.Document.insert(data_to_insert)
-        inserted_id = ret[0]['id']
+        logger.info('Creating Document record using Salesforce client ...')
+        ret = client.Document.create(data_to_insert)
+        inserted_id = ret['id']
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -1017,7 +1038,7 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
             sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting records ...')
         if (inserted_id):
-            client.bulk.Document.delete([{'Id': inserted_id}])
+            client.Document.delete(inserted_id)
 
 
 # Test SDC-12193
