@@ -35,8 +35,15 @@ def sdc_common_hook():
     return hook
 
 
+@pytest.fixture(autouse=True)
+def impersonation_check(sdc_executor):
+    if sdc_executor.sdc_configuration.get('stage.conf_hadoop.always.impersonate.current.user') != 'true':
+        pytest.skip('Hadoop FS impersonation requires stage.conf_hadoop.'
+                    'always.impersonate.current.user to be set to true')
+
+
 @cluster('cdh', 'hdp')
-def test_hadoop_fs_strict_impersonation(args, sdc_builder, sdc_executor, cluster):
+def test_hadoop_fs_strict_impersonation(sdc_builder, sdc_executor, cluster):
     """ Test strict impersonation (SDC-3704) of Hadoop FS target. The pipeline would look like:
 
         dev_data_generator >> hadoop_fs
