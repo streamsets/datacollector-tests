@@ -14,7 +14,7 @@ def test_condition(sdc_builder, sdc_executor):
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(json_content='ARRAY_OBJECTS', raw_data = json.dumps(DATA))
+        dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=json.dumps(DATA))
         stream_selector = pipeline_builder.add_stage('Stream Selector')
         dev_identity_1 = pipeline_builder.add_stage('Dev Identity')
         dev_identity_2 = pipeline_builder.add_stage('Dev Identity')

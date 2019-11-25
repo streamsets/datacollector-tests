@@ -40,6 +40,7 @@ def test_action(sdc_builder, sdc_executor, stage_attributes):
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.data_format = 'JSON'
         dev_raw_data_source.raw_data = json.dumps(DATA)
 
         field_remover = pipeline_builder.add_stage('Field Remover').set_attributes(**stage_attributes)

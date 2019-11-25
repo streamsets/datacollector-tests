@@ -12,6 +12,7 @@ def test_fields_to_rename(sdc_builder, sdc_executor):
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.data_format = 'JSON'
         dev_raw_data_source.raw_data = json.dumps(DATA)
         field_renamer = pipeline_builder.add_stage('Field Renamer')
         field_renamer.fields_to_rename = [{'fromFieldExpression': '/name', 'toFieldExpression': '/internetInventor'}]
