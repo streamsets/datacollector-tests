@@ -487,3 +487,72 @@ def validate_schema_was_registered(name, confluent):
     assert schema.fields[0].type.name == 'int'
     assert schema.fields[1].name == 'b'
     assert schema.fields[1].type.name == 'string'
+
+
+@cluster('cdh', 'kafka')
+def test_pipeline_retry_for_exceptions_with_on_error_record_action_stop_pipeline(sdc_builder, sdc_executor, cluster):
+    """ STF test for SDC-8738.
+        Pipeline configuration is set to retry on error.
+        Kafka Producer Destination's onErrorRecord action is set to "STOP PIPELINE"
+        Now, when the pipeline raises a stageException or starting exception,
+        the pipeline should be restarted based on if retry is set or not.
+
+        Previously, *the pipeline was stopped and never retried*,
+        because the OnErrorRecord action was set to "STOP PIPELINE"
+        i.e. the logic for errorRecordException was conflated with StageException and StartingException.
+        But since, this is not a on error record exception,
+        the new and *correct* behavior is to retry the pipeline based on retry logic.
+
+        Now the behavior has been changed to make sure that for StageExceptions and other runtime Exceptions,
+        the pipeline will be retried as per retry settings.
+
+        Check in the history to see that the pipeline transitions from starting to start_error and then retries again
+
+        Kafka Destination Origin pipeline:
+           dev_raw_data_source >> kafka_destination
+
+    """
+    topic = get_random_string(string.ascii_letters, 10)
+    logger.debug('Kafka topic name: %s', topic)
+
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'TEXT'
+    dev_raw_data_source.raw_data = 'Hello World!'
+
+    destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                          library=cluster.kafka.standalone_stage_lib)
+    destination.topic = topic
+    destination.data_format = 'TEXT'
+    # Set up some invalid compression type in Kafka Configuration,
+    # so that the pipeline never starts, and throws a STARTING_ERROR instead
+    destination.kafka_configuration = [{'key': 'compression.type', 'value': 'invalid.value'}]
+
+    # Set the on record error handling to 'STOP PIPELINE'
+    # Even with this setting, the expected outcome is that the pipeline should retry on failure,
+    # since the failure here will be a STARTING_ERROR and not a on record error
+    destination.on_record_error = 'STOP_PIPELINE'
+
+    dev_raw_data_source >> destination
+
+    pipeline = builder.build().configure_for_environment(cluster)
+
+    # This is important, since without this the pipeline wouldn't retry
+    pipeline.configuration['shouldRetry'] = True
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.debug('Starting Pipeline')
+        sdc_executor.start_pipeline(pipeline=pipeline, wait_for_statuses=['RETRY', 'START_ERROR'])
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        # The pipeline could have potentially moved on to STARTING state again.
+        # So cannot check for RETRY == history.entries.latest
+        # Check instead if RETRY is in the list of entries. That is validation enough
+        assert 'RETRY' in [entry['status'] for entry in history.entries]
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
