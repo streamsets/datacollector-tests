@@ -1,9 +1,11 @@
 import requests
+from streamsets.testframework.markers import sdc_min_version
 
 APPLICATION_ID = 'keanu'
 HTTP_LISTENING_PORT = 8000
 STATUS_CODE = 867
 
+@sdc_min_version('3.4.0')
 def test_status_code(sdc_builder, sdc_executor):
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
