@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import os
 import string
-import time
-from datetime import datetime
 
-from streamsets.sdk.models import Configuration
+import pytest
+
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, sftp
 from streamsets.testframework.utils import get_random_string
@@ -31,12 +29,13 @@ S3_BUCKET_PREFIX = 'sftp_upload'
 
 
 @aws('s3')
+@pytest.mark.parametrize('read_ahead_stream', [True, False])
 @sftp
-def test_sftp_origin_whole_file_to_s3(sdc_builder, sdc_executor, sftp, aws):
+def test_sftp_origin_whole_file_to_s3(sdc_builder, sdc_executor, sftp, aws, read_ahead_stream):
     """This is a test for SDC-11273.  First, it creates a large (~6MB) file and puts it on the SFTP server.
     Then, it creates a pipeline with SFTP origin and S3 destination, with whole file format, and runs
     until the single record (file) is complete.  Then, it asserts the S3 bucket contents are correct.
-    It passes only if the new option ("Disable Read Ahead Stream") is enabled.
+    We test for both scenarios: With Read Ahead Stream and without it.
     """
     sftp_file_name = get_random_string(string.ascii_letters, 10) + '.txt'
     raw_text_data = get_random_string(string.printable, 6000000)
@@ -52,8 +51,8 @@ def test_sftp_origin_whole_file_to_s3(sdc_builder, sdc_executor, sftp, aws):
     sftp_ftp_client.file_name_pattern = sftp_file_name
     sftp_ftp_client.data_format = 'WHOLE_FILE'
     if Version(sdc_builder.version) >= Version('3.8.2'):
-        # Disable read-ahead stream as workaround for sshj library issues (see SDC-11273).
-        sftp_ftp_client.disable_read_ahead_stream = True
+        # Disable/Enable read-ahead stream.
+        sftp_ftp_client.disable_read_ahead_stream = read_ahead_stream
 
     s3_destination = builder.add_stage('Amazon S3', type='destination')
     s3_destination.file_name_expression = "${record:value('/fileInfo/filename')}"
