@@ -272,7 +272,7 @@ def test_pipeline_finisher(reset_offset, sdc_builder, sdc_executor):
     origin.raw_data = '{}'
 
     executor = builder.add_stage('Pipeline Finisher Executor')
-    executor.reset_offset = reset_offset
+    executor.reset_origin = reset_offset
 
     origin >> executor
     pipeline = builder.build()
