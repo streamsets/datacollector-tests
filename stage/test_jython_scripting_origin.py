@@ -15,6 +15,8 @@
 
 import pytest
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.sdk import sdc_api
+
 
 
 @pytest.fixture(scope='module')
@@ -63,7 +65,11 @@ def test_send_events(sdc_builder, sdc_executor):
 
 
 @sdc_min_version('3.10.0')
-def test_send_error_records(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('stage_attributes', [
+    {'on_record_error': 'TO_ERROR'},
+    {'on_record_error': 'STOP_PIPELINE'}
+])
+def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
     """Test error records generation from a jython script. It uses a script that generates 10 error records and
     then checks they are correctly sent to the error stream.
 
@@ -75,6 +81,7 @@ def test_send_error_records(sdc_builder, sdc_executor):
 
     jython = builder.add_stage('Jython Scripting')
     jython.set_attributes(record_type='NATIVE_OBJECTS',
+                          on_record_error=stage_attributes['on_record_error'],
                           user_script=SCRIPT_SEND_ERROR_RECORDS,
                           batch_size=batch_size)
 
@@ -84,16 +91,27 @@ def test_send_error_records(sdc_builder, sdc_executor):
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    except sdc_api.RunError as ex:
+        assert stage_attributes['on_record_error'] == 'STOP_PIPELINE', \
+            "RunError should only occur when ErrorRecords generated with STOP_PIPELINE."
 
-    # Verify that the stage produced 10 error records with values 'error0', ..., 'error9'. This is the
-    # expected output in accordance to the script defined in SCRIPT_SEND_TO_ERROR variable.
-    expected_output = [f'error{i}' for i in range(batch_size)]
-    actual_output = [e.field.value for e in snapshot[jython.instance_name].error_records]
-    assert sorted(actual_output) == expected_output
-    assert len(snapshot[jython.instance_name].output) == 0
-    assert len(snapshot[jython.instance_name].event_records) == 0
+    # if on_record_error is TO_ERROR, then error counts should match generated.
+    try:
+        if stage_attributes['on_record_error'] == 'TO_ERROR':
+            sdc_executor.stop_pipeline(pipeline)
+
+            # Verify that the stage produced 10 error records with values 'error0', ..., 'error9'. This is the
+            # expected output in accordance to the script defined in SCRIPT_SEND_TO_ERROR variable.
+            expected_output = [f'error{i}' for i in range(batch_size)]
+            actual_output = [e.field.value for e in snapshot[jython.instance_name].error_records]
+            assert sorted(actual_output) == expected_output
+            assert len(snapshot[jython.instance_name].output) == 0
+            assert len(snapshot[jython.instance_name].event_records) == 0
+    finally:
+        sdc_executor.remove_pipeline()
+
 
 
 SCRIPT_SEND_EVENTS = """
