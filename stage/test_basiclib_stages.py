@@ -34,73 +34,40 @@ def sdc_common_hook():
     return hook
 
 
-@pytest.fixture(scope='module')
-def pipeline_shell_generator(sdc_executor):
-    builder = sdc_executor.get_pipeline_builder()
-
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = '{}'
-
-    shell_executor = builder.add_stage('Shell')
-    shell_executor.environment_variables = Configuration(property_key='key', file='${FILE}')
-    shell_executor.script = 'echo `whoami` > $file'
-
-    dev_raw_data_source >> shell_executor
-
-    executor_pipeline = builder.build()
-    executor_pipeline.add_parameters(FILE='/')
-    sdc_executor.add_pipeline(executor_pipeline)
-
-    yield executor_pipeline
-
-
-@pytest.fixture(scope='module')
-def pipeline_shell_read(sdc_executor):
-    builder = sdc_executor.get_pipeline_builder()
-
-    file_source = builder.add_stage('File Tail')
-    file_source.data_format = 'TEXT'
-    file_source.file_to_tail = [
-        dict(fileRollMode='REVERSE_COUNTER', patternForToken='.*', fileFullPath='${FILE}')
-    ]
-
-    trash1 = builder.add_stage('Trash')
-    trash2 = builder.add_stage('Trash')
-
-    file_source >> trash1
-    file_source >> trash2
-
-    read_pipeline = builder.build()
-    read_pipeline.add_parameters(FILE='/')
-    sdc_executor.add_pipeline(read_pipeline)
-
-    yield read_pipeline
-
-
-def test_shell_executor_impersonation(sdc_executor, pipeline_shell_generator, pipeline_shell_read):
+def test_shell_executor_impersonation(sdc_builder, sdc_executor):
     """Test proper impersonation on the Shell executor side. This is a dual pipeline test to test the executor
-    side effect.
-    Test fails till TEST-128 is addressed.
-    """
+    side effect."""
+    # Build a pipeline writing the name of the user executing shell commands to a random file under /tmp.
+    # The Dev Raw Data Source is basically a noop origin and we use a Pipeline Finisher Executor to stop after 1 batch.
+    filepath = f'/tmp/{get_random_string()}'
 
-    # Use this file to exchange data between the executor and our test
-    runtime_parameters = {'FILE': "/tmp/{}".format(get_random_string(string.ascii_letters, 30))}
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data='{}')
+    shell = builder.add_stage('Shell').set_attributes(script=f'echo `whoami` > {filepath}')
+    pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
+    dev_raw_data_source >> [shell, pipeline_finisher_executor]
 
-    # Run the pipeline with executor exactly once
-    sdc_executor.start_pipeline(pipeline_shell_generator,
-                                runtime_parameters=runtime_parameters).wait_for_pipeline_batch_count(1)
-    sdc_executor.stop_pipeline(pipeline_shell_generator)
+    shell_pipeline = builder.build()
+    sdc_executor.add_pipeline(shell_pipeline)
+    sdc_executor.start_pipeline(shell_pipeline).wait_for_finished()
 
-    # And retrieve its output
-    snapshot = sdc_executor.capture_snapshot(pipeline=pipeline_shell_read, runtime_parameters=runtime_parameters,
-                                             start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline_shell_read)
+    # Build a separate pipeline to read the file written and check, using a snapshot, that the "correct" username
+    # is in the file.
+    builder = sdc_builder.get_pipeline_builder()
+    file_to_tail = [dict(fileRollMode='REVERSE_COUNTER', patternForToken='.*', fileFullPath=f'{filepath}')]
+    file_tail = builder.add_stage('File Tail').set_attributes(data_format='TEXT', file_to_tail=file_to_tail)
+    trash_1 = builder.add_stage('Trash')
+    trash_2 = builder.add_stage('Trash')
+    pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
+    file_tail >> [trash_1, pipeline_finisher_executor]
+    file_tail >> trash_2
 
-    records = snapshot[pipeline_shell_read.origin_stage].output_lanes[pipeline_shell_read.origin_stage.output_lanes[0]]
-    assert len(records) == 1
-    # Blocked by TEST-128, should be different user
-    assert records[0].field['text'].value == 'sdc'
+    file_tail_pipeline = builder.build()
+    sdc_executor.add_pipeline(file_tail_pipeline)
+    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
+
+    records = [record.field for record in snapshot[file_tail].output_lanes[file_tail.output_lanes[0]]]
+    assert records == [{'text': sdc_executor.username}]
 
 
 def test_stream_selector_processor(sdc_builder, sdc_executor):
