@@ -308,6 +308,88 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
 
 @sdc_min_version('3.2.0.0')
 @cluster('cdh', 'hdp')
+@pytest.mark.parametrize('action', ['ARCHIVE', 'DELETE'])
+@pytest.mark.parametrize('process_subdirs', [True, False])
+def test_hadoop_fs_origin_standalone_archive(sdc_builder, sdc_executor, cluster, action, process_subdirs):
+    """Test file post-processing functionality in Hadoop FS Standalone origin.
+
+    The test creates a directory tree and populates it with files. Then it checks the files are ingested by
+    the pipeline and post-processed accordingly (either removing the file from HDFS when 'DELETE' is
+    configured or moving the files to the archive directory when 'ARCHIVE' is configured).
+
+    Pipeline:  hdfs_origin >> trash
+
+    """
+    fs = cluster.hdfs.client
+
+    # Variable `files` defines the directory tree employed in the test. Keys are the directories and values
+    # are the list of files in each directory.
+    rootdir = os.path.join('/tmp', get_random_string(string.ascii_letters, 10))
+    archive_dir = os.path.join('/tmp', get_random_string(string.ascii_letters, 10))
+    files = {'.': [get_random_string() for _ in range(3)],
+             'a1': [get_random_string() for _ in range(3)],
+             'b1': [get_random_string() for _ in range(3)],
+             os.path.join('a1', 'a2'): [get_random_string() for _ in range(3)],
+             os.path.join('b1', 'b2'): [get_random_string() for _ in range(3)]}
+    num_files = sum([len(files[d]) for d in files]) if process_subdirs else len(files['.'])
+
+    # Create the directory tree according to `files`. The content of each file will be just the filename.
+    # Also generate the directory where files will be archived.
+    fs.makedirs(archive_dir, permission='777')
+    for (folder, filenames) in files.items():
+        if folder != '.':
+            # Creates `rootdir` during the first fs.makedirs() invocation.
+            fs.makedirs(os.path.join(rootdir, folder), permission='777')
+        for f in filenames:
+            fs.write(os.path.join(rootdir, folder, f), data=f, permission='777')
+
+    # Build the pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    hdfs_origin = builder.add_stage('Hadoop FS Standalone', type='origin')
+    hdfs_origin.set_attributes(files_directory=rootdir,
+                               read_order='TIMESTAMP',
+                               file_name_pattern='*',
+                               process_subdirectories=process_subdirs,
+                               file_post_processing=action,
+                               archive_directory=archive_dir,
+                               data_format='TEXT')
+    trash = builder.add_stage('Trash')
+    hdfs_origin >> trash
+
+    try:
+        # Run the pipeline and wait until all the files were ingested.
+        pipeline = builder.build().configure_for_environment(cluster)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_files)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Check all the files were correctly post-processed. First, verify that all the files were removed
+        # from their original paths.
+        num_files = sum([len(files) for folder, __, files in fs.walk(rootdir)
+                         if (folder == rootdir or process_subdirs)])
+        assert num_files == 0
+
+        # Second, verify the files where moved to the archive dir when 'ARCHIVE' is configured.
+        if action == 'ARCHIVE':
+            archived_files = []
+            for folder, __, filenames in fs.walk(archive_dir):
+                archived_files.extend([os.path.join(folder, f) for f in filenames])
+
+            for folder, filenames in files.items():
+                if folder == '.' or process_subdirs:
+                    for f in filenames:
+                        expected_path = os.path.join(archive_dir, folder, f).replace('./', '')
+                        assert expected_path in archived_files
+                        with fs.read(expected_path) as reader:
+                            assert reader.read() == f.encode()
+
+    finally:
+        fs.delete(rootdir, recursive=True)
+        fs.delete(archive_dir, recursive=True)
+
+
+@sdc_min_version('3.2.0.0')
+@cluster('cdh', 'hdp')
 @pytest.mark.parametrize('filename', ['file.txt', '_tmp_file.txt', '.tmp_file.txt'])
 def test_hadoop_fs_origin_standalone_subdirectories(sdc_builder, sdc_executor, cluster, filename):
     """Write a simple file into each level of a Hadoop FS folder hierarchy, with randomly-generated names
@@ -721,4 +803,3 @@ def test_hadoop_fs_origin_standalone_simple_ordering(sdc_builder, sdc_executor, 
 
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
-
