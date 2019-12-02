@@ -23,6 +23,7 @@ from collections import OrderedDict
 
 import pytest
 import sqlalchemy
+import datetime
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
 from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -2360,6 +2361,116 @@ def test_jdbc_multitable_oracle_split_by_timestamp_with_timezone(sdc_builder, sd
         for m in range(6, 8):
             for s in range(0, 59):
                 connection.execute(f"INSERT INTO {table_name} VALUES({m*100+s}, TIMESTAMP'2019-01-01 10:{m}:{s}-5:00')")
+        connection.execute("commit")
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        result = [row.items() for row in connection.execute(comparing_query)]
+        assert len(result) == 0
+
+    finally:
+        logger.info('Dropping table %s and %s in %s database ...', table_name, table_name_dest, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
+        connection.execute(f"DROP TABLE {table_name_dest}")
+
+
+def _get_date_from_days(d):
+    return datetime.date(1970, 1, 1) + datetime.timedelta(days=d)
+
+
+@database('oracle')
+def test_jdbc_multitable_oracle_split_by_date(sdc_builder, sdc_executor, database):
+    """Make sure that we can properly partition DATE type.
+    More precisely, we want to run this pipeline:
+
+    multitable >> jdbc
+    multitable >= finisher
+
+    With more than one thread and using a DATE column as a offset column.
+    This feature was not available until version 3.11.0, and was detected and
+    solved in ESC-513.
+    """
+    table_name = get_random_string(string.ascii_uppercase, 20)
+    table_name_dest = get_random_string(string.ascii_uppercase, 20)
+
+    connection = database.engine.connect()
+
+    comparing_query = f"""(
+        select * from {table_name}
+        minus
+        select * from {table_name_dest}
+    ) union (
+        select * from {table_name_dest}
+        minus
+        select * from {table_name}
+    )"""
+
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                ID number primary key,
+                DT date
+            )
+        """)
+        # Create destination table
+        connection.execute(f"""CREATE TABLE {table_name_dest} AS SELECT * FROM {table_name} WHERE 1=0""")
+
+        # Insert a few rows
+        for m in range(0, 5):
+            for s in range(0, 59):
+                identifier = 100 * m + s
+                connection.execute(
+                    f"INSERT INTO {table_name} VALUES({identifier}, DATE'{_get_date_from_days(identifier)}')"
+                )
+        connection.execute("commit")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('JDBC Multitable Consumer')
+        # Partition size is set to 259200000 which corresponds to 30 days in ms,
+        # since dates are translated to timestamps
+        origin.table_configs = [{
+            "tablePattern": f'%{table_name}%',
+            "overrideDefaultOffsetColumns": True,
+            "offsetColumns": ["DT"], # Should cause SDC < 3.11.0 to throw an UnsupportedOperationException
+            "enableNonIncremental": False,
+            "partitioningMode": "REQUIRED",
+            "partitionSize": "259200000", # 30 days = 30*24*60*60*1000 (259200000)ms
+            "maxNumActivePartitions": 2
+        }]
+        origin.number_of_threads = 2
+        origin.maximum_pool_size = 2
+        origin.max_batch_size_records = 30
+
+        finisher = builder.add_stage('Pipeline Finisher Executor')
+        finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+        FIELD_MAPPINGS = [dict(field='/ID', columnName='ID'),
+                          dict(field='/DT', columnName='DT')]
+        destination = builder.add_stage('JDBC Producer')
+        destination.set_attributes(default_operation='INSERT',
+                                   table_name=table_name_dest,
+                                   field_to_column_mapping=FIELD_MAPPINGS,
+                                   stage_on_record_error='STOP_PIPELINE')
+
+        origin >> destination
+        origin >= finisher
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        result = [row.items() for row in connection.execute(comparing_query)]
+        assert len(result) == 0
+
+        # Insert few more rows and validate the outcome again
+        for m in range(6, 8):
+            for s in range(0, 59):
+                identifier = 100 * m + s
+                connection.execute(
+                    f"INSERT INTO {table_name} VALUES({identifier}, DATE'{_get_date_from_days(identifier)}')"
+                )
         connection.execute("commit")
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
