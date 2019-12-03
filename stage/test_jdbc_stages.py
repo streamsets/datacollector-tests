@@ -2859,7 +2859,7 @@ def test_jdbc_sqlserver_types(sdc_builder, sdc_executor, database, use_table_ori
         connection.execute(f"DROP TABLE {table_name}")
 
 
-@sdc_min_version('3.13.0')
+@sdc_min_version('3.12.0')
 @database('sqlserver')
 @pytest.mark.parametrize('on_unknown_type_action', ['CONVERT_TO_STRING', 'STOP_PIPELINE'])
 def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, database, on_unknown_type_action):
