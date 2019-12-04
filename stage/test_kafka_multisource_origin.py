@@ -338,7 +338,7 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
         start_kafka_pipeline_command = sdc_executor.start_pipeline(kafka_consumer_pipeline)
 
         start = time.time()
-        start_kafka_pipeline_command.wait_for_pipeline_batch_count(20)
+        start_kafka_pipeline_command.wait_for_pipeline_output_records_count(20)
         end = time.time()
         total_time = (end - start)
         assert total_time < 5.0
