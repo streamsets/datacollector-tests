@@ -20,6 +20,7 @@ import pytest
 import time
 from streamsets.testframework.markers import rabbitmq, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from streamsets.sdk.sdc_api import StartError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -209,3 +210,36 @@ def test_rabbitmq_producer_msg_expiration(sdc_builder, sdc_executor, rabbitmq, s
         channel.queue_delete(queue_name)
         channel.close()
         connection.close()
+
+@rabbitmq
+def test_rabbitmq_rabbitmq_consumer_no_queue(sdc_builder, sdc_executor, rabbitmq):
+    """
+    Test for RabbitMQ consumer use case when queue is not specified. A validation error should be raised,
+    as the consumer is unable to read without the queue.
+
+    RabbitMQ Consumer pipeline:
+        rabbitmq_consumer >> trash
+    """
+
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    # We set to use default exchange and hence exchange does not need to be pre-created or given.
+    rabbitmq_consumer = builder.add_stage('RabbitMQ Consumer').set_attributes(data_format='TEXT',
+                                                                              durable=True,
+                                                                              auto_delete=False,
+                                                                              bindings=[])
+    trash = builder.add_stage('Trash')
+
+    rabbitmq_consumer >> trash
+
+    consumer_origin_pipeline = builder.build(title='RabbitMQ Consumer pipeline').configure_for_environment(rabbitmq)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    # We don't need to publish messages, we shouldn't be able to start the pipeline
+    try:
+        sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True)
+    except StartError as e:
+        assert e.message.startswith("RABBITMQ_10")
+    else:
+        assert False
