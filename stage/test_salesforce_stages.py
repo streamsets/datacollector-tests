@@ -45,6 +45,8 @@ CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.value
 # Folder for Documents
 FOLDER_NAME = 'TestFolder'
 
+CASE_SUBJECT = 'Test Case'
+
 ACCOUNTS_FOR_SUBQUERY = 5
 CONTACTS_FOR_SUBQUERY = 5
 
@@ -1460,3 +1462,68 @@ def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, sal
         logger.info('Deleting records ...')
         if (inserted_ids):
             client.bulk.Contact.delete(inserted_ids)
+
+
+# Test SDC-13117
+@salesforce
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_destination_polymorphic(sdc_builder, sdc_executor, salesforce, api):
+    """
+    Test that we can write to polymorphic external ID fields
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_destination
+    """
+    client = salesforce.client
+    case_id = None
+    try:
+        # Using Salesforce client, create a Case
+        logger.info('Creating rows using Salesforce client ...')
+        result = client.Case.create({'Subject': CASE_SUBJECT})
+        case_id = result['id']
+
+        # Set the case owner. Even though we're not changing the owner, SDC-13117 would cause an error to
+        # be thrown due to the bad syntax for the field name
+        csv_data_to_insert = ['Id,Owner']
+        csv_data_to_insert.append(f'{case_id},{salesforce.username}')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, csv_data_to_insert)
+
+        salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
+        field_mapping = [{'sdcField': '/Id', 'salesforceField': 'Id'},
+                         {'sdcField': '/Owner', 'salesforceField': 'User:Owner.Username'}]
+        salesforce_destination.set_attributes(default_operation='UPDATE',
+                                              field_mapping=field_mapping,
+                                              sobject_type='Case',
+                                              use_bulk_api=(api == 'bulk'))
+
+        dev_raw_data_source >> salesforce_destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Now the pipeline will update the Case
+        logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Using Salesforce connection, read the Case, just to check
+        query_str = (f"SELECT Id, Subject, Owner.Username FROM Case WHERE Id = '{case_id}'")
+        result = client.query(query_str)
+
+        assert 1 == len(result['records'])
+        assert case_id == result['records'][0]['Id']
+        assert CASE_SUBJECT == result['records'][0]['Subject']
+        assert salesforce.username == result['records'][0]['Owner']['Username']
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting records ...')
+        if (case_id):
+            client.Case.delete(case_id)
