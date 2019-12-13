@@ -945,11 +945,50 @@ def test_directory_origin_configuration_first_file_to_process(sdc_builder, sdc_e
             sdc_executor.stop_pipeline(pipeline)
 
 
-@pytest.mark.parametrize('data_format', ['LOG'])
-@pytest.mark.parametrize('log_format', ['GROK'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_grok_pattern(sdc_builder, sdc_executor, data_format, log_format):
-    pass
+@pytest.mark.parametrize('grok_pattern_is_correct', [True, False])
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'LOG', 'log_format': 'GROK'}])
+def test_grok_pattern(sdc_builder, sdc_executor, stage_attributes, grok_pattern_is_correct,
+                      file_writer, shell_executor, keep_data):
+    """Test for the grok pattern configuration that is used to parse the log line.
+
+    For the positive case, we rely upon the field's default value of '%{COMMONAPACHELOG}' and then
+    ensure that changing this has the intended effect of breaking things for the negative case.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'b.txt'
+    DATA = '127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /apache.gif HTTP/1.0" 200 232'
+    EXPECTED_OUTPUT = {'request': '/apache.gif', 'auth': 'frank', 'ident': '-', 'response': '200', 'bytes':
+                       '232', 'clientip': '127.0.0.1', 'verb': 'GET', 'httpversion': '1.0', 'rawrequest': None,
+                       'timestamp': '10/Oct/2000:13:55:36 -0700'}
+    try:
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), DATA)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory').set_attributes(files_directory=files_directory,
+                                                                           file_name_pattern='*.txt',
+                                                                           **stage_attributes)
+        if not grok_pattern_is_correct:
+            # We use '%{HOST}', a valid grok pattern, as this will ensure that we don't trigger exceptions
+            # but simply break matching.
+            directory.grok_pattern = '%{HOST}'
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[directory].output]
+        error_records = [record.field for record in snapshot[directory].error_records]
+        if grok_pattern_is_correct:
+            assert records == [EXPECTED_OUTPUT]
+        else:
+            # Note: opened SDC-13184 because malformed patterns still lead to normal record output. Test
+            # should be updated to also check that the error records are being populated once the bug is fixed.
+            assert not records and error_records
+    finally:
+        if not keep_data:
+            shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('grok_pattern_definition', ['MY_CUSTOM_LOG_1', 'MY_CUSTOM_LOG_2'])
@@ -1970,6 +2009,7 @@ JSON_DATA = [{"name": "Manish Zope", "age": 35, "car": "lll company", "address":
              {"name": "Sachin Tope", "age": 30, "car": "hhh company",
               "address": "FLAT NO 555 xyz society opposite to abc school near ddd chowk wakad Pune - 411057"},
              {"name": "Sagar HiFi", "age": 28, "car": "rrr company", "address": "ttt"}]
+
 AVRO_RECORDS = [
     {
         "name": "sdc1",
