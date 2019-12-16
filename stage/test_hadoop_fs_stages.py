@@ -335,11 +335,11 @@ def test_hadoop_fs_origin_standalone_archive(sdc_builder, sdc_executor, cluster,
 
     # Create the directory tree according to `files`. The content of each file will be just the filename.
     # Also generate the directory where files will be archived.
-    fs.makedirs(archive_dir, permission='777')
+    fs.makedirs(rootdir, permission='0777')  # Ensure sticky bit is disable to avoid permission issues.
+    fs.makedirs(archive_dir, permission='0777')
     for (folder, filenames) in files.items():
         if folder != '.':
-            # Creates `rootdir` during the first fs.makedirs() invocation.
-            fs.makedirs(os.path.join(rootdir, folder), permission='777')
+            fs.makedirs(os.path.join(rootdir, folder), permission='0777')
         for f in filenames:
             fs.write(os.path.join(rootdir, folder, f), data=f, permission='777')
 
