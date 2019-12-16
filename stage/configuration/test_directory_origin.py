@@ -952,11 +952,49 @@ def test_directory_origin_configuration_grok_pattern(sdc_builder, sdc_executor, 
     pass
 
 
-@pytest.mark.parametrize('data_format', ['LOG'])
-@pytest.mark.parametrize('log_format', ['GROK'])
-@pytest.mark.skip('Not yet implemented')
-def test_directory_origin_configuration_grok_pattern_definition(sdc_builder, sdc_executor, data_format, log_format):
-    pass
+@pytest.mark.parametrize('grok_pattern_definition', ['MY_CUSTOM_LOG_1', 'MY_CUSTOM_LOG_2'])
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'LOG', 'log_format': 'GROK'}])
+def test_grok_pattern_definition(sdc_builder, sdc_executor, stage_attributes, shell_executor, file_writer,
+                                 grok_pattern_definition, keep_data):
+    """Test whether Directory origin can parse logs using a couple of different grok pattern definitions."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'b.txt'
+    FILE_CONTENT = ('127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /apache.gif HTTP/1.0" 200 2326 '
+                    '"http://www.example.com/strt.html"')
+
+    if grok_pattern_definition == 'MY_CUSTOM_LOG_1':
+        GROK_PATTERN_DEFINITION = 'MYCUSTOMLOG %{COMMONAPACHELOG} %{QS:referrer}'
+        EXPECTED_OUTPUT = {'request': '/apache.gif', 'auth': 'frank', 'ident': '-', 'verb': 'GET',
+                           'referrer': '"http://www.example.com/strt.html"', 'response': '200', 'bytes': '2326',
+                           'clientip': '127.0.0.1', 'httpversion': '1.0', 'rawrequest': None,
+                           'timestamp': '10/Oct/2000:13:55:36 -0700'}
+    else:
+        GROK_PATTERN_DEFINITION = r'MYCUSTOMLOG \[%{HTTPDATE:timestamp}\]'
+        EXPECTED_OUTPUT = {'timestamp': '10/Oct/2000:13:55:36 -0700'}
+
+    try:
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENT)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(files_directory=files_directory,
+                                 file_name_pattern='*.txt',
+                                 grok_pattern='%{MYCUSTOMLOG}',
+                                 grok_pattern_definition=GROK_PATTERN_DEFINITION,
+                                 **stage_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[directory].output]
+        assert records == [EXPECTED_OUTPUT]
+    finally:
+        if not keep_data:
+            shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DELIMITED'])
