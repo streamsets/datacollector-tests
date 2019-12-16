@@ -38,8 +38,7 @@ def test_send_events(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     jython = builder.add_stage('Jython Scripting')
-    jython.set_attributes(produce_events=True,
-                          record_type='NATIVE_OBJECTS',
+    jython.set_attributes(record_type='NATIVE_OBJECTS',
                           user_script=SCRIPT_SEND_EVENTS,
                           batch_size=batch_size)
 
