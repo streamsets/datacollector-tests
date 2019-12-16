@@ -882,9 +882,8 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
 
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
-    # Changing " with ' and vice versa in following string makes the query execution fail.
     salesforce_origin.set_attributes(soql_query=query,
-                                     subscribe_for_notifications=False, generate_events=True)
+                                     subscribe_for_notifications=False)
 
     trash = pipeline_builder.add_stage('Trash')
     trash_2 = pipeline_builder.add_stage('Trash')
