@@ -1,6 +1,12 @@
 import pytest
 
+from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.decorators import stub
+
+
+KEYSTORE_FILE_PATH = 'resources/tls/keystore.jks'
+KEYSTORE_TYPE = 'JKS'
+KEYSTORE_PASSWORD = 'password'
 
 
 @stub
@@ -451,10 +457,38 @@ def test_json_content(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'use_tls': True}])
+@pytest.mark.parametrize('stage_attributes', [{'use_tls': True, 'keystore_file': KEYSTORE_FILE_PATH},
+                                              {'use_tls': True, 'keystore_file': 'wrong/path/file.jks'}])
 def test_keystore_file(sdc_builder, sdc_executor, stage_attributes):
-    pass
+    """Test "KeyStore path" config parameter. It is tested with two values, one pointing to a real KeyStore file
+    and the other to an unexisting file. We check a TLS_01 error is raised for the unexisting file and that
+    the pipeline successfully transitions to RUNNING state if the file exists.
+
+    Pipeline:
+      rest_srv >> trash
+
+    """
+    builder = sdc_builder.get_pipeline_builder()
+    rest_srv = builder.add_stage('REST Service')
+    rest_srv.set_attributes(keystore_type=KEYSTORE_TYPE,
+                            keystore_password=KEYSTORE_PASSWORD,
+                            application_id='admin',
+                            **stage_attributes)
+    trash = builder.add_stage('Trash')
+    rest_srv >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    if stage_attributes['keystore_file'] == KEYSTORE_FILE_PATH:
+        # Expecting SDC loads the KeyStore and successfully starts to run the pipeline.
+        sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING')
+        sdc_executor.stop_pipeline(pipeline)
+    else:
+        # Expecting a StartError from SDC due to unexisting KeyStore file (TLS_01 error).
+        with pytest.raises(StartError) as e:
+            sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING')
+        assert e.value.message.startswith('TLS_01')
 
 
 @stub
@@ -917,4 +951,3 @@ def test_validate_schema(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'XML', 'validate_schema': True}])
 def test_xml_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
-
