@@ -1,8 +1,9 @@
 import json
+import os
 
 import pytest
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import ftp, sdc_min_version
+from streamsets.testframework.markers import ftp, sftp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 
@@ -959,11 +960,44 @@ def test_use_client_certificate_for_ftps(sdc_builder, sdc_executor, stage_attrib
     pass
 
 
-@stub
+@sdc_min_version('3.9.0')
+@sftp
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT', 'use_custom_delimiter': False},
                                               {'data_format': 'TEXT', 'use_custom_delimiter': True}])
-def test_use_custom_delimiter(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_use_custom_delimiter(sdc_builder, sdc_executor, stage_attributes, sftp, keep_data):
+    """Test for SFTP/FTP/FTPS origin can read text file with use custom delimiter parameter as true or false.
+    use custom parameter | expected outcome
+    -------------------------------------------------------------------------------------------------------------------
+    True                 | Records will be created based on the custom delimiters.
+    False                | By default, the text data format creates records based on line breaks."""
+    CONTENT = 'Python is an interpreted, high-level, general-purpose programming language;Created by Guido van Rossum'
+    EXPECTED_OUTPUT = ['Python is an interpreted, high-level, general-purpose programming language',
+                       'Created by Guido van Rossum']
+    sftp_file_name = get_random_string()
+    sftp.put_string(os.path.join(sftp.path, sftp_file_name), CONTENT)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+    sftp_ftp_client.set_attributes(file_name_pattern=sftp_file_name, custom_delimiter=';', **stage_attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    sftp_ftp_client >> [trash, pipeline_finisher]
+    sftp_ftp_client_pipeline = pipeline_builder.build().configure_for_environment(sftp)
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[sftp_ftp_client.instance_name].output]
+        if stage_attributes['use_custom_delimiter']:
+            assert records == [{'text': EXPECTED_OUTPUT[0]}, {'text': EXPECTED_OUTPUT[1]}]
+        else:
+            assert records == [{'text': CONTENT}]
+    finally:
+        if not keep_data:
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, sftp_file_name))
+            client.close()
+            transport.close()
 
 
 @stub
@@ -981,4 +1015,3 @@ def test_use_custom_log_format(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'authentication': 'PASSWORD'}, {'authentication': 'PRIVATE_KEY'}])
 def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
-
