@@ -597,10 +597,60 @@ def test_max_data_size_in_bytes(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT'}, {'data_format': 'LOG'}])
-def test_max_line_length(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@sdc_min_version('3.9.0')
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT'},
+                                              {'data_format': 'LOG'}])
+@pytest.mark.parametrize('max_line_length', [155, 82])
+@sftp
+def test_max_line_length(sdc_builder, sdc_executor, stage_attributes, sftp, max_line_length, keep_data):
+    """Check how SFTP/FTP/FTPS origin reads line in text and log file with Max Line Length set.
+
+    Case 1 Max Line Length > length of record -> Should read complete record
+    Case 2 Max Line Length < length of record -> Should truncate the record to Max Line Length value.
+    """
+    file_name = get_random_string()
+    CONTENT = ('2019-04-30 08:23:53 AM [INFO] [streamsets.sdk.sdc_api] Pipeline Filewriterpipeline5340a2b5-b792-'
+               '45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).')
+    sftp.put_string(os.path.join(sftp.path, file_name), CONTENT)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+    sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name,
+                                        max_line_length=max_line_length,
+                                        **stage_attributes)
+    if stage_attributes['data_format'] == 'LOG':
+        REGULAR_EXPRESSION = r'(\S+) (\S+) (\S+) (\S+) (\S+) (.*)'
+        LOG_FORMAT = 'REGEX'
+        LOG_FIELD_MAPPING = [{'fieldPath': '/date', 'group': 1},
+                             {'fieldPath': '/time', 'group': 2},
+                             {'fieldPath': '/timehalf', 'group': 3},
+                             {'fieldPath': '/info', 'group': 4},
+                             {'fieldPath': '/file', 'group': 5},
+                             {'fieldPath': '/message', 'group': 6}]
+        sftp_ftp_ftps_client.set_attributes(field_path_to_regex_group_mapping=LOG_FIELD_MAPPING,
+                                            log_format=LOG_FORMAT,
+                                            regular_expression=REGULAR_EXPRESSION)
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(sftp)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        if stage_attributes['data_format'] == 'TEXT':
+            texts = [record['text'] for record in records]
+            assert texts == [CONTENT[:max_line_length]]
+        else:
+            messages = [record['/message'] for record in records]
+            assert messages == [CONTENT[55:max_line_length]]
+
+    finally:
+        if not keep_data:
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, file_name))
+            client.close()
+            transport.close()
 
 
 @stub
