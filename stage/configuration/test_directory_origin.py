@@ -1103,19 +1103,53 @@ def test_directory_origin_configuration_ignore_control_characters_delimited(sdc_
             assert output_records[0].field == OrderedDict([('field1', 'Field\x00 11'), ('field2', 'Field\v12'),
                                                            ('field3', 'Fie\fld\a13')])
     finally:
-        shell_executor(f'rm -r {files_directory}')
+        #shell_executor(f'rm -r {files_directory}')
         sdc_executor.stop_pipeline(pipeline)
 
 
-@pytest.mark.parametrize('ignore_control_characters', [True, False])
-@pytest.mark.skip('Not yet implemented')
+@pytest.mark.parametrize('stage_attributes', [{'ignore_control_characters': True},
+                                              {'ignore_control_characters': False}])
 def test_directory_origin_configuration_ignore_control_characters_json(sdc_builder, sdc_executor,
-                                                                       ignore_control_characters, shell_executor,
-                                                                       file_writer):
-    """Directory origin not able to read json data with control characters.
-    Filed bug :- https://issues.streamsets.com/browse/SDC-11604.
-    """
-    pass
+                                                                       stage_attributes, keep_data,
+                                                                       shell_executor, file_writer):
+    """Test for the Ignore Control Characters configuration when parsing JSON."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    FILE_NAME = 'a.json'
+    # We have to give a string of JSON data instead of using something like json.dumps on a dictionary because
+    # the json library would always escape the very control characters we're trying to test (ECMA-404).
+    DATA = '{"line": "This was some text with control char\vacters."}'
+    EXPECTED_OUTPUT = {'line': 'This was some text with control characters.'}
+
+    try:
+        shell_executor(f'mkdir {files_directory}')
+        file_writer(os.path.join(files_directory, FILE_NAME), DATA)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory').set_attributes(data_format='JSON',
+                                                                           files_directory=files_directory,
+                                                                           file_name_pattern='*.json',
+                                                                           **stage_attributes)
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [trash, pipeline_finisher]
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[directory].output]
+        if stage_attributes['ignore_control_characters']:
+            assert records == [EXPECTED_OUTPUT]
+        else:
+            # If we don't ignore control characters, SPOOLDIR_01 is raised because the file cannot be parsed by the
+            # Directory origin and no records are output.
+            assert sdc_executor.get_stage_errors(pipeline, directory)[0].error_code == 'SPOOLDIR_01' and not records
+    finally:
+        if not keep_data:
+            shell_executor(f'rm -r {files_directory}')
+        # When Ignore Control Characters == False, a stage error means no batches are output, so the Pipeline Finisher
+        # isn't triggered, meaning we need to stop the pipeline ourselves.
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
