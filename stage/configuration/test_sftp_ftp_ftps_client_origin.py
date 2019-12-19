@@ -1,10 +1,13 @@
 import json
+import logging
 import os
 
 import pytest
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import ftp, sftp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
 
 
 @stub
@@ -875,10 +878,61 @@ def test_quote_character(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@sftp
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE'}])
-def test_rate_per_second(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_rate_per_second(sdc_builder, sdc_executor, stage_attributes, sftp, shell_executor, keep_data):
+    """Test if SFTP/FTP/FTPS origin honors "Rate Per Second" configuration.
+
+    Pipeline will be run four times with configuration set to different values
+    and the expected inverse proportionality of the value and the pipeline run time checked.
+    """
+    try:
+        DATA = 'a' * 10 * 1024 * 1024  # 10 MB file.
+        file_name = get_random_string()
+        sftp.put_string(os.path.join(sftp.path, file_name), DATA)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client',
+                                                          type='origin').set_attributes(file_name_pattern=file_name,
+                                                                                        **stage_attributes)
+        # Using Whole File data format at the origin requires a destination that supports it, as well. Local FS
+        # is an easy one to use.
+        local_fs = pipeline_builder.add_stage('Local FS').set_attributes(data_format='WHOLE_FILE',
+                                                                         directory_template='/tmp',
+                                                                         file_name_expression=file_name,
+                                                                         file_type='WHOLE_FILE',
+                                                                         files_prefix='')
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        sftp_ftp_ftps_client >> [local_fs, pipeline_finisher]
+        pipeline = pipeline_builder.build().configure_for_environment(sftp)
+
+        pipeline_run_times = []
+        for rate_per_second in ['${10 * MB}', '${5 * MB}', '${1 * MB}', '${500 * KB}']:
+            sftp_ftp_ftps_client.rate_per_second = rate_per_second
+            sdc_executor.add_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            history = sdc_executor.get_pipeline_history(pipeline)
+            pipeline_finishing_timestamp = next(entry['timeStamp']
+                                                for entry in history.entries
+                                                if entry['status'] == 'FINISHING')
+            pipeline_running_timestamp = next(entry['timeStamp']
+                                              for entry in history.entries
+                                              if entry['status'] == 'RUNNING')
+            pipeline_run_time = pipeline_finishing_timestamp - pipeline_running_timestamp
+            logger.info('Pipeline with rate per second of %s ran for %s s', rate_per_second, pipeline_run_time)
+            pipeline_run_times.append(pipeline_run_time)
+            sdc_executor.remove_pipeline(pipeline)
+            shell_executor(f"rm {os.path.join('/tmp', file_name)}")
+
+        # The rate_per_second we iterate over should result in monotonically increasing run times.
+        assert pipeline_run_times[0] < pipeline_run_times[1] < pipeline_run_times[2] < pipeline_run_times[3]
+
+    finally:
+        if not keep_data:
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, file_name))
+            client.close()
+            transport.close()
 
 
 @stub
