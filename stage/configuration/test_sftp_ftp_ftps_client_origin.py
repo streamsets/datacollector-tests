@@ -656,10 +656,43 @@ def test_max_line_length(sdc_builder, sdc_executor, stage_attributes, sftp, max_
             transport.close()
 
 
-@stub
+@sdc_min_version('3.9.0')
+@sftp
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'JSON'}])
-def test_max_object_length_in_chars(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_max_object_length_in_chars(sdc_builder, sdc_executor, stage_attributes, sftp, keep_data):
+    """Check if SFTP/FTP/FTPS origin honors "Max Object Length (chars)" configuration.
+
+    Expected behavior has records after Max Object Length is reached sent to error.
+    """
+    DATA = [{'name': 'Amit Kumar', 'age': 24, 'car': 'lll company', 'address': ''},
+            {'name': 'Nitish Kumar', 'age': 30, 'car': 'hhh company',
+             'address': 'FLAT NO 555 xyz society opposite to abc school near ddd chowk wakad Pune - 411057'},
+            {'name': 'Rahul HiFi', 'age': 28, 'car': 'rrr company', 'address': 'ttt'}]
+    EXPECTED_OUTPUT = [{'name': 'Amit Kumar', 'age': 24, 'car': 'lll company', 'address': ''}]
+    file_name = f'{get_random_string()}.json'
+    file_content = ''.join([json.dumps(record) for record in DATA])
+    sftp.put_string(os.path.join(sftp.path, file_name), file_content)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+    sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name, max_object_length_in_chars=100, **stage_attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(sftp)
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+
+        assert records == EXPECTED_OUTPUT
+    finally:
+        if not keep_data:
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, file_name))
+            client.close()
+            transport.close()
 
 
 @stub
