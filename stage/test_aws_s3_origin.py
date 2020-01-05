@@ -21,7 +21,7 @@ import time
 from zipfile import ZipFile
 
 import pytest
-from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.markers import aws, sdc_min_version, large
 from streamsets.testframework.utils import get_random_string
 from xlwt import Workbook
 
@@ -34,13 +34,13 @@ DEFAULT_DATA_FORMAT = 'JSON'
 SINGLETHREADED = 1
 MULTITHREADED = 5
 DEFAULT_NUMBER_OF_RECORDS = 5
-
+DATACOLLECTOR_TEST_FILES_BUCKET = 'datacollector-test-files'
 
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
-
+        data_collector.sdc_properties['production.maxBatchSize'] = '100000'
     return hook
 
 
@@ -1339,3 +1339,46 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
                                    client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
+@aws('s3')
+@large
+def test_s3_read_large_file(sdc_builder, sdc_executor, aws):
+    """This is a test for reading a large file (>2GB) from S3 in CSV format and test the fix for SDC-12774
+        1. Create and run a pipeline from S3 origin to Trash
+        2. Read the specified CSV file
+        3. Check the results (number of record in the file vs number of records read).
+    """
+    FILE_NAME = 'large-file-test-sdc-12774.csv'
+    NUMBER_OF_RECORDS_IN_THE_FILE = 300_000_000
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    # Since we will be a reading a large file, set the batch size to 100,000
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+    s3_origin.set_attributes(bucket=DATACOLLECTOR_TEST_FILES_BUCKET, data_format='DELIMITED',
+                             delimiter_format_type='CSV',
+                             prefix_pattern=FILE_NAME,
+                             max_batch_size_in_records=100_000)
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    s3_origin >> trash
+    s3_origin >= [pipeline_finisher]
+
+    pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # The file that is being read is large. Set the timeout to 1 hour
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=3600)
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+
+        assert input_records == NUMBER_OF_RECORDS_IN_THE_FILE
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
