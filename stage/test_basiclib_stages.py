@@ -158,10 +158,11 @@ def test_log_parser_processor_multiple_grok_patterns(sdc_builder, sdc_executor):
     log_parser_processor = pipeline_builder.add_stage('Log Parser').set_attributes(field_to_parse='/log',
                                                                                    new_parsed_field='/parsed_log',
                                                                                    log_format="GROK",
+                                                                                   grok_pattern_definition="JUSTLOGLEVEL %{LOGLEVEL:log-level}",
                                                                                    grok_patterns=[
                                                                                        '',
                                                                                        '%{COMBINEDAPACHELOG}',
-                                                                                       '%{LOGLEVEL}'
+                                                                                       '%{JUSTLOGLEVEL}'
                                                                                    ])
 
     trash = pipeline_builder.add_stage('Trash')
@@ -191,7 +192,7 @@ def test_log_parser_processor_multiple_grok_patterns(sdc_builder, sdc_executor):
     assert records[0]['parsed_log']['httpversion'] == '1.0'
     assert records[0]['parsed_log']['timestamp'] == '01/Feb/1998:01:08:46 -0800'
 
-    assert records[1]['parsed_log']['parsedLine'] == 'DEBUG'
+    assert records[1]['parsed_log']['log-level'] == 'DEBUG'
 
 
 @sdc_min_version('3.9.0')
