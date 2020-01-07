@@ -14,9 +14,9 @@
 
 
 import pytest
-from streamsets.testframework.markers import sdc_min_version
 from streamsets.sdk import sdc_api
-
+from streamsets.sdk.utils import Version
+from streamsets.testframework.markers import sdc_min_version
 
 
 @pytest.fixture(scope='module')
@@ -37,9 +37,16 @@ def test_send_events(sdc_builder, sdc_executor):
     batch_size = 10
     builder = sdc_builder.get_pipeline_builder()
 
+    # Event generation API for scripting origins changed in SDC 3.12. Addressing it with different testing
+    # scripts.
+    if Version(sdc_builder.version) < Version('3.12.0'):
+        script = SCRIPT_SEND_EVENTS_v1
+    else:
+        script = SCRIPT_SEND_EVENTS_v2
+
     jython = builder.add_stage('Jython Scripting')
     jython.set_attributes(record_type='NATIVE_OBJECTS',
-                          user_script=SCRIPT_SEND_EVENTS,
+                          user_script=script,
                           batch_size=batch_size)
 
     trash1 = builder.add_stage('Trash')
@@ -55,7 +62,7 @@ def test_send_events(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
 
     # Verify that the stage produced 10 events with values 'event0', ..., 'event9'. This is the expected
-    # output in accordance to the script defined in SCRIPT_SEND_EVENTS variable.
+    # output in accordance to the script.
     expected_output = [f'event{i}' for i in range(batch_size)]
     actual_output = [e.field.value for e in snapshot[jython.instance_name].event_records]
     assert sorted(actual_output) == expected_output
@@ -78,10 +85,17 @@ def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
     batch_size = 10
     builder = sdc_builder.get_pipeline_builder()
 
+    # Error generation API for scripting origins changed in SDC 3.12. Addressing it with different testing
+    # scripts.
+    if Version(sdc_builder.version) < Version('3.12.0'):
+        script = SCRIPT_SEND_ERROR_RECORDS_v1
+    else:
+        script = SCRIPT_SEND_ERROR_RECORDS_v2
+
     jython = builder.add_stage('Jython Scripting')
     jython.set_attributes(record_type='NATIVE_OBJECTS',
                           on_record_error=stage_attributes['on_record_error'],
-                          user_script=SCRIPT_SEND_ERROR_RECORDS,
+                          user_script=script,
                           batch_size=batch_size)
 
     trash = builder.add_stage('Trash')
@@ -102,7 +116,7 @@ def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
             sdc_executor.stop_pipeline(pipeline)
 
             # Verify that the stage produced 10 error records with values 'error0', ..., 'error9'. This is the
-            # expected output in accordance to the script defined in SCRIPT_SEND_TO_ERROR variable.
+            # expected output in accordance to the script defined.
             expected_output = [f'error{i}' for i in range(batch_size)]
             actual_output = [e.field.value for e in snapshot[jython.instance_name].error_records]
             assert sorted(actual_output) == expected_output
@@ -112,8 +126,15 @@ def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
         sdc_executor.remove_pipeline()
 
 
+SCRIPT_SEND_EVENTS_v1 = """
+for i in range(sdc.batchSize):
+    event = sdc.createEvent('event-type', 1)
+    event.value = 'event' + str(i)
+    sdc.toEvent(event)
+"""
 
-SCRIPT_SEND_EVENTS = """
+
+SCRIPT_SEND_EVENTS_v2 = """
 entityName = ''
 offset = 0
 cur_batch = sdc.createBatch()
@@ -138,7 +159,16 @@ while hasNext:
             hasNext = False
 """
 
-SCRIPT_SEND_ERROR_RECORDS = """
+
+SCRIPT_SEND_ERROR_RECORDS_v1 = """
+for i in range(sdc.batchSize):
+    record = sdc.createRecord('record souce id')
+    record.value = 'error' + str(i)
+    sdc.error.write(record, 'testing error stream')
+"""
+
+
+SCRIPT_SEND_ERROR_RECORDS_v2 = """
 entityName = ''
 offset = 0
 cur_batch = sdc.createBatch()
