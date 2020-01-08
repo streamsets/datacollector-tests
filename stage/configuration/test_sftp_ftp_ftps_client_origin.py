@@ -499,10 +499,49 @@ def test_grok_pattern(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@sftp
+@pytest.mark.parametrize('grok_pattern_definition', ['MYCUSTOMLOG %{COMMONAPACHELOG} %{QS:referrer}',
+                                                     r'MYCUSTOMLOG \[%{HTTPDATE:timestamp}\]'])
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'LOG', 'log_format': 'GROK'}])
-def test_grok_pattern_definition(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_grok_pattern_definition(sdc_builder, sdc_executor, stage_attributes, grok_pattern_definition, sftp, keep_data):
+    """Test for different grok_pattern_definitions."""
+    file_name = get_random_string()
+    FILE_CONTENT = ('127.0.0.1 - frank [10/Oct/2000:13:55:36 -0700] "GET /apache.gif HTTP/1.0" 200 2326 '
+                    '"http://www.example.com/strt.html"')
+    if grok_pattern_definition == 'MYCUSTOMLOG %{COMMONAPACHELOG} %{QS:referrer}':
+        EXPECTED_OUTPUT = {'request': '/apache.gif', 'auth': 'frank', 'ident': '-', 'verb': 'GET',
+                           'referrer': '"http://www.example.com/strt.html"', 'response': '200', 'bytes': '2326',
+                           'clientip': '127.0.0.1', 'httpversion': '1.0', 'rawrequest': None,
+                           'timestamp': '10/Oct/2000:13:55:36 -0700'}
+    else:
+        EXPECTED_OUTPUT = {'timestamp': '10/Oct/2000:13:55:36 -0700'}
+
+    try:
+        sftp.put_string(os.path.join(sftp.path, file_name), FILE_CONTENT)
+        builder = sdc_builder.get_pipeline_builder()
+        sftp_ftp_ftps_client = builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+        sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name,
+                                            grok_pattern='%{MYCUSTOMLOG}',
+                                            grok_pattern_definition=grok_pattern_definition,
+                                            **stage_attributes)
+        trash = builder.add_stage('Trash')
+        pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+        sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+        pipeline = builder.build().configure_for_environment(sftp)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        assert records == [EXPECTED_OUTPUT]
+
+    finally:
+        transport, client = sftp.client
+        try:
+            if not keep_data:
+                client.remove(os.path.join(sftp.path, file_name))
+        finally:
+            client.close()
+            transport.close()
 
 
 @sftp
