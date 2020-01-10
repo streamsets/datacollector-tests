@@ -1,6 +1,32 @@
-import pytest
+# Copyright 2018 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+import logging
+
+import pytest
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
+from streamsets.testframework.markers import cluster
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(autouse=True)
+def kafka_check(cluster):
+    if isinstance(cluster, ClouderaManagerCluster) and not hasattr(cluster, 'kafka'):
+        pytest.skip('Kafka tests require Kafka to be installed on the cluster')
 
 
 @stub
@@ -373,10 +399,34 @@ def test_text_field_path(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@cluster('cdh', 'kafka')
 @pytest.mark.parametrize('stage_attributes', [{'runtime_topic_resolution': False}])
-def test_topic(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_topic(sdc_builder, sdc_executor, stage_attributes, cluster):
+    topic = get_random_string()
+    logger.debug('Kafka topic name: %s', topic)
+
+    DATA = ['Hello World!' for _ in range(7)]
+    raw_data = '\n'.join(DATA)
+
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  raw_data=raw_data)
+    kafka_destination = builder.add_stage('Kafka Producer', library=cluster.kafka.standalone_stage_lib)
+    kafka_destination.set_attributes(topic=topic, data_format='TEXT', **stage_attributes)
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    dev_raw_data_source >> [kafka_destination, pipeline_finisher]
+    pipeline = builder.build().configure_for_environment(cluster)
+
+    # Specify timeout so that iteration of consumer is stopped after that time and
+    # specify auto_offset_reset to get messages from beginning.
+    consumer = cluster.kafka.consumer(consumer_timeout_ms=5000, auto_offset_reset='earliest')
+    consumer.subscribe([topic])
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline)
+
+    messages = [message.value.decode().strip() for message in consumer]
+    assert messages == DATA
 
 
 @stub

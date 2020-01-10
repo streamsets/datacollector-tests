@@ -36,63 +36,6 @@ def kafka_check(cluster):
 #
 
 @cluster('cdh', 'kafka')
-def test_kafka_destination(sdc_builder, sdc_executor, cluster):
-    """Send simple text messages into Kafka Destination from Dev Raw Data Source and
-       confirm that Kafka successfully reads them using KafkaConsumer from cluster.
-       Specifically, this would look like:
-
-       Kafka Destination Origin pipeline:
-           dev_raw_data_source >> kafka_destination
-
-    """
-
-    topic = get_random_string(string.ascii_letters, 10)
-    logger.debug('Kafka topic name: %s', topic)
-
-    # Build the Kafka destination pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    builder.add_error_stage('Discard')
-
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'TEXT'
-    dev_raw_data_source.raw_data = 'Hello World!'
-
-    kafka_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
-                                          library=cluster.kafka.standalone_stage_lib)
-    kafka_destination.topic = topic
-    kafka_destination.data_format = 'TEXT'
-
-    dev_raw_data_source >> kafka_destination
-    kafka_destination_pipeline = builder.build(title='Kafka Destination pipeline').configure_for_environment(cluster)
-    kafka_destination_pipeline.configuration['rateLimit'] = 1
-
-    sdc_executor.add_pipeline(kafka_destination_pipeline)
-
-    # Specify timeout so that iteration of consumer is stopped after that time and
-    # specify auto_offset_reset to get messages from beginning.
-    consumer = cluster.kafka.consumer(consumer_timeout_ms=1000, auto_offset_reset='earliest')
-    consumer.subscribe([topic])
-
-    # Send messages using pipeline to Kafka Destination.
-    logger.debug('Starting Kafka Destination pipeline and waiting for it to produce 10 records ...')
-    sdc_executor.start_pipeline(kafka_destination_pipeline).wait_for_pipeline_batch_count(10)
-
-    logger.debug('Stopping Kafka Destination pipeline and getting the count of records produced in total ...')
-    sdc_executor.stop_pipeline(kafka_destination_pipeline)
-
-    history = sdc_executor.get_pipeline_history(kafka_destination_pipeline)
-    msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-    logger.debug('No. of messages sent in the pipeline = %s', msgs_sent_count)
-
-    msgs_received = [message.value.decode().strip() for message in consumer]
-    logger.debug('No. of messages received in Kafka Consumer = %d', (len(msgs_received)))
-
-    logger.debug('Verifying messages with Kafka consumer client ...')
-    assert msgs_sent_count == len(msgs_received)
-    assert msgs_received == [dev_raw_data_source.raw_data] * msgs_sent_count
-
-
-@cluster('cdh', 'kafka')
 def test_kafka_destination_topic_resolution(sdc_builder, sdc_executor, cluster):
     """Test topic resolution in Kafka destination. We configure a pipeline which sends messages to the Kafka topic
     specified by the record field 'topic'. Then we check that the number of messages available in Kafka topics
