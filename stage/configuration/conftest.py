@@ -123,13 +123,12 @@ def compressed_file_writer(sdc_executor):
     Args:
         tmp_directory (:obj:`str`): The absolute path to which to write the file.
         local_fs_data_format: Format in which data should be generated.
-        compression_format: Compression format = COMPRESSED_FILE.
         file_content (:obj:`str`): The file contents.
         compression_codec (:obj:`str`): Compression format in which we have to write the file
                                         By default GZIP file will be generated
         files_prefix (:obj:`str`): File name format to be generated.
     """
-    def compressed_file_writer_(tmp_directory, local_fs_data_format, compression_format, file_content,
+    def compressed_file_writer_(tmp_directory, local_fs_data_format, file_content,
                                 compression_codec='GZIP', files_prefix='sdc-${sdc:id()}'):
         ext_map = {'BINARY': 'bin', 'TEXT': 'txt', 'DELIMITED': 'csv', 'JSON': 'json', 'LOG': 'log',
                    'PROTOBUF': 'proto', 'SDC_JSON': 'json', 'XML': 'xml'}
@@ -144,7 +143,6 @@ def compressed_file_writer(sdc_executor):
             dev_raw_data_source_data_format = 'JSON'
 
         attributes = {'data_format': local_fs_data_format,
-                      'compression_format': compression_format,
                       'directory_template': tmp_directory,
                       'files_prefix': files_prefix,
                       'files_suffix': extension,

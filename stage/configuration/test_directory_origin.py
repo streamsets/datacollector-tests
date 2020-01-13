@@ -343,7 +343,8 @@ def test_directory_origin_configuration_comment_marker(sdc_builder, sdc_executor
 @pytest.mark.parametrize('compression_format', ['COMPRESSED_FILE'])
 @pytest.mark.parametrize('compression_codec', ['GZIP', 'BZIP2'])
 def test_directory_origin_configuration_compression_format(sdc_builder, sdc_executor, data_format, compression_format,
-                                                           compressed_file_writer, compression_codec, shell_executor):
+                                                           compressed_file_writer, compression_codec, shell_executor,
+                                                           keep_data):
     """Verify direcotry origin can read data from compressed files.
         Pattern is inside the compressed file.
         e.g. compression_format_test.txt is compressed as compression_format_test.txt.gz then
@@ -365,8 +366,8 @@ def test_directory_origin_configuration_compression_format(sdc_builder, sdc_exec
             file_content = ''.join(json.dumps(record) for record in file_content)
 
         # Writes compressed file to local FS.
-        compressed_file_writer(tmp_directory, data_format, compression_format, file_content,
-                               compression_codec=compression_codec, files_prefix='sdc-${sdc:id()}')
+        compressed_file_writer(tmp_directory, data_format, file_content, compression_codec=compression_codec,
+                               files_prefix='sdc-${sdc:id()}')
         # Reading from compressed file.
         attributes = {'data_format': data_format,
                       'file_name_pattern': 'sdc*',
@@ -381,8 +382,10 @@ def test_directory_origin_configuration_compression_format(sdc_builder, sdc_exec
         execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format,
                                            actual_file_content, actual_file_content)
     finally:
-        sdc_executor.stop_pipeline(pipeline)
-        shell_executor(f'rm -r {tmp_directory}')
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        if not keep_data:
+            shell_executor(f'rm -r {tmp_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
@@ -2185,7 +2188,8 @@ def get_directory_to_trash_pipeline(sdc_builder, attributes):
     directory = pipeline_builder.add_stage('Directory')
     directory.set_attributes(**attributes)
     trash = pipeline_builder.add_stage('Trash')
-    directory >> trash
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    directory >> [pipeline_finisher, trash]
     pipeline = pipeline_builder.build()
     return directory, pipeline
 
