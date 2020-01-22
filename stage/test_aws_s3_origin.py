@@ -19,6 +19,7 @@ import string
 import tempfile
 import time
 from zipfile import ZipFile
+import xml.etree.ElementTree as ET
 
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version, large
@@ -1382,3 +1383,78 @@ def test_s3_read_large_file(sdc_builder, sdc_executor, aws):
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
+
+
+@aws('s3')
+@pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
+def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_executor, aws, read_order):
+    """ This test is for xml data format, which was not working properly when reset with file offset.
+        It checks that no stage error happens after the pipeline is restarted with an offset halfway in the file.
+        Snapshot pipeline:
+            s3_origin >> trash
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    records_in_file = 10_000
+
+    # Create test data files
+    data_file_filename = 'xml-file.xml'
+    xml_root = ET.Element('root')
+    records = ET.SubElement(xml_root, 'records')
+    for i in range(records_in_file):
+        record = ET.SubElement(records, 'record')
+        record_id = ET.SubElement(record, 'id')
+        record_id.text = str(i)
+        name = ET.SubElement(record, 'name')
+        name.text = f'record-{i}'
+    test_data = ET.tostring(xml_root)
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+    s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format='XML',
+                             delimiter_element='/root/records/record',
+                             prefix_pattern=f'{s3_key}/*.xml',
+                             read_order=read_order,
+                             max_batch_size_in_records=10)
+    trash = builder.add_stage('Trash')
+
+    s3_origin >> trash
+
+    s3_origin_pipeline = builder.build(title='Amazon S3 origin restart pipeline with XML data format')\
+        .configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_filename}',
+                          Body=test_data)
+
+        # Read 2 batches & stop the pipeline halfway through the file
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_batch_count(2)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+
+        # Restart the pipeline and wait until it reads all data
+        sdc_executor.start_pipeline(s3_origin_pipeline)\
+            .wait_for_pipeline_batch_count((records_in_file - input_records)/10)
+
+        # Assert no stage errors have happened
+        assert 0 == len(sdc_executor.get_stage_errors(s3_origin_pipeline, s3_origin))
+
+    finally:
+        # If no files have been processed we need to stop the pipeline, otherwise it will be finished
+        try:
+            if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+                sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
+        finally:
+            # Clean up S3.
+            delete_keys = {'Objects': [{'Key': k['Key']}
+                                       for k in
+                                       client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
+            client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
