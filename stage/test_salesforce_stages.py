@@ -22,8 +22,14 @@ from uuid import uuid4
 
 import pytest
 import requests
+from json.decoder import JSONDecodeError
+from simple_salesforce import Salesforce
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+
+CONTACT = 'Contact'
+CDC = 'CDC'
+PUSH_TOPIC = 'PUSH_TOPIC'
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +78,7 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
                      {'sdcField': '/LeadSource', 'salesforceField': 'LeadSource'}]
     salesforce_destination.set_attributes(default_operation='INSERT',
                                           field_mapping=field_mapping,
-                                          sobject_type='Contact')
+                                          sobject_type=CONTACT)
 
     dev_raw_data_source >> salesforce_destination
 
@@ -132,7 +138,7 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
     salesforce_destination.set_attributes(default_operation='INSERT',
                                           field_mapping=field_mapping,
                                           use_bulk_api=(api == 'bulk'),
-                                          sobject_type='Contact')
+                                          sobject_type=CONTACT)
 
     dev_raw_data_source >> salesforce_destination
 
@@ -188,7 +194,7 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
                      {'sdcField': '/LeadSource', 'salesforceField': 'LeadSource'}]
     salesforce_destination.set_attributes(default_operation='INSERT',
                                           field_mapping=field_mapping,
-                                          sobject_type='Contact')
+                                          sobject_type=CONTACT)
 
     dev_raw_data_source >> salesforce_destination
 
@@ -322,7 +328,7 @@ def verify_snapshot(snapshot, stage_name, expected_data):
                           for rec in item if rec['sqpath'] == '/Id'])
                     for item in rows_from_snapshot]
 
-    # Verify correct rows are received using snaphot.
+    # Verify correct rows are received using snapshot.
     data_from_snapshot = [dict([(rec['sqpath'].strip('/'), rec['value'])
                                 for rec in item if rec['sqpath'] != '/Id' and rec['sqpath'] != '/SystemModstamp'])
                           for item in rows_from_snapshot]
@@ -1146,7 +1152,7 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
                          {'sdcField': '/ReportsTo.Email', 'salesforceField': 'ReportsTo.Email'}]
         salesforce_destination.set_attributes(default_operation='UPDATE',
                                               field_mapping=field_mapping,
-                                              sobject_type='Contact',
+                                              sobject_type=CONTACT,
                                               use_bulk_api=(api == 'bulk'))
 
         dev_raw_data_source >> salesforce_destination
@@ -1180,19 +1186,45 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
 def create_push_topic(client):
     push_topic_name = get_random_string(string.ascii_letters, 10).lower()
     logger.info(f'Creating PushTopic {push_topic_name} in Salesforce')
-    push_topic = client.PushTopic.create({'Name': push_topic_name,
-                                          'Query': 'SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact',
-                                          'ApiVersion': '47.0',
-                                          'NotifyForOperationCreate': True,
-                                          'NotifyForOperationUpdate': True,
-                                          'NotifyForOperationUndelete': True,
-                                          'NotifyForOperationDelete': True,
-                                          'NotifyForFields': 'All'})
-    return push_topic, push_topic_name
+    result = client.PushTopic.create({'Name': push_topic_name,
+                                      'Query': 'SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact',
+                                      'ApiVersion': '47.0',
+                                      'NotifyForOperationCreate': True,
+                                      'NotifyForOperationUpdate': True,
+                                      'NotifyForOperationUndelete': True,
+                                      'NotifyForOperationDelete': True,
+                                      'NotifyForFields': 'All'})
+    return result['id'], push_topic_name
+
+
+def enable_cdc(client):
+    payload = {
+        "FullName": "ChangeEvents_ContactChangeEvent",
+        "Metadata": {
+            "eventChannel": "ChangeEvents",
+            "selectedEntity": "ContactChangeEvent"
+        }
+    }
+    result = client.restful('tooling/sobjects/PlatformEventChannelMember', method='POST', json=payload)
+    assert True == result['success']
+    return result['id']
+
+
+def disable_cdc(client, subscription_id):
+    try:
+        client.restful(f'tooling/sobjects/PlatformEventChannelMember/{subscription_id}', method='DELETE')
+    except JSONDecodeError:
+        # Simple Salesforce issue #327
+        # https://github.com/simple-salesforce/simple-salesforce/issues/327
+        pass
 
 
 @salesforce
-def test_salesforce_streaming_api(sdc_builder, sdc_executor, salesforce):
+@pytest.mark.parametrize(('subscription_type'), [
+    PUSH_TOPIC,
+    CDC
+])
+def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscription_type):
     """
     Start pipeline, create data using Salesforce client
     and then check if Salesforce origin receives data using snapshot.
@@ -1202,18 +1234,24 @@ def test_salesforce_streaming_api(sdc_builder, sdc_executor, salesforce):
     """
     client = salesforce.client
 
-    push_topic = None
+    subscription_id = None
     contact = None
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
-        push_topic, push_topic_name = create_push_topic(client)
+        if subscription_type == PUSH_TOPIC:
+            subscription_id, push_topic_name = create_push_topic(client)
+        else:
+            subscription_id = enable_cdc(client)
 
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
         salesforce_origin.set_attributes(query_existing_data=False,
                                          subscribe_for_notifications=True,
-                                         subscription_type='PUSH_TOPIC',
-                                         push_topic=push_topic_name)
+                                         subscription_type=subscription_type)
+        if subscription_type == PUSH_TOPIC:
+            salesforce_origin.set_attributes(push_topic=push_topic_name)
+        else:
+            salesforce_origin.set_attributes(change_data_capture_object=CONTACT)
 
         trash = pipeline_builder.add_stage('Trash')
         salesforce_origin >> trash
@@ -1235,16 +1273,30 @@ def test_salesforce_streaming_api(sdc_builder, sdc_executor, salesforce):
         logger.info('Taking snapshot')
         snapshot = snapshot_command.wait_for_finished().snapshot
 
-        verify_snapshot(snapshot, salesforce_origin, [DATA_TO_INSERT[0]])
+        if subscription_type == PUSH_TOPIC:
+            verify_snapshot(snapshot, salesforce_origin, [DATA_TO_INSERT[0]])
+        else:
+            # CDC returns more than just the record fields, so verify_snapshot isn't so useful
+            assert len(snapshot[salesforce_origin].output) == 1
+            assert snapshot[salesforce_origin].output[0].header['values']['salesforce.cdc.recordIds']
+            assert snapshot[salesforce_origin].output[0].field['Email'] == DATA_TO_INSERT[0]['Email']
+            # CDC returns nested compound fields
+            assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == DATA_TO_INSERT[0]['FirstName']
+            assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == DATA_TO_INSERT[0]['LastName']
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting records ...')
-        if push_topic:
-            client.PushTopic.delete(push_topic['id'])
+        if subscription_id:
+            if subscription_type == PUSH_TOPIC:
+                logger.info('Deleting PushTopic...')
+                client.PushTopic.delete(subscription_id)
+            else:
+                logger.info('Disabling CDC for Contact...')
+                disable_cdc(client, subscription_id)
         if contact:
+            logger.info('Deleting contact...')
             client.contact.delete(contact['id'])
 
 
@@ -1279,7 +1331,7 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
         salesforce_origin.set_attributes(query_existing_data=False,
                                          subscribe_for_notifications=True,
-                                         subscription_type='PUSH_TOPIC',
+                                         subscription_type=PUSH_TOPIC,
                                          push_topic=push_topic_name,
                                          streaming_buffer_size=(1048576 if good_or_bad == 'good' else 256))
 
@@ -1433,7 +1485,7 @@ def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, sal
                          {'sdcField': '/ReportsTo.Email', 'salesforceField': 'ReportsTo.Email'}]
         salesforce_destination.set_attributes(default_operation='UPDATE',
                                               field_mapping=field_mapping,
-                                              sobject_type='Contact',
+                                              sobject_type=CONTACT,
                                               use_bulk_api=False)
 
         dev_raw_data_source >> salesforce_destination
@@ -1570,8 +1622,6 @@ def test_salesforce_datetime_in_history(sdc_builder, sdc_executor, salesforce, a
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
-        print(snapshot[salesforce_origin].output[0].field['NewValue'])
 
         # There should be a single row with Id and NewValue fields. For SOAP API, NewValue should be a DATETIME, for
         # Bulk API it's a STRING
