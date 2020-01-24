@@ -18,11 +18,13 @@ import json
 import logging
 import os
 import string
+import datetime, time
 from operator import itemgetter
 
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -210,6 +212,60 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
 
         # assert Data Lake files generated
         assert messages == output_records
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
+
+
+@azure('datalake')
+@sdc_min_version('3.9.0')
+def test_parse_timestamp_datalake_origin(sdc_builder, sdc_executor, azure):
+    """ Test for time creation file in Data Lake Store origin stage. We do so by creating and modificating a file in
+    Azure Data Lake Storage using the STF client, then reading last modification date from the file using the ALDS Gen2
+    Origin Stage, to assert file's modification time ingested by the pipeline is the expected time from the moment the
+    file was created. Assert the difference and discard the difference if they fluctuate in less than one second.
+    The pipeline looks like:
+
+    azure_data_lake_store_origin >> trash
+    """
+    directory_name = get_random_string(string.ascii_letters, 5)
+    file_name = 'test-data.txt'
+    messages = [f'message{i}' for i in range(1, 2)]
+
+    try:
+        # Put files in the azure storage file system
+        dl_fs = azure.datalake.file_system
+
+        dl_fs.mkdir({directory_name})
+        dl_fs.touch(f'{directory_name}/{file_name}')
+        dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
+        time_modification_time = int(time.time())
+
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        azure_data_lake_store_origin = builder.add_stage(name=SOURCE_STAGE_NAME)
+        trash = builder.add_stage('Trash')
+        azure_data_lake_store_origin.set_attributes(data_format='TEXT',
+                                                    files_directory=f'/{directory_name}',
+                                                    file_name_pattern='*')
+        azure_data_lake_store_origin >> trash
+
+        datalake_origin_pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(datalake_origin_pipeline)
+
+        # start pipeline and read file in ADLS
+        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline,
+                                                 start_pipeline=True,
+                                                 batches=1).snapshot
+        sdc_executor.stop_pipeline(datalake_origin_pipeline)
+
+        for record in snapshot[azure_data_lake_store_origin.instance_name].output:
+            timestamp = record.header.values["mtime"]
+        time_modification_time_obtained = int(timestamp[:-3])
+
+        assert abs(time_modification_time - time_modification_time_obtained) <= 1
+
+
     finally:
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
         dl_fs.rmdir(directory_name, recursive=True)
