@@ -1637,3 +1637,35 @@ def test_salesforce_datetime_in_history(sdc_builder, sdc_executor, salesforce, a
             client.Contract.delete(con['id'])
         if acc and acc['id']:
             client.Account.delete(acc['id'])
+
+
+@salesforce
+def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesforce):
+    """
+    Test SDC-12378 - enabling CDC with blank object name ('get notifications for all objects') was causing
+    initial query to fail.
+
+    Create data using Salesforce client and then check if Salesforce origin receives them using snapshot.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
+             "WHERE Id > '000000000000000' AND "
+             "Email LIKE 'xtest%' "
+             "ORDER BY Id")
+
+    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+    salesforce_origin.set_attributes(soql_query=query,
+                                     subscribe_for_notifications=True,
+                                     subscription_type=CDC,
+                                     change_data_capture_object='')
+
+    trash = pipeline_builder.add_stage('Trash')
+    salesforce_origin >> trash
+    pipeline = pipeline_builder.build(title='Salesforce Origin').configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, DATA_TO_INSERT, salesforce)
