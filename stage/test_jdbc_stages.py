@@ -24,6 +24,7 @@ from collections import OrderedDict
 import pytest
 import sqlalchemy
 import datetime
+from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
 from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -2883,7 +2884,7 @@ def test_jdbc_postgresql_types(sdc_builder, sdc_executor, database, use_table_or
     ('DATE', "'2019-01-01'", 'DATE', 1546300800000),
     ('DATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085322310000),
     ('DATETIME2', "'2004-05-23T14:25:10'", 'DATETIME', 1085322310000),
-    ('DATETIMEOFFSET', "'2004-05-23T14:25:10'", 'STRING', '2004-05-23 14:25:10 +00:00'),
+    ('DATETIMEOFFSET', "'2004-05-23 14:25:10.3456 -08:00'", 'DEPENDS_ON_VERSION', 'depends_on_version'),
     ('SMALLDATETIME', "'2004-05-23T14:25:10'", 'DATETIME', 1085322300000),
     ('TIME', "'14:25:10'", 'TIME', 51910000),
     ('BIT', "1", 'BOOLEAN', True),
@@ -2935,14 +2936,23 @@ def test_jdbc_sqlserver_types(sdc_builder, sdc_executor, database, use_table_ori
         if use_table_origin:
             origin = builder.add_stage('JDBC Multitable Consumer')
             origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
-            origin.on_unknown_type = 'CONVERT_TO_STRING'
         else:
             origin = builder.add_stage('JDBC Query Consumer')
             origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
             origin.incremental_mode = False
-            origin.on_unknown_type = 'CONVERT_TO_STRING'
 
         trash = builder.add_stage('Trash')
+
+        # As a part of SDC-10125, DATETIMEOFFSET is natively supported in SDC, and is converted into ZONED_DATETIME
+        if sql_type == 'DATETIMEOFFSET':
+            if Version(sdc_builder.version) >= Version('3.14.0'):
+                expected_type = 'ZONED_DATETIME'
+                expected_value = '2004-05-23T14:25:10.3456-08:00'
+            else:
+                expected_type = 'STRING'
+                expected_value = '2004-05-23 14:25:10.3456 -08:00'
+                # This unknown_type_action setting is required, otherwise DATETIMEOFFSET tests for SDC < 3.14 will fail.
+                origin.on_unknown_type = 'CONVERT_TO_STRING'
 
         origin >> trash
 
@@ -2981,6 +2991,10 @@ def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, databa
         The pipeline will look like:
             JDBC_Multitable_Consumer >> trash
     """
+
+    if Version(sdc_builder.version) >= Version('3.14.0'):
+        pytest.skip("Skipping SQLServer Unknown Type action check, since DATETIMEOFFSET field is now natively supported from SDC Version 3.14.0")
+
     column_type = 'DATETIMEOFFSET'
     INPUT_DATE = "'2004-05-23T14:25:10'"
     EXPECTED_OUTCOME = OrderedDict(id=1, date_offset='2004-05-23 14:25:10 +00:00')
