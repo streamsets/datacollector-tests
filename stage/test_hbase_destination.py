@@ -35,54 +35,6 @@ def version_check(sdc_builder, cluster):
 
 
 @cluster('cdh', 'hdp')
-def test_hbase_destination(sdc_builder, sdc_executor, cluster):
-    """Simple HBase destination test.
-    dev_raw_data_source >> hbase
-    """
-
-    # Create dummy data.
-    dumb_haiku = ['I see you driving', 'Round town with the girl I love', 'And I am like haiku.']
-
-    # Create random table name to avoid collisions.
-    random_table_name = get_random_string(string.ascii_letters, 10)
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-
-    # Add Dev Raw Data Source stage to pipeline.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'TEXT'
-    dev_raw_data_source.raw_data = '\n'.join(dumb_haiku)
-
-    # Add HBase stage to pipeline.
-    hbase = pipeline_builder.add_stage('HBase', type='destination')
-    hbase.table_name = random_table_name
-    hbase.row_key = '/text'
-    hbase.fields = [dict(columnValue='/text', columnStorageType='TEXT', columnName='cf1:cq1')]
-
-    # Build pipeline.
-    dev_raw_data_source >> hbase
-    pipeline = pipeline_builder.build().configure_for_environment(cluster)
-    pipeline.configuration['shouldRetry'] = False
-    sdc_executor.add_pipeline(pipeline)
-
-    try:
-        # Create table.
-        logger.info('Creating HBase table %s ...', random_table_name)
-        cluster.hbase.client.create_table(name=random_table_name, families={'cf1': {}})
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-
-        assert [record.field['text']
-                for record in snapshot[dev_raw_data_source.instance_name].output] == dumb_haiku
-    finally:
-        # Delete table.
-
-        logger.info('Deleting HBase table %s ...', random_table_name)
-        cluster.hbase.client.delete_table(name=random_table_name, disable=True)
-
-
-@cluster('cdh', 'hdp')
 def test_hbase_destination_validate_no_config_issues(sdc_builder, sdc_executor, cluster):
     """Simple HBase destination pipeline validation test.
     dev_raw_data_source >> hbase

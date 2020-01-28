@@ -1,11 +1,64 @@
+import json
+import logging
+
 import pytest
 
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import cluster
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
 
 
-@stub
-def test_fields(sdc_builder, sdc_executor):
-    pass
+@pytest.fixture(autouse=True)
+def version_check(sdc_builder, cluster):
+    if cluster.version == 'cdh6.0.0' and Version('3.5.0') <= Version(sdc_builder.version) < Version('3.6.0'):
+        pytest.skip('HBase destination is not included in streamsets-datacollector-cdh_6_0-lib in SDC 3.5')
+
+
+@cluster('cdh', 'hdp')
+def test_fields(sdc_builder, sdc_executor, cluster, keep_data):
+    """Test that fields are properly mapped into HBase."""
+    DATA = [{'team': 'Quick-Step Floors', 'points': '13322.9'},
+            {'team': 'Team Sky', 'points': '9718.9'},
+            {'team': 'BORA - hansgrohe', 'points': '9138'}]
+    # Since it comes out of HBase, we expect output to be lexicographically sorted bytes and to see
+    # column family:column qualifer formatting.
+    EXPECTED_OUTPUT = [{b'BORA - hansgrohe': {b'data:points': b'9138'}},
+                       {b'Quick-Step Floors': {b'data:points': b'13322.9'}},
+                       {b'Team Sky': {b'data:points': b'9718.9'}}]
+    table_name = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    # Set JSON Content to "Array of Objects" to make it easier to pass in DATA without extra processing.
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=json.dumps(DATA))
+
+    hbase = pipeline_builder.add_stage('HBase', type='destination')
+    hbase.set_attributes(fields=[dict(columnValue='/points', columnStorageType='TEXT', columnName='data:points')],
+                         row_key='/team',
+                         table_name=table_name)
+
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+
+    dev_raw_data_source >> [hbase, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating HBase table %s ...', table_name)
+        cluster.hbase.client.create_table(name=table_name, families={'data': {}})
+        sdc_executor.start_pipeline(pipeline)
+
+        table = cluster.hbase.client.table(table_name)
+        # HappyBase's table.scan returns a row key and a dictionary of column data, which we roll up with a list
+        # comprehension.
+        assert [{row_key: data} for row_key, data in table.scan()] == EXPECTED_OUTPUT
+
+    finally:
+        if not keep_data:
+            logger.info('Deleting HBase table %s ...', random_table_name)
+            cluster.hbase.client.delete_table(name=table_name, disable=True)
 
 
 @stub
