@@ -57,7 +57,7 @@ def test_fields(sdc_builder, sdc_executor, cluster, keep_data):
 
     finally:
         if not keep_data:
-            logger.info('Deleting HBase table %s ...', random_table_name)
+            logger.info('Deleting HBase table %s ...', table_name)
             cluster.hbase.client.delete_table(name=table_name, disable=True)
 
 
