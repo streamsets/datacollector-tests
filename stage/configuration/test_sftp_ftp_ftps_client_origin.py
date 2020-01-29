@@ -1057,7 +1057,7 @@ def test_rate_per_second(sdc_builder, sdc_executor, stage_attributes, sftp, shel
     """Test if SFTP/FTP/FTPS origin honors "Rate Per Second" configuration.
 
     Pipeline will be run four times with configuration set to different values
-    and the expected inverse proportionality of the value and the pipeline run time checked.
+    and the expected proportionality of the value and the pipeline throughput checked.
     """
     try:
         DATA = 'a' * 10 * 1024 * 1024  # 10 MB file.
@@ -1075,30 +1075,21 @@ def test_rate_per_second(sdc_builder, sdc_executor, stage_attributes, sftp, shel
                                                                          file_name_expression=file_name,
                                                                          file_type='WHOLE_FILE',
                                                                          files_prefix='')
-        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        sftp_ftp_ftps_client >> [local_fs, pipeline_finisher]
+        sftp_ftp_ftps_client >> local_fs
         pipeline = pipeline_builder.build().configure_for_environment(sftp)
-
-        pipeline_run_times = []
+        pipeline_throughputs = []
         for rate_per_second in ['${10 * MB}', '${5 * MB}', '${1 * MB}', '${500 * KB}']:
             sftp_ftp_ftps_client.rate_per_second = rate_per_second
-            sdc_executor.add_pipeline(pipeline)
-            sdc_executor.start_pipeline(pipeline).wait_for_finished()
-            history = sdc_executor.get_pipeline_history(pipeline)
-            pipeline_finishing_timestamp = next(entry['timeStamp']
-                                                for entry in history.entries
-                                                if entry['status'] == 'FINISHING')
-            pipeline_running_timestamp = next(entry['timeStamp']
-                                              for entry in history.entries
-                                              if entry['status'] == 'RUNNING')
-            pipeline_run_time = pipeline_finishing_timestamp - pipeline_running_timestamp
-            logger.info('Pipeline with rate per second of %s ran for %s s', rate_per_second, pipeline_run_time)
-            pipeline_run_times.append(pipeline_run_time)
-            sdc_executor.remove_pipeline(pipeline)
+            benchmark_data = sdc_executor.benchmark_pipeline(pipeline, record_count=1, runs=1)
+            throughput = benchmark_data['throughput_mean']
+            logger.info('Pipeline with rate per second of %s had mean throughput of %s records/s',
+                        rate_per_second,
+                        throughput)
+            pipeline_throughputs.append(throughput)
             shell_executor(f"rm {os.path.join('/tmp', file_name)}")
 
-        # The rate_per_second we iterate over should result in monotonically increasing run times.
-        assert pipeline_run_times[0] < pipeline_run_times[1] < pipeline_run_times[2] < pipeline_run_times[3]
+        # The rate_per_second we iterate over should result in monotonically decreasing throughput values.
+        assert pipeline_throughputs[0] > pipeline_throughputs[1] > pipeline_throughputs[2] > pipeline_throughputs[3]
 
     finally:
         if not keep_data:
