@@ -3050,3 +3050,53 @@ def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, databa
 
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('3.14.0')
+@database('sqlserver')
+def test_jdbc_sqlserver_datetimeoffset_as_primary_key(sdc_builder, sdc_executor, database):
+    """Test JDBC Multitable Consumer with SQLServer table configured with DATETIMEOFFSET column as primary key.
+        The pipeline will look like:
+            JDBC_Multitable_Consumer >> trash
+    """
+    INPUT_COLUMN_TYPE, INPUT_DATE = 'DATETIMEOFFSET', "'2004-05-23 14:25:10.3456 -08:00'"
+    EXPECTED_TYPE, EXPECTED_VALUE = 'ZONED_DATETIME', '2004-05-23T14:25:10.3456-08:00'
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{table_name}%'}])
+
+    trash=pipeline_builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection.execute(f"""
+        CREATE TABLE {table_name}(
+            dto {INPUT_COLUMN_TYPE} NOT NULL PRIMARY KEY
+        )
+    """)
+    connection.execute(f"INSERT INTO {table_name} VALUES({INPUT_DATE})")
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot[jdbc_multitable_consumer].output) == 1
+        record = snapshot[jdbc_multitable_consumer].output[0]
+
+        assert record.field['dto'].type == EXPECTED_TYPE
+        assert record.field['dto'].value == EXPECTED_VALUE
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
+
+
+
