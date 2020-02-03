@@ -16,8 +16,10 @@ import copy
 import json
 import logging
 import math
+import os
 import random
 import string
+import tempfile
 import time
 from collections import OrderedDict
 
@@ -25,7 +27,7 @@ import pytest
 import sqlalchemy
 import datetime
 from streamsets.sdk.utils import Version
-from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase
+from streamsets.testframework.environments.databases import Db2Database, OracleDatabase, SQLServerDatabase
 from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -42,6 +44,8 @@ ROWS_TO_UPDATE = [
 ]
 LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
 RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
+
+DEFAULT_DB2_SCHEMA = 'DB2INST1'
 
 
 @database
@@ -3159,4 +3163,112 @@ def test_jdbc_sqlserver_datetimeoffset_as_primary_key(sdc_builder, sdc_executor,
         connection.execute(f"DROP TABLE {table_name}")
 
 
+# Test for SDC-13288
+@database('db2')
+def test_jdbc_producer_db2_long_record(sdc_builder, sdc_executor, database):
+    """Test that JDBC Producer correctly sends record when setting Custom Data SQLSTATE for db2 database instead of
+     throwing StageException. The pipelines reads a file with 5 records 1 by 1 having the last record being biggest
+     than the db2 table column size. That throws an error with an specific SQL Code (22001). Having that code in Custom
+     Data SQLSTATE sends the last record to error.
 
+     The pipeline looks like:
+
+     directory_origin >> jdbc_producer
+
+     In order to create the file read by directory origin another pipeline is used that looks like:
+
+     dev_raw_data_source >> local_fs
+    """
+
+    # Insert data into file.
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    csv_records = ['1,hello', '2,hello', '3,hello', '4,hello', '5,hellolargerword']
+    _setup_delimited_file(sdc_executor, tmp_directory, csv_records)
+
+    # Create directory origin.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED',
+                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             batch_size_in_recs=1)
+
+    # Create jdbc producer destination.
+    # Create table. db2 internal sets table name in uppercase. Thus using directly ascii uppercase.
+    table_name = get_random_string(string.ascii_uppercase, 20)
+    database.engine.execute(f'CREATE TABLE {table_name} (id VARCHAR(20) NOT NULL PRIMARY KEY, a VARCHAR(10));')
+    field_to_column_mapping = [dict(columnName='ID',
+                                    dataType='USE_COLUMN_TYPE',
+                                    field='/0',
+                                    paramValue='?'),
+                               dict(columnName='A',
+                                    dataType='USE_COLUMN_TYPE',
+                                    field='/1',
+                                    paramValue='?')]
+    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+    jdbc_producer.set_attributes(default_operation="INSERT",
+                                 schema_name=DEFAULT_DB2_SCHEMA,
+                                 table_name=table_name,
+                                 field_to_column_mapping=field_to_column_mapping,
+                                 stage_on_record_error='TO_ERROR',
+                                 data_sqlstate_codes=["22001"])
+
+    directory >> jdbc_producer
+
+    directory_jdbc_producer_pipeline = pipeline_builder.build(
+        title='Directory - JDBC Producer. Test DB2 sql code error').configure_for_environment(database)
+    sdc_executor.add_pipeline(directory_jdbc_producer_pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(directory_jdbc_producer_pipeline, start_pipeline=True, batch_size=1,
+                                                 batches=5).snapshot
+        sdc_executor.stop_pipeline(directory_jdbc_producer_pipeline)
+
+        assert 5 == len(snapshot.snapshot_batches)
+
+        result = database.engine.execute(f'SELECT ID,A FROM {table_name};')
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # Order by id.
+        result.close()
+
+        # Assert records in database include from id=1 to id=4 excluding id=5. Columns => record[0] = id, record[1] = a.
+        assert data_from_database == [(record[0], record[1]) for record in
+                                      [unified_record.split(',') for unified_record in csv_records[:-1]]]
+
+        stage = snapshot.snapshot_batches[4][jdbc_producer.instance_name]
+
+        assert 1 == len(stage.error_records)
+
+        error_record = stage.error_records[0]
+
+        assert 'hellolargerword' == error_record.field['1']
+        assert 'JDBC_14' == error_record.header['errorCode']
+        assert 'SQLSTATE=22001' in error_record.header['errorMessage']
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        database.engine.execute(f'DROP TABLE {table_name}')
+
+
+def _setup_delimited_file(sdc_executor, tmp_directory, csv_records):
+    """Setup csv records and save in local system. The pipelines looks like:
+
+            dev_raw_data_source >> local_fs
+
+    """
+    raw_data = "\n".join(csv_records)
+    pipeline_builder = sdc_executor.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=tmp_directory,
+                            files_prefix='sdc-${sdc:id()}', files_suffix='csv')
+
+    dev_raw_data_source >> local_fs
+    files_pipeline = pipeline_builder.build('Generate files pipeline')
+    sdc_executor.add_pipeline(files_pipeline)
+
+    # Generate some batches/files.
+    sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
+
+    return csv_records
