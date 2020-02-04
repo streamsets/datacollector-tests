@@ -22,6 +22,7 @@ import pytest
 from pretenders.common.constants import FOREVER
 from streamsets.testframework.markers import http, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from streamsets.sdk.utils import Version
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,10 @@ def http_server_pipeline(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     http_server = pipeline_builder.add_stage('HTTP Server')
-    http_server.application_id = '${APPLICATION_ID}'
+    if Version(sdc_builder.version) >= Version('3.14.0'):
+        http_server.list_of_application_ids = [{"appId":'${APPLICATION_ID}'}]
+    else:
+        http_server.application_id = '${APPLICATION_ID}'
     http_server.data_format = 'JSON'
     http_server.http_listening_port = '${HTTP_PORT}'
 
@@ -446,3 +450,45 @@ def test_http_server_no_application_id(sdc_executor, http_server_pipeline):
         assert resp.status == 200
     finally:
         sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
+
+@http
+@sdc_min_version("3.14.0")
+def test_http_server_multiple_application_ids(sdc_builder, sdc_executor):
+    """HTTP Server Origin with some valid Application-ID must accept any request that contains
+     a valid Application-ID"""
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    http_server = pipeline_builder.add_stage('HTTP Server')
+    http_server.list_of_application_ids = [{"appId":'TEST_ID_FIRST'},{"appId":'TEST_ID_SECOND'}]
+    http_server.data_format = 'JSON'
+    http_server.http_listening_port = 9999
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    http_server >>  trash
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+
+        # Try a GET request using sample data with a valid Application-ID and we should expect a 200 response.
+        http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
+        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}',{'X-SDC-APPLICATION-ID': 'TEST_ID_FIRST'})
+        resp = http_res.getresponse()
+        assert resp.status == 200
+
+        # Try a GET request using sample data with another valid Application-ID and we should expect a 200 response.
+        http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
+        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}',{'X-SDC-APPLICATION-ID': 'TEST_ID_SECOND'})
+        resp = http_res.getresponse()
+        assert resp.status == 200
+
+        # Try a GET request using sample data with a non valid Application-ID and we should expect a 403 response.
+        http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
+        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}',{'X-SDC-APPLICATION-ID': 'TEST_ID_THIRD'})
+        resp = http_res.getresponse()
+        assert resp.status == 403
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
