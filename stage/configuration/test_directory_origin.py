@@ -241,7 +241,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     FILE_CONTENTS_1 = get_text_file_content('1')
     FILE_CONTENTS_2 = get_text_file_content('2')
     number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
-
+    if batch_size_in_recs == 3:
+        number_of_batches = 3
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
@@ -444,7 +445,7 @@ def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, d
     file_content = ''.join(json.dumps(record) for record in json_data)
 
     try:
-        compressed_file_writer(files_directory, data_format, 'NONE', file_content, 'NONE')
+        compressed_file_writer(files_directory, data_format, file_content, 'NONE')
 
         attributes = {'data_format': data_format,
                       'file_name_pattern': '*.json',
@@ -546,7 +547,7 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
                               <request>GET /images/sponsored.gif 304</request>
                           </msg>
                       </root>"""
-
+    EXPECTED_OUTPUT = {'time': [{'value': '8/12/2016 6:01:00'}], 'request': [{'value': 'GET /index.html 200'}]}
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
@@ -558,7 +559,7 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
                                  files_directory=files_directory,
                                  file_name_pattern='xml_delimited_file*',
                                  file_name_pattern_mode='GLOB',
-                                 delimeter_element='msg')
+                                 delimiter_element='msg')
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
         pipeline = pipeline_builder.build()
@@ -566,14 +567,7 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
         output_records = snapshot[directory.instance_name].output
-        item_list = output_records[0].field['msg']
-        rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
-                              for item in item_list]
-        # Parse input xml data to verify results from snapshot.
-        root = ElementTree.fromstring(FILE_CONTENTS)
-        expected_data = [{msg.find('time').text: msg.find('request').text}
-                         for msg in root.iter('msg')]
-        assert rows_from_snapshot == expected_data
+        assert output_records[0].field == EXPECTED_OUTPUT
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
@@ -899,8 +893,7 @@ def test_directory_origin_configuration_file_name_pattern_within_compressed_dire
             file_name = file_name.replace('.json', '*.json')
             json_data = file_content # Used in assertion
             file_content = ''.join(json.dumps(record) for record in file_content)
-            compressed_file_writer(files_directory, data_format, 'NONE', file_content, 'NONE',
-                                   'compression_format_test')
+            compressed_file_writer(files_directory, data_format, file_content, 'NONE', 'compression_format_test')
         else:
             files_directory = create_file_and_directory(file_name, file_content, shell_executor,
                                                                           file_writer)
@@ -1489,7 +1482,7 @@ def test_directory_origin_configuration_max_record_length_in_chars(sdc_builder, 
 
 
 @pytest.mark.parametrize('data_format', ['XML'])
-@pytest.mark.parametrize('max_record_length_in_chars', [238, 240, 260])
+@pytest.mark.parametrize('max_record_length_in_chars', [206, 208, 220])
 def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_builder, sdc_executor, shell_executor,
                                                                        file_writer, data_format,
                                                                        max_record_length_in_chars):
@@ -1506,7 +1499,7 @@ def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_build
                                   <request>GET /index.html 200</request>
                               </msg>
                           </root>"""
-
+    EXPECTED_OUTPUT = {'time': [{'value': '8/12/2016 6:01:00'}], 'request': [{'value': 'GET /index.html 200'}]}
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
@@ -1518,7 +1511,7 @@ def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_build
                                  files_directory=files_directory,
                                  file_name_pattern='xml_max_record_length_in_chars_file*',
                                  file_name_pattern_mode='GLOB',
-                                 delimeter_element='msg',
+                                 delimiter_element='msg',
                                  max_record_length_in_chars=max_record_length_in_chars)
         trash = pipeline_builder.add_stage('Trash')
         directory >> trash
@@ -1528,17 +1521,10 @@ def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_build
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
         output_records = snapshot[directory.instance_name].output
 
-        if max_record_length_in_chars < 240:
+        if max_record_length_in_chars < 208:
             assert not snapshot[directory].output
         else:
-            item_list = output_records[0].field['msg']
-            rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
-                                  for item in item_list]
-            # Parse input xml data to verify results from snapshot.
-            root = ElementTree.fromstring(FILE_CONTENTS)
-            expected_data = [{msg.find('time').text: msg.find('request').text}
-                             for msg in root.iter('msg')]
-            assert rows_from_snapshot == expected_data
+            assert output_records[0].field == EXPECTED_OUTPUT
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
@@ -1847,22 +1833,18 @@ def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executo
     We will check number of records / files read is greater when rate is set to 1 MB as compare to 0.5 MB value.
     """
     files_directory = os.path.join('/tmp', get_random_string())
-
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
         write_multiple_files(sdc_builder, sdc_executor, files_directory, 'rate_per')
-
         def run_pipeline(attributes):
             directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
-
             sdc_executor.add_pipeline(pipeline)
             sdc_executor.start_pipeline(pipeline)
             time.sleep(1)
             sdc_executor.stop_pipeline(pipeline)
             directory_pipeline_history = sdc_executor.get_pipeline_history(pipeline)
             return directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
         #1st run with rate per second as 0.5 MB
         attributes = {'data_format': data_format,
                       'file_name_pattern': 'rate_*',
@@ -1870,11 +1852,9 @@ def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executo
                       'files_directory': files_directory,
                       'rate_per_second': '${0.5 * MB}'}
         msgs_result_count1 = run_pipeline(attributes)
-
         #2nd run with rate per second as 1 MB
         attributes['rate_per_second'] = '${1 * MB}'
         msgs_result_count2 = run_pipeline(attributes)
-
         # As there is no linear relation between the two we can not do exact assertions.
         # We can at least expect more number of records read when this value is increased.
         assert msgs_result_count2 > msgs_result_count1
@@ -2188,8 +2168,8 @@ def get_directory_to_trash_pipeline(sdc_builder, attributes):
     directory = pipeline_builder.add_stage('Directory')
     directory.set_attributes(**attributes)
     trash = pipeline_builder.add_stage('Trash')
-    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    directory >> [pipeline_finisher, trash]
+    # pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    directory >> [trash]
     pipeline = pipeline_builder.build()
     return directory, pipeline
 
