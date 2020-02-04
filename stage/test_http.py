@@ -428,3 +428,21 @@ def test_http_server_method_restriction(sdc_executor, http_server_pipeline):
     assert resp.status == 405
 
     sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
+
+
+@http
+@sdc_min_version("3.14.0")
+def test_http_server_no_application_id(sdc_executor, http_server_pipeline):
+    """HTTP Server Origin with no Application-ID must accept any request that does not contain any Application-ID"""
+    server_runtime_parameters = {'HTTP_PORT': 9999,
+                                 'APPLICATION_ID': ''}
+    sdc_executor.start_pipeline(http_server_pipeline.pipeline, server_runtime_parameters)
+
+    try:
+        # Try a GET request using sample data with no application ID and we should expect a 200 response.
+        http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
+        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}')
+        resp = http_res.getresponse()
+        assert resp.status == 200
+    finally:
+        sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
