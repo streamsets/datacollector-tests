@@ -318,3 +318,68 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)
+
+
+@azure('eventhub')
+@pytest.mark.parametrize('include_plain_text_credentials', [True, False])
+def test_azure_event_hub_consumer_export(sdc_builder, sdc_executor, include_plain_text_credentials):
+    """Verify that the Azure IoT/Event Hub Consumer includes/masks sensitive fields correctly."""
+    EXPECTED_CONNECTION_STRING_KEY = 'Connection String Key' if include_plain_text_credentials else ''
+    EXPECTED_STORAGE_ACCOUNT_KEY = 'Storage Account Key' if include_plain_text_credentials else ''
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    azure_iot_event_hub_consumer = pipeline_builder.add_stage('Azure IoT/Event Hub Consumer')
+    azure_iot_event_hub_consumer.set_attributes(connection_string_key='Connection String Key',
+                                                container_name='Container Name',
+                                                data_format='JSON',
+                                                event_hub_name='Event Hub Name',
+                                                namespace_name='Namespace Name',
+                                                shared_access_policy_name='Shared Access Policy Name',
+                                                storage_account_key='Storage Account Key',
+                                                storage_account_name='Storage Account Name')
+    trash = pipeline_builder.add_stage('Trash')
+    azure_iot_event_hub_consumer >> trash
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    exported_json = sdc_executor.export_pipeline(pipeline,
+                                                 include_plain_text_credentials=include_plain_text_credentials)
+
+    # After exporting the pipeline, we import it into a PipelineBuilder to make accessing attributes easier.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.import_pipeline(pipeline=exported_json)
+    azure_iot_event_hub_consumer = pipeline_builder.build().origin_stage
+
+    assert azure_iot_event_hub_consumer.connection_string_key == EXPECTED_CONNECTION_STRING_KEY
+    assert azure_iot_event_hub_consumer.storage_account_key == EXPECTED_STORAGE_ACCOUNT_KEY
+
+
+@azure('eventhub')
+@pytest.mark.parametrize('include_plain_text_credentials', [True, False])
+def test_azure_event_hub_producer_export(sdc_builder, sdc_executor, include_plain_text_credentials):
+    """Verify that the Azure Event Hub Producer includes/masks sensitive fields correctly."""
+    EXPECTED_CONNECTION_STRING_KEY = 'Connection String Key' if include_plain_text_credentials else ''
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    azure_event_hub_producer = pipeline_builder.add_stage('Azure Event Hub Producer')
+    azure_event_hub_producer.set_attributes(connection_string_key='Connection String Key',
+                                            data_format='JSON',
+                                            event_hub_name='Event Hub Name',
+                                            namespace_name='Namespace Name',
+                                            shared_access_policy_name='Shared Access Policy Name')
+    dev_data_generator >> azure_event_hub_producer
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    exported_json = sdc_executor.export_pipeline(pipeline,
+                                                 include_plain_text_credentials=include_plain_text_credentials)
+
+    # After exporting the pipeline, we import it into a PipelineBuilder to make accessing attributes easier.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.import_pipeline(pipeline=exported_json)
+    # The Pipeline.stages attribute returns a list of stages with the origin at index 0, so element 1 returns the
+    # destination.
+    azure_event_hub_producer = pipeline_builder.build().stages[1]
+    assert azure_event_hub_producer.connection_string_key == EXPECTED_CONNECTION_STRING_KEY
