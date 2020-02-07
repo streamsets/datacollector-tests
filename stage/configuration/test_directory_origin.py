@@ -1021,9 +1021,9 @@ def test_grok_pattern(sdc_builder, sdc_executor, stage_attributes, grok_pattern_
         if grok_pattern_is_correct:
             assert records == [EXPECTED_OUTPUT]
         else:
-            # Note: opened SDC-13184 because malformed patterns still lead to normal record output. Test
-            # should be updated to also check that the error records are being populated once the bug is fixed.
-            assert not records and error_records
+            # If grok pattern doesn't match the input, no records should go through and there should be stage errors
+            # raised.
+            assert not records and sdc_executor.get_stage_errors(pipeline, directory)
     finally:
         if not keep_data:
             shell_executor(f'rm -r {files_directory}')
