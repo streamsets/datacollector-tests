@@ -1827,39 +1827,54 @@ def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executo
         shell_executor(f'rm -r {files_directory}')
 
 
-@pytest.mark.parametrize('data_format', ['WHOLE_FILE'])
-def test_directory_origin_configuration_rate_per_second(sdc_builder, sdc_executor, data_format, shell_executor):
-    """Test if Directory origin honours rate_per_second attribute. Here we will run pipeline with its 2 values
-    We will check number of records / files read is greater when rate is set to 1 MB as compare to 0.5 MB value.
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE'}])
+def test_rate_per_second(sdc_builder, sdc_executor, stage_attributes, shell_executor, file_writer, keep_data):
+    """Test if Directory origin honors "Rate Per Second" configuration.
+
+    Pipeline will be run four times with configuration set to different values
+    and the expected proportionality of the value and the pipeline throughput checked.
     """
+    FILE_NAME = 'file.txt'
+    DATA = 'a' * 1024  # 1 KB file. This needs to be small as larger values make the Jython processor we use to
+                       # write the file go crazy.
+
     files_directory = os.path.join('/tmp', get_random_string())
+    logger.debug('Creating files directory %s ...', files_directory)
+    shell_executor(f'mkdir {files_directory}')
+
     try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
-        write_multiple_files(sdc_builder, sdc_executor, files_directory, 'rate_per')
-        def run_pipeline(attributes):
-            directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
-            sdc_executor.add_pipeline(pipeline)
-            sdc_executor.start_pipeline(pipeline)
-            time.sleep(1)
-            sdc_executor.stop_pipeline(pipeline)
-            directory_pipeline_history = sdc_executor.get_pipeline_history(pipeline)
-            return directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        #1st run with rate per second as 0.5 MB
-        attributes = {'data_format': data_format,
-                      'file_name_pattern': 'rate_*',
-                      'file_name_pattern_mode': 'GLOB',
-                      'files_directory': files_directory,
-                      'rate_per_second': '${0.5 * MB}'}
-        msgs_result_count1 = run_pipeline(attributes)
-        #2nd run with rate per second as 1 MB
-        attributes['rate_per_second'] = '${1 * MB}'
-        msgs_result_count2 = run_pipeline(attributes)
-        # As there is no linear relation between the two we can not do exact assertions.
-        # We can at least expect more number of records read when this value is increased.
-        assert msgs_result_count2 > msgs_result_count1
+        file_writer(os.path.join(files_directory, FILE_NAME), DATA)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        # Buffer size needs to be set to a small value to go along with the small file we're aiming to read.
+        directory = pipeline_builder.add_stage('Directory').set_attributes(buffer_size_in_bytes=10,
+                                                                           files_directory=files_directory,
+                                                                           file_name_pattern=FILE_NAME,
+                                                                           **stage_attributes)
+        # Using Whole File data format at the origin requires a destination that supports it, as well. Local FS
+        # is an easy one to use.
+        local_fs = pipeline_builder.add_stage('Local FS').set_attributes(data_format='WHOLE_FILE',
+                                                                         directory_template='/tmp',
+                                                                         file_name_expression=FILE_NAME,
+                                                                         file_type='WHOLE_FILE',
+                                                                         files_prefix='')
+        directory >> local_fs
+        pipeline = pipeline_builder.build()
+        pipeline_throughputs = []
+        for rate_per_second in ['1000', '500', '100', '50']:
+            directory.rate_per_second = rate_per_second
+            benchmark_data = sdc_executor.benchmark_pipeline(pipeline, record_count=1, runs=1)
+            throughput = benchmark_data['throughput_mean']
+            logger.info('Pipeline with rate per second of %s had mean throughput of %s records/s',
+                        rate_per_second,
+                        throughput)
+            pipeline_throughputs.append(throughput)
+            shell_executor(f"rm {os.path.join('/tmp', FILE_NAME)}")
+
+        # The rate_per_second we iterate over should result in monotonically decreasing throughput values.
+        assert pipeline_throughputs[0] > pipeline_throughputs[1] > pipeline_throughputs[2] > pipeline_throughputs[3]
     finally:
-        shell_executor(f'rm -r {files_directory}')
+        if not keep_data:
+            shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
