@@ -189,7 +189,7 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
         # Put files in the azure storage file system
         dl_fs = azure.datalake.file_system
 
-        dl_fs.mkdir({directory_name})
+        dl_fs.mkdir(directory_name)
         dl_fs.touch(f'{directory_name}/{file_name}')
         dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
         # Build the origin pipeline
@@ -236,7 +236,7 @@ def test_parse_timestamp_datalake_origin(sdc_builder, sdc_executor, azure):
         # Put files in the azure storage file system
         dl_fs = azure.datalake.file_system
 
-        dl_fs.mkdir({directory_name})
+        dl_fs.mkdir(directory_name)
         dl_fs.touch(f'{directory_name}/{file_name}')
         dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
         time_modification_time = int(time.time())
@@ -291,7 +291,7 @@ def test_datalake_origin_stop_go(sdc_builder, sdc_executor, azure):
         # Put files in the azure storage file system
         dl_fs = azure.datalake.file_system
 
-        dl_fs.mkdir({directory_name})
+        dl_fs.mkdir(directory_name)
         dl_fs.touch(f'{directory_name}/{file_name}')
         dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
         # Build the origin pipeline
@@ -360,7 +360,7 @@ def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
         # Put files in the azure storage file system
         dl_fs = azure.datalake.file_system
 
-        dl_fs.mkdir({directory_name})
+        dl_fs.mkdir(directory_name)
         dl_fs.touch(f'{directory_name}/{file_name}')
         dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
         # Build the origin pipeline
@@ -423,7 +423,7 @@ def test_datalake_origin_resume_offset(sdc_builder, sdc_executor, azure):
         # Put files in the azure storage file system
         dl_fs = azure.datalake.file_system
 
-        dl_fs.mkdir({directory_name})
+        dl_fs.mkdir(directory_name)
         dl_fs.touch(f'{directory_name}/{file_name}')
         dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
         # Build the origin pipeline
