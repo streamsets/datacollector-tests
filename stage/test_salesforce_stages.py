@@ -639,6 +639,100 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
         _clean_up(sdc_executor, pipeline, client, contact_ids)
 
 
+@pytest.mark.parametrize(('missing_values_behavior'), [
+    'SEND_TO_ERROR',
+    'PASS_RECORD_ON'
+])
+@salesforce
+def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforce, missing_values_behavior):
+    """Test SDC-13390 - attempt to retrieve a deleted record
+    Pipeline will attempt to enrich records with the 'LastName' of contacts by
+    adding a field as 'surName'. Depending on missing_values_behavior, the
+    record with the deleted id should be passed along the pipeline or sent to
+    error.
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_lookup >> trash
+    """
+    client = salesforce.client
+    contact_ids = None
+    pipeline = None
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        result = client.bulk.Contact.insert(DATA_TO_INSERT)
+        contact_ids = [{'Id': item['id']}
+                       for item in result]
+
+        # Delete a record
+        client.Contact.delete(contact_ids[1]['Id'])
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        # Lookup by record Id's
+        lookup_data = ['Id'] + [row['Id'] for row in contact_ids]
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
+
+        salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
+
+        # Map LastName to surName
+        field_mappings = [dict(dataType='USE_SALESFORCE_TYPE',
+                               salesforceField='LastName',
+                               sdcField='/surName')]
+
+        # Ask for all of the fields we set, so that we can assert their values
+        # If we don't find a record in Salesforce, we want to pass the record along the pipeline
+        salesforce_lookup.set_attributes(lookup_mode='RETRIEVE',
+                                         id_field='/Id',
+                                         salesforce_fields=','.join(DATA_TO_INSERT[0].keys()),
+                                         object_type=CONTACT,
+                                         missing_values_behavior=missing_values_behavior,
+                                         field_mappings=field_mappings)
+
+        trash = pipeline_builder.add_stage('Trash')
+        dev_raw_data_source >> salesforce_lookup >> trash
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # We need to look for surName field instead of LastName
+        lookup_expected_data = copy.deepcopy(DATA_TO_INSERT)
+        for record in lookup_expected_data:
+            record['surName'] = record.pop('LastName')
+
+        rows_from_snapshot = [record.field
+                              for record in snapshot[salesforce_lookup].output]
+
+        if (missing_values_behavior == 'PASS_RECORD_ON'):
+            # Middle record should just have its Id field
+            assert rows_from_snapshot[1]['Id'] == contact_ids[1]['Id']
+        else:
+            assert len(snapshot[salesforce_lookup].error_records) == 1
+            assert snapshot[salesforce_lookup].error_records[0].field['Id'] == contact_ids[1]['Id']
+
+        data_from_snapshot = [{field:record[field] for field in record if field not in ['Id', 'SystemModstamp']}
+                              for record in rows_from_snapshot]
+
+        # Remove the middle element(s) so we can do the next assert
+        if (missing_values_behavior == 'PASS_RECORD_ON'):
+            del(data_from_snapshot[1])
+
+        del(lookup_expected_data[1])
+
+        assert data_from_snapshot == lookup_expected_data
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        if contact_ids:
+            logger.info('Deleting records ...')
+            client.bulk.Contact.delete(contact_ids)
+
+
+# Test SDC-9251, SDC-9493
 @salesforce
 @pytest.mark.parametrize(('api'), [
     'soap',
