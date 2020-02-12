@@ -686,7 +686,6 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(fetch_size=1,
-            max_batch_size=1,
             table_configs=table_configs,
             use_direct_table_query = use_table
         )
