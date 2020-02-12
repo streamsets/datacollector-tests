@@ -154,8 +154,8 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
-        sql_server_cdc.set_attributes(max_pool_size=no_of_threads,
-                                      no_of_threads=no_of_threads,
+        sql_server_cdc.set_attributes(maximum_pool_size=no_of_threads,
+                                      number_of_threads=no_of_threads,
                                       table_configs=table_configs)
 
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
