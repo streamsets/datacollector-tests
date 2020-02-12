@@ -831,17 +831,7 @@ def test_provision_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
     EMR origin pipeline:
         emr_origin >> s3_destination
     """
-    # Set configurations so that pipeline can create Amazon EMR.
-    pipeline_configs = {'amazonEMRConfig.provisionNewCluster': True,
-                        'amazonEMRConfig.clusterPrefix': 'stf_test',
-                        'amazonEMRConfig.terminateCluster': True,
-                        'amazonEMRConfig.ec2SubnetId': aws.ec2_subnet_id,
-                        'amazonEMRConfig.masterSecurityGroup': aws.ec2_security_group,
-                        'amazonEMRConfig.slaveSecurityGroup': aws.ec2_security_group,
-                        'amazonEMRConfig.instanceCount': 1,
-                        'amazonEMRConfig.masterInstanceType': 'M4_LARGE',
-                        'amazonEMRConfig.slaveInstanceType': 'M4_LARGE'}
-    _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs)
+    _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws)
 
 
 @aws('existingemr')
@@ -856,11 +846,10 @@ def test_existing_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
     EMR origin pipeline:
         emr_origin >> s3_destination
     """
-    pipeline_configs = {'amazonEMRConfig.clusterId': aws.emr_cluster_id}
-    _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs)
+    _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws)
 
 
-def _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs):
+def _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
     s3_bucket = aws.emr_s3_bucket_name
     s3_input_key = '{0}/{1}/input'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
     s3_output_key = '{0}/{1}/output'.format(S3_SANDBOX_PREFIX, get_random_string(string.ascii_letters, 10))
@@ -888,16 +877,11 @@ def _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs):
 
     emr_origin >> s3_destination
 
+    aws.sdc_pipeline_configurations.update({
+        'amazonEMRConfig.s3LogUri': f's3://{s3_staging_bucket}/{s3_logging_key}',
+        'amazonEMRConfig.s3StagingUri': f's3://{s3_staging_bucket}/{s3_staging_key}',
+    })
     pipeline = builder.build(title='Amazon EMR to S3 pipeline').configure_for_environment(aws)
-    configs = {'executionMode': 'EMR_BATCH',
-               'amazonEMRConfig.userRegion': aws.sdc_formatted_region,
-               'amazonEMRConfig.accessKey': aws.aws_access_key_id,
-               'amazonEMRConfig.secretKey': aws.aws_secret_access_key,
-               'amazonEMRConfig.s3StagingUri': f's3://{s3_staging_bucket}/{s3_staging_key}',
-               'amazonEMRConfig.s3LogUri': f's3://{s3_staging_bucket}/{s3_logging_key}',
-               'amazonEMRConfig.enableEMRDebugging': False}
-    configs.update(pipeline_configs)
-    pipeline.configuration.update(configs)
     sdc_executor.add_pipeline(pipeline)
 
     client = aws.s3
@@ -919,15 +903,17 @@ def _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws, pipeline_configs):
 
         assert s3_contents == [raw_str] * s3_obj_count
     finally:
-        logger.info('Deleting input S3 data ...')
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_input_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        logger.info('Deleting input S3 data from bucket %s with location %s ...', s3_bucket, s3_input_key)
+        aws.delete_s3_data(s3_bucket, s3_input_key)
 
-        logger.info('Deleting output S3 data ...')
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_output_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        logger.info('Deleting output S3 data from bucket %s with location %s ...', s3_bucket, s3_output_key)
+        aws.delete_s3_data(s3_bucket, s3_output_key)
+
+        logger.info('Deleting staging S3 data from bucket %s with location %s ...', s3_staging_bucket, s3_staging_key)
+        aws.delete_s3_data(s3_staging_bucket, s3_staging_key)
+
+        logger.info('Deleting logging S3 data from bucket %s with location %s ...', s3_staging_bucket, s3_logging_key)
+        aws.delete_s3_data(s3_staging_bucket, s3_logging_key)
 
 
 @aws('sqs')
@@ -1031,10 +1017,11 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
         s3_contents = s3_obj_key['Body'].read().decode().strip()
         assert s3_contents == data
     finally:
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+        logger.info('Deleting output S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_dest_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_dest_key)
 
 
 @aws('s3')
