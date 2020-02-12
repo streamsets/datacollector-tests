@@ -777,7 +777,7 @@ def produce_kafka_messages_protobuf(topic, sdc_builder, sdc_executor, cluster, m
                                           library=cluster.kafka.standalone_stage_lib)
     kafka_destination.topic = topic
     kafka_destination.set_attributes(data_format='PROTOBUF', message_type='Contact',
-                                     protobuf_descriptor_file=PROTOBUF_FILE_PATH, delimited_messages=False)
+                                     protobuf_descriptor_file=PROTOBUF_FILE_PATH)
 
     dev_raw_data_source >> kafka_destination
     kafka_destination_pipeline = builder.build(
