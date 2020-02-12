@@ -287,8 +287,7 @@ def test_pulsar_origin_standalone_json(sdc_builder, sdc_executor, pulsar):
 
     pulsar_producer = get_pulsar_producer_stage(pulsar_producer_pipeline_builder, '${record:value(\'/Topic\')}')
     pulsar_producer.set_attributes(data_format='JSON',
-                                   partition_type='ROUND_ROBIN',
-                                   compresion_type='LZ4')
+                                   partition_type='ROUND_ROBIN')
 
     dev_raw_data_source >> pulsar_producer
     pulsar_producer_pipeline = pulsar_producer_pipeline_builder.build(
