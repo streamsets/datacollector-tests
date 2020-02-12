@@ -636,7 +636,7 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
-    jdbc_query_executor.set_attributes(sql_query=query_str)
+    jdbc_query_executor.set_attributes(sql_queries=[query_str])
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> record_deduplicator >> jdbc_query_executor
@@ -655,6 +655,62 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
+
+
+@database
+@sdc_min_version('3.14.0')  # multiple queries execution
+def test_jdbc_query_executor_multiple_queries(sdc_builder, sdc_executor, database):
+    """Simple JDBC Query Executor test.
+    Pipeline will insert records into database and then using sqlalchemy, the verification will happen
+    that correct data is inserted into database.
+
+    This is achieved by using a deduplicator which assures us that there is only one ingest to database.
+    The pipeline looks like:
+        dev_raw_data_source >> record_deduplicator >> jdbc_query_executor
+                               record_deduplicator >> trash
+    """
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
+    table = _create_table(table_name, database)
+
+    ROWS_IN_DATABASE_UPDATED = [
+        {'id': 1, 'name': 'Alex'},
+        {'id': 2, 'name': 'Alex'},
+        {'id': 3, 'name': 'Alex'}
+    ]
+
+    DATA = ['id,name'] + [','.join(str(item) for item in rec.values()) for rec in ROWS_IN_DATABASE]
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(DATA))
+
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+
+    jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
+    query_str1 = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
+    query_str2 = f"UPDATE {table_name} SET name = 'Alex' WHERE name = '${{record:value('/name')}}'"
+
+    jdbc_query_executor.set_attributes(sql_queries=[query_str1, query_str2])
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> record_deduplicator >> jdbc_query_executor
+    record_deduplicator >> trash
+    pipeline = pipeline_builder.build(title='JDBC Query Executor').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(RAW_DATA) - 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+        assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE_UPDATED]
+    finally:
+        logger.info(f'Dropping table {table_name} in {database.type} database ...')
+        table.drop(database.engine)
+
 
 @database
 @sdc_min_version('3.11.0')
@@ -681,7 +737,7 @@ def test_jdbc_query_executor_successful_query_event(sdc_builder, sdc_executor, d
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor.set_attributes(sql_query=query_str)
+    jdbc_query_executor.set_attributes(sql_queries=[query_str])
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash1 = pipeline_builder.add_stage('Trash')
@@ -710,6 +766,7 @@ def test_jdbc_query_executor_successful_query_event(sdc_builder, sdc_executor, d
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+
 @database
 @sdc_min_version('3.11.0')
 def test_jdbc_query_executor_insert_query_result_count(sdc_builder, sdc_executor, database):
@@ -736,7 +793,7 @@ def test_jdbc_query_executor_insert_query_result_count(sdc_builder, sdc_executor
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor.set_attributes(sql_query=query_str, include_query_result_count_in_events=True)
+    jdbc_query_executor.set_attributes(sql_queries=[query_str], include_query_result_count_in_events=True)
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash1 = pipeline_builder.add_stage('Trash')
@@ -799,10 +856,10 @@ def test_jdbc_query_executor_lifecycle_events(sdc_builder, sdc_executor, databas
     trash = builder.add_stage('Trash')
 
     start_stage = builder.add_start_event_stage('JDBC Query')
-    start_stage.set_attributes(sql_query=query)
+    start_stage.set_attributes(sql_queries=[query])
 
     stop_stage = builder.add_stop_event_stage('JDBC Query')
-    stop_stage.set_attributes(sql_query=query)
+    stop_stage.set_attributes(sql_queries=[query])
 
     source >> trash
 
@@ -824,6 +881,7 @@ def test_jdbc_query_executor_lifecycle_events(sdc_builder, sdc_executor, databas
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+
 @database
 def test_jdbc_query_executor_failure_state(sdc_builder, sdc_executor, database):
     """Verify that the executor is properly called with the proper state on pipeline initialization failure."""
@@ -844,7 +902,7 @@ def test_jdbc_query_executor_failure_state(sdc_builder, sdc_executor, database):
     trash = builder.add_stage('Trash')
 
     stop_stage = builder.add_stop_event_stage('JDBC Query')
-    stop_stage.set_attributes(sql_query=query)
+    stop_stage.set_attributes(sql_queries=[query])
 
     source >> trash
 
@@ -864,6 +922,7 @@ def test_jdbc_query_executor_failure_state(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
+
 
 @database
 @sdc_min_version('3.11.0')
@@ -892,9 +951,9 @@ def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor
     query_str2 = f"SELECT * FROM {table_name}"
 
     jdbc_query_executor1 = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor1.set_attributes(sql_query=query_str1)
+    jdbc_query_executor1.set_attributes(sql_queries=[query_str1])
     jdbc_query_executor2 = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor2.set_attributes(sql_query=query_str2, include_query_result_count_in_events=True)
+    jdbc_query_executor2.set_attributes(sql_queries=[query_str2], include_query_result_count_in_events=True)
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash1 = pipeline_builder.add_stage('Trash')
@@ -925,6 +984,7 @@ def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+
 @database
 @sdc_min_version('3.11.0')
 def test_jdbc_query_executor_failed_query_event(sdc_builder, sdc_executor, database):
@@ -950,7 +1010,7 @@ def test_jdbc_query_executor_failed_query_event(sdc_builder, sdc_executor, datab
     query_str = f"INSERT INTO {invalid_table} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor.set_attributes(sql_query=query_str)
+    jdbc_query_executor.set_attributes(sql_queries=[query_str])
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash1 = pipeline_builder.add_stage('Trash')
@@ -979,6 +1039,7 @@ def test_jdbc_query_executor_failed_query_event(sdc_builder, sdc_executor, datab
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+
 @database
 @sdc_min_version('3.10.0')
 @pytest.mark.parametrize('enable_parallel_execution', [True, False])
@@ -992,7 +1053,7 @@ def test_jdbc_query_executor_parallel_query_execution(sdc_builder, sdc_executor,
         dev_raw_data_source >> jdbc_query_executor
     """
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = get_random_string(string.ascii_uppercase, 20)
     table = _create_table(table_name, database)
 
     # first, the inserts - they will run in parallel,
@@ -1003,7 +1064,7 @@ def test_jdbc_query_executor_parallel_query_execution(sdc_builder, sdc_executor,
     for rec in ROWS_IN_DATABASE:
         statements.extend([f"INSERT INTO {table_name} (name, id) VALUES ('{rec['name']}', {rec['id']})",
                            f"UPDATE {table_name} SET name = 'bob' WHERE id = {rec['id']}",
-                           f"UPDATE {table_name} SET name = 'Merrick' WHERE id = {rec['id']}"])
+                           f"UPDATE {table_name} SET name = 'MERRICK' WHERE id = {rec['id']}"])
     # convert to string - Dev Raw Data Source Data Format tab does not seem
     # to "unroll" the array into newline-terminated records.
     statements = "\n".join(statements)
@@ -1013,7 +1074,7 @@ def test_jdbc_query_executor_parallel_query_execution(sdc_builder, sdc_executor,
     dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=statements)
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor.set_attributes(sql_query="${record:value('/text')}",
+    jdbc_query_executor.set_attributes(sql_queries=["${record:value('/text')}"],
                                        enable_parallel_queries=enable_parallel_execution,
                                        maximum_pool_size=2,
                                        minimum_idle_connections=2)
@@ -1028,9 +1089,9 @@ def test_jdbc_query_executor_parallel_query_execution(sdc_builder, sdc_executor,
         sdc_executor.stop_pipeline(pipeline)
 
         result = database.engine.execute(table.select())
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[1]) # order by id
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
         result.close()
-        assert data_from_database == [('Merrick', record['id']) for record in ROWS_IN_DATABASE]
+        assert data_from_database == [('MERRICK', record['id']) for record in ROWS_IN_DATABASE]
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
