@@ -381,7 +381,7 @@ def test_http_destination(sdc_builder, sdc_executor, http_client, method, reques
         dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
         http_client_destination = builder.add_stage('HTTP Client', type='destination')
         # for POST/PATCH, we post 'raw_data' and expect 'expected_dict' as response data
-        http_client_destination.set_attributes(data_format='JSON', default_request_content_type='application/json',
+        http_client_destination.set_attributes(data_format='JSON',
                                                headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                                http_method=method,
                                                resource_url=mock_uri,
