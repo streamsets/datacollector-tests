@@ -107,7 +107,7 @@ def test_cassandra_destination_no_batch(sdc_builder, sdc_executor, cassandra):
         {'field': '/contact/zip_code', 'columnName': 'zip_code'},
         {'field': '/contact/phone', 'columnName': 'phone'}],
                                          fully_qualified_table_name=f'{cassandra_keyspace}.{cassandra_table}',
-                                         protocol_version='V4', disable_batch_insert=True)
+                                         protocol_version='V4', enable_batches=False)
     if cassandra.kerberos_enabled:
         cassandra_destination.set_attributes(authentication_provider='KERBEROS')
     else:
