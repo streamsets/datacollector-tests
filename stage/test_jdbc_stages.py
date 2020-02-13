@@ -2502,7 +2502,6 @@ def test_jdbc_multitable_oracle_split_by_date(sdc_builder, sdc_executor, databas
         }]
         origin.number_of_threads = 2
         origin.maximum_pool_size = 2
-        origin.max_batch_size_records = 30
 
         finisher = builder.add_stage('Pipeline Finisher Executor')
         finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
