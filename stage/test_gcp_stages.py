@@ -905,8 +905,7 @@ def test_google_storage_destination(sdc_builder, sdc_executor, gcp):
     google_cloud_storage.set_attributes(bucket=bucket_name,
                                         common_prefix='gcs-test',
                                         partition_prefix='${YYYY()}/${MM()}/${DD()}/${hh()}/${mm()}',
-                                        data_format='TEXT',
-                                        file_suffix='txt')
+                                        data_format='TEXT')
 
     dev_raw_data_source >> google_cloud_storage
 
