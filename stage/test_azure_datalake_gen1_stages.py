@@ -157,8 +157,7 @@ def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azur
                                          if adls_version == ADLS_LEGACY else f'/{directory_name}',
                                          files_prefix=files_prefix,
                                          files_suffix=files_suffix,
-                                         max_records_in_file=1,
-                                         generate_events=True)
+                                         max_records_in_file=1)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> azure_data_lake_store >= trash
