@@ -628,7 +628,7 @@ def test_ftp_destination_create_path_pathrelative_finisher(sdc_builder, sdc_exec
     sftp_ftp_client = builder.add_stage(name=FTP_DEST_CLIENT_NAME)
     ftp_file_name_path = os.path.join(local_tmp_directory, ftp_file_name)
     sftp_ftp_client.set_attributes(file_name_expression=ftp_file_name_path,
-                                   create_path=True, path_relative_to_user_homer_directory=False)
+                                   create_path=True, path_relative_to_user_home_directory=False)
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(
