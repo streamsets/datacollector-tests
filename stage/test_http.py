@@ -258,7 +258,6 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
         http_client_processor.set_attributes(data_format='JSON', http_method='GET',
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}',
-                                             target_field=f'/',
                                              multiple_values_behavior='ALL_AS_LIST')
         trash = builder.add_stage('Trash')
 
