@@ -677,7 +677,7 @@ def produce_lfs_messages_protobuf(ftp_file, sdc_builder, sdc_executor, message, 
 
     local_fs.set_attributes(file_type='TEXT', files_prefix=ftp_file, directory_template=TMPOUT,
                             data_format='PROTOBUF', message_type='Contact',
-                            protobuf_descriptor_file=PROTOBUF_FILE_PATH, delimited_messages=False)
+                            protobuf_descriptor_file=PROTOBUF_FILE_PATH)
 
     dev_raw_data_source >> local_fs
 
