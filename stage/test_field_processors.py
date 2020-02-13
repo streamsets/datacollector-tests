@@ -780,7 +780,7 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
 # SDC-11561: File Type Converter doesn't work properly with null in MAP and LIST types
 @sdc_min_version('3.9.0') # For the JavaScript processor use
 def test_field_type_converter_null_map(sdc_builder, sdc_executor):
-    """Make sure that the origin doesn't fail (does a no-op) on a map that is null."""
+    """Make sure that the processor doesn't fail (does a no-op) on a map that is null."""
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
@@ -789,7 +789,7 @@ def test_field_type_converter_null_map(sdc_builder, sdc_executor):
     origin.stop_after_first_batch = True
 
     javascript = builder.add_stage('JavaScript Evaluator')
-    javascript.script_record_type = 'SDC_RECORDS'
+    javascript.record_type = 'SDC_RECORDS'
     javascript.init_script = ''
     javascript.destroy_script = ''
     javascript.script =  """
