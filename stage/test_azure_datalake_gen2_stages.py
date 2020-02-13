@@ -369,7 +369,6 @@ def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
         azure_data_lake_store_origin = builder.add_stage(name=SOURCE_STAGE_NAME)
         azure_data_lake_store_origin.set_attributes(data_format='TEXT',
                                                     files_directory=f'/{directory_name}',
-                                                    produce_events=True,
                                                     file_name_pattern='*')
 
         pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')

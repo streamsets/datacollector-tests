@@ -1664,7 +1664,6 @@ def test_native_parquet_timestamps(sdc_builder, sdc_executor, cluster):
                              data_format='AVRO',
                              directory_in_header=True,
                              use_roll_attribute=True,
-                             produce_events=True,
                              max_records_in_file=1)
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')

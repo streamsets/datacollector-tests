@@ -696,7 +696,7 @@ def move_directory_messages_protobuf_ftp(ftp_file, sdc_builder, sdc_executor, me
     directory = builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='WHOLE_FILE', file_name_pattern=f'{ftp_file}*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=TMPOUT,
-                             process_subdirectories=False, read_order='TIMESTAMP', produce_events=True)
+                             process_subdirectories=False, read_order='TIMESTAMP')
 
     sftp_ftp_client = builder.add_stage(name=FTP_DEST_CLIENT_NAME)
     sftp_ftp_client.file_name_expression = ftp_file
@@ -745,7 +745,7 @@ def move_directory_messages_SDC_record_ftp(ftp_file, sdc_builder, sdc_executor, 
     directory = builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='WHOLE_FILE', file_name_pattern=f'{ftp_file}*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=TMPOUT,
-                             process_subdirectories=False, read_order='TIMESTAMP', produce_events=True)
+                             process_subdirectories=False, read_order='TIMESTAMP')
 
     sftp_ftp_client = builder.add_stage(name=FTP_DEST_CLIENT_NAME)
     sftp_ftp_client.file_name_expression = ftp_file
