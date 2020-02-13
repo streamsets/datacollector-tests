@@ -336,7 +336,6 @@ def test_kafka_write_string_records_round_robin(sdc_builder, sdc_executor, clust
     kafka_destination.topic = topic
     kafka_destination.data_format = 'TEXT'
     kafka_destination.set_attributes(partition_strategy ='ROUND_ROBIN',
-                                     batch_wait_time_in_ms=20000,
                                      topic=topic)
 
     dev_raw_data_source >> kafka_destination
