@@ -21,12 +21,120 @@ import string
 import tempfile
 import time
 import csv
+import textwrap
 
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+FILE_WRITER_SCRIPT = """
+    file_contents = '''{file_contents}'''
+    for record in records:
+        with open('{filepath}', 'w') as f:
+            f.write(file_contents.decode('utf8').encode('{encoding}'))
+"""
+
+FILE_WRITER_SCRIPT_BINARY = """
+    with open('{filepath}', 'wb') as f:
+        f.write({file_contents})
+"""
+
+
+@pytest.fixture
+def file_writer(sdc_executor):
+    """Writes a file to SDC's local FS.
+
+    Args:
+        filepath (:obj:`str`): The absolute path to which to write the file.
+        file_contents (:obj:`str`): The file contents.
+        encoding (:obj:`str`, optional): The file encoding. Default: ``'utf8'``
+        file_data_type (:obj:`str`, optional): The file which type of data containing . Default: ``'NOT_BINARY'``
+    """
+    def file_writer_(filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
+        write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding, file_data_type)
+    return file_writer_
+
+
+def write_file_with_pipeline(sdc_executor, filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
+    builder = sdc_executor.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+    jython_evaluator = builder.add_stage('Jython Evaluator')
+
+    file_writer_script = FILE_WRITER_SCRIPT_BINARY if file_data_type == 'BINARY' else FILE_WRITER_SCRIPT
+    jython_evaluator.script = textwrap.dedent(file_writer_script).format(filepath=str(filepath),
+                                                                         file_contents=file_contents,
+                                                                         encoding=encoding)
+    trash = builder.add_stage('Trash')
+    dev_raw_data_source >> jython_evaluator >> trash
+    pipeline = builder.build('File writer pipeline')
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    sdc_executor.remove_pipeline(pipeline)
+
+
+@pytest.fixture
+def shell_executor(sdc_executor):
+    def shell_executor_(script, environment_variables=None):
+        builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+        shell = builder.add_stage('Shell')
+        shell.set_attributes(script=script,
+                             environment_variables=(Configuration(**environment_variables)._data
+                                                    if environment_variables
+                                                    else []))
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> [trash, shell]
+        pipeline = builder.build('Shell executor pipeline')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.remove_pipeline(pipeline)
+    return shell_executor_
+
+
+@pytest.fixture
+def list_dir(sdc_executor):
+    def list_dir_(data_format, files_directory, file_name_pattern, recursive=True, batches=1, batch_size=10):
+        builder = sdc_executor.get_pipeline_builder()
+        directory = builder.add_stage('Directory', type='origin')
+        directory.set_attributes(data_format=data_format,
+                                 file_name_pattern=file_name_pattern,
+                                 file_name_pattern_mode='GLOB',
+                                 files_directory=files_directory,
+                                 process_subdirectories=recursive)
+
+        trash = builder.add_stage('Trash')
+
+        pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'],
+                                         on_record_error='DISCARD')
+
+        directory >> trash
+        directory >= pipeline_finisher
+
+        pipeline = builder.build('List dir pipeline')
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 batches=batches,
+                                                 batch_size=batch_size,
+                                                 start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        files = [str(record.field['filepath']) for b in range(len(snapshot.snapshot_batches))
+                 for record in snapshot.snapshot_batches[b][directory.instance_name].event_records
+                 if record.header.values['sdc.event.type'] == 'new-file']
+
+        sdc_executor.remove_pipeline(pipeline)
+
+        return files
+    return list_dir_
+
 
 # pylint: disable=pointless-statement, too-many-locals
 
@@ -1209,6 +1317,64 @@ def generate_files(sdc_builder, sdc_executor, tmp_directory):
     # generate some batches/files
     sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10)
     sdc_executor.stop_pipeline(files_pipeline)
+
+
+@pytest.mark.parametrize('read_order', ['TIMESTAMP', 'LEXICOGRAPHICAL'])
+@pytest.mark.parametrize('file_post_processing', ['DELETE', 'ARCHIVE'])
+def test_directory_no_post_process_older_files(sdc_builder, sdc_executor, file_writer, shell_executor, list_dir,
+                                               read_order, file_post_processing):
+    """
+    Test that only files that have been processed by the origin are post processed
+    """
+
+    FILES_DIRECTORY = '/tmp'
+
+    random_str = get_random_string(string.ascii_letters, 10)
+    file_path = os.path.join(FILES_DIRECTORY, random_str)
+    archive_path = os.path.join(FILES_DIRECTORY, random_str + '_archive')
+
+    # Create files and archive directories
+    shell_executor(f"""
+        mkdir {file_path}
+        mkdir {archive_path}
+    """)
+
+    # Create files
+    for i in range(4):
+        file_writer(os.path.join(file_path, f'file-{i}.txt'), f'{i}')
+
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='TEXT',
+                             file_name_pattern='file-*.txt',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing=file_post_processing,
+                             archive_directory=archive_path,
+                             files_directory=file_path,
+                             process_subdirectories=True,
+                             read_order=read_order,
+                             first_file_to_process='file-2.txt')
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'],
+                                     on_record_error='DISCARD')
+
+    directory >> trash
+    directory >= pipeline_finisher
+
+    pipeline = builder.build(f'Test directory origin no postprocess older files {read_order} {file_post_processing}')
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    unprocessed_files = [os.path.join(file_path, f'file-{i}.txt') for i in range(2)]
+    assert sorted(list_dir('TEXT', file_path, 'file-*.txt', batches=2)) == unprocessed_files
+
+    if file_post_processing == 'ARCHIVE':
+        archived_files = [os.path.join(archive_path, f'file-{i}.txt') for i in range(2, 4)]
+        assert sorted(list_dir('TEXT', archive_path, 'file-*.txt', batches=2)) == archived_files
 
 
 def setup_avro_file(sdc_executor, tmp_directory):
