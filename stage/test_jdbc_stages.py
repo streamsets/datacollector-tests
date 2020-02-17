@@ -636,7 +636,7 @@ def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
-    jdbc_query_executor.set_attributes(sql_queries=[query_str])
+    jdbc_query_executor.set_attributes(sql_query=query_str)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> record_deduplicator >> jdbc_query_executor
@@ -737,7 +737,7 @@ def test_jdbc_query_executor_successful_query_event(sdc_builder, sdc_executor, d
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor.set_attributes(sql_queries=[query_str])
+    jdbc_query_executor.set_attributes(sql_query=query_str)
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash1 = pipeline_builder.add_stage('Trash')
@@ -793,7 +793,7 @@ def test_jdbc_query_executor_insert_query_result_count(sdc_builder, sdc_executor
     query_str = f"INSERT INTO {table_name} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor.set_attributes(sql_queries=[query_str], include_query_result_count_in_events=True)
+    jdbc_query_executor.set_attributes(sql_query=query_str, include_query_result_count_in_events=True)
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash1 = pipeline_builder.add_stage('Trash')
@@ -856,10 +856,10 @@ def test_jdbc_query_executor_lifecycle_events(sdc_builder, sdc_executor, databas
     trash = builder.add_stage('Trash')
 
     start_stage = builder.add_start_event_stage('JDBC Query')
-    start_stage.set_attributes(sql_queries=[query])
+    start_stage.set_attributes(sql_query=query)
 
     stop_stage = builder.add_stop_event_stage('JDBC Query')
-    stop_stage.set_attributes(sql_queries=[query])
+    stop_stage.set_attributes(sql_query=query)
 
     source >> trash
 
@@ -902,7 +902,7 @@ def test_jdbc_query_executor_failure_state(sdc_builder, sdc_executor, database):
     trash = builder.add_stage('Trash')
 
     stop_stage = builder.add_stop_event_stage('JDBC Query')
-    stop_stage.set_attributes(sql_queries=[query])
+    stop_stage.set_attributes(sql_query=query)
 
     source >> trash
 
@@ -951,9 +951,9 @@ def test_jdbc_query_executor_select_query_result_count(sdc_builder, sdc_executor
     query_str2 = f"SELECT * FROM {table_name}"
 
     jdbc_query_executor1 = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor1.set_attributes(sql_queries=[query_str1])
+    jdbc_query_executor1.set_attributes(sql_query=query_str1)
     jdbc_query_executor2 = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor2.set_attributes(sql_queries=[query_str2], include_query_result_count_in_events=True)
+    jdbc_query_executor2.set_attributes(sql_query=query_str2, include_query_result_count_in_events=True)
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash1 = pipeline_builder.add_stage('Trash')
@@ -1010,7 +1010,7 @@ def test_jdbc_query_executor_failed_query_event(sdc_builder, sdc_executor, datab
     query_str = f"INSERT INTO {invalid_table} (name, id) VALUES ('${{record:value('/name')}}', '${{record:value('/id')}}')"
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor.set_attributes(sql_queries=[query_str])
+    jdbc_query_executor.set_attributes(sql_query=query_str)
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash1 = pipeline_builder.add_stage('Trash')
@@ -1074,7 +1074,7 @@ def test_jdbc_query_executor_parallel_query_execution(sdc_builder, sdc_executor,
     dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=statements)
 
     jdbc_query_executor = pipeline_builder.add_stage('JDBC Query', type='executor')
-    jdbc_query_executor.set_attributes(sql_queries=["${record:value('/text')}"],
+    jdbc_query_executor.set_attributes(sql_query="${record:value('/text')}",
                                        enable_parallel_queries=enable_parallel_execution,
                                        maximum_pool_size=2,
                                        minimum_idle_connections=2)
