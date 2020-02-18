@@ -961,6 +961,64 @@ def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
             client.delete_queue(QueueUrl=queue_url)
 
 
+@aws('sqs')
+@sdc_min_version('3.0.0.0')
+# (10, 10) -> Messages = batch size
+# (3. 5), (5, 10) -> batch size > number of messages
+# (10, 5) -> batch size < number of messages but exactly divisible
+# (5, 3) -> batch size > number of messages but not exactly divisible
+@pytest.mark.parametrize('number_of_messages_sent_and_origin_batch_size', [(10, 10), (10, 5), (5, 3), (3, 5), (5, 10)])
+def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws, number_of_messages_sent_and_origin_batch_size):
+    """Test for SQS consumer origin stage with max batch size configuration. We do so by publishing data
+     to a test queue using SQS client and having a pipeline which reads that data using SQS consumer origin stage.
+     We assert the number of input/output and number of batches. The pipeline looks like:
+
+    Amazon SQS Consumer pipeline:
+        amazon_sqs_consumer >> trash
+    """
+    queue_name = '{}_{}'.format(aws.sqs_queue_prefix, get_random_string(string.ascii_letters, 10))
+
+    number_of_messages, max_batch_size = number_of_messages_sent_and_origin_batch_size
+
+    number_of_batches = (1 if max_batch_size >= number_of_messages
+                         else (int(number_of_messages/max_batch_size) + (1 if number_of_messages % max_batch_size > 0 else 0)))
+
+    logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, '
+                f'Number of batches be produced : {number_of_batches}')
+
+    builder = sdc_builder.get_pipeline_builder()
+    amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
+    amazon_sqs_consumer.set_attributes(data_format='TEXT',
+                                       max_batch_size_in_messages= max_batch_size,
+                                       number_of_messages_per_request=10,
+                                       queue_name_prefixes=[queue_name])
+    trash = builder.add_stage('Trash')
+    amazon_sqs_consumer >> trash
+
+    consumer_origin_pipeline = builder.build(title='Amazon SQS Consumer pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = aws.sqs
+    logger.info('Creating %s SQS queue on AWS ...', queue_name)
+    queue_url = client.create_queue(QueueName=queue_name)['QueueUrl']
+    try:
+        message_entries = [{'Id': str(i), 'MessageBody': 'Message {0}'.format(i)} for i in range(number_of_messages)]
+        sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
+        if len(sent_response.get('Successful', [])) != number_of_messages:
+            raise Exception('Test messages not successfully sent to the queue %s', queue_name)
+
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_batch_count(number_of_batches)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        metrics = sdc_executor.get_pipeline_history(consumer_origin_pipeline).latest.metrics
+        assert metrics.counter("pipeline.batchCount.counter").count == number_of_batches
+        assert metrics.counter("pipeline.batchInputRecords.counter").count == number_of_messages + 1
+        assert metrics.counter("pipeline.batchOutputRecords.counter").count == number_of_messages
+    finally:
+        if queue_url:
+            logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
+            client.delete_queue(QueueUrl=queue_url)
+
 @aws('s3')
 def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
     """Test simple scenario of moving files from source to target using WHOLE_FILE_FORMAT."""
