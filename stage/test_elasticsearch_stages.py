@@ -157,15 +157,15 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, addition
         es_search = ESSearch(index=es_index)
         es_response = es_search.execute()
 
-        # Basically retry for 3 times while es_response is empty. That was intended to avoid emptiness flaky errors
-        for i in range(3):
+        # Basically retry for X times while es_response is empty. That was intended to avoid emptiness flaky errors
+        for i in range(5):
+            logger.info(f'Trying to get response from ES, try {i}')
             if not es_response:
                 time.sleep(5)
                 es_response = es_search.execute()
-            else:
-                es_meta = es_response[0].meta
-                break
-                
+        es_meta = es_response[0].meta if es_response else None
+        assert es_meta is not None
+
         # assert meta ingest
         assert es_meta['index'] == es_index and es_meta['doc_type'] == es_mapping and es_meta['id'] == es_doc_id
         # assert data ingest
