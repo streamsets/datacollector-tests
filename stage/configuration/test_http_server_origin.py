@@ -1,6 +1,7 @@
 import pytest
 
 from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
 
 
@@ -365,8 +366,11 @@ def test_keystore_file(sdc_builder, sdc_executor, stage_attributes):
     http_server.set_attributes(keystore_type=KEYSTORE_TYPE,
                                keystore_password=KEYSTORE_PASSWORD,
                                data_format='JSON',
-                               application_id='admin',
                                **stage_attributes)
+    if Version(sdc_builder.version) >= Version('3.14.0'):
+        http_server.list_of_application_ids = [{'appId': 'admin'}]
+    else:
+        http_server.application_id = 'admin'
     trash = builder.add_stage('Trash')
     http_server >> trash
 
