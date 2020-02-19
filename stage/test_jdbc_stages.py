@@ -481,7 +481,7 @@ def test_jdbc_tee_processor(sdc_builder, sdc_executor, database):
     if isinstance(database, OracleDatabase):
         pytest.skip('JDBC Tee Processor does not support Oracle')
     elif type(database) == SQLServerDatabase:
-        pytest.skip('JDBC Tee Processor does not support multi row op on SQL Server')
+        pytest.skip('JDBC Tee Processor does not support SQL Server')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = _create_table(table_name, database)
@@ -538,9 +538,8 @@ def test_jdbc_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_m
     """
     if isinstance(database, OracleDatabase):
         pytest.skip('JDBC Tee Processor does not support Oracle')
-
-    if use_multi_row == True and type(database) == SQLServerDatabase:
-        pytest.skip('JDBC Tee Processor does not support multi row on SQL Server')
+    elif type(database) == SQLServerDatabase:
+        pytest.skip('JDBC Tee Processor does not support SQL Server')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     pipeline_builder = sdc_builder.get_pipeline_builder()
