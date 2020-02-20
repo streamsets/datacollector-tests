@@ -18,12 +18,16 @@ import json
 import logging
 import string
 import time
+from io import BytesIO
 from uuid import uuid4
 from json.decoder import JSONDecodeError
 from datetime import datetime, timedelta
 from itertools import zip_longest
 from operator import itemgetter
+from sfdclib import SfdcSession, SfdcMetadataApi
 from time import sleep
+from xml.sax.saxutils import escape
+from zipfile import ZipFile
 
 import pytest
 import requests
@@ -33,6 +37,7 @@ from streamsets.testframework.utils import get_random_string
 CONTACT = 'Contact'
 CDC = 'CDC'
 PUSH_TOPIC = 'PUSH_TOPIC'
+API_VERSION = '47.0'
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,55 @@ DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': 'User1',
                            {'FirstName': 'Test3', 'LastName': 'User3',
                             'Email': 'xtes3@example.comFROM', 'LeadSource': 'Web'}]
 CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
+
+ADD_CUSTOM_FIELD_PACKAGE= f'''<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>Contact</members>
+        <name>CustomObject</name>
+    </types>
+    <types>
+        <members>Admin</members>
+        <name>Profile</name>
+    </types>
+    <version>{API_VERSION}</version>
+</Package>'''
+
+ADD_CUSTOM_FIELD= '''<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fields>
+        <fullName>BoolCustField__c</fullName>
+        <defaultValue>false</defaultValue>
+        <description>ThisIsABoolCustField</description>
+        <externalId>false</externalId>
+        <inlineHelpText>ThisIsABoolCustField</inlineHelpText>
+        <label>BoolCustField</label>
+        <trackTrending>false</trackTrending>
+        <type>Checkbox</type>
+    </fields>
+</CustomObject>'''
+
+CUSTOM_FIELD_PERMISSION='''<?xml version="1.0" encoding="UTF-8"?>
+<Profile xmlns="http://soap.sforce.com/2006/04/metadata">
+  <fieldPermissions>
+        <editable>true</editable>
+        <field>Contact.BoolCustField__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+</Profile>'''
+
+DELETE_CUSTOM_FIELD_PACKAGE=f'''<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <version>{API_VERSION}</version>
+</Package>'''
+
+DELETE_CUSTOM_FIELD='''<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>Contact.BoolCustField__c</members>
+        <name>CustomField</name>
+    </types>
+</Package>'''
 
 # Folder for Documents
 FOLDER_NAME = 'TestFolder'
@@ -1562,6 +1616,155 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         if contact:
             logger.info('Deleting contact...')
             client.contact.delete(contact['id'])
+
+
+def deploy_metadata(metadata, package_content, files):
+    b = BytesIO()
+
+    with ZipFile(b,'w') as zip:
+        zip.writestr('package.xml', package_content)
+        for file in files:
+            zip.writestr(file['name'], file['content'])
+        zip.close()
+
+    deployment = metadata.deploy(b, {})
+
+    result = None
+    end_time = datetime.now() + timedelta(seconds=60)
+    while result != 'Succeeded' and result != 'Failed' and datetime.now() < end_time:
+        sleep(1)
+        result = metadata.check_deploy_status(deployment[0])[0]
+
+    logger.info(f'Deployment {result}')
+
+    assert result == 'Succeeded'
+
+
+def add_custom_field_to_contact(metadata):
+    deploy_metadata(metadata,
+                    ADD_CUSTOM_FIELD_PACKAGE,
+                    [{'name':'objects/Contact.object', 'content':ADD_CUSTOM_FIELD},
+                     {'name':'profiles/Admin.profile', 'content':CUSTOM_FIELD_PERMISSION}])
+
+
+def delete_custom_field_from_contact(metadata):
+    deploy_metadata(metadata,
+                    DELETE_CUSTOM_FIELD_PACKAGE,
+                    [{'name':'destructiveChanges.xml', 'content':DELETE_CUSTOM_FIELD}])
+
+
+@salesforce
+def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
+    """Start pipeline, create data using Salesforce client
+    and then check if Salesforce origin receives notifications using snapshot.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+
+    Args:
+        sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
+        sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
+        salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
+        subscription_type (:obj:`str`): Type of subscription: 'PUSH_TOPIC' or 'CDC'
+    """
+    client = salesforce.client
+
+    pipeline = None
+    subscription_id = None
+    contact = None
+    try:
+        session = SfdcSession(username=escape(salesforce.username),
+                              password=escape(salesforce.password),
+                              is_sandbox=True,
+                              api_version=API_VERSION)
+        session.login()
+
+        metadata = SfdcMetadataApi(session)
+
+        logger.info('Adding custom field to Contact object...')
+        add_custom_field_to_contact(metadata)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        subscription_id = enable_cdc(client)
+
+        salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        salesforce_origin.set_attributes(query_existing_data=False,
+                                         subscribe_for_notifications=True,
+                                         subscription_type=CDC,
+                                         change_data_capture_object=CONTACT)
+
+        trash = pipeline_builder.add_stage('Trash')
+        salesforce_origin >> trash
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        logger.info('Starting pipeline')
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
+        # updates could flood a channel."
+        # REST API in Simple Salesforce can only create one record at a time, so just create one contact
+        logger.info('Creating first record using Salesforce client...')
+        contact = client.Contact.create(DATA_TO_INSERT[0])
+
+        logger.info('Taking snapshot')
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        # CDC returns more than just the record fields, so verify_snapshot isn't so useful
+        assert len(snapshot[salesforce_origin].output) == 1
+        assert snapshot[salesforce_origin].output[0].header.values['salesforce.cdc.recordIds']
+        assert snapshot[salesforce_origin].output[0].field['Email'] == DATA_TO_INSERT[0]['Email']
+        # CDC returns nested compound fields
+        assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == DATA_TO_INSERT[0]['FirstName']
+        assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == DATA_TO_INSERT[0]['LastName']
+
+        logger.info('Stopping pipeline')
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Create another record, setting the custom field, then delete the
+        # field, so that the current schema doesn't match the CDC notification
+        logger.info('Creating second record using Salesforce client...')
+        data_to_insert = DATA_TO_INSERT[1]
+        data_to_insert['BoolCustField__c'] = True
+        contact2 = client.Contact.create(data_to_insert)
+
+        logger.info('Deleting custom field from Contact object...')
+        delete_custom_field_from_contact(metadata)
+
+        logger.info('Restarting pipeline')
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        logger.info('Taking another snapshot')
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        assert len(snapshot[salesforce_origin].output) == 1
+        assert snapshot[salesforce_origin].output[0].header.values['salesforce.cdc.recordIds']
+        assert snapshot[salesforce_origin].output[0].field['Email'] == data_to_insert['Email']
+        assert snapshot[salesforce_origin].output[0].field['BoolCustField__c'] == data_to_insert['BoolCustField__c']
+        # CDC returns nested compound fields
+        assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == data_to_insert['FirstName']
+        assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == data_to_insert['LastName']
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        if subscription_id:
+            logger.info('Disabling CDC for Contact...')
+            disable_cdc(client, subscription_id)
+        if contact:
+            logger.info('Deleting contact...')
+            client.contact.delete(contact['id'])
+        if contact2:
+            logger.info('Deleting contact...')
+            client.contact.delete(contact2['id'])
 
 
 @salesforce
