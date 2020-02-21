@@ -74,10 +74,11 @@ def test_sftp_origin_whole_file_to_s3(sdc_builder, sdc_executor, sftp, aws, read
         assert len(list_s3_objs['Contents']) == 1
 
         # read data from S3 to assert contents
-        s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
+        s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode()
                        for s3_content in list_s3_objs['Contents']]
 
         # compare the S3 bucket contents against the original whole file contents
+        assert len(s3_contents[0]) == len(raw_text_data)
         assert s3_contents[0] == raw_text_data
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
