@@ -1049,6 +1049,34 @@ def test_directory_post_delete_on_batch_failure(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(pipeline)
     assert 1 == len(snapshot[origin.instance_name].output)
 
+# SDC-13559: Directory origin fires one batch after another when Allow Late directories is in effect
+def test_directory_allow_late_directory_wait_time(sdc_builder, sdc_executor):
+    """Test to ensure that when user explicitly enables "Allow Late Directory" and the directory doesn't exists,
+    the origin won't go into a mode where it will generate one batch after another, ignoring the option Batch Wait
+    Time completely."""
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.data_format = 'TEXT'
+    directory.file_name_pattern = 'sdc*.txt'
+    directory.files_directory = '/i/do/not/exists'
+    directory.allow_late_directory = True
+    trash = builder.add_stage('Trash')
+
+    directory >> trash
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline)
+    # We let the pipeline run for ~10 seconds - enough time to validate whether the origin is creating one batch
+    # after another or not.
+    time.sleep(10)
+    sdc_executor.stop_pipeline(pipeline)
+
+    # The origin and/or pipeline can still generate some batches, so we don't test precise number, just that is
+    # really small (less then 1 batch/second).
+    history = sdc_executor.get_pipeline_history(pipeline)
+    assert history.latest.metrics.counter('pipeline.batchCount.counter').count < 5
+
 
 # Test for SDC-13476
 def test_directory_origin_read_different_file_type(sdc_builder, sdc_executor):
