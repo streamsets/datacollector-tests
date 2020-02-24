@@ -1672,6 +1672,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
     pipeline = None
     subscription_id = None
     contact = None
+    contact2 = None
     try:
         session = SfdcSession(username=escape(salesforce.username),
                               password=escape(salesforce.password),
@@ -1728,7 +1729,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         # Create another record, setting the custom field, then delete the
         # field, so that the current schema doesn't match the CDC notification
         logger.info('Creating second record using Salesforce client...')
-        data_to_insert = DATA_TO_INSERT[1]
+        data_to_insert = copy.deepcopy(DATA_TO_INSERT[1])
         data_to_insert['BoolCustField__c'] = True
         contact2 = client.Contact.create(data_to_insert)
 
