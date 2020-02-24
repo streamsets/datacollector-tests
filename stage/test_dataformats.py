@@ -14,10 +14,11 @@
 
 import logging
 import pytest
+from streamsets.sdk.utils import Version
 from decimal import Decimal
 
 from streamsets.testframework.markers import sdc_min_version
-
+from stage.utils.utils_xml import get_xml_output_field
 logger = logging.getLogger(__name__)
 
 #
@@ -38,14 +39,15 @@ def create_text_pipeline(sdc_builder, data_format, content, **parser_configs):
     parser.target_field = '/'
     parser.data_format = data_format
 
-    if (parser_configs):
-      parser.set_attributes(**parser_configs)
+    if parser_configs:
+        parser.set_attributes(**parser_configs)
 
     trash = builder.add_stage('Trash')
 
     origin >> parser >> trash
 
     return builder.build('Parse {}'.format(data_format))
+
 
 @sdc_min_version('3.0.0.0')
 def test_parse_json(sdc_builder, sdc_executor):
@@ -58,6 +60,7 @@ def test_parse_json(sdc_builder, sdc_executor):
 
     assert len(snapshot['DataParser_01'].output) == 1
     assert snapshot['DataParser_01'].output[0].get_field_data('/key') == 'value'
+
 
 @sdc_min_version('3.0.0.0')
 def test_parse_delimited(sdc_builder, sdc_executor):
@@ -77,7 +80,8 @@ def test_parse_delimited(sdc_builder, sdc_executor):
 @sdc_min_version('3.8.0')
 def test_parse_multichar_delimited(sdc_builder, sdc_executor):
     """Validate parsing of delimited content via the Data Parser processor."""
-    pipeline = create_text_pipeline(sdc_builder, 'DELIMITED', 'abcd||efgh||ijkl', delimiter_format_type='MULTI_CHARACTER',
+    pipeline = create_text_pipeline(sdc_builder, 'DELIMITED', 'abcd||efgh||ijkl',
+                                    delimiter_format_type='MULTI_CHARACTER',
                                     multi_character_field_delimiter='||', header_line='NO_HEADER')
 
     sdc_executor.add_pipeline(pipeline)
@@ -90,6 +94,7 @@ def test_parse_multichar_delimited(sdc_builder, sdc_executor):
     assert output_record.get_field_data('[0]') == 'abcd'
     assert output_record.get_field_data('[1]') == 'efgh'
     assert output_record.get_field_data('[2]') == 'ijkl'
+
 
 @sdc_min_version('3.0.0.0')
 def test_parse_log(sdc_builder, sdc_executor):
@@ -117,6 +122,7 @@ def test_parse_syslog(sdc_builder, sdc_executor):
     assert snapshot['DataParser_01'].output[0].get_field_data('/severity') == 2
     assert snapshot['DataParser_01'].output[0].get_field_data('/host') == 'mymachine'
 
+
 @sdc_min_version('3.0.0.0')
 def test_parse_xml(sdc_builder, sdc_executor):
     """Validate parsing of xml content via the Data Parser processor."""
@@ -124,10 +130,26 @@ def test_parse_xml(sdc_builder, sdc_executor):
 
     sdc_executor.add_pipeline(pipeline)
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
     sdc_executor.stop_pipeline(pipeline)
 
     assert len(snapshot['DataParser_01'].output) == 1
-    assert snapshot['DataParser_01'].output[0].get_field_data('/key[0]/value') == 'value'
+    key_field = get_xml_output_field(pipeline[0], snapshot['DataParser_01'].output[0].field, 'root')
+    assert key_field['key'][0]['value'] == 'value'
+
+
+@sdc_min_version('3.14.0')
+def test_parse_xml_preserve_root_element(sdc_builder, sdc_executor):
+    """Validate parsing of xml content via the Data Parser processor.
+    Since 3.14.0 there is a new property 'preserve root element', set to True by default"""
+    pipeline = create_text_pipeline(sdc_builder, 'XML', "<root><key>value</key></root>", preserve_root_element=True)
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    assert len(snapshot['DataParser_01'].output) == 1
+    assert snapshot['DataParser_01'].output[0].get_field_data('/root/key[0]/value') == 'value'
 
 
 # SDC-11018: Re-scale data when writing Decimal into Avro
@@ -189,6 +211,7 @@ def test_avro_decimal_incorrect_scale(sdc_builder, sdc_executor):
     assert len(snapshot[parser].output) == 2
     assert snapshot[parser].output[0].get_field_data('/a') == Decimal('1.10000')
     assert snapshot[parser].output[1].get_field_data('/a') == None
+
 
 # SDC-11022: Do not use avro union index when writing avro data
 @sdc_min_version('3.2.0.0') # Data Generator

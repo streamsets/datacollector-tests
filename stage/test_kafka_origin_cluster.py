@@ -26,6 +26,7 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
+from stage.utils.utils_xml import get_xml_output_field
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ SCHEMA = {
         {'name': 'boss', 'type': ['Employee', 'null']}
     ]
 }
+
 
 @pytest.fixture(scope='function')
 def port():
@@ -888,13 +890,17 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
     snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
     snapshot = snapshot_command.snapshot
 
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'PROTOBUF', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
+    basic_data_formats = ['CSV', 'SYSLOG', 'COLLECTD', 'PROTOBUF', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
 
     # Verify snapshot data.
     if data_format in basic_data_formats:
         record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
-
         assert message == str(record_field[0])
+
+    elif data_format == 'XML':
+        output_data = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output][0]
+        record_field = get_xml_output_field(kafka_consumer_pipeline[0], output_data, 'developers')
+        assert message == str(record_field)
 
     elif data_format == 'BINARY':
         record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
@@ -955,5 +961,3 @@ def json_test(sdc_builder, sdc_executor, cluster, message, expected, port):
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
-
-

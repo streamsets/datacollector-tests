@@ -18,12 +18,14 @@ import os
 import string
 import tempfile
 
+from streamsets.sdk.utils import Version
 import avro
 import avro.schema
 from avro.datafile import DataFileWriter
 from avro.io import DatumWriter
 from streamsets.testframework.markers import ftp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from stage.utils.utils_xml import get_xml_output_field
 from xlwt import Workbook
 
 logger = logging.getLogger(__name__)
@@ -147,7 +149,9 @@ def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
     sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
     try:
         assert len(snapshot[sftp_ftp_client].output) == 1
-        assert snapshot[sftp_ftp_client].output[0].field['developer'] == expected
+        output_data = snapshot[sftp_ftp_client].output[0].field
+        developers_element = get_xml_output_field(sftp_ftp_client, output_data, 'developers')
+        assert developers_element['developer'] == expected
 
     finally:
         # Delete the test FTP origin file we created

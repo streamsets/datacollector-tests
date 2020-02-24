@@ -26,6 +26,7 @@ from avro.datafile import DataFileWriter
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from stage.utils.utils_xml import get_xml_output_field
 
 logger = logging.getLogger(__name__)
 
@@ -958,12 +959,17 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 
     snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
     snapshot = snapshot_command.snapshot
 
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
+    basic_data_formats = ['CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
 
     # Verify snapshot data.
     if data_format in basic_data_formats:
         record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
         assert message == str(record_field[0])
+
+    elif data_format == 'XML':
+        output_data = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output][0]
+        record_field = get_xml_output_field(kafka_consumer_pipeline[0], output_data, 'developers')
+        assert message == str(record_field)
 
     elif data_format == 'LOG':
         stage = snapshot[kafka_consumer_pipeline[0].instance_name]

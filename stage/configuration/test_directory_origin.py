@@ -22,9 +22,11 @@ import time
 from collections import OrderedDict
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from stage.utils.utils_xml import get_xml_output_field
 from xml.etree import ElementTree
 
 logger = logging.getLogger(__file__)
@@ -568,6 +570,7 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
         output_records = snapshot[directory.instance_name].output
         assert output_records[0].field == EXPECTED_OUTPUT
+
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
@@ -887,16 +890,15 @@ def test_directory_origin_configuration_file_name_pattern_within_compressed_dire
         json_data = None
         if data_format == 'DELIMITED':
             files_directory = create_file_and_directory(file_name, file_content, shell_executor,
-                                                                          delimited_file_writer, 'CSV')
+                                                        delimited_file_writer, 'CSV')
         elif data_format == 'SDC_JSON':
             files_directory = os.path.join('/tmp', get_random_string())
             file_name = file_name.replace('.json', '*.json')
-            json_data = file_content # Used in assertion
+            json_data = file_content  # Used in assertion
             file_content = ''.join(json.dumps(record) for record in file_content)
             compressed_file_writer(files_directory, data_format, file_content, 'NONE', 'compression_format_test')
         else:
-            files_directory = create_file_and_directory(file_name, file_content, shell_executor,
-                                                                          file_writer)
+            files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
         if compression_format == 'ARCHIVE':
             shell_executor(f'cd {files_directory} '
@@ -909,12 +911,12 @@ def test_directory_origin_configuration_file_name_pattern_within_compressed_dire
                            f'&& rm {file_name}')
             file_name_pattern = '*.gz'
 
-        attributes = {'data_format':data_format,
-                      'files_directory':files_directory,
-                      'file_name_pattern_within_compressed_directory':'compression_*',
-                      'file_name_pattern':file_name_pattern,
+        attributes = {'data_format': data_format,
+                      'files_directory': files_directory,
+                      'file_name_pattern_within_compressed_directory': 'compression_*',
+                      'file_name_pattern': file_name_pattern,
                       'file_name_pattern_mode': 'GLOB',
-                      'compression_format':compression_format,
+                      'compression_format': compression_format,
                       'header_line': 'WITH_HEADER',
                       'log_format': 'LOG4J',
                       'json_content': 'MULTIPLE_OBJECTS'}
@@ -1278,17 +1280,19 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
                         </bookstore>"""
     try:
         files_directory = create_file_and_directory(FILE_NAME, FILE_CONTENTS, shell_executor,file_writer)
-        attributes= {'data_format':data_format,
-                                 'files_directory':files_directory,
-                                 'file_name_pattern':'xml_include_xpath_file*',
-                                 'file_name_pattern_mode':'GLOB',
-                                 'delimiter_element':'/*[1]/*',
-                                 'include_field_xpaths':include_field_xpaths}
+        attributes = {'data_format': data_format,
+                      'files_directory': files_directory,
+                      'file_name_pattern': 'xml_include_xpath_file*',
+                      'file_name_pattern_mode': 'GLOB',
+                      'delimiter_element': '/*[1]/*',
+                      'include_field_xpaths': include_field_xpaths}
         directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        item_list = [output.field for output in snapshot[directory.instance_name].output]
+
+        item_list = [get_xml_output_field(directory, output.field, '{http://books.com/book}book')
+                     for output in snapshot[directory.instance_name].output]
         rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
                               for item in item_list]
         # Parse input xml data to verify results from snapshot using xpath for search.
@@ -1298,13 +1302,15 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
         assert rows_from_snapshot == expected_data
         output_records = snapshot[directory.instance_name].output
 
+        output_data = output_records[0]._data['value']['value']
+        field_info = get_xml_output_field(directory, output_data, '{http://books.com/book}book', 'value')
+
         if include_field_xpaths:
             # Test for Record Headers
             record_header = [record.header.values for record in output_records]
             assert record_header[0]['xmlns:b'] == 'http://books.com/book'
             assert record_header[0]['xmlns:prc'] == 'http://books.com/price'
             # Test for Field Headers .Currently using _data property since api for field header is not there.
-            field_info = output_records[0]._data['value']['value']
             assert (field_info['title']['value'][0]['value']['attr|lang']['attributes'][
                         'xpath'] == '/bookstore/b:book/title/@lang')
             assert (field_info['title']['value'][0]['value']['value']['attributes'][
@@ -1317,7 +1323,6 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
             assert 'xmlns:b' not in record_header[0]
             assert 'xmlns:prc' not in record_header[0]
             # Test for Field Headers .Currently using _data property since api for field header is not there.
-            field_info = output_records[0]._data['value']['value']
             assert 'attributes' not in field_info['title']['value'][0]['value']['attr|lang']
             assert 'attributes' not in field_info['title']['value'][0]['value']['value']
             assert 'attributes' not in field_info['prc:price']['value'][0]['value']['value']
@@ -1524,7 +1529,9 @@ def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_build
         if max_record_length_in_chars < 208:
             assert not snapshot[directory].output
         else:
-            assert output_records[0].field == EXPECTED_OUTPUT
+            msg_field = get_xml_output_field(directory, output_records[0].field, 'msg')
+            assert msg_field == EXPECTED_OUTPUT
+
     finally:
         sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
@@ -1598,7 +1605,10 @@ def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, sh
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        item_list = [output.field for output in snapshot[directory.instance_name].output]
+
+        item_list = [get_xml_output_field(directory, output.field, 'msg')
+                     for output in snapshot[directory.instance_name].output]
+
         rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
                               for item in item_list]
         # Parse input xml data to verify results from snapshot using xpath for search.
@@ -1682,7 +1692,9 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        item_list = [output.field for output in snapshot[directory.instance_name].output]
+
+        item_list = [get_xml_output_field(directory, output.field, '{http://books.com/book}book')
+                     for output in snapshot[directory.instance_name].output]
         rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
                               for item in item_list]
         # Parse input xml data to verify results from snapshot using xpath for search.
@@ -1695,8 +1707,9 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
         if output_field_attributes:
             # Test for Field Attributes. Currently using _data property since attributes are not accessible with the
             # field property.
-            field_header = output_records[0]._data['value']['attributes']
-            assert field_header['xmlns:b'] == 'http://books.com/book'
+            output_data = output_records[0]._data['value']
+            field_header = get_xml_output_field(directory, output_data, 'value', '{http://books.com/book}book')
+            assert field_header['attributes']['xmlns:b'] == 'http://books.com/book'
         else:
             assert 'attributes' not in output_records[0]._data['value']
     finally:
@@ -2190,7 +2203,7 @@ def get_directory_to_trash_pipeline(sdc_builder, attributes):
 
 
 def create_file_and_directory(file_name, file_content, shell_executor, file_writer, delimiter_format_type=None,
-                          delimiter_character=None):
+                              delimiter_character=None):
     files_directory = os.path.join('/tmp', get_random_string())
     logger.debug('Creating files directory %s ...', files_directory)
     shell_executor(f'mkdir {files_directory}')
@@ -2309,7 +2322,9 @@ def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_f
                                            'category': 'org.StreamSets.Log4j', 'ndc': 'unknown',
                                            'message': 'This is sample log message'}
     elif data_format == 'XML':
-        msg_field = output_records[0].field['msg']
+        xml_output_field = get_xml_output_field(directory, output_records[0].field, 'root')
+        msg_field = xml_output_field['msg']
+
         assert msg_field[0]['metainfo'][0]['value'] == 'Index page:More info about content'
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
