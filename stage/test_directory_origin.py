@@ -1011,6 +1011,71 @@ def test_directory_post_delete_on_batch_failure(sdc_builder, sdc_executor):
     assert 1 == len(snapshot[origin.instance_name].output)
 
 
+# Test for SDC-13476
+def test_directory_origin_read_different_file_type(sdc_builder, sdc_executor):
+    """Test Directory Origin. We make sure we covered race condition
+    when directory origin is configured with JSON data format but files directory have txt files.
+    It shows the relative stage errors depending on the type of file we try to read from files directory.
+    The pipelines looks like:
+
+        dev_raw_data_source >> local_fs
+        directory >> trash
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    generate_files(sdc_builder, sdc_executor, tmp_directory)
+
+    # 2nd pipeline which reads the files using Directory Origin stage
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='JSON',
+                             file_name_pattern='*',
+                             number_of_threads=10,
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             error_directory=tmp_directory,
+                             read_order='LEXICOGRAPHICAL')
+    trash = builder.add_stage('Trash')
+    directory >> trash
+
+    pipeline = builder.build('Validation')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    assert 10 == len(sdc_executor.get_stage_errors(pipeline, directory))
+
+    sdc_executor.stop_pipeline(pipeline)
+
+    output_records = snapshot[directory.instance_name].output
+
+    assert 0 == len(output_records)
+
+
+def generate_files(sdc_builder, sdc_executor, tmp_directory):
+    raw_data = 'Hello!'
+
+    # pipeline which generates the required files for Directory Origin
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=tmp_directory,
+                            files_prefix='sdc-${sdc:id()}',
+                            files_suffix='txt',
+                            max_records_in_file=1)
+
+    dev_raw_data_source >> local_fs
+    files_pipeline = builder.build('Generate files pipeline')
+    sdc_executor.add_pipeline(files_pipeline)
+
+    # generate some batches/files
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10)
+    sdc_executor.stop_pipeline(files_pipeline)
+
+
 def setup_avro_file(sdc_executor, tmp_directory):
     """Setup 5 avro records and save in local system. The pipelines looks like:
 
