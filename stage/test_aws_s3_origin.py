@@ -1458,3 +1458,79 @@ def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_execut
                                        for k in
                                        client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
             client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
+
+@aws('s3')
+@pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
+def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executor, aws, read_order):
+    """ This test is for xml data format, which was not working properly when reset with file offset.
+        It checks that no stage error happens after the pipeline is restarted with an offset halfway in the file.
+        Snapshot pipeline:
+            s3_origin >> trash
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    n_files = 200
+    records_in_file = 1000
+
+    # Create test data files
+    data_file_filename = 'file.txt'
+    records = [f'Record {i}' for i in range(records_in_file)]
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+    s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format='TEXT',
+                             delimiter_element='/root/records/record',
+                             prefix_pattern=f'{s3_key}/*.txt',
+                             read_order=read_order,
+                             max_batch_size_in_records=100)
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
+
+    s3_origin_pipeline = builder.build(title='Amazon S3 origin restart pipeline with XML data format') \
+        .configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        for i in range(n_files):
+            client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_filename}',
+                              Body='\n'.join(records).encode('ascii'))
+
+        # Read 10 batches & stop the pipeline
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_batch_count(10)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        # Update prefix_pattern so that no file is found
+        s3_origin.set_attributes(delimiter_element=f'{s3_key}/*.xml')
+        sdc_executor.update_pipeline(s3_origin_pipeline)
+
+        # Restart the pipeline and wait until it reads all data
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+
+        # Check no input records were found
+        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
+        num_input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+
+        assert 0 == num_input_records
+
+    finally:
+        # If no files have been processed we need to stop the pipeline, otherwise it will be finished
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
+                                       'Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
