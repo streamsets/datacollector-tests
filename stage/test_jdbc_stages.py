@@ -3341,3 +3341,56 @@ for (step = 0; step < 1000; step++) {
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+
+@database
+def test_multitable_quote_column_names(sdc_builder, sdc_executor, database):
+    """
+    Ensure that we properly quote all table and column names when querying the database.
+    """
+    table_name = "table_" + get_random_string(string.ascii_letters, 10)
+    offset_name = "column_" + get_random_string(string.ascii_letters, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs=[{"tablePattern": f'%{table_name}%'}]
+
+    trash = builder.add_stage('Trash')
+
+    origin >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column(offset_name, sqlalchemy.Integer, primary_key=True, quote=True),
+        quote = True
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), [{offset_name: 1}])
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        # We want to run for a few seconds to see if any errors show up (like that did in previous versions)
+        time.sleep(10)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # There should be no errors reported
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.JDBCMultitableConsumer_01.errorRecords.counter').count == 0
+        assert history.latest.metrics.counter('stage.JDBCMultitableConsumer_01.stageErrors.counter').count == 0
+
+        # And verify that we properly read that one record
+        assert len(snapshot[origin].output) == 1
+        assert snapshot[origin].output[0].get_field_data('/' + offset_name) == 1
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
