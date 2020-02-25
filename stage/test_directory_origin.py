@@ -340,12 +340,13 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
     assert msgs_result_count == (no_of_input_files + no_of_input_files_2)
 
 
-def get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, index):
+def get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, index,
+                                delay_between_batches=10):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
     batch_size = 100
     dev_data_generator.set_attributes(batch_size=batch_size,
-                                      delay_between_batches=10,
+                                      delay_between_batches=delay_between_batches,
                                       number_of_threads=no_of_threads)
     dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
 
@@ -1118,6 +1119,73 @@ def test_directory_origin_read_different_file_type(sdc_builder, sdc_executor):
     output_records = snapshot[directory.instance_name].output
 
     assert 0 == len(output_records)
+
+
+@pytest.mark.parametrize('no_of_threads', [4])
+@sdc_min_version('3.2.0.0')
+def test_directory_origin_multiple_threads_timestamp_ordering(sdc_builder, sdc_executor, no_of_threads):
+    """Test Directory Origin. We test that we read the same amount of files that we write with no reprocessing
+    of files and no NoSuchFileException in the sdc logs
+
+    Pipeline looks like:
+
+    Dev Data Generator >> Local FS (files_pipeline in the test)
+    Directory Origin >> Trash
+
+    """
+
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    number_of_batches = 100
+    max_records_in_file = 10
+
+    # Start files_pipeline
+    files_pipeline = get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, 1,
+                                                 2000)
+    sdc_executor.add_pipeline(files_pipeline)
+    start_pipeline_command = sdc_executor.start_pipeline(files_pipeline)
+
+    # 2nd pipeline which reads the files using Directory Origin stage in whole data format
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(batch_wait_time_in_secs=1,
+                             data_format='WHOLE_FILE',
+                             max_files_in_directory=1000,
+                             files_directory=tmp_directory,
+                             file_name_pattern='*',
+                             file_name_pattern_mode='GLOB',
+                             number_of_threads=no_of_threads,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             file_post_processing='DELETE')
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    directory >> trash
+
+    directory_pipeline = pipeline_builder.build(title='Directory Origin')
+    sdc_executor.add_pipeline(directory_pipeline)
+    pipeline_start_command = sdc_executor.start_pipeline(directory_pipeline)
+
+    # Stop files_pipeline after number_of_batches or more
+    start_pipeline_command.wait_for_pipeline_batch_count(number_of_batches)
+    sdc_executor.stop_pipeline(files_pipeline)
+
+    # Get how many records are sent
+    file_pipeline_history = sdc_executor.get_pipeline_history(files_pipeline)
+    msgs_sent_count = file_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    # Compute the expected number of batches to process all files
+    no_of_input_files = (msgs_sent_count / max_records_in_file)
+
+    pipeline_start_command.wait_for_pipeline_batch_count(no_of_input_files)
+
+    assert 0 == len(sdc_executor.get_stage_errors(directory_pipeline, directory))
+
+    sdc_executor.stop_pipeline(directory_pipeline)
+    directory_pipeline_history = sdc_executor.get_pipeline_history(directory_pipeline)
+    msgs_result_count = directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    assert msgs_result_count == no_of_input_files
 
 
 def generate_files(sdc_builder, sdc_executor, tmp_directory):
