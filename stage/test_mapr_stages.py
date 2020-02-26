@@ -488,17 +488,8 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(producer_pipeline)
 
 
-@cluster('mapr')
-def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
-    """This test will start MapR Streams producer and consumer pipelines which check for integrity of data
-    from a MapR Streams producer to MapR Streams consumer. Both the pipelines run as standalone. Specifically, this
-    would look like:
-
-    MapR Streams producer pipeline:
-        dev_raw_data_source >> mapr_streams_producer
-
-    MapR Streams consumer pipeline:
-        mapr_streams_consumer >> trash
+def _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, cluster, with_timestamp):
+    """Utility method to run the multitopic streams test so we can version-guard the 'with timestamp' option
     """
     # MapR Stream name has to be pre-created in MapR cluster. Clusterdock MapR image has this already.
     stream_name = '/sample-stream'
@@ -523,6 +514,8 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
                                          auto_offset_reset='EARLIEST',
                                          consumer_group=get_random_string(string.ascii_letters, 10),
                                          number_of_threads=10)
+    if with_timestamp:
+        mapr_streams_consumer.set_attributes(include_timestamps=True)
     trash = builder.add_stage('Trash')
     mapr_streams_consumer >> trash
     consumer_pipeline = builder.build('MapR Multitopic Consumer Pipeline').configure_for_environment(cluster)
@@ -546,6 +539,11 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(producer_pipeline)
         assert len(snapshot_data) > 0
         assert all(record == stream_producer_values[0] for record in snapshot_data)
+        if with_timestamp:
+            record_header = [record.header for record in snapshot[consumer_pipeline[0].instance_name].output]
+            for element in record_header:
+                assert 'timestamp' in element['values']
+                assert 'timestampType' in element['values']
 
         sdc_executor.start_pipeline(producer_pipeline_2).wait_for_pipeline_batch_count(wait_batches)
         snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, wait=False)
@@ -555,8 +553,44 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(producer_pipeline_2)
         assert len(snapshot_data) > 0
         assert all(record == stream_producer_values[1] for record in snapshot_data)
+        if with_timestamp:
+            record_header = [record.header for record in snapshot[consumer_pipeline[0].instance_name].output]
+            for element in record_header:
+                assert 'timestamp' in element['values']
+                assert 'timestampType' in element['values']
     finally:
         sdc_executor.stop_pipeline(consumer_pipeline)
+
+
+@cluster('mapr')
+def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
+    """This test will start MapR Streams producer and consumer pipelines which check for integrity of data
+    from a MapR Streams producer to MapR Streams consumer. Both the pipelines run as standalone. Specifically, this
+    would look like:
+
+    MapR Streams producer pipeline:
+        dev_raw_data_source >> mapr_streams_producer
+
+    MapR Streams consumer pipeline:
+        mapr_streams_consumer >> trash
+    """
+    _test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster, False)
+
+
+@cluster('mapr')
+@sdc_min_version('3.15.0')
+def test_mapr_standalone_multitopic_streams_with_timestamp(sdc_builder, sdc_executor, cluster):
+    """This test will start MapR Streams producer and consumer pipelines which check for integrity of data
+    from a MapR Streams producer to MapR Streams consumer, including the message timestamp.
+    Both the pipelines run as standalone. Specifically, this would look like:
+
+    MapR Streams producer pipeline:
+        dev_raw_data_source >> mapr_streams_producer
+
+    MapR Streams consumer pipeline:
+        mapr_streams_consumer >> trash
+    """
+    _test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster, True)
 
 
 def generate_streams_producer(sdc_builder, topic_name, value, cluster):

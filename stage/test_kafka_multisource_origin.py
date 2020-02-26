@@ -45,6 +45,41 @@ def sdc_common_hook():
 
 
 @cluster('cdh', 'kafka')
+@sdc_min_version('3.15.0')
+def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
+    """Check that timestamp and timestamp type are included in record header. Verifies that for previous versions of
+    kafka (< 0.10), a validation issue is thrown.
+
+    Kafka Consumer Origin pipeline with standalone mode:
+        kafka_consumer >> trash
+    """
+    stage_libs = cluster.sdc_stage_libs
+
+    message = 'Hello World from SDC & DPM!'
+    expected = '{\'text\': Hello World from SDC & DPM!}'
+
+    # Build the Kafka consumer pipeline with Standalone mode.
+    builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(builder, cluster)
+    kafka_multitopic_consumer.set_attributes(include_timestamps=True)
+
+    trash = builder.add_stage(label='Trash')
+    kafka_multitopic_consumer >> trash
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
+    kafka_consumer_pipeline.configuration['shouldRetry'] = False
+    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(kafka_consumer_pipeline)
+
+    try:
+        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, message.encode(), 'TEXT')
+        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
+    finally:
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+
+
+@cluster('cdh', 'kafka')
 @sdc_min_version('3.6.0')
 def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, cluster):
     """Check that accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
@@ -85,7 +120,7 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
 
-        verify_kafka_origin_results_timestamp(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
+        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
@@ -439,7 +474,7 @@ def produce_kafka_messages_in_different_timestamp(topic, cluster, messages, data
     return timestamp
 
 
-def verify_kafka_origin_results_timestamp(kafka_multitopic_consumer_pipeline, sdc_executor, message, data_format):
+def verify_kafka_origin_results(kafka_multitopic_consumer_pipeline, sdc_executor, message, data_format):
     """Start, stop pipeline and verify results using snapshot"""
 
     # Start Pipeline.
@@ -457,3 +492,12 @@ def verify_kafka_origin_results_timestamp(kafka_multitopic_consumer_pipeline, sd
     if data_format in basic_data_formats:
         record_field = [record.field for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
         assert message == [str(record_field[0]), str(record_field[1])]
+
+    elif data_format == 'TEXT_TIMESTAMP':
+        record_field = [record.field for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
+        record_header = [record.header for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
+        for element in record_header:
+            logger.debug('ELEMENT: %s', element['values'])
+            assert 'timestamp' in element['values']
+            assert 'timestampType' in element['values']
+        assert message == str(record_field[0])
