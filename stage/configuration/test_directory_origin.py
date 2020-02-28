@@ -568,8 +568,9 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
 
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
-        assert output_records[0].field == EXPECTED_OUTPUT
+        output_data = snapshot[directory.instance_name].output[0].field
+        output_records = get_xml_output_field(directory, output_data, 'msg')
+        assert output_records == EXPECTED_OUTPUT
 
     finally:
         sdc_executor.stop_pipeline(pipeline)
