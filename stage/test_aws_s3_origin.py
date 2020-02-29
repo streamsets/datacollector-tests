@@ -14,7 +14,6 @@
 import io
 import json
 import logging
-import os
 import string
 import tempfile
 import time
@@ -25,6 +24,8 @@ import pytest
 from streamsets.testframework.markers import aws, sdc_min_version, large
 from streamsets.testframework.utils import get_random_string
 from xlwt import Workbook
+
+from .utils.utils_aws import allow_public_access, restore_public_access
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,22 @@ def test_s3_origin_multithreaded(sdc_builder, sdc_executor, aws):
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, 10, 50)
 
 
-def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, number_of_threads, number_of_records):
+@aws('s3')
+def test_s3_origin_anonymous(sdc_builder, sdc_executor, aws):
+    """Tests accessing a public object where we can list bucket contents."""
+    base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
+                   DEFAULT_NUMBER_OF_RECORDS, anonymous=True)
+
+
+@aws('s3')
+def test_s3_origin_anonymous_no_list(sdc_builder, sdc_executor, aws):
+    """Tests accessing a public object where we cannot list bucket contents."""
+    base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
+                   1, anonymous=True, allow_list=False)
+
+
+def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, number_of_threads, number_of_records,
+                   anonymous=False, allow_list=True):
     """Basic setup for amazon S3Origin tests. It receives different variables indicating the read order, data format...
     In order to parametrize all this configuration properties and make tests simpler.
     The pipeline looks like:
@@ -252,8 +268,11 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
-    s3_origin.set_attributes(bucket=s3_bucket, data_format=data_format, prefix_pattern=f'{s3_key}/*',
-                             number_of_threads=number_of_threads, read_order=read_order)
+    s3_origin.set_attributes(bucket=s3_bucket,
+                             data_format=data_format,
+                             prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
+                             number_of_threads=number_of_threads,
+                             read_order=read_order)
 
     trash = builder.add_stage('Trash')
 
@@ -270,13 +289,23 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     s3_origin_pipeline = builder.build(title=pipeline_name).configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
 
+    if anonymous:
+        s3_origin.set_attributes(access_key_id='', secret_access_key='')
+
     sdc_executor.add_pipeline(s3_origin_pipeline)
 
     client = aws.s3
+    public_access_block = None
+    bucket_policy = None
     try:
+        acl = 'public-read' if anonymous else 'private'
+
+        if anonymous:
+            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, allow_list, False)
+
         # Insert objects into S3.
         for i in range(s3_obj_count):
-            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=json.dumps(json_data))
+            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=json.dumps(json_data), ACL=acl)
 
         if number_of_threads == SINGLETHREADED:
             # Snapshot the pipeline and compare the records.
@@ -298,11 +327,15 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
             assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == s3_obj_count + 1
 
     finally:
+        restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         if number_of_records > 0:
             # Clean up S3.
-            delete_keys = {'Objects': [{'Key': k['Key']}
-                                       for k in
-                                       client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+            if number_of_records > 1:
+                delete_keys = {'Objects': [{'Key': k['Key']}
+                                           for k in
+                                           client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+            else:
+                delete_keys = {'Objects': [{'Key' : f'{s3_key}/0'}]}
             client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
 
 

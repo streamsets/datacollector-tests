@@ -25,6 +25,8 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
+from .utils.utils_aws import allow_public_access, restore_public_access
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -360,7 +362,21 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
         dev_raw_data_source >> record_deduplicator >> s3_destination
                                                    >> to_error
     """
-    _run_test_s3_destination(sdc_builder, sdc_executor, aws, False)
+    _run_test_s3_destination(sdc_builder, sdc_executor, aws, False, False)
+
+
+@aws('s3')
+def test_s3_destination_anonymous(sdc_builder, sdc_executor, aws):
+    """Test for S3 target stage. We do so by running a dev raw data source generator to S3 destination
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been ingested by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    and S3 destination in order to determine exactly what has been ingested. The pipeline looks like:
+
+    S3 Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> s3_destination
+                                                   >> to_error
+    """
+    _run_test_s3_destination(sdc_builder, sdc_executor, aws, False, True)
 
 
 @aws('s3', 'kms')
@@ -376,10 +392,10 @@ def test_s3_destination_sse_kms(sdc_builder, sdc_executor, aws):
         dev_raw_data_source >> record_deduplicator >> s3_destination
                                                    >> to_error
     """
-    _run_test_s3_destination(sdc_builder, sdc_executor, aws, True)
+    _run_test_s3_destination(sdc_builder, sdc_executor, aws, True, False)
 
 
-def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms):
+def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous):
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
 
@@ -417,8 +433,16 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms):
     s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(s3_dest_pipeline)
 
+    if anonymous:
+        s3_destination.set_attributes(access_key_id='', secret_access_key='')
+
     client = aws.s3
+    public_access_block = None
+    bucket_policy = None
     try:
+        if anonymous:
+            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, False, True)
+
         # start pipeline and capture pipeline messages to assert
         snapshot = sdc_executor.capture_snapshot(s3_dest_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(s3_dest_pipeline)
@@ -444,6 +468,7 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms):
             assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
             assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
     finally:
+        restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
