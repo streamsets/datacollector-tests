@@ -1292,7 +1292,7 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
 
-        item_list = [get_xml_output_field(directory, output.field, '{http://books.com/book}book')
+        item_list = [get_xml_output_field(directory, output.field, 'b:book')
                      for output in snapshot[directory.instance_name].output]
         rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
                               for item in item_list]
@@ -1304,7 +1304,7 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
         output_records = snapshot[directory.instance_name].output
 
         output_data = output_records[0]._data['value']['value']
-        field_info = get_xml_output_field(directory, output_data, '{http://books.com/book}book', 'value')
+        field_info = get_xml_output_field(directory, output_data, 'b:book', 'value')
 
         if include_field_xpaths:
             # Test for Record Headers
@@ -1694,7 +1694,7 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
         sdc_executor.add_pipeline(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
 
-        item_list = [get_xml_output_field(directory, output.field, '{http://books.com/book}book')
+        item_list = [get_xml_output_field(directory, output.field, 'b:book')
                      for output in snapshot[directory.instance_name].output]
         rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
                               for item in item_list]
@@ -1709,7 +1709,7 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
             # Test for Field Attributes. Currently using _data property since attributes are not accessible with the
             # field property.
             output_data = output_records[0]._data['value']
-            field_header = get_xml_output_field(directory, output_data, 'value', '{http://books.com/book}book')
+            field_header = get_xml_output_field(directory, output_data, 'value', 'b:book')
             assert field_header['attributes']['xmlns:b'] == 'http://books.com/book'
         else:
             assert 'attributes' not in output_records[0]._data['value']
