@@ -407,3 +407,39 @@ def test_expression_evaluator(sdc_builder, sdc_executor):
     assert snapshot[expression].output[0].get_field_data('/new_field') == 'Secret 1'
     assert snapshot[expression].output[0].header['values']['new header'] == 'Secret 2'
     assert snapshot[expression].output[0].get_field_data('/a').attributes['new field header'] == 'Secret 3'
+
+
+@sdc_min_version('3.15.0')
+def test_deduplicator_field_to_compare(sdc_builder, sdc_executor):
+    """When field to compare in Record Deduplicator stage doesn't exists, it use On Record Error to manage
+    the DEDUP error. The record error has to be "DEDUP_04: Field Path does not exist in the record".
+
+    dev_raw_data_source >> record_deduplicator  >> trash
+                                                >> trash
+    """
+    raw_data = "Hello"
+    field_to_compare = ["/ff", "/text"]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=raw_data)
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    record_deduplicator.set_attributes(on_record_error='TO_ERROR',
+                                       compare="SPECIFIED_FIELDS",
+                                       fields_to_compare=field_to_compare)
+    trash_one = pipeline_builder.add_stage('Trash')
+    trash_second = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> record_deduplicator >> trash_one
+    record_deduplicator >> trash_second
+
+    pipeline = pipeline_builder.build('test_deduplicator_field_to_compare')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    stage = snapshot[record_deduplicator.instance_name]
+    assert 1 == len(stage.error_records)
+    assert 'DEDUP_04' == stage.error_records[0].header['errorCode']
