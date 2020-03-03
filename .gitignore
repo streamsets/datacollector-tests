@@ -23,3 +23,4 @@ _build
 maintain-boss.pid
 pretenders-boss.pid
 pretenders.log
+venv/*

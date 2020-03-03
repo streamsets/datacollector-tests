@@ -174,7 +174,10 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
              f"(${{record:value('/{FIRST_COLUMN if not database.type == 'Oracle' else FIRST_COLUMN.upper()}')}}"
              f", '${{record:value('/{OTHER_COLUMN if not database.type == 'Oracle' else OTHER_COLUMN.upper()}')}}')")
 
-    jdbc_query_dest.set_attributes(sql_query=query)
+    if Version(sdc_builder.version) < Version('3.14.0'):
+        jdbc_query_dest.set_attributes(sql_query=query)
+    else:
+        jdbc_query_dest.set_attributes(sql_queries=[query])
 
     finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
