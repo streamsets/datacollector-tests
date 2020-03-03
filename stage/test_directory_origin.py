@@ -1296,6 +1296,119 @@ def test_directory_origin_multiple_threads_timestamp_ordering(sdc_builder, sdc_e
     assert msgs_result_count == no_of_input_files
 
 
+# Test for SDC-13486
+def test_directory_origin_error_file_to_error_dir(sdc_builder, sdc_executor):
+    """ Test Directory Origin. Create two files in tmp_directory file1.txt which is correctly parsed by directory
+    origin and file2.txt which is not correctly parsed by directory origin and hence it is sent to tmp_error_directory
+    by that directory origin. After that we check with another directory origin reading from tmp_error_directory that
+    we get an error_record specifying that file2.txt cannot be parsed again so we have checked that file2.txt was moved
+    to tmp_error_directory by the first directory origin.
+
+    Pipelines look like:
+
+        dev_raw_data_source >> local_fs (called Custom Generate file1.txt pipeline)
+        dev_raw_data_source >> local_fs (called Custom Generate file2.txt pipeline)
+        dev_raw_data_source >= shell (events lane for the same pipeline as in above comment)
+        directory >> trash (called Directory Read file1.txt and file2.txt)
+        directory >> trash (called Directory Read file2.txt from error directory)
+
+    """
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    tmp_error_directory = os.path.join(tempfile.mkdtemp(prefix="err_dir_", dir=tempfile.gettempdir()))
+
+    headers = "publication_title	print_identifier	online_identifier\n"
+
+    # Generate file1.txt with good data.
+    raw_data = headers + "abcd  efgh    ijkl\n"
+    pipeline_builder = sdc_executor.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True,
+                                       event_data='create-directory')
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT',
+                            directory_template=tmp_directory,
+                            files_prefix='file1', files_suffix='txt')
+
+    dev_raw_data_source >> local_fs
+
+    files_pipeline = pipeline_builder.build('Custom Generate file1.txt pipeline')
+    sdc_executor.add_pipeline(files_pipeline)
+
+    logger.debug("Creating file1.txt")
+    sdc_executor.start_pipeline(files_pipeline).wait_for_finished(timeout_sec=5)
+
+    # Generate file2.txt with bad data and create error directory.
+    raw_data = headers + f'''ab	"	"'	''abcd		efgh\n'''
+    dev_raw_data_source.set_attributes(raw_data=raw_data)
+    local_fs.set_attributes(files_prefix='file2')
+
+    shell = pipeline_builder.add_stage('Shell')
+    shell.set_attributes(preconditions=["${record:value('/text') == 'create-directory'}"],
+                         script=f'''mkdir {tmp_error_directory}''')
+
+    dev_raw_data_source >= shell
+
+    files_pipeline_2 = pipeline_builder.build('Custom Generate file2.txt pipeline')
+    sdc_executor.add_pipeline(files_pipeline_2)
+
+    logger.debug("Creating file2.txt")
+    sdc_executor.start_pipeline(files_pipeline_2).wait_for_finished(timeout_sec=5)
+
+    # 1st Directory pipeline which tries to read both file1.txt and file2.txt.
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(file_name_pattern='*.txt',
+                             number_of_threads=2,
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='NONE',
+                             files_directory=tmp_directory,
+                             error_directory=tmp_error_directory,
+                             read_order='LEXICOGRAPHICAL',
+                             data_format='DELIMITED',
+                             header_line='WITH_HEADER',
+                             delimiter_format_type='TDF')  # Tab separated values.
+    trash = builder.add_stage('Trash')
+    directory >> trash
+
+    pipeline_dir = builder.build('Directory Read file1.txt and file2.txt')
+    sdc_executor.add_pipeline(pipeline_dir)
+
+    sdc_executor.start_pipeline(pipeline_dir)
+
+    assert 1 == len(sdc_executor.get_stage_errors(pipeline_dir, directory))
+    assert "file2" in sdc_executor.get_stage_errors(pipeline_dir, directory)[0].error_message
+
+    sdc_executor.stop_pipeline(pipeline_dir)
+
+    # 2nd Directory pipeline which will read from error directory to check file2.txt is there.
+    builder = sdc_builder.get_pipeline_builder()
+    directory_error = builder.add_stage('Directory', type='origin')
+    directory_error.set_attributes(file_name_pattern='*.txt',
+                                   number_of_threads=2,
+                                   file_name_pattern_mode='GLOB',
+                                   file_post_processing='NONE',
+                                   files_directory=tmp_error_directory,
+                                   error_directory=tmp_error_directory,
+                                   read_order='LEXICOGRAPHICAL',
+                                   data_format='DELIMITED',
+                                   header_line='WITH_HEADER',
+                                   delimiter_format_type='TDF')  # Tab separated values.
+    trash_2 = builder.add_stage('Trash')
+    directory_error >> trash_2
+
+    pipeline_error_dir = builder.build('Directory Read file2.txt from error directory')
+    sdc_executor.add_pipeline(pipeline_error_dir)
+
+    sdc_executor.start_pipeline(pipeline_error_dir)
+
+    assert 1 == len(sdc_executor.get_stage_errors(pipeline_error_dir, directory))
+    assert "file2" in sdc_executor.get_stage_errors(pipeline_error_dir, directory)[0].error_message
+
+    sdc_executor.stop_pipeline(pipeline_error_dir)
+
+
 def generate_files(sdc_builder, sdc_executor, tmp_directory):
     raw_data = 'Hello!'
 
