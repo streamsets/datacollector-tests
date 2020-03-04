@@ -222,7 +222,7 @@ def test_pulsar_origin_standalone_text(sdc_builder, sdc_executor, pulsar):
     dev_raw_data_source = get_dev_raw_data_source(pulsar_producer_pipeline_builder, json_data)
 
     pulsar_producer = get_pulsar_producer_stage(pulsar_producer_pipeline_builder, topic)
-    pulsar_producer.set_attributes(compresion_type='NONE')
+    pulsar_producer.set_attributes(compression_type='NONE')
 
     dev_raw_data_source >> pulsar_producer
     pulsar_producer_pipeline = pulsar_producer_pipeline_builder.build(
@@ -289,7 +289,8 @@ def test_pulsar_origin_standalone_json(sdc_builder, sdc_executor, pulsar):
 
     pulsar_producer = get_pulsar_producer_stage(pulsar_producer_pipeline_builder, '${record:value(\'/Topic\')}')
     pulsar_producer.set_attributes(data_format='JSON',
-                                   partition_type='ROUND_ROBIN')
+                                   partition_type='ROUND_ROBIN',
+                                   compression_type='LZ4')
 
     dev_raw_data_source >> pulsar_producer
     pulsar_producer_pipeline = pulsar_producer_pipeline_builder.build(
@@ -355,7 +356,7 @@ def test_pulsar_origin_standalone_xml(sdc_builder, sdc_executor, pulsar):
                                    partition_type='SINGLE',
                                    hashing_scheme='JAVA_STRING_HASH',
                                    message_key='12345',
-                                   compresion_type='ZLIB')
+                                   compression_type='ZLIB')
 
     dev_raw_data_source >> pulsar_producer
     pulsar_producer_pipeline = pulsar_producer_pipeline_builder.build(
@@ -460,7 +461,7 @@ def test_pulsar_origin_standalone_topics_list(sdc_builder, sdc_executor, pulsar)
     pulsar_consumer.set_attributes(topics_selector='TOPICS_LIST',
                                    topics_list=topics_list,
                                    subscription_type='EXCLUSIVE',
-                                   ead_compacted=False,
+                                   read_compacted=False,
                                    data_format='JSON')
 
     trash = pulsar_consumer_pipeline_builder.add_stage(label='Trash')
@@ -644,7 +645,7 @@ def test_pulsar_origin_standalone_json_tls_encrypt(sdc_builder, sdc_executor, pu
     pulsar_producer = get_pulsar_producer_stage(pulsar_producer_pipeline_builder, '${record:value(\'/Topic\')}')
     pulsar_producer.set_attributes(data_format='JSON',
                                    partition_type='ROUND_ROBIN',
-                                   compresion_type='LZ4',
+                                   compression_type='LZ4',
                                    enable_tls=True)
 
     dev_raw_data_source >> pulsar_producer
@@ -716,8 +717,8 @@ def test_pulsar_origin_standalone_json_tls_mutual_auth(sdc_builder, sdc_executor
     pulsar_producer = get_pulsar_producer_stage(pulsar_producer_pipeline_builder, '${record:value(\'/Topic\')}')
     pulsar_producer.set_attributes(data_format='JSON',
                                    partition_type='ROUND_ROBIN',
-                                   compresion_type='LZ4',
-                                   nable_tls=True,
+                                   compression_type='LZ4',
+                                   enable_tls=True,
                                    enable_mutual_authentication=True)
 
     dev_raw_data_source >> pulsar_producer
