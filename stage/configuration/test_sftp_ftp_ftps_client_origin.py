@@ -2,6 +2,7 @@ from collections import OrderedDict
 import json
 import logging
 import os
+import time
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -1317,3 +1318,49 @@ def test_use_custom_log_format(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'authentication': 'PASSWORD'}, {'authentication': 'PRIVATE_KEY'}])
 def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
+
+
+@sdc_min_version('3.15.0')
+@sftp
+def test_file_processing_delay(sdc_builder, sdc_executor, sftp):
+    """Test file processing delay property for SFTP origin. Configure the pipeline with a 15 second delay.
+    - Add a file, immediately start the pipeline and assert the file is not read
+    - Wait 15 seconds (necessary to make sure the delay time has passed) and check the file is now properly read.
+        sftp_ftp_client >> trash
+    """
+    sftp_file_name = get_random_string()
+    raw_text_data = 'Hello World!'
+    sftp.put_string(os.path.join(sftp.path, sftp_file_name), raw_text_data)
+
+    # Build SFTP pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
+    sftp_ftp_client.file_name_pattern = sftp_file_name
+    sftp_ftp_client.data_format = 'TEXT'
+    sftp_ftp_client.file_processing_delay = 15000  # Files will be processed after 15 seconds have passed
+    trash = builder.add_stage('Trash')
+
+    sftp_ftp_client >> trash
+    sftp_ftp_client_pipeline = builder.build('SFTP Origin Pipeline').configure_for_environment(sftp)
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    # On first run nothing should be read - file delay is in place
+    snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+    assert len(snapshot[sftp_ftp_client].output) == 0
+
+    # Allow time for the file delay to pass and restart the pipeline, check both files are read in order
+    time.sleep(16)
+    snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+
+    assert len(snapshot[sftp_ftp_client].output) == 1
+    assert snapshot[sftp_ftp_client].output[0].field['text'] == raw_text_data
+
+    # Delete the test SFTP origin file we created
+    transport, client = sftp.client
+    try:
+        client.remove(os.path.join(sftp.path, sftp_file_name))
+    finally:
+        client.close()
+        transport.close()
