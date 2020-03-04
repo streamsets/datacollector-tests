@@ -3386,6 +3386,7 @@ for (step = 0; step < 1000; step++) {
 
 
 @database
+@sdc_min_version('3.15.0')
 def test_multitable_quote_column_names(sdc_builder, sdc_executor, database):
     """
     Ensure that we properly quote all table and column names when querying the database.
@@ -3403,6 +3404,8 @@ def test_multitable_quote_column_names(sdc_builder, sdc_executor, database):
     origin >> trash
 
     pipeline = builder.build().configure_for_environment(database)
+    # Work-arounding STF behavior of upper-casing table name configuration
+    origin.table_configs[0]["tablePattern"] = f'%{table_name}%'
 
     metadata = sqlalchemy.MetaData()
     table = sqlalchemy.Table(
