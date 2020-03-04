@@ -18,6 +18,7 @@ import string
 import datetime
 
 from pulsar import MessageId
+from stage.utils.utils_xml import get_xml_output_field
 from streamsets.testframework.markers import pulsar, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -77,7 +78,8 @@ def verify_results_snapshot(pulsar_consumer_pipeline, snapshot_pipeline_command,
             assert record['Name'] == message['Name']
             assert record['Job'] == message['Job']
         elif data_format == 'XML':
-            assert record['value'] == message
+            output_record = get_xml_output_field(pulsar_consumer_pipeline[0], record, 'text')
+            assert output_record['value'] == message
         elif data_format == 'DELIMITED':
             logger.debug(record)
             logger.debug(message)
