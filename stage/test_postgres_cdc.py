@@ -425,6 +425,7 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
 
 
 @database('postgresql')
+@sdc_min_version('3.15.0')
 def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_executor, database):
     """Basic test that inserts to a Postgres table with multiple threads,
     and validates via timeout checking that all CDCs are received,
