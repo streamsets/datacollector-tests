@@ -42,6 +42,13 @@ FILE_WRITER_SCRIPT_BINARY = """
 """
 
 
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
+    return hook
+
+
 @pytest.fixture
 def file_writer(sdc_executor):
     """Writes a file to SDC's local FS.
