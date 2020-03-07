@@ -342,10 +342,10 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "originFieldPath",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "resultFieldPath",
-        "value" : "xyz"
+        "value" : "/xyz"
       }, {
         "name" : "stageOnRecordError",
         "value" : "TO_ERROR"
@@ -373,10 +373,10 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "originFieldPath",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "resultFieldPath",
-        "value" : "xyz"
+        "value" : "/xyz"
       }, {
         "name" : "urlSafe",
         "value" : false
@@ -650,7 +650,7 @@
       "stageVersion" : "2",
       "configuration" : [ {
         "name" : "listPath",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "copyFields",
         "value" : true
@@ -758,7 +758,7 @@
       "stageVersion" : "2",
       "configuration" : [ {
         "name" : "fieldPath",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "separator",
         "value" : "xyz"
@@ -1219,7 +1219,7 @@
         "value" : false
       }, {
         "name" : "conf.outputField",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "conf.headerOutputLocation",
         "value" : "HEADER"
@@ -1546,13 +1546,13 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "fieldPathToParse",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "removeCtrlChars",
         "value" : false
       }, {
         "name" : "parsedFieldPath",
-        "value" : "xyz"
+        "value" : "/xyz"
       }, {
         "name" : "stageOnRecordError",
         "value" : "TO_ERROR"
@@ -1905,7 +1905,7 @@
       "stageVersion" : "3",
       "configuration" : [ {
         "name" : "fromField",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "keepOriginalFields",
         "value" : true
@@ -1957,7 +1957,7 @@
       "stageVersion" : "1",
       "configuration" : [ {
         "name" : "configs.fieldPathToParse",
-        "value" : "abc"
+        "value" : "/abc"
       }, {
         "name" : "configs.charset",
         "value" : "UTF-8"
@@ -1972,7 +1972,7 @@
         "value" : [ ]
       }, {
         "name" : "configs.parsedFieldPath",
-        "value" : "xyz"
+        "value" : "/xyz"
       }, {
         "name" : "stageOnRecordError",
         "value" : "TO_ERROR"
