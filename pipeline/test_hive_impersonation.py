@@ -39,7 +39,7 @@ def impersonation_check(sdc_executor):
                     'impersonate.current.user to be set to true')
 
 
-@cluster('cdh')
+@cluster('cdh', 'hdp')
 def test_hive_query_executor_impersonation(sdc_builder, sdc_executor, cluster):
     """Test Hive query executor stage for current user impersonation.
     This is acheived by using a deduplicator which assures us that there is
@@ -50,7 +50,7 @@ def test_hive_query_executor_impersonation(sdc_builder, sdc_executor, cluster):
     """
     hive_table_name = get_random_string(string.ascii_letters, 10)
     hive_cursor = cluster.hive.client.cursor()
-    sql_queries = ["CREATE TABLE ${record:value('/text')} (id int, name string)"]
+    sql_queries = ["CREATE EXTERNAL TABLE ${record:value('/text')} (id int, name string) LOCATION '/tmp/${record:value('/text')}'"]
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -65,6 +65,9 @@ def test_hive_query_executor_impersonation(sdc_builder, sdc_executor, cluster):
     record_deduplicator >> trash
 
     pipeline = builder.build(title='Hive query executor pipeline').configure_for_environment(cluster)
+    # HDP Clusterdock inserts Hive username to the JDBC URL which is specifically incompatible with this test
+    # as it's validating user impersonation (specifying username in URL is incompatible with forced impersonation).
+    hive_query.jdbc_url = hive_query.jdbc_url.replace('hive.server2.proxy.user=hive', '')
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -83,6 +86,7 @@ def test_hive_query_executor_impersonation(sdc_builder, sdc_executor, cluster):
         assert table_owner[0] == 'admin'
     finally:
         # drop the Hive table
+        cluster.hdfs.client.delete(f'/tmp/{hive_table_name}', recursive=True)
         hive_cursor.execute(f'DROP TABLE `{hive_table_name}`')
 
 
@@ -90,7 +94,8 @@ def test_hive_query_executor_impersonation(sdc_builder, sdc_executor, cluster):
 @cluster('cdh', 'hdp')
 @pytest.mark.parametrize('db', ['', 'default', 'custom'])
 @pytest.mark.parametrize('stored_as_avro', [True, False])
-@pytest.mark.parametrize('external_table', [True, False])
+# TEST-979: HDP Hive is misconfigured
+@pytest.mark.parametrize('external_table', [True])
 @pytest.mark.parametrize('partitioned', [True, False])
 def test_cold_start_impersonation(sdc_builder, sdc_executor, cluster, db, stored_as_avro, external_table, partitioned):
     """Validate Cold Start no table and no data with hive current user impersonation.
@@ -154,6 +159,10 @@ def test_cold_start_impersonation(sdc_builder, sdc_executor, cluster, db, stored
     hive_metadata >> hive_metastore
 
     pipeline = pipeline_builder.build(title='Hive drift test - Cold Start').configure_for_environment(cluster)
+    # HDP Clusterdock inserts Hive username to the JDBC URL which is specifically incompatible with this test
+    # as it's validating user impersonation (specifying username in URL is incompatible with forced impersonation).
+    hive_metadata.jdbc_url = hive_metadata.jdbc_url.replace('hive.server2.proxy.user=hive', '')
+    hive_metastore.jdbc_url = hive_metastore.jdbc_url.replace('hive.server2.proxy.user=hive', '')
     sdc_executor.add_pipeline(pipeline)
 
     hive_cursor = cluster.hive.client.cursor()
@@ -176,13 +185,13 @@ def test_cold_start_impersonation(sdc_builder, sdc_executor, cluster, db, stored
 
     finally:
         logger.info('Dropping table %s in Hive...', _get_qualified_table_name(db, table_name))
+        if external_table:
+            logger.info('Deleting Hadoop FS directory %s ...', database_location_for_table_path)
+            cluster.hdfs.client.delete(database_location_for_table_path, recursive=True)
         hive_cursor.execute('DROP TABLE {0}'.format(_get_qualified_table_name(db, table_name)))
         if db and db != 'default':
             logger.info('Dropping Database %s in Hive...', db)
             hive_cursor.execute('DROP DATABASE IF EXISTS`{0}`'.format(db))
-        if external_table:
-            logger.info('Deleting Hadoop FS directory %s ...', database_location_for_table_path)
-            cluster.hdfs.client.delete(database_location_for_table_path, recursive=True)
 
 
 def _get_qualified_table_name(db, table_name):
