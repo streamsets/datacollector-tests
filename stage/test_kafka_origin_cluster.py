@@ -60,6 +60,17 @@ def kafka_check(cluster):
         pytest.skip('Kafka tests require Kafka to be installed on the cluster')
 
 
+@pytest.fixture(autouse=True)
+def spark2_check(cluster):
+    """
+    CDH 5 doesn't have Spark 2 installed by default, it's a separate Parcel that might or might no be present. Luckily
+    CDH 6 doesn't have the same problem as Spark 2 is the default version shipped there. We do depend on Spark 2 for a
+    while now, so unless we're sure we have all the services we need, we skip the test.
+    """
+    if isinstance(cluster, ClouderaManagerCluster) and cluster.get_cluster_version().startswith("5.") and not hasattr(cluster, 'spark2_on_yarn'):
+        pytest.skip('Kafka tests require Spark 2 to be installed on the cluster')
+
+
 @cluster('cdh')
 def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
