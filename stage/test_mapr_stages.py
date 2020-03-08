@@ -101,7 +101,7 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
     # Build the MapR DB JSON Consumer pipeline.
     pipeline_builder = sdc_builder.get_pipeline_builder()
     mapr_db_json_origin = pipeline_builder.add_stage('MapR DB JSON Origin')
-    mapr_db_json_origin.set_attributes(table_name=table_path, row_key='/_id')
+    mapr_db_json_origin.set_attributes(table_name=table_path)
     trash = pipeline_builder.add_stage('Trash')
     mapr_db_json_origin >> trash
     json_db_origin_pipeline = pipeline_builder.build('MapR Json DB Origin').configure_for_environment(cluster)
