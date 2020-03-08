@@ -15,6 +15,7 @@
 import pytest
 
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.sdk.sdc_api import StartError
 
 @pytest.fixture(scope='module')
 def sdc_common_hook():
@@ -41,13 +42,19 @@ def test_start_and_capture_snapshot(sdc_builder, sdc_executor):
 
     source >> trash
 
-    pipeline = builder.build(title='Hadoop FS pipeline')
+    pipeline = builder.build()
     pipeline.configuration['executionMode'] = 'CLUSTER_BATCH'
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
-    sdc_executor.get_pipeline_status(pipeline).wait_for_status('START_ERROR', ignore_errors=True)
+    try:
+        sdc_executor.capture_snapshot(pipeline, start_pipeline=True)
+    except StartError:
+        # We are expecting error that we will further inspect via pipeline status
+        pass
+    else:
+        assert False
 
+    sdc_executor.get_pipeline_status(pipeline).wait_for_status('START_ERROR', ignore_errors=True)
     status = sdc_executor.get_pipeline_status(pipeline).response.json()
     assert 'Cluster mode does not support snapshots.' in status['message']
 

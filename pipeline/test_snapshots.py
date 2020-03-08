@@ -15,6 +15,7 @@
 import pytest
 
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.sdk.sdc_api import StartError
 
 
 # SDC-6217
@@ -28,7 +29,7 @@ def test_capture_same_snapshot_twice(sdc_builder, sdc_executor):
     trash = builder.add_stage('Trash')
     source >> trash
 
-    pipeline = builder.build(title='Capture same snapshot twice')
+    pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
 
     # First snapshot needs to succeed
@@ -37,10 +38,16 @@ def test_capture_same_snapshot_twice(sdc_builder, sdc_executor):
     assert snapshot is not None
 
     # Trying to capture the same snapshot second time should fail
-    sdc_executor.capture_snapshot(pipeline, snapshot_name='name', start_pipeline=True, wait=False)
-    sdc_executor.get_pipeline_status(pipeline).wait_for_status('START_ERROR', ignore_errors=True)
+    try:
+        sdc_executor.capture_snapshot(pipeline, snapshot_name='name', start_pipeline=True, wait=False)
+    except StartError:
+        # We are expecting error that we will further inspect via pipeline status
+        pass
+    else:
+        assert False
 
+    sdc_executor.get_pipeline_status(pipeline).wait_for_status('START_ERROR', ignore_errors=True)
     status = sdc_executor.get_pipeline_status(pipeline).response.json()
     assert 'CONTAINER_0606' in status['message']
-    assert 'Snapshot already exists' in status['message']
+    assert 'Snapshot name for pipeline' in status['message']
 
