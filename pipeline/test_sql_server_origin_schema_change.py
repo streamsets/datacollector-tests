@@ -132,7 +132,7 @@ def test_sql_server_cdc_with_cdc_schema_name(sdc_builder, sdc_executor, database
                                   maximum_pool_size=no_of_threads+1,
                                   minimum_idle_connections=no_of_threads+1,
                                   new_table_discovery_interval='${1 * SECONDS}',
-                                  no_of_threads=no_of_threads)
+                                  number_of_threads=no_of_threads)
 
     dest_table_name = get_random_string(string.ascii_uppercase, 9)
 
