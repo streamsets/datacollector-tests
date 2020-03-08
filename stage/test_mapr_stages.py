@@ -574,7 +574,7 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
     MapR Streams consumer pipeline:
         mapr_streams_consumer >> trash
     """
-    _test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster, False)
+    _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, cluster, False)
 
 
 @cluster('mapr')
@@ -590,7 +590,7 @@ def test_mapr_standalone_multitopic_streams_with_timestamp(sdc_builder, sdc_exec
     MapR Streams consumer pipeline:
         mapr_streams_consumer >> trash
     """
-    _test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster, True)
+    _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, cluster, True)
 
 
 def generate_streams_producer(sdc_builder, topic_name, value, cluster):
