@@ -419,8 +419,7 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
 
     mapping = [dict(keyName='name', sdcField='/name')]
     mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
-    mongodb_lookup.set_attributes(capped_collection=False,
-                                  database=get_random_string(ascii_letters, 5),
+    mongodb_lookup.set_attributes(database=get_random_string(ascii_letters, 5),
                                   collection=get_random_string(ascii_letters, 10),
                                   result_field='/result',
                                   document_to_sdc_field_mappings=mapping)
@@ -530,8 +529,7 @@ def test_mongodb_lookup_processor_invalid_url(sdc_builder, sdc_executor, mongodb
 
     mapping = [dict(keyName='name', sdcField='/name')]
     mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
-    mongodb_lookup.set_attributes(capped_collection=False,
-                                  database=get_random_string(ascii_letters, 5),
+    mongodb_lookup.set_attributes(database=get_random_string(ascii_letters, 5),
                                   collection=get_random_string(ascii_letters, 10),
                                   result_field='/result',
                                   document_to_sdc_field_mappings=mapping)
@@ -579,8 +577,7 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
                dict(keyName='location.state', sdcField='/state')]
 
     mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
-    mongodb_lookup.set_attributes(capped_collection=False,
-                                  database=get_random_string(ascii_letters, 5),
+    mongodb_lookup.set_attributes(database=get_random_string(ascii_letters, 5),
                                   collection=get_random_string(ascii_letters, 10),
                                   result_field='/result',
                                   document_to_sdc_field_mappings=mapping)
