@@ -38,6 +38,8 @@ CONTACT = 'Contact'
 CDC = 'CDC'
 PUSH_TOPIC = 'PUSH_TOPIC'
 API_VERSION = '47.0'
+COLON = ':'
+PERIOD = '.'
 
 
 logger = logging.getLogger(__name__)
@@ -1476,7 +1478,11 @@ def test_salesforce_destination_datetime(sdc_builder, sdc_executor, salesforce, 
     'soap',
     'bulk'
 ])
-def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesforce, api):
+@pytest.mark.parametrize(('separator'), [
+    COLON,
+    PERIOD
+])
+def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesforce, api, separator):
     """Test that we can write to related external ID fields (SDC-12636).
 
     The pipeline looks like:
@@ -1488,6 +1494,9 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
         salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
         api (:obj:`str`): API to test: 'soap' or 'bulk'
     """
+    if api == 'soap' and separator == COLON:
+        pytest.skip('Skipping... Colon separator is only allowed with Bulk API')
+
     client = salesforce.client
     inserted_ids = None
     try:
@@ -1510,7 +1519,7 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
 
         salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
         field_mapping = [{'sdcField': '/Id', 'salesforceField': 'Id'},
-                         {'sdcField': '/ReportsTo.Email', 'salesforceField': 'ReportsTo.Email'}]
+                         {'sdcField': '/ReportsTo.Email', 'salesforceField': f'ReportsTo{separator}Email'}]
         salesforce_destination.set_attributes(default_operation='UPDATE',
                                               field_mapping=field_mapping,
                                               sobject_type=CONTACT,
