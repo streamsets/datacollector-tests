@@ -453,14 +453,14 @@ def test_invalid_configs_diff_bucket_same_prefix(sdc_builder, sdc_executor, aws)
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, common_prefix=prefix, error_handling_option='ARCHIVE',
                              archiving_option='MOVE_TO_BUCKET', error_prefix=prefix, error_bucket=aws.s3_bucket_name,
                              post_processing_option='ARCHIVE', post_process_prefix=prefix,
-                             post_process_bucket='post-process-bucket', data_format=DEFAULT_DATA_FORMAT,
+                             post_process_bucket='post-process-bucket-qwertyuiopasdfhklhkjlzxcv', data_format=DEFAULT_DATA_FORMAT,
                              prefix_pattern=f'{s3_key}*')
 
     trash = builder.add_stage('Trash')
 
     s3_origin >> trash
 
-    s3_origin_pipeline = builder.build(title='Amazon S3 configs  pipeline').configure_for_environment(aws)
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
 
     s3_origin_pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(s3_origin_pipeline)
