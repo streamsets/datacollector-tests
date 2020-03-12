@@ -3440,3 +3440,88 @@ def test_multitable_quote_column_names(sdc_builder, sdc_executor, database):
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
+@database
+@sdc_min_version('3.0.0.0')
+def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured(sdc_builder, sdc_executor, database):
+    """
+    SDC-13625 Integration test for SDC-13624 - MT Consumer ingests duplicates when initial offset is specified
+    Setup origin as follows:
+        partitioning enabled + num_threads and num partitions > 1 + override offset column set
+        + initial value specified for offset
+
+    Verify that origin does not ingest the records more than once (duplicates) when initial value for offset is set
+
+    Pipeline:
+        JDBC MT Consumer >> Trash
+                         >= Pipeline Finisher (no-more-data)
+    """
+    if database.type == 'Oracle':
+        pytest.skip("This test depends on proper case for column names that Oracle auto-uppers.")
+
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{
+        "tablePattern": f'{table_name}',
+        "enableNonIncremental": False,
+        "partitioningMode": "REQUIRED",
+        "partitionSize": "100000",
+        "maxNumActivePartitions": 5,
+        'overrideDefaultOffsetColumns': True,
+        'offsetColumns': ['created'],
+        'offsetColumnToInitialOffsetValue': [{
+            'key': 'created',
+            'value': '0'
+        }]
+    }])
+
+    jdbc_multitable_consumer.number_of_threads = 2
+    jdbc_multitable_consumer.maximum_pool_size = 2
+
+    trash = pipeline_builder.add_stage('Trash')
+    jdbc_multitable_consumer >> trash
+
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+    jdbc_multitable_consumer >= finisher
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    ONE_MILLION = 1000000
+    rows_in_table = [{'id': i, 'name': get_random_string(string.ascii_lowercase, 5), 'created': i + ONE_MILLION}
+                     for i in range(1, 21)]
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(5)),
+        sqlalchemy.Column('created', sqlalchemy.Integer)
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding 20 rows into %s table', table_name)
+        connection = database.engine.connect()
+
+        connection.execute(table.insert(), rows_in_table)
+        connection.close()
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, batches=2, start_pipeline=True).snapshot
+
+        rows_from_snapshot = [(record.get_field_data('/name').value,
+                               record.get_field_data('/id').value,
+                               record.get_field_data('/created').value)
+                              for batch in snapshot.snapshot_batches
+                              for record in batch.stage_outputs[jdbc_multitable_consumer.instance_name].output]
+
+        expected_data = [(row['name'], row['id'], row['created']) for row in rows_in_table]
+        assert rows_from_snapshot == expected_data
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
