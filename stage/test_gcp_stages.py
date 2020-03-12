@@ -958,7 +958,6 @@ def test_google_storage_destination_error(sdc_builder, sdc_executor, gcp):
                                         common_prefix='gcs-test',
                                         partition_prefix='${YYYY()}/${MM()}/${DD()}/${hh()}/${mm()}',
                                         data_format='TEXT',
-                                        file_suffix='txt',
                                         stage_on_record_error='TO_ERROR')
 
     dev_raw_data_source >> google_cloud_storage
@@ -1030,7 +1029,6 @@ def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc
                                         common_prefix='gcs-test',
                                         partition_prefix='${YYYY()}/${MM()}/${DD()}/${hh()}/${mm()}',
                                         data_format='TEXT',
-                                        file_suffix='txt',
                                         stage_on_record_error='TO_ERROR')
 
     dev_raw_data_source >> google_cloud_storage
