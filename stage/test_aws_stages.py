@@ -1005,8 +1005,13 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws, number
 
     number_of_messages, max_batch_size = number_of_messages_sent_and_origin_batch_size
 
+    # number of batches will be 1 if max batch size >= number of messages
+    # if number of messages > max_batch_size, we will have more than 1 batch
+    # to decide the number of batches, we will basically divide to get the number of batches
+    # and if it is not properly divisible (i.e modulo is non zero), we will add one more batch
     number_of_batches = (1 if max_batch_size >= number_of_messages
                          else (int(number_of_messages/max_batch_size) + (1 if number_of_messages % max_batch_size > 0 else 0)))
+
 
     logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, '
                 f'Number of batches be produced : {number_of_batches}')
@@ -1037,7 +1042,7 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws, number
 
         metrics = sdc_executor.get_pipeline_history(consumer_origin_pipeline).latest.metrics
         assert metrics.counter("pipeline.batchCount.counter").count == number_of_batches
-        assert metrics.counter("pipeline.batchInputRecords.counter").count == number_of_messages + 1
+        assert metrics.counter("pipeline.batchInputRecords.counter").count == number_of_messages
         assert metrics.counter("pipeline.batchOutputRecords.counter").count == number_of_messages
     finally:
         if queue_url:
