@@ -125,9 +125,11 @@ def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
 
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    except sdc_api.RunError as ex:
+    # SDC-13828 - may raise either RunError or RunningError depending on whether or not
+    # the user script has terminated (i.e. the pipeline is stopped) in time
+    except (sdc_api.RunError, sdc_api.RunningError) as ex:
         assert stage_attributes['on_record_error'] == 'STOP_PIPELINE', \
-            "RunError should only occur when ErrorRecords generated with STOP_PIPELINE."
+            "RunError or RunningError should only occur when ErrorRecords generated with STOP_PIPELINE."
 
     # if on_record_error is TO_ERROR, then error counts should match generated.
     try:
