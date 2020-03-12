@@ -34,15 +34,26 @@ def test_send_events(sdc_builder, sdc_executor):
     Pipeline: jython >> trash
 
     """
+
+    builder_api_version = _get_scripting_api_version(sdc_builder.version)
+    executor_api_version = _get_scripting_api_version(sdc_executor.version)
+
+    if builder_api_version != executor_api_version:
+        pytest.skip(
+            f'Scripting API versions are not compatible (builder: {builder_api_version}'
+            f',executor: {executor_api_version})'
+        )
+
+    if builder_api_version == 'v1':
+        script = SCRIPT_SEND_EVENTS_v1
+    else:
+        script = SCRIPT_SEND_EVENTS_v2
+
     batch_size = 10
     builder = sdc_builder.get_pipeline_builder()
 
     # Event generation API for scripting origins changed in SDC 3.12. Addressing it with different testing
     # scripts.
-    if Version(sdc_builder.version) < Version('3.12.0'):
-        script = SCRIPT_SEND_EVENTS_v1
-    else:
-        script = SCRIPT_SEND_EVENTS_v2
 
     jython = builder.add_stage('Jython Scripting')
     jython.set_attributes(record_type='NATIVE_OBJECTS',
@@ -82,15 +93,23 @@ def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
     Pipeline: jython >> trash
 
     """
+
+    builder_api_version = _get_scripting_api_version(sdc_builder.version)
+    executor_api_version = _get_scripting_api_version(sdc_executor.version)
+
+    if builder_api_version != executor_api_version:
+        pytest.skip(
+            f'Scripting API versions are not compatible (builder: {builder_api_version}'
+            f',executor: {executor_api_version})'
+        )
+
+    if builder_api_version == 'v1':
+        script = SCRIPT_SEND_EVENTS_v1
+    else:
+        script = SCRIPT_SEND_EVENTS_v2
+
     batch_size = 10
     builder = sdc_builder.get_pipeline_builder()
-
-    # Error generation API for scripting origins changed in SDC 3.12. Addressing it with different testing
-    # scripts.
-    if Version(sdc_builder.version) < Version('3.12.0'):
-        script = SCRIPT_SEND_ERROR_RECORDS_v1
-    else:
-        script = SCRIPT_SEND_ERROR_RECORDS_v2
 
     jython = builder.add_stage('Jython Scripting')
     jython.set_attributes(record_type='NATIVE_OBJECTS',
@@ -124,6 +143,21 @@ def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
             assert len(snapshot[jython.instance_name].event_records) == 0
     finally:
         sdc_executor.remove_pipeline()
+
+
+def _get_scripting_api_version(sdc_version):
+    """Get the scripting API version as a function of a given SDC version
+    :param sdc_version: SDC version to check, in string format
+    :return: v1 if version < 3.12.0, v2 otherwise
+    """
+    # Scripting API version changed with no retrocompatibility
+    # in SDC 3.12.0, so if a test is launched as 3.10.0 > 3.13.0 or something similar
+    # it won't work
+    # This is why the tests that use this function only run when both the builder and
+    # the executor have the same version
+    if Version(sdc_version) < Version('3.12.0'):
+        return 'v1'
+    return 'v2'
 
 
 SCRIPT_SEND_EVENTS_v1 = """
