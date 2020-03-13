@@ -42,6 +42,7 @@ COLON = ':'
 PERIOD = '.'
 
 
+
 logger = logging.getLogger(__name__)
 
 STR_15_RANDOM = ""
@@ -547,7 +548,6 @@ def verify_by_snapshot(sdc_executor, pipeline, stage, expected_data, salesforce,
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        logger.info(data_to_insert) #Borrar
         inserted_ids = _get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
 
         logger.info('Starting pipeline and snapshot')
@@ -2303,12 +2303,13 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
         # Einstein Analytics data load is asynchronous, so poll until it's done
         logger.info('Looking for dataset in Einstein Analytics')
         end_time = datetime.now() + timedelta(seconds=60)
-        while not id and datetime.now() < end_time:
-            sleep(1)
+        id = None
+        while id is None and datetime.now() < end_time:
+            sleep(5)
             id, currentVersionId = find_dataset(client, edgemart_alias)
 
         # Make sure we found a dataset and didn't time out!
-        assert id != None
+        assert not(id is None)
 
         # Now query the data from Einstein Analytics using SAQL
 
