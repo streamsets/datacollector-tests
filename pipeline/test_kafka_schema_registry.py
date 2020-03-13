@@ -258,6 +258,8 @@ def test_kafka_consumer_key_capture_modes(sdc_builder, sdc_executor, cluster, co
     We will first publish an Avro message (with separate key and value schema) to Kafka, then try to read it from a
     pipeline, and ensure the key is captured correctly as per configuration.
     """
+    if ('streamsets-datacollector-apache-kafka_0_9-lib' in cluster.sdc_stage_libs):
+        pytest.skip('Test only designed to run on Kafka version >= 0.10.0')
 
     broker_url = cluster.kafka.brokers[0].replace("kafka://", "")
 
@@ -374,6 +376,8 @@ def test_kafka_producer_key_capture(sdc_builder, sdc_executor, cluster, confluen
     In the second pipeline, we will read the avro key and value written by the first pipeline and assert if the key
     and value is correct
     """
+    if ('streamsets-datacollector-apache-kafka_0_9-lib' in cluster.sdc_stage_libs):
+        pytest.skip('Test only designed to run on Kafka version >= 0.10.0')
 
     broker_url = cluster.kafka.brokers[0].replace("kafka://", "")
 
