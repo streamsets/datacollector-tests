@@ -398,6 +398,39 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
             sdc_executor.stop_pipeline(rpc_origin_pipeline)
 
 
+# SDC-13819: Kafka Multi-Topic Consumer refuses to ingest malformed records, rather than sending them to pipeline error handling
+@cluster('cdh', 'kafka')
+def test_kafka_origin_only_errors(sdc_builder, sdc_executor, cluster):
+    """
+    Ensure that the origin can read batches with only error records. We accomplish that by configuring JSON as a file
+    format and pushing messages that are clearly not JSON.
+    """
+    builder = sdc_builder.get_pipeline_builder()
+    origin = get_kafka_multitopic_consumer_stage(builder, cluster)
+    # We explicitly read files as JSON
+    origin.data_format = 'JSON'
+
+    trash = builder.add_stage(label='Trash')
+    origin >> trash
+
+    pipeline = builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        # Produce three text messages (e.g. no JSON)
+        produce_kafka_messages_list(origin.topic_list[0], cluster, ["A", "B", "C"], 'TEXT')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # No normal records should be read
+        assert len(snapshot[origin].output) == 0
+        # But we should see the 3 errors
+        assert len(snapshot[origin].error_records) == 3
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     cluster_version = cluster.version[3:]
