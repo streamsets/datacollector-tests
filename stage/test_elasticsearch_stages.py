@@ -105,7 +105,7 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
         # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
         elasticsearch.connect()
         es_search = ESSearch(index=es_index)
-        es_response = es_search.execute()
+        es_response = _es_search_with_retry(es_search)
         es_meta = es_response[0].meta
         # assert meta ingest
         assert es_meta['index'] == es_index and es_meta['doc_type'] == es_mapping and es_meta['id'] == es_doc_id
@@ -155,16 +155,8 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, addition
         # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
         elasticsearch.connect()
         es_search = ESSearch(index=es_index)
-        es_response = es_search.execute()
-
-        # Basically retry for X times while es_response is empty. That was intended to avoid emptiness flaky errors
-        for i in range(5):
-            logger.info(f'Trying to get response from ES, try {i}')
-            if not es_response:
-                time.sleep(5)
-                es_response = es_search.execute()
-        es_meta = es_response[0].meta if es_response else None
-        assert es_meta is not None
+        es_response = _es_search_with_retry(es_search)
+        es_meta = es_response[0].meta
 
         # assert meta ingest
         assert es_meta['index'] == es_index and es_meta['doc_type'] == es_mapping and es_meta['id'] == es_doc_id
@@ -174,6 +166,20 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, addition
         # Clean up test data in ES
         idx = Index(es_index)
         idx.delete()
+
+
+def _es_search_with_retry(es_search):
+    """Run the search until we get a positive response. Helpful when 'eventual consistency' is a trouble."""
+    es_response = es_search.execute()
+    for i in range(10):
+        logger.info(f'Trying to get response from ES, try {i}')
+        if not es_response:
+            time.sleep(5)
+            es_response = es_search.execute()
+    # We should have a valid response
+    assert es_response is not None
+    # That we can return to the caller
+    return es_response
 
 
 # SDC-11233: Elasticsearch origin does not properly upgrade single-threaded offsets
