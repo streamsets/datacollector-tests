@@ -289,7 +289,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
     """
 
     message = '<developers><developer>Alex</developer><developer>Xavi</developer></developers>'
-    expected = ['{\'value\': Alex}', '{\'value\': Xavi}']
+    expected = ['{\'developer\': {\'value\': Alex}}', '{\'developer\': {\'value\': Xavi}}']
 
     if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
             ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
