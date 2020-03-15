@@ -922,8 +922,7 @@ def test_spark_executor(sdc_builder, sdc_executor, cluster):
     trash = builder.add_stage('Trash')
     trash2 = builder.add_stage('Trash')
     spark_executor = builder.add_stage(name=SPARK_EXECUTOR_STAGE_NAME)
-    spark_executor.set_attributes(cluster_manager='YARN',
-                                  minimum_number_of_worker_nodes=1,
+    spark_executor.set_attributes(minimum_number_of_worker_nodes=1,
                                   maximum_number_of_worker_nodes=1,
                                   application_name=application_name,
                                   deploy_mode='CLUSTER',
