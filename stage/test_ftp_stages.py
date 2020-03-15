@@ -274,7 +274,6 @@ def test_ftp_origin_wholefile_with_finisher(sdc_builder, sdc_executor, ftp):
     """Test FTP origin message is in format Whole File. We first create two files on FTP server
     and have the FTP origin stage read them.
     We add a pipeline finisher to check when there is no more data.
-    The pipeline deletes the files.
 
     We then assert its snapshot. The pipeline looks like:
         sftp_ftp_client >> trash
@@ -299,40 +298,27 @@ def test_ftp_origin_wholefile_with_finisher(sdc_builder, sdc_executor, ftp):
     expected_2 = f'/{ftp_file_name_2}'
 
     builder = sdc_builder.get_pipeline_builder()
-    sftp_ftp_client = builder.add_stage(name=FTP_ORIGIN_CLIENT_NAME)
-    sftp_ftp_client.set_attributes(file_name_pattern=f'{ftp_file_name}*', data_format='WHOLE_FILE',
-                                   file_post_processing="DELETE")
+    origin = builder.add_stage(name=FTP_ORIGIN_CLIENT_NAME)
+    origin.set_attributes(file_name_pattern=f'{ftp_file_name}*', data_format='WHOLE_FILE')
 
     trash = builder.add_stage('Trash')
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
-    pipeline_finished_executor.set_attributes(
-        stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+    pipeline_finished_executor.stage_record_preconditions = ["${record:eventType() == 'no-more-data'}"]
 
-    sftp_ftp_client >> trash
-    sftp_ftp_client >= pipeline_finished_executor
+    origin >> trash
+    origin >= pipeline_finished_executor
 
-    sftp_ftp_client_pipeline = builder.build('FTP Origin Pipeline WholeFile-Finisher').configure_for_environment(ftp)
-    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+    pipeline = builder.build().configure_for_environment(ftp)
+    sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, batches=3, batch_size=10,
-                                             start_pipeline=True).snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, batches=3, batch_size=10, start_pipeline=True).snapshot
     try:
-        assert len(snapshot.snapshot_batches[0][sftp_ftp_client.instance_name].output) == 1
-        assert len(snapshot.snapshot_batches[1][sftp_ftp_client.instance_name].output) == 1
+        assert len(snapshot.snapshot_batches[0][origin.instance_name].output) == 1
+        assert len(snapshot.snapshot_batches[1][origin.instance_name].output) == 1
 
-        assert snapshot.snapshot_batches[0][sftp_ftp_client.instance_name].output[0].field['fileInfo'][
-                   'file'] == expected_1
-        assert snapshot.snapshot_batches[1][sftp_ftp_client.instance_name].output[0].field['fileInfo'][
-                   'file'] == expected_2
-
-        # Assert the first file was deleted by the pipeline.
-        client.cwd('/')
-        file_list = client.nlst()
-        assert ftp_file_name_1 not in file_list
-
-        # Assert the second file was deleted in tmp folder by the pipeline.
-        assert ftp_file_name_2 not in file_list
+        assert snapshot.snapshot_batches[0][origin.instance_name].output[0].field['fileInfo']['file'] == expected_1
+        assert snapshot.snapshot_batches[1][origin.instance_name].output[0].field['fileInfo']['file'] == expected_2
     finally:
         client.quit()
 
