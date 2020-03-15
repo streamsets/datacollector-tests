@@ -60,7 +60,7 @@ def test_key_serializer(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@cluster('kafka', 'cdh', 'hdp')
+@cluster('kafka', 'hdp')
 @pytest.mark.parametrize('stage_attributes', [{'use_tls': True, 'keystore_file': KEYSTORE_FILE_PATH},
                                               {'use_tls': True, 'keystore_file': 'wrong/path/file.jks'}])
 def test_keystore_file(sdc_builder, sdc_executor, stage_attributes, cluster):
