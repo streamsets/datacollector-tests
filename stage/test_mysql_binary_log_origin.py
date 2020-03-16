@@ -51,19 +51,18 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database):
         # Insert data into table.
         connection.execute(table.insert(), {'id': 100, 'name': 'a', 'json_column': {'a': 123, 'b': 456}})
 
+
         # Create Pipeline.
         pipeline_builder = sdc_builder.get_pipeline_builder()
         mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
-        mysql_binary_log.set_attributes(hostname=database.host,
-                                        start_from_beginning=True,
-                                        username=database.username,
-                                        password=database.password,
+        mysql_binary_log.set_attributes(start_from_beginning=True,
+                                        server_id='1',
                                         include_tables=database.database + '.' + table_name)
         trash = pipeline_builder.add_stage('Trash')
 
         mysql_binary_log >> trash
 
-        pipeline = pipeline_builder.build(title='MySQL Binary Log JSON Column')
+        pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Run pipeline and verify output.
