@@ -1202,13 +1202,12 @@ def test_jdbc_producer_insert(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database
+@database('mysql', 'postgresql')
 def test_jdbc_producer_insert_type_err(sdc_builder, sdc_executor, database):
-    """Simple JDBC Producer test with INSERT operation.
-    The pipeline inserts two correct records into the database and verify that correct data is in the database.
-    The pipeline inserts one wrong type record and verify the error is produced
-    The pipeline should look like:
-        dev_raw_datasource >> jdbc_producer
+    """This test covers invalid type coersion - writing string into int column. As different databases works differently,
+    we can't assert this across all supported databases. MySQL and PostgreSQL behaves the same way and we can properly
+    catch and generate JDBC_23. Other databases report coercion issues much later in the query cycle, sometimes even
+    in a way where we can't understand what and why has happened.
     """
 
     ROWS_IN_DATABASE = [
