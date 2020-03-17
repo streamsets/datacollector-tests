@@ -1573,6 +1573,9 @@ def test_jdbc_producer_multirow_with_duplicates(sdc_builder, sdc_executor, datab
     """
     Make sure that when using Multi Row insert, data related errors are send to error stream.
     """
+    if type(database) == SQLServerDatabase:
+        pytest.skip('This test is trying to insert explicit value to identity column which is not supported on SQL Server')
+
     table_name = get_random_string(string.ascii_lowercase, 15)
 
     builder = sdc_builder.get_pipeline_builder()
