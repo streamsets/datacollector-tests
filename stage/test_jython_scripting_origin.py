@@ -104,9 +104,9 @@ def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
         )
 
     if builder_api_version == 'v1':
-        script = SCRIPT_SEND_EVENTS_v1
+        script = SCRIPT_SEND_ERROR_RECORDS_v1
     else:
-        script = SCRIPT_SEND_EVENTS_v2
+        script = SCRIPT_SEND_ERROR_RECORDS_v2
 
     batch_size = 10
     builder = sdc_builder.get_pipeline_builder()
