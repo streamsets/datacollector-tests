@@ -17,8 +17,9 @@ import string
 
 import pytest
 import sqlalchemy
+from streamsets.testframework.environments.hortonworks import AmbariCluster
 from streamsets.testframework.markers import database, cluster
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,11 @@ def test_jdbc_multitable_consumer_to_hive(sdc_builder, sdc_executor, database, c
 
     Note: Numeric fixture of the test fails till SDC-6766 is addressed.
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     # Generate two random strings to use when naming the DB tables at the source.
     src_table_suffix = get_random_string(string.ascii_lowercase, 6)  # lowercase for db compatibility (e.g. PostgreSQL)
     random_table_name_1 = '{}_{}'.format(get_random_string(table_name_characters, table_name_length), src_table_suffix)

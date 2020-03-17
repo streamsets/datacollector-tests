@@ -18,10 +18,12 @@ import logging
 from datetime import datetime
 
 import pytest
+from streamsets.testframework.environments.hortonworks import AmbariCluster
 from streamsets.testframework.markers import cluster, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
+
 
 @pytest.fixture(scope='module')
 def sdc_common_hook():
@@ -37,6 +39,14 @@ def impersonation_check(sdc_executor):
                                           'impersonate.current.user') != 'true':
         pytest.skip('Hive impersonation requires stage.conf_com.streamsets.pipeline.stage.hive.'
                     'impersonate.current.user to be set to true')
+
+
+@pytest.fixture(autouse=True)
+def hive_check(cluster, sdc_builder):
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
 
 @cluster('cdh', 'hdp')

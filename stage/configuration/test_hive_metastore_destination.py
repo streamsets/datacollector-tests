@@ -1,6 +1,16 @@
 import pytest
 
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.environments.hortonworks import AmbariCluster
+from streamsets.testframework.utils import Version
+
+
+@pytest.fixture(autouse=True)
+def hive_check(cluster, sdc_builder):
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
 
 @stub
@@ -90,4 +100,3 @@ def test_use_credentials(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'use_credentials': True}])
 def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
-

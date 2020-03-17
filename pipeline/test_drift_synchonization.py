@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 
 import pytest
 import sqlalchemy
+from streamsets.testframework.environments.hortonworks import AmbariCluster
 from streamsets.testframework.markers import database, cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
@@ -142,6 +143,12 @@ def test_null_fields(sdc_builder, sdc_executor, cluster):
     """
     if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
+
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -210,6 +217,12 @@ def test_cold_start(sdc_builder, sdc_executor, cluster, db, stored_as_avro, exte
     """
     if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
+
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     db_for_path = 'default' if not db else f'{db}.db' if db != 'default' else db
@@ -308,6 +321,11 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
     if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
     table_name = get_random_string(string.ascii_lowercase, 20)
+
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     if custom_table_location and not external_table:
         pytest.skip('Test skipped : SDC-5459: Hive processor is ignoring location for internal tables')
@@ -421,6 +439,11 @@ def test_partition_locations(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hive_metastore
 
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     raw_data = [dict(id=1, name='abc', part1=get_random_string(), part2=get_random_string(), part3=get_random_string()),
                 dict(id=2, name='def', part1=get_random_string(), part2=get_random_string(), part3=get_random_string()),
@@ -527,6 +550,11 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supp
     """
     if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
+
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -671,6 +699,12 @@ def test_partition_types(sdc_builder, sdc_executor, cluster, partition_type, par
     """
     if getattr(cluster, 'kerberized_services', False) and 'hive' in cluster.kerberized_services:
         pytest.skip('Test runs only in non-kerberized environment till SDC-9324 is fixed.')
+
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     raw_data = [OrderedDict(id=1, name='abc', value=partition_value, part=partition_value)]
@@ -731,6 +765,11 @@ def test_multiplexing(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_suffix = get_random_string(string.ascii_lowercase, 10)
 
     raw_data = [dict(id=1, name='San Francisco', table=f'towns_{table_suffix}', country='US', year='2016'),
@@ -812,6 +851,11 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     partition_values = OrderedDict([("-", True), ("_", True), ("$", True), (",", True),
                                     ("(", True), (")", True), ("&", True), ("@", True),
@@ -904,6 +948,10 @@ def test_special_characters_in_table_and_columns(sdc_builder, sdc_executor, clus
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     object_name_prefix_suffix = get_random_string(string.ascii_lowercase, 5)
 
@@ -976,6 +1024,11 @@ def test_keywords_in_object_names(sdc_builder, sdc_executor, cluster, keyword):
         dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
         hive_metadata >> hadoop_fs
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = keyword
     db = keyword
 
@@ -1052,6 +1105,10 @@ def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location)
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -1123,6 +1180,10 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -1199,6 +1260,11 @@ def test_partial_input(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     raw_data = [dict(idx=0), dict(idx=1),
@@ -1263,6 +1329,11 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name_suffix = get_random_string(string.ascii_lowercase, 20)
 
     raw_data = [OrderedDict([('id', 0), ('table', f'column_rename_add{table_name_suffix}')]),
@@ -1383,6 +1454,11 @@ def test_unsupported_table_data_formats(sdc_builder, sdc_executor, cluster, data
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     raw_data = dict(id=str(uuid.uuid4()), name=get_random_string(string.ascii_lowercase, 20))
@@ -1447,6 +1523,11 @@ def test_drift_multiple_open_partitions(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     raw_data = [dict(id=str(uuid.uuid4()), part='part1'),
@@ -1525,6 +1606,11 @@ def test_sub_partitions(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     raw_data = [dict(id=1, name='abc', timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
@@ -1713,6 +1799,11 @@ def test_events(sdc_builder, sdc_executor, cluster):
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     raw_data = [dict(id=str(uuid.uuid4()), name='abc', part='part1'),
@@ -1809,6 +1900,11 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster, stop_on_query_f
 
         dev_raw_data_source >> hive_query_executor
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     raw_data = [dict(name='multiple_queries_all_success',
                      query1='select 11',
                      query2='select 12',
