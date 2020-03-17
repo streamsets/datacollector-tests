@@ -27,7 +27,7 @@ import pytest
 import sqlalchemy
 import datetime
 from streamsets.sdk.utils import Version
-from streamsets.testframework.environments.databases import Db2Database, OracleDatabase, SQLServerDatabase
+from streamsets.testframework.environments.databases import Db2Database, OracleDatabase, SQLServerDatabase, PostgreSqlDatabase
 from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -1092,8 +1092,13 @@ def test_jdbc_query_executor_parallel_query_execution(sdc_builder, sdc_executor,
         dev_raw_data_source >> jdbc_query_executor
     """
 
+
     table_name = get_random_string(string.ascii_uppercase, 20)
     table = _create_table(table_name, database)
+
+    # Make sure that we properly escape the table name. Ideally we would do escape for all databases, but since we
+    # know that all except postgre are passing, we only escape for Postgre for now.
+    enclosed_table = f'"{table_name}"' if type(database) == PostgreSqlDatabase else table_name
 
     # first, the inserts - they will run in parallel,
     # then all the updates will run sequentially
@@ -1101,9 +1106,9 @@ def test_jdbc_query_executor_parallel_query_execution(sdc_builder, sdc_executor,
     # otherwise we've failed.
     statements = []
     for rec in ROWS_IN_DATABASE:
-        statements.extend([f"INSERT INTO {table_name} (name, id) VALUES ('{rec['name']}', {rec['id']})",
-                           f"UPDATE {table_name} SET name = 'bob' WHERE id = {rec['id']}",
-                           f"UPDATE {table_name} SET name = 'MERRICK' WHERE id = {rec['id']}"])
+        statements.extend([f"INSERT INTO {enclosed_table} (name, id) VALUES ('{rec['name']}', {rec['id']})",
+                           f"UPDATE {enclosed_table} SET name = 'bob' WHERE id = {rec['id']}",
+                           f"UPDATE {enclosed_table} SET name = 'MERRICK' WHERE id = {rec['id']}"])
     # convert to string - Dev Raw Data Source Data Format tab does not seem
     # to "unroll" the array into newline-terminated records.
     statements = "\n".join(statements)
