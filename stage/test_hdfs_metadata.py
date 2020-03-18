@@ -255,6 +255,9 @@ def test_hdfs_metadata_change_acls(sdc_builder, sdc_executor, cluster):
     """HDFS File Metadata with Change ACLs Task
     The data is written to a HDFS file then changed ACLs by HDFS File Metadata executor.
     """
+    if not cluster.hdfs.is_acls:
+        pytest.skip('ACLS are not enabled on the cluster.')
+
     hdfs_directory = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
