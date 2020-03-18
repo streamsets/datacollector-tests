@@ -40,7 +40,7 @@ PUSH_TOPIC = 'PUSH_TOPIC'
 API_VERSION = '47.0'
 COLON = ':'
 PERIOD = '.'
-
+TIMEOUT = 300
 
 
 logger = logging.getLogger(__name__)
@@ -360,14 +360,14 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
     try:
         # Produce Salesforce records using pipeline.
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(2)
         sdc_executor.stop_pipeline(pipeline)
 
         # Using Salesforce connection, read the contents in the Salesforce destination.
-        # Changing " with ' and vice versa in following string makes the query execution fail.
+        # ORDER BY LastModifiedDate, Email to ensure consistency
         query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
                      f'FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = \'{STR_15_RANDOM}\''
-                     " ORDER BY Id")
+                     " ORDER BY LastModifiedDate, Email")
         result = client.query(query_str)
 
         read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]},{item["LeadSource"]}'
@@ -375,14 +375,11 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
         # Following is used later to delete these records.
         read_ids = _get_ids(result['records'], 'Id')
 
-        assert CSV_DATA_TO_INSERT[1:] == read_data
+        # Compare only the first batch of data
+        assert CSV_DATA_TO_INSERT[1:] == read_data[:len(CSV_DATA_TO_INSERT)-1]
 
         history = sdc_executor.get_pipeline_history(pipeline)
         assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count > 3
-
-        # That will mean that duplicated are marked as error, but at the same time means that is able to commit
-        # records to SalesForce
-        assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count > 0
 
     finally:
         _clean_up(sdc_executor, pipeline, client, read_ids)
@@ -551,7 +548,7 @@ def verify_by_snapshot(sdc_executor, pipeline, stage, expected_data, salesforce,
         inserted_ids = _get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         verify_snapshot(snapshot, stage, expected_data)
 
@@ -608,13 +605,13 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         inserted_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=60).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
 
         sdc_executor.stop_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=60).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
         rows_from_snapshot = [record.value['value']
                               for record in snapshot[salesforce_origin].output]
 
@@ -683,7 +680,7 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> salesforce_lookup >> trash
-    pipeline = pipeline_builder.build(title='Test Salesforce Lookup Processor').configure_for_environment(salesforce)
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
     LOOKUP_EXPECTED_DATA = copy.deepcopy(data_to_insert)
@@ -691,6 +688,7 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data
         record['surName'] = record.pop('LastName')
     verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, LOOKUP_EXPECTED_DATA,
                        salesforce, data_to_insert)
+
 
 @salesforce
 def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesforce):
@@ -737,7 +735,7 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # We need to look for surName field instead of LastName
         lookup_expected_data = copy.deepcopy(DATA_TO_INSERT)
@@ -806,7 +804,7 @@ def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforc
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # We need to look for surName field instead of LastName
         lookup_expected_data = copy.deepcopy(DATA_TO_INSERT)
@@ -904,7 +902,7 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
         contact_ids = _get_ids(client.bulk.Contact.insert(expected_contacts), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # Verify correct rows are received using snapshot.
         assert ACCOUNTS_FOR_SUBQUERY == len(snapshot[salesforce_origin].output)
@@ -958,7 +956,7 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
         contact_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # There should be a single row with a count field
         assert len(snapshot[salesforce_origin].output) == 1
@@ -1022,7 +1020,7 @@ def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
         account_ids = _get_ids(client.bulk.Account.insert(data_to_insert), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # There should be a single row with a count field
         assert len(snapshot[salesforce_origin].output) == 1
@@ -1080,7 +1078,7 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
         contact_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # There should be a single row with a /count field containing an integer
         assert len(snapshot[salesforce_lookup].output) == 1
@@ -1136,7 +1134,7 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
         contact_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # There should be a single row with a /count field containing three strings
         assert len(snapshot[salesforce_lookup].output) == 1
@@ -1193,7 +1191,7 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         inserted_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
         verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
 
         logger.info('Revoking Salesforce session')
@@ -1206,7 +1204,7 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         client = salesforce.client
 
         logger.info('Capturing another snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, timeout_sec=120).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, timeout_sec=TIMEOUT).snapshot
         verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
 
     finally:
@@ -1275,7 +1273,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         inserted_ids_1 = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
 
@@ -1284,7 +1282,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         assert snapshot[salesforce_origin].event_records[0].header.values['sdc.event.type'] == 'no-more-data'
 
         # Pipeline stops, but if it changes in a future version
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED', timeout_sec=TIMEOUT)
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(pipeline)
@@ -1294,7 +1292,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         inserted_ids_2 = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT_2), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot_2 = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot_2 = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         verify_snapshot(snapshot_2, salesforce_origin, DATA_TO_INSERT + DATA_TO_INSERT_2)
 
@@ -1376,7 +1374,7 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
         inserted_id = ret['id']
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # There should be a single row with Id and Body fields
         assert len(snapshot[salesforce_origin].output) == 1
@@ -1653,7 +1651,7 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, timeout_sec=TIMEOUT)
 
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
@@ -1771,7 +1769,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, timeout_sec=TIMEOUT)
 
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
@@ -1807,7 +1805,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         delete_custom_field_from_contact(metadata)
 
         logger.info('Restarting pipeline')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, timeout_sec=TIMEOUT)
 
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
@@ -1886,7 +1884,7 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
 
         logger.info('Starting pipeline')
 
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, timeout_sec=TIMEOUT)
 
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
@@ -1978,7 +1976,7 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
         sdc_executor.start_pipeline(pipeline)
 
         logger.info('Waiting for pipeline to finish')
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status = 'FINISHED', timeout_sec = 120)
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status = 'FINISHED', timeout_sec = TIMEOUT)
 
         logger.info('Getting pipeline history')
         history = sdc_executor.get_pipeline_history(pipeline)
@@ -2180,7 +2178,7 @@ def test_salesforce_datetime_in_history(sdc_builder, sdc_executor, salesforce, a
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # There should be a single row with Id and NewValue fields. For SOAP API, NewValue should be a DATETIME, for
         # Bulk API it's a STRING
@@ -2416,11 +2414,11 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         inserted_ids = _get_ids(client.bulk.Contact.insert(first_data_to_insert), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         verify_snapshot(snapshot, salesforce_origin, first_data_to_insert)
 
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False, timeout_sec=TIMEOUT)
 
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
