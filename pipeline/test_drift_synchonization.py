@@ -1956,6 +1956,81 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster, stop_on_query_f
         assert expected_event_values == stage.event_records[event_idx].field
 
 
+@sdc_min_version('3.0.0.0')
+@cluster('cdh', 'hdp')
+def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cluster):
+    """Validate that the avro Schema in records contains strictly hive table column information
+        and not partition information.
+
+        Currently, we use the "DESC <tableName>" query to gather table information
+        results in partition names appear twice in the resultset - one with column info and one with partiton info,
+        so they are counted twice.
+        This behavior is fixed as a part of SDC-13898
+
+        The pipeline looks like:
+        dev_raw_data_source >> hive_metadata
+        hive_metadata >> hadoop_fs
+        hive_metadata >> hive_metastore
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    id, username = 'id', 'username'
+    raw_data = json.dumps({id: 1, username: 'abc'})
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    partition_name = 'partition1'
+    partition_configuration = [
+        {'name': partition_name, 'valueType': 'STRING', 'valueEL': '${record:value("/username")}'}
+    ]
+
+    hive_metadata = pipeline_builder.add_stage('Hive Metadata')
+    hive_metadata.set_attributes(data_format='AVRO',
+                                 partition_configuration=partition_configuration,
+                                 table_name=table_name)
+
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(avro_schema_location='HEADER',
+                             data_format='AVRO',
+                             directory_in_header=True,
+                             use_roll_attribute=True)
+
+    hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
+
+    dev_raw_data_source >> hive_metadata
+    hive_metadata >> hadoop_fs
+    hive_metadata >> hive_metastore
+
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    hive_cursor = cluster.hive.client.cursor()
+    create_table_command = ('CREATE TABLE IF NOT EXISTS {0} ({1} INT, {2} STRING) '
+                            'PARTITIONED BY ({3} STRING) '
+                            ' STORED AS AVRO'
+                            ).format(table_name, id, username, partition_name)
+    logger.info('Creating table %s in Hive', table_name)
+    hive_cursor.execute(create_table_command)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
+
+        all_records = snapshot[hive_metadata.instance_name].output_lanes[hive_metadata.output_lanes[0]]
+        assert len(all_records) == 1
+
+        avro_schema = json.loads(all_records[0].header['values']['avroSchema'])
+        column_list = [field['name'] for field in avro_schema['fields']]
+
+        assert id and username in column_list and partition_name not in column_list
+    finally:
+        logger.info('Dropping table %s in Hive...', table_name)
+        hive_cursor.execute('DROP TABLE {}'.format(table_name))
+
+
 def _get_qualified_table_name(db, table_name):
     return f'`{db}`.`{table_name}`' if db else f'`{table_name}`'
 
