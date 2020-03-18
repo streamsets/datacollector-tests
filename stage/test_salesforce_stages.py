@@ -1670,13 +1670,7 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         if subscription_type == PUSH_TOPIC:
             verify_snapshot(snapshot, salesforce_origin, [DATA_TO_INSERT[0]])
         else:
-            # CDC returns more than just the record fields, so verify_snapshot isn't so useful
-            assert len(snapshot[salesforce_origin].output) == 1
-            assert snapshot[salesforce_origin].output[0].header.values['salesforce.cdc.recordIds']
-            assert snapshot[salesforce_origin].output[0].field['Email'] == DATA_TO_INSERT[0]['Email']
-            # CDC returns nested compound fields
-            assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == DATA_TO_INSERT[0]['FirstName']
-            assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == DATA_TO_INSERT[0]['LastName']
+            verify_cdc_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT[0])
 
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -2342,3 +2336,121 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
                 client.restful(f'wave/datasets/{id}', method='DELETE')
             except JSONDecodeError:
                 pass
+
+
+def verify_cdc_snapshot(snapshot, stage, inserted_data):
+    # CDC returns more than just the record fields, so verify_snapshot isn't so useful
+    assert len(snapshot[stage].output) == 1
+    assert snapshot[stage].output[0].header.values['salesforce.cdc.recordIds']
+    assert snapshot[stage].output[0].field['Email'] == inserted_data['Email']
+    # CDC returns nested compound fields
+    assert snapshot[stage].output[0].field['Name']['FirstName'] == inserted_data['FirstName']
+    assert snapshot[stage].output[0].field['Name']['LastName'] == inserted_data['LastName']
+
+
+@salesforce
+@pytest.mark.parametrize(('subscription_type'), [
+    PUSH_TOPIC,
+    CDC
+])
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
+def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor, salesforce, subscription_type, api):
+    """Start pipeline, write data using Salesforce client, read existing data via query,
+    check if Salesforce origin reads data via snapshot, write more data, check that Salesforce
+    origin reads it via Push Topic/CDC.
+
+    The pipeline looks like:
+        salesforce_origin >> trash
+
+    Args:
+        sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
+        sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
+        salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
+        subscription_type (:obj:`str`): Type of subscription: 'PUSH_TOPIC' or 'CDC'
+        api (:obj:`str`): API to test: 'soap' or 'bulk'
+    """
+    client = salesforce.client
+
+    pipeline = None
+    subscription_id = None
+    contact = None
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        if subscription_type == PUSH_TOPIC:
+            subscription_id, push_topic_name = create_push_topic(client)
+        else:
+            subscription_id = enable_cdc(client)
+
+        query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
+                 "WHERE Id > '000000000000000' AND "
+                 f'Email LIKE \'xtest%\' and LastName = \'{STR_15_RANDOM}\''
+                 " ORDER BY Id")
+
+        first_data_to_insert = DATA_TO_INSERT[:-1]
+        second_data_to_insert = DATA_TO_INSERT[-1]
+
+        salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        salesforce_origin.set_attributes(query_existing_data=True,
+                                         subscribe_for_notifications=True,
+                                         use_bulk_api=(api == 'bulk'),
+                                         soql_query=query,
+                                         subscription_type=subscription_type)
+        if subscription_type == PUSH_TOPIC:
+            salesforce_origin.set_attributes(push_topic=push_topic_name)
+        else:
+            salesforce_origin.set_attributes(change_data_capture_object=CONTACT)
+
+        trash = pipeline_builder.add_stage('Trash')
+        salesforce_origin >> trash
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        client = salesforce.client
+        inserted_ids = None
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        inserted_ids = _get_ids(client.bulk.Contact.insert(first_data_to_insert), 'id')
+
+        logger.info('Starting pipeline and snapshot')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        verify_snapshot(snapshot, salesforce_origin, first_data_to_insert)
+
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
+
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
+        # updates could flood a channel."
+        # REST API in Simple Salesforce can only create one record at a time, so just create one contact
+        logger.info('Creating record using Salesforce client...')
+        contact = client.Contact.create(second_data_to_insert)
+
+        logger.info('Taking snapshot')
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        if subscription_type == PUSH_TOPIC:
+            verify_snapshot(snapshot, salesforce_origin, [second_data_to_insert])
+        else:
+            verify_cdc_snapshot(snapshot, salesforce_origin, second_data_to_insert)
+
+    finally:
+        _clean_up(sdc_executor, pipeline, client, inserted_ids)
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        if subscription_id:
+            if subscription_type == PUSH_TOPIC:
+                logger.info('Deleting PushTopic...')
+                client.PushTopic.delete(subscription_id)
+            else:
+                logger.info('Disabling CDC for Contact...')
+                disable_cdc(client, subscription_id)
+        if contact:
+            logger.info('Deleting contact...')
+            client.contact.delete(contact['id'])
