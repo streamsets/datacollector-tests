@@ -400,6 +400,7 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
 
 # SDC-13819: Kafka Multi-Topic Consumer refuses to ingest malformed records, rather than sending them to pipeline error handling
 @cluster('cdh', 'kafka')
+@sdc_min_version('3.15.0')
 def test_kafka_origin_only_errors(sdc_builder, sdc_executor, cluster):
     """
     Ensure that the origin can read batches with only error records. We accomplish that by configuring JSON as a file
