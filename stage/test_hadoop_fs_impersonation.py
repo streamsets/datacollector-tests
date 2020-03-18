@@ -58,6 +58,9 @@ def test_hadoop_fs_strict_impersonation(sdc_builder, sdc_executor, cluster):
 
     dev_data_generator >> hadoop_fs
     pipeline = pipeline_builder.build(title='Hadoop FS impersonation pipeline').configure_for_environment(cluster)
+    # Some ENVs like HDP will auto-set this field which is against logic of this test and hence we have to manually
+    # reset that field back to empty value.
+    hadoop_fs.hdfs_user = ''
     sdc_executor.add_pipeline(pipeline)
 
     try:
