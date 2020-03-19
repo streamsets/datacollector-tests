@@ -21,6 +21,7 @@ from time import sleep
 import pytest
 import sqlalchemy
 from sqlalchemy import text
+from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -744,122 +745,6 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
             logger.info('Table: %s dropped.', src_table_name)
 
 
-def _setup_table(database, table_name, create_primary_key=True):
-    db_engine = database.engine
-    logger.info('Creating source table %s in %s database ...', table_name, database.type)
-
-    table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
-                             sqlalchemy.Column(PRIMARY_KEY, sqlalchemy.Integer, primary_key=create_primary_key),
-                             sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
-    table.create(db_engine)
-    return table
-
-
-def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder,
-                                 buffer_locally, src_table_name, batch_size=BATCH_SIZE,
-                                 dictionary_source='DICT_FROM_ONLINE_CATALOG'):
-    oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
-    start = _get_current_oracle_time(connection=connection)
-    start_date = start.strftime('%d-%m-%Y %H:%M:%S')
-
-    # The time at the oracle db and the node executing the test may not have the exact same time.
-    # So wait until this node reaches that time (including the timezone offset),
-    # otherwise validation will fail because the origin thinks the
-    # start time is in the future.
-    _wait_until_time(time=start)
-
-    logger.info('Start Date is %s', start_date)
-
-    if Version(sdc_builder.version) >= Version('3.1.0.0'):
-        tables = [{'schema': database.username.upper(), 'table': src_table_name, 'excludePattern': ''}]
-    else:
-        oracle_cdc_client.set_attributes(schema_name=database.username.upper())
-        tables = [src_table_name]
-
-    return oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
-                                            db_time_zone='UTC',
-                                            dictionary_source=dictionary_source,
-                                            initial_change='DATE',
-                                            logminer_session_window='${10 * MINUTES}',
-                                            max_batch_size_in_records=batch_size,
-                                            maximum_transaction_length='${1 * MINUTES}',
-                                            start_date=start_date,
-                                            tables=tables)
-
-
-def _get_current_oracle_time(connection):
-    return connection.execute(sqlalchemy.sql.text('SELECT SYSDATE FROM DUAL')).fetchall()[0][0]
-
-
-def _wait_until_time(time):
-    current_time = datetime.utcnow()
-    if current_time < time:
-        sleep((time - current_time).total_seconds() + 1)
-
-
-def _get_table_pattern(src_table_name):
-    return f'{src_table_name[:-2]}%'
-
-
-def _insert(connection, table, count=3):
-    rows = [{'ID': i, 'NAME': get_random_string(string.ascii_uppercase, 10)} for i in range(count)]
-    sdc_op_types = [1 for i in range(count)]
-    cdc_op_types = ['INSERT' for i in range(count)]
-
-    connection.execute(table.insert(), rows)
-    return Operations(rows=rows,
-                      cdc_op_types=cdc_op_types,
-                      sdc_op_types=sdc_op_types,
-                      change_count=count)
-
-
-def _update(connection, table, count=3):
-    rows = []
-    txn = connection.begin()
-    try:
-        for i in range(count):
-            rows.append({'ID': i, 'NAME': get_random_string(string.ascii_uppercase, 6)})
-            connection.execute(table.update().where(table.c.ID == i).values(NAME=rows[i]['NAME']))
-        txn.commit()
-    except:
-        txn.rollback()
-        raise
-
-    sdc_op_types = [3 for i in range(count)]
-    cdc_op_types = ['UPDATE' for i in range(count)]
-
-    return Operations(rows=rows,
-                      cdc_op_types=cdc_op_types,
-                      sdc_op_types=sdc_op_types,
-                      change_count=count)
-
-
-def _delete(connection, table, count=3):
-    txn = connection.begin()
-    try:
-        for i in range(count):
-            connection.execute(table.delete().where(table.c.ID == i))
-        txn.commit()
-    except:
-        txn.rollback()
-        raise
-
-    sdc_op_types = [2 for i in range(count)]
-    cdc_op_types = ['DELETE' for i in range(count)]
-
-    return Operations(rows=[],
-                      cdc_op_types=cdc_op_types,
-                      sdc_op_types=sdc_op_types,
-                      change_count=count)
-
-
-def _select_from_table(db_engine, dest_table):
-    target_result = db_engine.execute(dest_table.select().order_by(dest_table.c[PRIMARY_KEY]))
-    target_result_list = target_result.fetchall()
-    target_result.close()
-    return target_result_list
-
-
 @sdc_min_version('3.0.0.0')
 @database('oracle')
 # https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm#CNCPT1821
@@ -985,3 +870,191 @@ def test_event_startup(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('3.14.0')
+@database('oracle')
+def test_dictionary_extraction(sdc_builder, sdc_executor, database):
+    """Test extraction of the LogMiner dictionary from the existing redo logs.
+
+    This test configures an Oracle CDC stage with 'DICT_FROM_REDO_LOGS' as dictionary source, builds the
+    dictionary, and check that the Oracle CDC is able to use the fresh dictionary to recover the data inserted
+    in the database before the pipeline is started.
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    table_name = f'STF_{get_random_string(string.ascii_lowercase)}'
+    connection = database.engine.connect()
+    input_data = [1, 2, 3, 4, 5]
+    num_records = len(input_data)
+
+    try:
+        # Create table and dictionary
+        connection.execute(f'CREATE TABLE {table_name} (ID NUMBER PRIMARY KEY)')
+        logger.info('Creating LogMiner dictionary...')
+        connection.execute('BEGIN DBMS_LOGMNR_D.BUILD(OPTIONS => DBMS_LOGMNR_D.STORE_IN_REDO_LOGS); END;')
+        logger.info('LogMiner dictionary ready.')
+
+        # Populate table with data
+        start_scn = _get_last_scn(connection)  # It will be the starting point to mine redo logs.
+        txn = connection.begin()
+        for i in input_data:
+            connection.execute(f'INSERT INTO {table_name} VALUES({i})')
+        txn.commit()
+
+        # Build the pipeline. We will use a extremely small 'duration_of_directory_extraction' to force the
+        # pipeline to fail.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   batch_size=1,
+                                                   buffer_locally=True,
+                                                   src_table_name=table_name,
+                                                   initial_change='SCN',
+                                                   start_scn=str(start_scn),
+                                                   dictionary_source='DICT_FROM_REDO_LOGS',
+                                                   duration_of_directory_extraction='${2 * MINUTES}')
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Start pipeline and check the data consumed by the pipeline is the expected one.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=120,
+                                                 batches=len(input_data), batch_size=1).snapshot
+        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_records = [snapshot.snapshot_batches[i][oracle_cdc.instance_name].output[0]
+                       for i in range(len(snapshot))]
+        consumed_data = [rec.field['ID'].value for rec in sdc_records]
+        assert sorted(consumed_data) == input_data
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f'DROP TABLE {table_name}')
+
+
+def _setup_table(database, table_name, create_primary_key=True):
+    db_engine = database.engine
+    logger.info('Creating source table %s in %s database ...', table_name, database.type)
+
+    table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                             sqlalchemy.Column(PRIMARY_KEY, sqlalchemy.Integer, primary_key=create_primary_key),
+                             sqlalchemy.Column(OTHER_COLUMN, sqlalchemy.String(20)))
+    table.create(db_engine)
+    return table
+
+
+def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder, buffer_locally,
+                                  src_table_name, batch_size=BATCH_SIZE, **kwargs):
+    kwargs.setdefault('dictionary_source', 'DICT_FROM_ONLINE_CATALOG')
+    kwargs.setdefault('logminer_session_window', '${10 * MINUTES}')
+    kwargs.setdefault('db_time_zone', 'UTC')
+    kwargs.setdefault('maximum_transaction_length', '${1 * MINUTES}')
+    kwargs.setdefault('initial_change', 'DATE')
+
+    start = _get_current_oracle_time(connection=connection)
+    kwargs.setdefault('start_date', start.strftime('%d-%m-%Y %H:%M:%S'))
+
+    # The time at the oracle db and the node executing the test may not have the exact same time.
+    # So wait until this node reaches that time (including the timezone offset),
+    # otherwise validation will fail because the origin thinks the
+    # start time is in the future.
+    _wait_until_time(time=start)
+    logger.info('Start Date is %s', kwargs['start_date'])
+
+    oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
+
+    if Version(sdc_builder.version) >= Version('3.1.0.0'):
+        tables = [{'schema': database.username.upper(), 'table': src_table_name, 'excludePattern': ''}]
+    else:
+        oracle_cdc_client.set_attributes(schema_name=database.username.upper())
+        tables = [src_table_name]
+
+    return oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
+                                            max_batch_size_in_records=batch_size,
+                                            tables=tables,
+                                            **kwargs)
+
+
+def _get_current_oracle_time(connection):
+    return connection.execute(sqlalchemy.sql.text('SELECT SYSDATE FROM DUAL')).fetchall()[0][0]
+
+
+def _get_last_scn(connection):
+    """Obtains last SCN from the database or raises an Exception if anything wrong happened."""
+    try:
+        return connection.execute('SELECT CURRENT_SCN FROM V$DATABASE').first()[0]
+    except:
+        raise Exception('Error retrieving last SCN from Oracle database.')
+
+
+def _wait_until_time(time):
+    current_time = datetime.utcnow()
+    if current_time < time:
+        sleep((time - current_time).total_seconds() + 1)
+
+
+def _get_table_pattern(src_table_name):
+    return f'{src_table_name[:-2]}%'
+
+
+def _insert(connection, table, count=3):
+    rows = [{'ID': i, 'NAME': get_random_string(string.ascii_uppercase, 10)} for i in range(count)]
+    sdc_op_types = [1 for i in range(count)]
+    cdc_op_types = ['INSERT' for i in range(count)]
+
+    connection.execute(table.insert(), rows)
+    return Operations(rows=rows,
+                      cdc_op_types=cdc_op_types,
+                      sdc_op_types=sdc_op_types,
+                      change_count=count)
+
+
+def _update(connection, table, count=3):
+    rows = []
+    txn = connection.begin()
+    try:
+        for i in range(count):
+            rows.append({'ID': i, 'NAME': get_random_string(string.ascii_uppercase, 6)})
+            connection.execute(table.update().where(table.c.ID == i).values(NAME=rows[i]['NAME']))
+        txn.commit()
+    except:
+        txn.rollback()
+        raise
+
+    sdc_op_types = [3 for i in range(count)]
+    cdc_op_types = ['UPDATE' for i in range(count)]
+
+    return Operations(rows=rows,
+                      cdc_op_types=cdc_op_types,
+                      sdc_op_types=sdc_op_types,
+                      change_count=count)
+
+
+def _delete(connection, table, count=3):
+    txn = connection.begin()
+    try:
+        for i in range(count):
+            connection.execute(table.delete().where(table.c.ID == i))
+        txn.commit()
+    except:
+        txn.rollback()
+        raise
+
+    sdc_op_types = [2 for i in range(count)]
+    cdc_op_types = ['DELETE' for i in range(count)]
+
+    return Operations(rows=[],
+                      cdc_op_types=cdc_op_types,
+                      sdc_op_types=sdc_op_types,
+                      change_count=count)
+
+
+def _select_from_table(db_engine, dest_table):
+    target_result = db_engine.execute(dest_table.select().order_by(dest_table.c[PRIMARY_KEY]))
+    target_result_list = target_result.fetchall()
+    target_result.close()
+    return target_result_list
