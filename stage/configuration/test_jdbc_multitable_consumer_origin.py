@@ -63,6 +63,47 @@ def test_jdbc_multitable_consumer_origin_configuration_additional_jdbc_configura
             sdc_executor.stop_pipeline(pipeline)
         delete_table([table], database)
 
+@sdc_min_version('3.15.0')
+@pytest.mark.parametrize('create_jdbc_header_attributes', [True, False])
+def test_jdbc_multitable_consumer_origin_configuration_create_header_attributes(sdc_builder,
+                                                                                sdc_executor,
+                                                                                database,
+                                                                                create_jdbc_header_attributes):
+    """Here we are testing disable Create_JDBC_Headers_Attributes checkbox. Setting it to false shouldn't add headers
+    tables' fields. And setting it to true, create the headers (jdbc.) and added to the fields.
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        rows_in_database = [{'id': row['id'], 'NAME': row['name']} for row in ROWS_IN_DATABASE]
+        columns = [Column('id', Integer, primary_key=True), Column('NAME', String(32))]
+        table = create_table(database, columns, table_name)
+        insert_data_in_table(database, table, rows_in_database)
+
+        #Build the pipeline
+        attributes = {'table_configs': [{"tablePattern": '%'}],
+                      'create_jdbc_header_attributes': create_jdbc_header_attributes}
+        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder,
+                                                                                            database,
+                                                                                            attributes)
+
+        #Execute pipeline and check result.
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        fields_with_headers = list(snapshot[jdbc_multitable_consumer.instance_name].output[0].header.values.keys())
+
+        if create_jdbc_header_attributes:
+            assert 5 == len(fields_with_headers)
+            assert 'jdbc.' == fields_with_headers[0][:5]
+
+        elif not create_jdbc_header_attributes:
+            assert 0 == len(fields_with_headers)
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        delete_table([table], database)
+
 
 @pytest.mark.parametrize('auto_commit', [False, True])
 @pytest.mark.skip('Not yet implemented')
