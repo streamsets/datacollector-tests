@@ -828,6 +828,119 @@ def test_field_type_converter_null_map(sdc_builder, sdc_executor):
     assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
 
 
+def test_field_type_converter_trim(sdc_builder, sdc_executor):
+    """Make sure that we properly trim if doing conversion from String to some of the other types."""
+    raw_data = json.dumps([{
+        'short': ' 123 ',
+        'long': ' 123 ',
+        'integer': ' 123 ',
+        'float': ' 123.5 ',
+        'double': ' 123.5 ',
+        'decimal': ' 123.5 ',
+        'zonedDatetime': ' 2011-12-03T10:15:30+01:00[Europe/Paris] ',
+        'datetime': ' 1978-01-05 19:38:01 ',
+        'time': '1978-01-05 19:38:01 ',
+        'date': ' 1978-01-05 19:38:01 ',
+        'boolean': ' true ',
+    }])
+
+    field_type_converter_configs = [
+        {
+            'fields': ['/short'],
+            'targetType': 'SHORT',
+        }, {
+            'fields': ['/long'],
+            'targetType': 'LONG',
+        }, {
+            'fields': ['/integer'],
+            'targetType': 'INTEGER'
+        }, {
+            'fields': ['/float'],
+            'targetType': 'FLOAT'
+        }, {
+            'fields': ['/double'],
+            'targetType': 'DOUBLE'
+        }, {
+            'fields': ['/decimal'],
+            'targetType': 'DECIMAL',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'
+        }, {
+            'fields': ['/zonedDatetime'],
+            'targetType': 'ZONED_DATETIME'
+        }, {
+            'fields': ['/time'],
+            'targetType': 'TIME',
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS'
+        }, {
+            'fields': ['/datetime'],
+            'targetType': 'DATETIME',
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS'
+        }, {
+            'fields': ['/date'],
+            'targetType': 'DATE',
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS'
+        }, {
+            'fields': ['/boolean'],
+            'targetType': 'BOOLEAN'
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.data_format = 'JSON'
+    source.json_content = 'ARRAY_OBJECTS'
+    source.raw_data = raw_data
+    source.stop_after_first_batch = True
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.conversion_method = 'BY_FIELD'
+    converter.field_type_converter_configs = field_type_converter_configs
+
+    trash = builder.add_stage('Trash')
+
+    source >> converter >> trash
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    # Verify metadata (types)
+    output = snapshot[converter].output
+    assert output[0].field['short'].type == 'SHORT'
+    assert output[0].field['short'].value == 123
+
+    assert output[0].field['long'].type == 'LONG'
+    assert output[0].field['long'].value == 123
+
+    assert output[0].field['integer'].type == 'INTEGER'
+    assert output[0].field['integer'].value == 123
+
+    assert output[0].field['float'].type == 'FLOAT'
+    assert output[0].field['float'].value == 123.5
+
+    assert output[0].field['double'].type == 'DOUBLE'
+    assert output[0].field['double'].value == 123.5
+
+    assert output[0].field['decimal'].type == 'DECIMAL'
+    assert output[0].field['decimal'].value == 123.5
+
+    assert output[0].field['zonedDatetime'].type == 'ZONED_DATETIME'
+    assert output[0].field['zonedDatetime'].value == '2011-12-03T10:15:30+01:00[Europe/Paris]'
+
+    assert output[0].field['datetime'].type == 'DATETIME'
+    assert output[0].field['datetime'].value == datetime(1978, 1, 5, 19, 38, 1)
+
+    assert output[0].field['time'].type == 'TIME'
+    assert output[0].field['time'].value == datetime(1978, 1, 5, 19, 38, 1)
+
+    assert output[0].field['date'].type == 'DATE'
+    assert output[0].field['date'].value == datetime(1978, 1, 5, 19, 38, 1)
+
+    assert output[0].field['boolean'].type == 'BOOLEAN'
+    assert output[0].field['boolean'].value == True
+
+
 def test_field_zip(sdc_builder, sdc_executor):
     """Test field zip processor. The pipeline would look like:
 
