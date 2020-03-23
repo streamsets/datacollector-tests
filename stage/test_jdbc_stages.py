@@ -3405,6 +3405,7 @@ def test_multitable_quote_column_names(sdc_builder, sdc_executor, database):
 
     origin = builder.add_stage('JDBC Multitable Consumer')
     origin.table_configs=[{"tablePattern": f'%{table_name}%'}]
+    origin.max_batch_size_in_records = 10
 
     trash = builder.add_stage('Trash')
 
