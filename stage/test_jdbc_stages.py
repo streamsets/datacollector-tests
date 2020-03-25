@@ -405,7 +405,7 @@ def _create_schema(schema_name, database):
     """
     if isinstance(database, OracleDatabase):
         database.engine.execute('CREATE USER {user} IDENTIFIED BY {pwd}'.format(user=schema_name, pwd=schema_name))
-        database.engine.execute('GRANT UNLIMITED TABLESPACE TO {user}'.format(user=schema_name))
+        database.engine.execute('GRANT CONNECT, RESOURCE TO {user}'.format(user=schema_name))
     else:
         schema = sqlalchemy.schema.CreateSchema(schema_name)
         database.engine.execute(schema)
@@ -420,7 +420,7 @@ def _drop_schema(schema_name, database):
 
     """
     if isinstance(database, OracleDatabase):
-        database.engine.execute('DROP USER {user}'.format(user=schema_name))
+        database.engine.execute('DROP USER {user} CASCADE'.format(user=schema_name))
     else:
         sqlalchemy.schema.DropSchema(schema_name)
 
@@ -2422,7 +2422,7 @@ def test_jdbc_multitable_oracle_split_by_timestamp_with_timezone(sdc_builder, sd
         connection.execute(f"""
             CREATE TABLE {table_name}(
                 ID number primary key,
-                TZ timestamp(6) with time zone 
+                TZ timestamp(6) with time zone
             )
         """)
         # Create destination table
@@ -2448,7 +2448,7 @@ def test_jdbc_multitable_oracle_split_by_timestamp_with_timezone(sdc_builder, sd
         }]
         origin.number_of_threads = 2
         origin.maximum_pool_size = 2
-        origin.max_batch_size_records = 30
+        origin.max_batch_size_in_records = 30
 
         finisher = builder.add_stage('Pipeline Finisher Executor')
         finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
@@ -2917,7 +2917,7 @@ def test_jdbc_postgresql_types(sdc_builder, sdc_executor, database, use_table_or
               END IF;
             END;
             $$
-            LANGUAGE plpgsql;        
+            LANGUAGE plpgsql;
         """)
 
         # Create enum complex type conditionally
@@ -2932,7 +2932,7 @@ def test_jdbc_postgresql_types(sdc_builder, sdc_executor, database, use_table_or
               END IF;
             END;
             $$
-            LANGUAGE plpgsql;        
+            LANGUAGE plpgsql;
         """)
 
         # Create table
@@ -3347,7 +3347,7 @@ var step;
 for (step = 0; step < 1000; step++) {
   batch = sdc.createBatch();
   batch.process("whatever", "batch-" + step);
-}    
+}
 """
 
     origin = builder.add_stage('JavaScript Scripting')

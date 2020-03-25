@@ -235,7 +235,7 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
 
         connection = database.engine.connect()
         table = _setup_table(database=database,
-                            table_name=src_table_name)
+                             table_name=src_table_name)
 
         logger.info('Using table pattern %s', src_table_pattern)
 
@@ -330,7 +330,7 @@ def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder, sdc_
         oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
         # Obviously past time so there is no archived redo logs for this.
         start_date = '30-09-2017 10:10:10'
-        tables = [{'schema': database.database, 'table': src_table_name, 'excludePattern': ''}]
+        tables = [{'schema': database.username.upper(), 'table': src_table_name, 'excludePattern': ''}]
 
         oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
                                          db_time_zone='UTC',
@@ -771,9 +771,9 @@ def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bu
     logger.info('Start Date is %s', start_date)
 
     if Version(sdc_builder.version) >= Version('3.1.0.0'):
-        tables = [{'schema': database.database, 'table': src_table_name, 'excludePattern': ''}]
+        tables = [{'schema': database.username.upper(), 'table': src_table_name, 'excludePattern': ''}]
     else:
-        oracle_cdc_client.set_attributes(schema_name=database.database)
+        oracle_cdc_client.set_attributes(schema_name=database.username.upper())
         tables = [src_table_name]
 
     return oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
@@ -985,4 +985,3 @@ def test_event_startup(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
-
