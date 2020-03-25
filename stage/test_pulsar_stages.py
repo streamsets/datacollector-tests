@@ -581,6 +581,7 @@ def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, puls
                                    topics_pattern='persistent://public/default/(' + topic1 + '|' + topic3 + ')',
                                    subscription_type='EXCLUSIVE',
                                    read_compacted=False,
+                                   max_batch_size_in_records=10,
                                    data_format='DELIMITED')
 
     trash = pulsar_consumer_pipeline_builder.add_stage(label='Trash')
