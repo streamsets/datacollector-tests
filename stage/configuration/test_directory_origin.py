@@ -2111,6 +2111,40 @@ def test_directory_origin_configuration_use_custom_log_format(sdc_builder, sdc_e
     pass
 
 
+def test_directory_no_read_permissions(sdc_builder, sdc_executor, shell_executor):
+    FILES_DIRECTORY = '/tmp'
+
+    random_str = get_random_string(string.ascii_letters, 10)
+    file_path = os.path.join(FILES_DIRECTORY, random_str)
+
+    shell_executor(f"""
+        mkdir {file_path}
+        chmod -R 000 {file_path}
+    """)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory')
+    directory.set_attributes(data_format='TEXT',
+                             files_directory=file_path,
+                             file_name_pattern='*')
+    trash = pipeline_builder.add_stage('Trash')
+    directory >> trash
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'Should not reach here'
+    except Exception as error:
+        assert error.issues['issueCount'] == 1
+
+        assert 'SPOOLDIR_38' in error.issues['stageIssues']['Directory_01'][0]['message']
+        assert 'FILES' in error.issues['stageIssues']['Directory_01'][0]['configGroup']
+    finally:
+        shell_executor(f'rm -R {file_path}')
+
+
 # Util functions
 
 LOG_FIELD_MAPPING = [{'fieldPath': '/date', 'group': 1},
