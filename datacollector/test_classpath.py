@@ -15,11 +15,10 @@
 import json
 import logging
 import pytest
-import urllib.request
-
-from javaproperties import Properties
 
 from streamsets.testframework.markers import cluster, sdc_min_version
+from streamsets.testframework.sdc import DataCollector
+from streamsets.testframework.utils import parse_multi_versions, wait_for_condition
 
 # Skip all tests in this module if --sdc-version < 3.1.0.0
 pytestmark = sdc_min_version('3.1.0.0-SNAPSHOT')
@@ -48,32 +47,40 @@ EXCLUDE_LIBS = {
 }
 
 
-@pytest.fixture(scope='module')
-def sdc_common_hook():
-    def hook(data_collector):
-        # Add all the stage libraries that we should
-        for stage_library in get_all_stage_libs():
-            data_collector.add_stage_lib(stage_library)
-
-        # Enable classpath validation itself
-        data_collector.sdc_properties.update(ENABLE_CLASSPATH_VALIDATION)
-
-    return hook
-
-
-# Parametrize generator
 def pytest_generate_tests(metafunc):
+    versions = parse_multi_versions(metafunc.config.getoption('sdc_version'))
+    if versions.pre_upgrade_version != versions.post_upgrade_version:
+        pytest.skip('Classpath validation tests are not run as upgrade tests')
+    # We do this logic to handle automation-friendly cases like `stf test --sdc-version '3.13.0 > 3.13.0'`,
+    # which result versions.pre_upgrade_version being set.
+    version = versions.pre_upgrade_version or versions.version
+
+    # To generate the list of test cases, we temporarily start a Data Collector instance and query its
+    # stageLibraries/list endpoint for all stage libraries (excluding legacy or enterprise libs).
     if 'stagelib' in metafunc.fixturenames:
-        metafunc.parametrize("stagelib", get_all_stage_libs())
+        with DataCollector(version=version, tear_down_on_exit=True) as data_collector:
+            data_collector.start()
+            # We need to use wait_for_condition as it was observed that calling the stageLibraries/list method
+            # immediately after Data Collector starts sometimes results in an empty list being returned.
+            # By saving the result into the config instance, we cache the list of stage libraries for when we
+            # need to add them to the SDC instance during start.
+            def stage_libs_loaded(data_collector, config):
+                config.all_stage_libs = sorted([stage_library.id for stage_library in data_collector.stage_libraries
+                                                if not stage_library._data['legacy']
+                                                and stage_library._repository_manifest['repoLabel'] != 'enterprise'
+                                                and stage_library.id not in EXCLUDE_LIBS])
+                return config.all_stage_libs
+            wait_for_condition(stage_libs_loaded, [data_collector, metafunc.config])
+
+        metafunc.parametrize('stagelib', metafunc.config.all_stage_libs)
 
 
-# Return all stage libraries that should be loaded at once (outside of the explicitly excluded ones).
-# Current implementation is temporary and will be replaced later on.
-def get_all_stage_libs():
-    raw_stagelibs = urllib.request.urlopen("http://nightly.streamsets.com.s3-us-west-2.amazonaws.com/datacollector/latest/tarball/stage-lib-manifest.properties")
-    p = Properties()
-    p.load(raw_stagelibs)
-    return [lib for lib in [lib.replace('stage-lib.', '') for lib in p if 'stage-lib.' in lib] if lib not in EXCLUDE_LIBS]
+@pytest.fixture(scope='module')
+def sdc_common_hook(request):
+    def hook(data_collector):
+        data_collector.add_stage_lib(*request.config.all_stage_libs)
+        data_collector.sdc_properties.update(ENABLE_CLASSPATH_VALIDATION)
+    return hook
 
 
 def test_classpath(sdc_executor, stagelib):
