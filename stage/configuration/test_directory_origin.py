@@ -1162,6 +1162,7 @@ def test_directory_origin_configuration_ignore_control_characters_json(sdc_build
         directory = pipeline_builder.add_stage('Directory').set_attributes(data_format='JSON',
                                                                            files_directory=files_directory,
                                                                            file_name_pattern='*.json',
+                                                                           batch_size_in_recs=10,
                                                                            **stage_attributes)
         trash = pipeline_builder.add_stage('Trash')
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
