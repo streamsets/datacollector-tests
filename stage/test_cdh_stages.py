@@ -889,6 +889,10 @@ def test_spark_executor(sdc_builder, sdc_executor, cluster):
         dev_raw_data_source >> record_deduplicator >> spark_executor
                                record_deduplicator >> trash
     """
+    # STF-1156: STF Does not properly configure Spark Executor for Secured Cluster
+    if cluster.hdfs.is_kerberized:
+        pytest.skip('Spark Executor tests on secured cluster are not supported.')
+
     python_data = 'print("Hello World!")'
     tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
     python_suffix = 'py'
