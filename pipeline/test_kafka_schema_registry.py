@@ -66,6 +66,7 @@ def consumer_single(sdc_builder, topic, cluster, confluent):
                                   lookup_schema_by='AUTO',
                                   key_deserializer='CONFLUENT',
                                   value_deserializer='CONFLUENT',
+                                  max_batch_size_in_records=10,
                                   kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
     trash = builder.add_stage(label='Trash')
@@ -86,6 +87,7 @@ def consumer_multi(sdc_builder, topic, cluster, confluent):
                                   avro_schema_location='REGISTRY',
                                   lookup_schema_by='AUTO',
                                   key_deserializer='CONFLUENT',
+                                  max_batch_size_in_records=10,
                                   value_deserializer='CONFLUENT',
                                   configuration_properties=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
