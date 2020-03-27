@@ -18,7 +18,7 @@ import time
 
 import pytest
 from elasticsearch_dsl import DocType, Index, Search as ESSearch
-from streamsets.testframework.markers import elasticsearch
+from streamsets.testframework.markers import elasticsearch, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,7 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
 
 
 @elasticsearch
+@sdc_min_version('3.0.0.0') # stop_after_first_batch
 def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch):
     """Test for a pipeline's error records being pumped to Elasticsearch. We do so by making a Dev Raw Data source
     target to Error stage which would send records to the pipeline configured Elasticsearch error records handling.
@@ -90,6 +91,7 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
     errstg = builder.add_error_stage('Write to Elasticsearch')
     errstg.set_attributes(document_id=es_doc_id, index=es_index, mapping=es_mapping)
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  stop_after_first_batch=True,
                                                                                   raw_data=raw_str)
     error_target = builder.add_stage('To Error')
 
@@ -98,12 +100,17 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
     sdc_executor.add_pipeline(es_error_pipeline)
 
     try:
+        elasticsearch.connect()
+
+        # Make sure that the index exists properly before running the test
+        index = Index(es_index)
+        index.create()
+        assert index.refresh()
+
         # Run pipeline and read from Elasticsearch to assert
-        sdc_executor.start_pipeline(es_error_pipeline).wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(es_error_pipeline)
+        sdc_executor.start_pipeline(es_error_pipeline).wait_for_finished()
 
         # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
-        elasticsearch.connect()
         es_search = ESSearch(index=es_index)
         es_response = _es_search_with_retry(es_search)
         es_meta = es_response[0].meta
@@ -117,6 +124,7 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
         idx.delete()
 
 
+@sdc_min_version('3.0.0.0') # stop_after_first_batch
 @elasticsearch
 @pytest.mark.parametrize('additional_properties', ['{}', '{"_retry_on_conflict":3}'])
 def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, additional_properties):
@@ -136,6 +144,7 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, addition
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  stop_after_first_batch=True,
                                                                                   raw_data=raw_str)
     es_target = builder.add_stage('Elasticsearch', type='destination')
     es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index, mapping=es_mapping,
@@ -148,12 +157,17 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, addition
     sdc_executor.add_pipeline(es_target_pipeline)
 
     try:
+        elasticsearch.connect()
+
+        # Make sure that the index exists properly before running the test
+        index = Index(es_index)
+        index.create()
+        assert index.refresh()
+
         # Run pipeline and read from Elasticsearch to assert
-        sdc_executor.start_pipeline(es_target_pipeline).wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(es_target_pipeline)
+        sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
 
         # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
-        elasticsearch.connect()
         es_search = ESSearch(index=es_index)
         es_response = _es_search_with_retry(es_search)
         es_meta = es_response[0].meta
