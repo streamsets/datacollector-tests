@@ -1479,6 +1479,10 @@ def test_hbase_proxy_user(sdc_builder, sdc_executor, cluster):
     dev_raw_data_source >> hbase
     """
 
+    # TEST-551: Permissions missing for stage.test_hbase_destination.test_hbase_proxy_user in Kerberised cluster
+    if cluster.hbase.is_kerberized:
+        pytest.skip('HBase Proxy User requires additional configuration on the cluster.')
+
     data = {'key': 'key', 'cf:a': '20', 'cf:b': '20180702113435000'}
     json_data = json.dumps(data)
 
