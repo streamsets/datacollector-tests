@@ -95,7 +95,7 @@ def test_jdbc_multitable_consumer_origin_configuration_create_header_attributes(
         fields_with_headers = list(snapshot[jdbc_multitable_consumer.instance_name].output[0].header.values.keys())
 
         if create_jdbc_header_attributes:
-            assert 5 >= len(fields_with_headers)
+            assert 5 <= len(fields_with_headers)
             assert 'jdbc.' == fields_with_headers[0][:5]
 
         elif not create_jdbc_header_attributes:
