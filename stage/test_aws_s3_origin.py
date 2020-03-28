@@ -244,9 +244,16 @@ def test_s3_origin_anonymous_no_list(sdc_builder, sdc_executor, aws):
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
                    1, anonymous=True, allow_list=False)
 
+@aws('s3')
+@sdc_min_version('3.16.0')
+@pytest.mark.parametrize('use_path_style_address_model', [True, False])
+def test_s3_origin_use_path_style_address_model(sdc_builder, sdc_executor, aws, use_path_style_address_model):
+    base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
+                   1, use_path_style_address_model=use_path_style_address_model)
+
 
 def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, number_of_threads, number_of_records,
-                   anonymous=False, allow_list=True):
+                   anonymous=False, allow_list=True, use_path_style_address_model=None):
     """Basic setup for amazon S3Origin tests. It receives different variables indicating the read order, data format...
     In order to parametrize all this configuration properties and make tests simpler.
     The pipeline looks like:
@@ -273,6 +280,11 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
                              prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
                              number_of_threads=number_of_threads,
                              read_order=read_order)
+
+    # Since Use Path Style Addess Model doesn't exist in all versions, we set it conditionally only if it should
+    # have some real value.
+    if use_path_style_address_model is not None:
+        s3_origin.use_path_style_address_model = use_path_style_address_model
 
     trash = builder.add_stage('Trash')
 
