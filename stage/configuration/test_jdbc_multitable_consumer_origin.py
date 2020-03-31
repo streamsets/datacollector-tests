@@ -83,7 +83,7 @@ def test_jdbc_multitable_consumer_origin_configuration_create_header_attributes(
         insert_data_in_table(database, table, rows_in_database)
 
         #Build the pipeline
-        attributes = {'table_configs': [{"tablePattern": '%'}],
+        attributes = {'table_configs': [{"tablePattern": table_name}],
                       'create_jdbc_header_attributes': create_jdbc_header_attributes}
         jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder,
                                                                                             database,
