@@ -170,7 +170,7 @@ def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database)
 
     origin = pipeline_builder.add_stage('JDBC Query Consumer')
     origin.incremental_mode = False
-    origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
+    origin.sql_query = 'SELECT * FROM {0} ORDER BY id ASC'.format(table_name)
 
     trash = pipeline_builder.add_stage('Trash')
     origin >> trash
