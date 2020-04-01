@@ -432,6 +432,45 @@ def test_kafka_origin_only_errors(sdc_builder, sdc_executor, cluster):
         sdc_executor.stop_pipeline(pipeline)
 
 
+# SDC-14063: Kafka multitopic consumer commits offset in a preview mode
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.16.0')
+def test_kafka_preview_not_committing_offset(sdc_builder, sdc_executor, cluster):
+    """Ensure that preview won't commit offset when reading from Kafka."""
+    builder = sdc_builder.get_pipeline_builder()
+    origin = get_kafka_multitopic_consumer_stage(builder, cluster)
+
+    trash = builder.add_stage(label='Trash')
+    origin >> trash
+
+    pipeline = builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        # Produce three text messages and confirm that preview can see them
+        produce_kafka_messages_list(origin.topic_list[0], cluster, ["A", "B", "C"], 'TEXT')
+        preview = sdc_executor.run_pipeline_preview(pipeline, timeout=30_000).wait_for_finished().preview
+        assert len(preview[origin].output) == 3
+        assert preview[origin].output[0].get_field_data('/text') == 'A'
+        assert preview[origin].output[1].get_field_data('/text') == 'B'
+        assert preview[origin].output[2].get_field_data('/text') == 'C'
+
+        # Produce additional 3 messages and ensure that normal pipeline run can see all 6 records (e.g. no commit after preview)
+        produce_kafka_messages_list(origin.topic_list[0], cluster, ["D", "E", "F"], 'TEXT')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        assert len(snapshot[origin].output) == 6
+        assert snapshot[origin].output[0].get_field_data('/text') == 'A'
+        assert snapshot[origin].output[1].get_field_data('/text') == 'B'
+        assert snapshot[origin].output[2].get_field_data('/text') == 'C'
+        assert snapshot[origin].output[3].get_field_data('/text') == 'D'
+        assert snapshot[origin].output[4].get_field_data('/text') == 'E'
+        assert snapshot[origin].output[5].get_field_data('/text') == 'F'
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     cluster_version = cluster.version[3:]
