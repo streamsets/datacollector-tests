@@ -380,9 +380,11 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
     # get how many records are sent
     file_pipeline_history = sdc_executor.get_pipeline_history(files_pipeline)
     msgs_sent_count = file_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+    logger.info(f'First pipeline uploaded {msgs_sent_count} records')
 
     # compute the expected number of batches to process all files
     no_of_input_files = (msgs_sent_count / max_records_in_file)
+    logger.info(f'First pipeline created {no_of_input_files} files')
 
     # 2nd pipeline which reads the files using Directory Origin stage in whole data format
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -417,7 +419,9 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
 
     file_pipeline_2_history = sdc_executor.get_pipeline_history(files_pipeline_2)
     msgs_sent_count_2 = file_pipeline_2_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+    logger.info(f'Second pipeline uploaded {msgs_sent_count_2} records')
     no_of_input_files_2 = (msgs_sent_count_2 / max_records_in_file)
+    logger.info(f'Second pipeline created {no_of_input_files_2} files')
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory_2 = pipeline_builder.add_stage('Directory', type='origin')
