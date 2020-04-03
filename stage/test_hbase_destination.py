@@ -21,6 +21,7 @@ import pytest
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 
 logger = logging.getLogger(__name__)
 
@@ -1480,7 +1481,7 @@ def test_hbase_proxy_user(sdc_builder, sdc_executor, cluster):
     """
 
     # TEST-551: Permissions missing for stage.test_hbase_destination.test_hbase_proxy_user in Kerberised cluster
-    if cluster.hbase.is_kerberized:
+    if isinstance(cluster, ClouderaManagerCluster) and cluster.hbase.is_kerberized:
         pytest.skip('HBase Proxy User requires additional configuration on the cluster.')
 
     data = {'key': 'key', 'cf:a': '20', 'cf:b': '20180702113435000'}
