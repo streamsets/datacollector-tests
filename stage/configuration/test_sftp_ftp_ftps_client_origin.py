@@ -336,11 +336,12 @@ def test_file_name_pattern(sdc_builder, sdc_executor, ftp):
 def test_file_name_pattern_mode(sdc_builder, sdc_executor, stage_attributes, sftp, keep_data):
     """Test for the File Name Pattern Mode configuration (could be glob or regex)."""
     DATA = {'name': 'Patrick Kane'}
-    file_name = f'{get_random_string()}.txt'
+    prefix = get_random_string()
+    file_name = f'{prefix}_{get_random_string()}.txt'
     sftp.put_string(os.path.join(sftp.path, file_name), json.dumps(DATA))
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        file_name_pattern = '*.txt' if stage_attributes['file_name_pattern_mode'] == 'GLOB' else r'[A-Za-z]+\.txt'
+        file_name_pattern = f'{prefix}*.txt' if stage_attributes['file_name_pattern_mode'] == 'GLOB' else f'{prefix}_[A-Za-z]+.txt'
         sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
         sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name_pattern, **stage_attributes)
         trash = pipeline_builder.add_stage('Trash')
