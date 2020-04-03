@@ -190,6 +190,8 @@ def _es_search_with_retry(es_search):
         if not es_response:
             time.sleep(5)
             es_response = es_search.execute()
+        else:
+            break
     # We should have a valid response
     assert es_response is not None
     # That we can return to the caller
