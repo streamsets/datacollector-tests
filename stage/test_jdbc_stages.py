@@ -2204,7 +2204,7 @@ def test_jdbc_producer_oracle_data_errors(sdc_builder, sdc_executor, multi_row, 
     ('blob', "utl_raw.cast_to_raw('BLOB')", 'BYTE_ARRAY', 'QkxPQg=='),
     ('clob', "'CLOB'", 'STRING', 'CLOB'),
     ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
-    ('XMLType', "xmltype('<a></a>')", 'STRING', '<a></a>')
+    ('XMLType', "xmltype('<a></a>')", 'STRING', '<a/>')
 ])
 @pytest.mark.parametrize('use_table_origin', [True, False])
 def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, use_table_origin, sql_type, insert_fragment,
