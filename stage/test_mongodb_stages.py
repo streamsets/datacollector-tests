@@ -398,6 +398,22 @@ def test_mongodb_origin_nested_field_offset(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(mongodb_origin.database)
 
 
+def mongodbLookupResultFieldName(sdc_builder):
+    """Resolve proper name for the "Result Field" in lookup - it will differ based on SDC version."""
+    if Version(sdc_builder.version) >= Version("3.7.0"):
+        return 'result_field'
+    else:
+        return 'new_field_to_save_lookup_result'
+
+
+def mongodbLookupMappingName(sdc_builder):
+    """Resolve proper name for the "Document to SDC Field Mappings" in lookup - it will differ based on SDC version."""
+    if Version(sdc_builder.version) >= Version("3.7.0"):
+        return 'document_to_sdc_field_mappings'
+    else:
+        return 'sdc_field_to_document_field_mapping'
+
+
 @mongodb
 @sdc_min_version('3.5.0')
 def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
@@ -420,9 +436,9 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
     mapping = [dict(keyName='name', sdcField='/name')]
     mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
     mongodb_lookup.set_attributes(database=get_random_string(ascii_letters, 5),
-                                  collection=get_random_string(ascii_letters, 10),
-                                  result_field='/result',
-                                  document_to_sdc_field_mappings=mapping)
+                                  collection=get_random_string(ascii_letters, 10))
+    setattr(mongodb_lookup, mongodbLookupResultFieldName(sdc_builder), '/result')
+    setattr(mongodb_lookup, mongodbLookupMappingName(sdc_builder), mapping)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> mongodb_lookup >> trash
@@ -479,9 +495,9 @@ def test_mongodb_lookup_processor_implicit_port(sdc_builder, sdc_executor, mongo
     mapping = [dict(keyName='name', sdcField='/name')]
     mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
     mongodb_lookup.set_attributes(database=get_random_string(ascii_letters, 5),
-                                  collection=get_random_string(ascii_letters, 10),
-                                  result_field='/result',
-                                  document_to_sdc_field_mappings=mapping)
+                                  collection=get_random_string(ascii_letters, 10))
+    setattr(mongodb_lookup, mongodbLookupResultFieldName(sdc_builder), '/result')
+    setattr(mongodb_lookup, mongodbLookupMappingName(sdc_builder), mapping)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> mongodb_lookup >> trash
@@ -530,9 +546,9 @@ def test_mongodb_lookup_processor_invalid_url(sdc_builder, sdc_executor, mongodb
     mapping = [dict(keyName='name', sdcField='/name')]
     mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
     mongodb_lookup.set_attributes(database=get_random_string(ascii_letters, 5),
-                                  collection=get_random_string(ascii_letters, 10),
-                                  result_field='/result',
-                                  document_to_sdc_field_mappings=mapping)
+                                  collection=get_random_string(ascii_letters, 10))
+    setattr(mongodb_lookup, mongodbLookupResultFieldName(sdc_builder), '/result')
+    setattr(mongodb_lookup, mongodbLookupMappingName(sdc_builder), mapping)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> mongodb_lookup >> trash
@@ -578,9 +594,9 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
 
     mongodb_lookup = pipeline_builder.add_stage('MongoDB Lookup', type='processor')
     mongodb_lookup.set_attributes(database=get_random_string(ascii_letters, 5),
-                                  collection=get_random_string(ascii_letters, 10),
-                                  result_field='/result',
-                                  document_to_sdc_field_mappings=mapping)
+                                  collection=get_random_string(ascii_letters, 10))
+    setattr(mongodb_lookup, mongodbLookupResultFieldName(sdc_builder), '/result')
+    setattr(mongodb_lookup, mongodbLookupMappingName(sdc_builder), mapping)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> mongodb_lookup >> trash
