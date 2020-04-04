@@ -395,7 +395,6 @@ def test_tcp_multiple_ports(sdc_builder, sdc_executor):
                                                                                max_batch_size_in_messages=10000,
                                                                                batch_wait_time_in_ms=60000,
                                                                                max_message_size_in_bytes=40960,
-                                                                               read_timeout_in_seconds=600,
                                                                                data_format='TEXT',
                                                                                max_line_length=10240)
     trash_stage = pipeline_builder.add_stage('Trash')
@@ -487,7 +486,6 @@ def test_tcp_epoll_enabled(sdc_builder, sdc_executor):
                                                                                max_batch_size_in_messages=10000,
                                                                                batch_wait_time_in_ms=60000,
                                                                                max_message_size_in_bytes=40960,
-                                                                               read_timeout_in_seconds=600,
                                                                                data_format='TEXT',
                                                                                max_line_length=10240)
     trash_stage = pipeline_builder.add_stage('Trash')
