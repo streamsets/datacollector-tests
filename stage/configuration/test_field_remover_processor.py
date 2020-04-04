@@ -2,6 +2,8 @@ import json
 
 import pytest
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import sdc_min_version
+from streamsets.sdk.utils import Version
 
 
 @pytest.mark.parametrize('stage_attributes', [{'action': 'KEEP'},
@@ -11,6 +13,9 @@ from streamsets.testframework.decorators import stub
                                               {'action': 'REMOVE_NULL'},
                                               {'action': 'REMOVE_NULL_EMPTY'}])
 def test_action(sdc_builder, sdc_executor, stage_attributes):
+    if stage_attributes['action'] == 'REMOVE_CONSTANT' and Version(sdc_builder.version) < Version('3.7.0'):
+        pytest.skip('REMOVE_CONSTANT have been added only in 3.7.0')
+
     try:
         DATA = dict(name='Al Gore', birthplace='Washington, D.C.', winningYears=None, internetPatents='')
 
@@ -65,6 +70,7 @@ def test_action(sdc_builder, sdc_executor, stage_attributes):
 
 
 @pytest.mark.parametrize('stage_attributes', [{'action': 'REMOVE_CONSTANT'}])
+@sdc_min_version('3.7.0')
 def test_constant(sdc_builder, sdc_executor, stage_attributes):
     """:py:function:`stage.configuration.test_field_remover_processor.test_action` covers this case
     as we set the remover to remove all fields, but only provide a constant that matches one."""
