@@ -50,8 +50,9 @@ DATA_TO_INSERT = []
 DATA_WITH_FROM_IN_EMAIL = []
 CSV_DATA_TO_INSERT = []
 
+@pytest.fixture(autouse=True)
 def _set_up_random():
-    """" This function is used to generate unique set of values for each test
+    """" This function is used to generate unique set of values for each test.
     Every time this function is used, generates a unique RANDOM string to
     set up the values used in every test."""
 
@@ -138,31 +139,6 @@ ACCOUNTS_FOR_SUBQUERY = 5
 CONTACTS_FOR_SUBQUERY = 5
 
 CONTACTS_FOR_NO_MORE_DATA = 100
-
-
-@pytest.fixture(autouse=True)
-def check_salesforce_is_clean(salesforce):
-    """pytest fixture to check that there are no stray records in Salesforce as a result of broken tests.
-
-    Args:
-        salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
-    """
-
-    _set_up_random()
-
-    for sobject in ['Contact', 'Account', 'Document', 'Event']:
-        logger.info(f'Checking that there are no {sobject} records')
-        if sobject == 'Contact':
-            sql_aux = f'SELECT COUNT(Id) FROM {sobject} WHERE Lastname LIKE \'{STR_15_RANDOM}%\''
-        elif sobject == 'Account':
-            sql_aux = f'SELECT COUNT(Id) FROM {sobject} WHERE Name LIKE \'{STR_15_RANDOM}%\''
-        elif sobject == 'Document':
-            sql_aux = f'SELECT COUNT(Id) FROM {sobject} WHERE Name LIKE \'{STR_15_RANDOM}%\''
-        elif sobject == 'Event':
-            sql_aux = f'SELECT COUNT(Id) FROM {sobject} WHERE Location LIKE \'{STR_15_RANDOM}%\''
-        count = salesforce.client.query(sql_aux)['records'][0]['expr0']
-        assert count == 0, f'Found {count} {sobject} records'
-
 
 def _get_ids(records, key):
     """Utility method to extract list of Ids from Bulk API insert/query result.
