@@ -3393,7 +3393,7 @@ for (step = 0; step < 1000; step++) {
 
 
 @database
-@sdc_min_version('3.15.0')
+@sdc_min_version('3.16.0')
 def test_multitable_quote_column_names(sdc_builder, sdc_executor, database):
     """
     Ensure that we properly quote all table and column names when querying the database.

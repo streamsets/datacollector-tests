@@ -45,7 +45,7 @@ def sdc_common_hook():
 
 
 @cluster('cdh', 'kafka')
-@sdc_min_version('3.15.0')
+@sdc_min_version('3.16.0')
 def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     """Check that timestamp and timestamp type are included in record header. Verifies that for previous versions of
     kafka (< 0.10), a validation issue is thrown.

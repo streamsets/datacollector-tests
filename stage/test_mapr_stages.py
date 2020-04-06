@@ -578,7 +578,7 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('mapr')
-@sdc_min_version('3.15.0')
+@sdc_min_version('3.16.0')
 def test_mapr_standalone_multitopic_streams_with_timestamp(sdc_builder, sdc_executor, cluster):
     """This test will start MapR Streams producer and consumer pipelines which check for integrity of data
     from a MapR Streams producer to MapR Streams consumer, including the message timestamp.

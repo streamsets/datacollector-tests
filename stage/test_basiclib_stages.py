@@ -409,7 +409,7 @@ def test_expression_evaluator(sdc_builder, sdc_executor):
     assert snapshot[expression].output[0].get_field_data('/a').attributes['new field header'] == 'Secret 3'
 
 
-@sdc_min_version('3.15.0')
+@sdc_min_version('3.16.0')
 def test_deduplicator_field_to_compare(sdc_builder, sdc_executor):
     """When field to compare in Record Deduplicator stage doesn't exists, it use On Record Error to manage
     the DEDUP error. The record error has to be "DEDUP_04: Field Path does not exist in the record".

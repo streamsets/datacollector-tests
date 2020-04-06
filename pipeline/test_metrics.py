@@ -31,7 +31,7 @@ def sdc_common_hook():
 
 
 # SDC-11777: provide way to easily see where a pipeline is when it is stuck in STARTING
-@sdc_min_version('3.15.0')
+@sdc_min_version('3.16.0')
 def test_runner_metrics_for_init_and_destroy(sdc_builder, sdc_executor):
     """Ensure that we properly update metrics when the runner is in starting phase."""
     builder = sdc_builder.get_pipeline_builder()

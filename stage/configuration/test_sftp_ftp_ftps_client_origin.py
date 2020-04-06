@@ -1321,7 +1321,7 @@ def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@sdc_min_version('3.15.0')
+@sdc_min_version('3.16.0')
 @sftp
 def test_file_processing_delay(sdc_builder, sdc_executor, sftp):
     """Test file processing delay property for SFTP origin. Configure the pipeline with a 15 second delay.

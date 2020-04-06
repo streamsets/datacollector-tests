@@ -65,7 +65,7 @@ def test_jdbc_multitable_consumer_origin_configuration_additional_jdbc_configura
 
 
 @database
-@sdc_min_version('3.15.0')
+@sdc_min_version('3.16.0')
 @pytest.mark.parametrize('create_jdbc_header_attributes', [True, False])
 def test_jdbc_multitable_consumer_origin_configuration_create_header_attributes(sdc_builder,
                                                                                 sdc_executor,
