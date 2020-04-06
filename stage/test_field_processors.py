@@ -828,6 +828,8 @@ def test_field_type_converter_null_map(sdc_builder, sdc_executor):
     assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
 
 
+# SDC-8583 fixed this in 3.16.0
+@sdc_min_version('3.16.0')
 def test_field_type_converter_trim(sdc_builder, sdc_executor):
     """Make sure that we properly trim if doing conversion from String to some of the other types."""
     raw_data = json.dumps([{
