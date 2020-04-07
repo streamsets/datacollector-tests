@@ -1,6 +1,14 @@
-import pytest
+import json
+import logging
+import string
+import time
 
+import pytest
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import redis
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
 
 
 @stub
@@ -291,11 +299,34 @@ def test_include_field_xpaths(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@redis
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'JSON', 'json_content': 'ARRAY_OBJECTS'},
                                               {'data_format': 'JSON', 'json_content': 'MULTIPLE_OBJECTS'}])
-def test_json_content(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_json_content(sdc_builder, sdc_executor, redis, stage_attributes, keep_data):
+    """Verify that the Redis Consumer origin can handle JSON Content whether an array of objects or multiple objects."""
+    SAMPLE_DATA = [{'key1': 'value1', 'key2': 'value2'}, {'key3': 'value3', 'key4': 'value4'}]
+    data = (json.dumps(SAMPLE_DATA)
+            if stage_attributes['json_content'] == 'ARRAY_OBJECTS'
+            else ''.join(json.dumps(object_) for object_ in SAMPLE_DATA))
+    key = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    redis_consumer = pipeline_builder.add_stage('Redis Consumer').set_attributes(pattern=[key], **stage_attributes)
+    trash = pipeline_builder.add_stage('Trash')
+    redis_consumer >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(redis)
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        redis.client.publish(key, data)
+        output_records = [record.field for record in snapshot_command.wait_for_finished().snapshot[redis_consumer].output]
+        assert output_records == SAMPLE_DATA
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        if not keep_data:
+            redis.client.delete(key)
 
 
 @stub
