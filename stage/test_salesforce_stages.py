@@ -50,8 +50,9 @@ DATA_TO_INSERT = []
 DATA_WITH_FROM_IN_EMAIL = []
 CSV_DATA_TO_INSERT = []
 
+@salesforce
 @pytest.fixture(autouse=True)
-def _set_up_random():
+def _set_up_random(salesforce):
     """" This function is used to generate unique set of values for each test.
     Every time this function is used, generates a unique RANDOM string to
     set up the values used in every test."""
@@ -80,6 +81,22 @@ def _set_up_random():
                                 'Email': 'xtes3@example.comFROM', 'LeadSource': 'Web'}]
     global CSV_DATA_TO_INSERT
     CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
+
+    # When the server has too many queries it returns temporary unavailable
+    # This is sleep is to avoid that error
+    time.sleep(10)
+    # Log to know if limits are reached
+    client = salesforce.client
+    limits = client.limits()
+    log_limits = f'Limits: DailyApiRequests: {limits["DailyApiRequests"]["Remaining"]}, ' \
+                 f'DailyBulkApiRequests: {limits["DailyBulkApiRequests"]["Remaining"]}, ' \
+                 f'DailyDurableStreamingApiEvents: {limits["DailyDurableStreamingApiEvents"]["Remaining"]}, ' \
+                 f'HourlyPublishedStandardVolumePlatformEvents: ' \
+                 f'{limits["HourlyPublishedStandardVolumePlatformEvents"]["Remaining"]}, ' \
+                 f'MonthlyPlatformEvents: {limits["MonthlyPlatformEvents"]["Remaining"]} '
+
+    logger.info(log_limits)
+
 
 ADD_CUSTOM_FIELD_PACKAGE= f'''<?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
