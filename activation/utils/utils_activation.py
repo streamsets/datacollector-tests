@@ -31,10 +31,8 @@ ACTIVATION_SUPPORT_SDC_MIN_VERSION = '3.15.0'
 SDC_ACTIVATION_DEFAULT_EMAIL_SUBJECT = 'StreamSets Data Collector Activation'
 
 
-def register_and_activate_sdc(sdc):
+def register_sdc(sdc):
     email_id = os.environ['SDC_ACTIVATION_TEST_EMAIL_ID']
-    email_password = os.environ['SDC_ACTIVATION_TEST_EMAIL_PASSWORD']
-
     data = {
         "activationUrl": REGISTRATION_ENDPOINT,
         "company": "Streamsets",
@@ -48,7 +46,15 @@ def register_and_activate_sdc(sdc):
         "version": sdc.version
     }
     registration_result_command = sdc.api_client.register(REGISTRATION_ENDPOINT, data)
-    assert registration_result_command.response.status_code == requests.codes['no_content']
+    assert registration_result_command.response.status_code == requests.codes.no_content
+    logger.info(f'SDC [{sdc.id}] is successfully registered.')
+
+
+def register_and_activate_sdc(sdc):
+    email_id = os.environ['SDC_ACTIVATION_TEST_EMAIL_ID']
+    email_password = os.environ['SDC_ACTIVATION_TEST_EMAIL_PASSWORD']
+
+    register_sdc(sdc)
 
     # Wait for some time to land the email in inbox
     time.sleep(20)
