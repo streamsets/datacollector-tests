@@ -872,6 +872,90 @@ def test_event_startup(sdc_builder, sdc_executor, database):
         connection.execute(f"DROP TABLE {table_name}")
 
 
+@database('oracle')
+@pytest.mark.parametrize('initial_change', ['DATE', 'SCN', 'LATEST'])
+def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
+    """Test Initial Change config.
+
+    The test performs 3 database transactions T1, T2 and T3, and the pipeline is started at a time in between
+    transactions T2 and T3. We expect the following outcome:
+    - When initial_change is 'DATE' or 'SCN', the test configures the Oracle CDC stage to read from
+      transaction T2, and consequently checks that the consumed data correspond to T2+T3.
+    - When initial_change is 'LATEST', the expected outcome is to read only data from T3.
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    table_name = f'STF_{get_random_string(string.ascii_lowercase)}'
+    connection = database.engine.connect()
+    test_options = {'initial_change': initial_change}
+    txn1_data = [1, 2]
+    txn2_data = [3, 4, 5]
+    txn3_data = [6, 7]
+    expected_data = txn3_data if initial_change == 'LATEST' else txn2_data + txn3_data
+
+    try:
+        # Create table and commit the first transaction.
+        connection.execute(f'CREATE TABLE {table_name} (id number primary key)')
+        txn1 = connection.begin()
+        for i in txn1_data:
+            connection.execute(f'INSERT INTO {table_name} VALUES({i})')
+        txn1.commit()
+        sleep(2)  # Seems to be necessary to avoid race conditions between commiting the first transaction and
+                  # retrieving the start date/scn.
+
+        # For initial_change 'DATE' or 'SCN', we configure as 'initial change' a point in between the first
+        # and second transaction. That means that changes in the first transaction should be ignored by Oracle
+        # CDC stage.
+        if initial_change == 'DATE':
+            current_time = _get_current_oracle_time(connection=connection)
+            test_options['start_date'] = current_time.strftime('%d-%m-%Y %H:%M:%S')
+        elif initial_change == 'SCN':
+            test_options['start_scn'] = _get_last_scn(connection)
+
+        # Commit a second transaction.
+        txn2 = connection.begin()
+        for i in txn2_data:
+            connection.execute(f'INSERT INTO {table_name} VALUES({i})')
+        txn2.commit()
+        sleep(2)
+
+        # Build the pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   buffer_locally=True,
+                                                   src_table_name=table_name,
+                                                   batch_size=1,
+                                                   **test_options)
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Start pipeline and commit a third transaction after that.
+        snapshot_cmd = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, wait=False,
+                                                     batches=len(expected_data), batch_size=1)
+        txn3 = connection.begin()
+        for i in txn3_data:
+            connection.execute(f'INSERT INTO {table_name} VALUES({i})')
+        txn3.commit()
+
+        # Check the data consumed by the pipeline is the expected one.
+        snapshot = snapshot_cmd.wait_for_finished().snapshot
+        sdc_records = [snapshot.snapshot_batches[i][oracle_cdc.instance_name].output[0]
+                       for i in range(len(snapshot))]
+        consumed_data = [rec.field['ID'].value for rec in sdc_records]
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        assert sorted(consumed_data) == expected_data
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f'DROP TABLE {table_name}')
+
+
 @sdc_min_version('3.14.0')
 @database('oracle')
 def test_dictionary_extraction(sdc_builder, sdc_executor, database):
@@ -914,7 +998,7 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
                                                    buffer_locally=True,
                                                    src_table_name=table_name,
                                                    initial_change='SCN',
-                                                   start_scn=str(start_scn),
+                                                   start_scn=start_scn,
                                                    dictionary_source='DICT_FROM_REDO_LOGS',
                                                    duration_of_directory_extraction='${2 * MINUTES}')
         trash = builder.add_stage('Trash')
@@ -980,13 +1064,17 @@ def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bu
 
 
 def _get_current_oracle_time(connection):
-    return connection.execute(sqlalchemy.sql.text('SELECT SYSDATE FROM DUAL')).fetchall()[0][0]
+    """Queries current time in Oracle database or raises an Exception if anything wrong happened."""
+    try:
+        return connection.execute(sqlalchemy.sql.text('SELECT SYSDATE FROM DUAL')).fetchall()[0][0]
+    except:
+        raise Exception('Error retrieving SYSDATE from Oracle database.')
 
 
 def _get_last_scn(connection):
     """Obtains last SCN from the database or raises an Exception if anything wrong happened."""
     try:
-        return connection.execute('SELECT CURRENT_SCN FROM V$DATABASE').first()[0]
+        return str(connection.execute('SELECT CURRENT_SCN FROM V$DATABASE').first()[0])
     except:
         raise Exception('Error retrieving last SCN from Oracle database.')
 
