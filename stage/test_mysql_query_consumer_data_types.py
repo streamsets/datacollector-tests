@@ -61,7 +61,7 @@ DATA_TYPES = [
 ]
 
 
-@sdc_min_version('3.15.0')
+@sdc_min_version('3.16.0')
 @database('mysql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES)
 def test_data_types(sdc_builder, sdc_executor, database, sql_type,
