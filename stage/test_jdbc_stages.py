@@ -3058,7 +3058,7 @@ def test_jdbc_sqlserver_types(sdc_builder, sdc_executor, database, use_table_ori
 
         # As a part of SDC-10125, DATETIMEOFFSET is natively supported in SDC, and is converted into ZONED_DATETIME
         if sql_type == 'DATETIMEOFFSET':
-            if Version(sdc_builder.version) >= Version('3.14.0'):
+            if Version(sdc_executor.version) >= Version('3.14.0'):
                 expected_type = 'ZONED_DATETIME'
                 expected_value = '2004-05-23T14:25:10.3456-08:00'
             else:
@@ -3105,7 +3105,7 @@ def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, databa
             JDBC_Multitable_Consumer >> trash
     """
 
-    if Version(sdc_builder.version) >= Version('3.14.0'):
+    if Version(sdc_executor.version) >= Version('3.14.0'):
         pytest.skip("Skipping SQLServer Unknown Type action check, since DATETIMEOFFSET field is now natively supported from SDC Version 3.14.0")
 
     column_type = 'DATETIMEOFFSET'
