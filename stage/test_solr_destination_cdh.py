@@ -25,6 +25,7 @@ logger.setLevel(logging.DEBUG)
 pytestmark = cluster('cdh')
 
 
+@sdc_min_version('3.8.0')
 def test_solr_write_records_cdh(sdc_builder, sdc_executor, cluster):
     """Solr basic write records test case.
     dev_raw_data_source >> solr_target
@@ -118,6 +119,7 @@ def test_solr_write_records_fields_automatically_mapped_cdh(sdc_builder, sdc_exe
         solr_client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster):
     """Solr write records on error discard test case.
     dev_raw_data_source >> solr_target
@@ -170,6 +172,7 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
         solr_client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster):
     """Solr write records on error to error test case.
     dev_raw_data_source >> solr_target
@@ -223,6 +226,7 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
         solr_client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, cluster):
     """Solr write records indexing error to error test case.
     dev_raw_data_source >> solr_target
@@ -280,6 +284,7 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
         solr_client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, cluster):
     """Solr write records error stop pipeline test case.
     dev_raw_data_source >> solr_target
@@ -330,6 +335,7 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, clust
         cluster.solr.client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluster):
     """Solr write record empty stop pipeline test case.
     dev_raw_data_source >> solr_target
@@ -380,6 +386,7 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluste
         cluster.solr.client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
     """Solr write record empty to error test case.
     dev_raw_data_source >> solr_target
@@ -435,6 +442,7 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
         solr_client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
     """Solr write record empty dicard test case.
     dev_raw_data_source >> solr_target
@@ -489,6 +497,7 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
         solr_client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_test_validations_null_url(sdc_builder, sdc_executor, cluster):
     """Solr basic validations null url.
     dev_raw_data_source >> solr_target
@@ -537,6 +546,7 @@ def test_solr_test_validations_null_url(sdc_builder, sdc_executor, cluster):
         cluster.solr.client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, cluster):
     """Solr basic validations empty fields.
     dev_raw_data_source >> solr_target
@@ -578,6 +588,7 @@ def test_solr_test_validations_empty_fields(sdc_builder, sdc_executor, cluster):
         cluster.solr.client.delete(id=field_val_1)
 
 
+@sdc_min_version('3.8.0')
 def test_solr_test_validations_invalid_url(sdc_builder, sdc_executor, cluster):
     """Solr basic validations invalid url.
     dev_raw_data_source >> solr_target
