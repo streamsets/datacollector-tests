@@ -1972,6 +1972,11 @@ def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cl
         hive_metadata >> hadoop_fs
         hive_metadata >> hive_metastore
     """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+            and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     id, username = 'id', 'username'
     raw_data = json.dumps({id: 1, username: 'abc'})
