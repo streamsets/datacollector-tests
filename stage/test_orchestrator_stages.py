@@ -28,7 +28,7 @@ def sdc_common_hook():
     return hook
 
 
-@sdc_min_version('3.9.0')
+@sdc_min_version('3.11.0')
 def test_cron_scheduler_origin(sdc_builder, sdc_executor):
     """Test Cron Scheduler Origin. The pipeline would look like:
 
@@ -59,7 +59,7 @@ def test_cron_scheduler_origin(sdc_builder, sdc_executor):
     assert timestamp_field.type == 'DATETIME'
 
 
-@sdc_min_version('3.9.0')
+@sdc_min_version('3.11.0')
 def test_control_hub_api_processor(sdc_builder, sdc_executor):
     """Test Control Hub API Processor. The pipeline would look like:
 
@@ -98,7 +98,7 @@ def test_control_hub_api_processor(sdc_builder, sdc_executor):
     assert control_hub_api_processor_snapshot.output[0].field['alive'].value == True
 
 
-@sdc_min_version('3.9.0')
+@sdc_min_version('3.11.0')
 def test_control_hub_api_processor_invalid_credentials(sdc_builder, sdc_executor):
     """Test Control Hub API Processor. The pipeline would look like:
 
@@ -135,7 +135,7 @@ def test_control_hub_api_processor_invalid_credentials(sdc_builder, sdc_executor
     assert len(control_hub_api_processor_snapshot.error_records) == 1
 
 
-@sdc_min_version('3.9.0')
+@sdc_min_version('3.11.0')
 def test_start_pipeline_processor(sdc_builder, sdc_executor):
     """Test Start Pipeline Origin/Processor. The pipeline would look like:
 
