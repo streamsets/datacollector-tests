@@ -32,7 +32,7 @@ from zipfile import ZipFile
 import pytest
 import requests
 from streamsets.testframework.markers import salesforce, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string,Version
 
 CONTACT = 'Contact'
 CDC = 'CDC'
@@ -1627,6 +1627,8 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         if subscription_type == PUSH_TOPIC:
             subscription_id, push_topic_name = create_push_topic(client)
         else:
+            if Version(sdc_builder.version) < Version('3.7.0'):
+                pytest.skip('CDC Feature requires minimum SDC version 3.7.0')
             subscription_id = enable_cdc(client)
 
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
@@ -1715,6 +1717,7 @@ def delete_custom_field_from_contact(metadata):
 
 
 @salesforce
+@sdc_min_version('3.7.0')
 def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
     """Start pipeline, create data using Salesforce client
     and then check if Salesforce origin receives notifications using snapshot.
@@ -2190,6 +2193,7 @@ def test_salesforce_datetime_in_history(sdc_builder, sdc_executor, salesforce, a
 
 
 @salesforce
+@sdc_min_version('3.7.0')
 def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesforce):
     """Test SDC-12378 - enabling CDC with blank object name ('get notifications for all objects') was causing
     initial query to fail.
