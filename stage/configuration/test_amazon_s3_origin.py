@@ -3,7 +3,7 @@ from collections import OrderedDict
 
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +207,6 @@ def test_configurations_data_format_log(sdc_executor, sdc_builder, aws, data_for
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
     attributes = {'bucket': aws.s3_bucket_name,
                   'prefix_pattern': f'{s3_key}/*',
-                  'number_of_threads': 1,
                   'read_order': 'LEXICOGRAPHICAL',
                   'data_format': data_format,
                   'log_format': log_format,
@@ -215,6 +214,8 @@ def test_configurations_data_format_log(sdc_executor, sdc_builder, aws, data_for
                   'regular_expression': REGULAR_EXPRESSION,
                   'field_path_to_regex_group_mapping': LOG_FIELD_MAPPING
                   }
+    if Version(sdc_builder.version) >= Version('3.7.0'):
+        attributes['number_of_threads'] = 1
     pipeline = get_aws_origin_to_trash_pipeline(sdc_builder, attributes, aws)
     s3_origin = pipeline.origin_stage
     try:
@@ -296,3 +297,4 @@ def execute_pipeline_and_get_output(sdc_executor, s3_origin, pipeline):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     output_records = snapshot[s3_origin].output
     return output_records
+
