@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version, large
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 from xlwt import Workbook
 
 from .utils.utils_aws import allow_public_access, restore_public_access
@@ -47,6 +47,7 @@ def sdc_common_hook():
 
 
 @aws('s3')
+@sdc_min_version('3.7.0')
 def test_s3_origin_empty_origin_stop_when_nomoredata_received(sdc_builder, sdc_executor, aws):
     """Test that an empty origin linked to a Pipeline Finisher Executor which ends the pipeline when
     a no-more-data is received actually emits this event.
@@ -275,11 +276,19 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
-    s3_origin.set_attributes(bucket=s3_bucket,
-                             data_format=data_format,
-                             prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
-                             number_of_threads=number_of_threads,
-                             read_order=read_order)
+    if Version(sdc_builder.version) >= Version('3.7.0'):
+        s3_origin.set_attributes(bucket=s3_bucket,
+                                 data_format=data_format,
+                                 prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
+                                 number_of_threads=number_of_threads,
+                                 read_order=read_order)
+    elif number_of_threads == 1:
+        s3_origin.set_attributes(bucket=s3_bucket,
+                                 data_format=data_format,
+                                 prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
+                                 read_order=read_order)
+    else:
+        pytest.skip("Multithreaded features are supported in S3 origin only for SDC Versions >= 3.7.0")
 
     # Since Use Path Style Addess Model doesn't exist in all versions, we set it conditionally only if it should
     # have some real value.
@@ -1579,3 +1588,4 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
                                    client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
                                        'Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
