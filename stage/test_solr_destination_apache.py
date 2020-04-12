@@ -26,6 +26,7 @@ logger.setLevel(logging.DEBUG)
 
 
 @solr
+@sdc_min_version('3.8.0')
 def test_solr_write_records_apache(sdc_builder, sdc_executor, solr):
     """A reusable function to test Dev Raw Data Source to Solr target pipeline.
     Since the same doc is ingested, we can skip multiple writes by using deduplicator. The Pipeline looks like:
