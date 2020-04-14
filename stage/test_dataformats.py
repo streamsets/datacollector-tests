@@ -63,6 +63,25 @@ def test_parse_json(sdc_builder, sdc_executor):
 
 
 @sdc_min_version('3.0.0.0')
+@pytest.mark.parametrize('param,expected', [
+    ("null", None),
+    ("false", False),
+    ("true", True),
+    ("\"string\"", "string")
+])
+def test_parse_json_constants(sdc_builder, sdc_executor, param, expected):
+    """Ensure that we properly read JSON constants outside of just 'objects'."""
+    pipeline = create_text_pipeline(sdc_builder, 'JSON', param)
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    assert len(snapshot['DataParser_01'].output) == 1
+    assert snapshot['DataParser_01'].output[0].get_field_data('/') == expected
+
+
+@sdc_min_version('3.0.0.0')
 def test_parse_delimited(sdc_builder, sdc_executor):
     """Validate parsing of delimited content via the Data Parser processor."""
     pipeline = create_text_pipeline(sdc_builder, 'DELIMITED', '1,2,3')
