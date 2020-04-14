@@ -4,6 +4,7 @@ import string
 import time
 
 import pytest
+from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import redis
 from streamsets.testframework.utils import get_random_string
@@ -591,9 +592,38 @@ def test_typesdb_file_path(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-def test_uri(sdc_builder, sdc_executor):
-    pass
+@redis
+@pytest.mark.parametrize('correct_uri', [True, False])
+def test_uri(sdc_builder, sdc_executor, redis, correct_uri, keep_data):
+    """Verify that Redis Consumer origin works when correct URI is given and raises StartError when it isn't."""
+    SAMPLE_DATA = dict(name='Jane Smith', zip_code=27023)
+    data = json.dumps(SAMPLE_DATA)
+    key = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    redis_consumer = pipeline_builder.add_stage('Redis Consumer').set_attributes(data_format='JSON', pattern=[key])
+    trash = pipeline_builder.add_stage('Trash')
+    redis_consumer >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(redis)
+    if not correct_uri:
+        redis_consumer.uri = 'Invalid URI'
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        if not correct_uri:
+            with pytest.raises(StartError):
+                sdc_executor.start_pipeline(pipeline)
+        else:
+            snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+            redis.client.publish(key, data)
+            output_records = [record.field
+                              for record in snapshot_command.wait_for_finished().snapshot[redis_consumer].output]
+            assert output_records == [SAMPLE_DATA]
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        if not keep_data:
+            redis.client.delete(key)
 
 
 @stub
