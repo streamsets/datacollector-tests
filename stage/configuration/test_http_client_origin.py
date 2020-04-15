@@ -84,12 +84,6 @@ def test_body_time_zone(sdc_builder, sdc_executor):
 
 
 @stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE'}])
-def test_buffer_size_in_bytes(sdc_builder, sdc_executor, stage_attributes):
-    pass
-
-
-@stub
 def test_charset(sdc_builder, sdc_executor):
     pass
 
@@ -1038,12 +1032,6 @@ def test_quote_character(sdc_builder, sdc_executor, stage_attributes):
 
 
 @stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE'}])
-def test_rate_per_second(sdc_builder, sdc_executor, stage_attributes):
-    pass
-
-
-@stub
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'EXCEL', 'read_all_sheets': False},
                                               {'data_format': 'EXCEL', 'read_all_sheets': True}])
 def test_read_all_sheets(sdc_builder, sdc_executor, stage_attributes):
@@ -1372,13 +1360,6 @@ def test_username(sdc_builder, sdc_executor, stage_attributes):
                                               {'enable_request_logging': True, 'verbosity': 'PAYLOAD_ANY'},
                                               {'enable_request_logging': True, 'verbosity': 'PAYLOAD_TEXT'}])
 def test_verbosity(sdc_builder, sdc_executor, stage_attributes):
-    pass
-
-
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE', 'verify_checksum': False},
-                                              {'data_format': 'WHOLE_FILE', 'verify_checksum': True}])
-def test_verify_checksum(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
