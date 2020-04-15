@@ -1,6 +1,9 @@
+import csv
+from collections import OrderedDict
+import io
 import json
-
 import pytest
+
 from pretenders.common.constants import FOREVER
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import http
@@ -325,7 +328,7 @@ def test_delimiter_element(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@http
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED', 'delimiter_format_type': 'CSV'},
                                               {'data_format': 'DELIMITED', 'delimiter_format_type': 'CUSTOM'},
                                               {'data_format': 'DELIMITED', 'delimiter_format_type': 'EXCEL'},
@@ -335,8 +338,72 @@ def test_delimiter_element(sdc_builder, sdc_executor, stage_attributes):
                                               {'data_format': 'DELIMITED', 'delimiter_format_type': 'POSTGRES_TEXT'},
                                               {'data_format': 'DELIMITED', 'delimiter_format_type': 'RFC4180'},
                                               {'data_format': 'DELIMITED', 'delimiter_format_type': 'TDF'}])
-def test_delimiter_format_type(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_delimiter_format_type(sdc_builder, sdc_executor, stage_attributes, http_client):
+    """Verify multiple data format type and its delimiter for 'http client origin'.
+    For:
+    CSV                ,
+    MYSQL              ,
+    POSTGRES_CSV       ,
+    POSTGRES_TEXT      ,
+    RFC4180            ,
+    CUSTOM             ^
+    TDF               \t
+    MULTI_CHARACTER    _/-\\_
+
+    pipeline looks like-
+    http_client_origin >> trash"""
+    raw_data = [['column1', 'column2', 'column3'], ['Field11', 'Field12', 'Field13'],
+                ['Field21', 'Field22', 'Field23']]
+
+    delimiter_character = '^' if stage_attributes['delimiter_format_type'] == 'CUSTOM' else None
+    # For multiple character delimited files
+    delim = '_/-\\_' if stage_attributes['delimiter_format_type'] == 'MULTI_CHARACTER' else None
+    custom_delimited_lines = [
+        f"first{delim}second{delim}third",
+        f"1{delim}11{delim}111",
+        f"31{delim}3,3{delim}3,_/-_3,3"
+    ]
+    file_content = custom_delimited_lines if stage_attributes[
+                                                 'delimiter_format_type'] == 'MULTI_CHARACTER' else raw_data
+    data = get_file_content(file_content, stage_attributes['delimiter_format_type'], delimiter_character)
+
+    mock_path = get_random_string()
+    http_mock = http_client.mock()
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(data, times=1)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        builder = sdc_builder.get_pipeline_builder()
+        http_client_origin = builder.add_stage('HTTP Client', type='origin')
+        http_client_origin.set_attributes(http_method='GET', resource_url=mock_uri, **stage_attributes)
+        trash = builder.add_stage('Trash')
+        http_client_origin >> trash
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        records = [record.field for record in snapshot[http_client_origin.instance_name].output]
+
+        assert 3 == len(records)
+        if stage_attributes['delimiter_format_type'] == 'MULTI_CHARACTER':
+            assert records == ([OrderedDict([('0', 'first_/-\_second_/-\_third')]),
+                                OrderedDict([('0', '1_/-\_11_/-\_111')]),
+                                OrderedDict([('0', '31_/-\_3,3_/-\_3,_/-_3,3')])])
+        elif stage_attributes['delimiter_format_type'] == 'EXCEL':
+            assert records == ([OrderedDict([('0', 'column1'), ('1', 'column2'), ('2', 'column3')]),
+                                OrderedDict([('0', 'Field11'), ('1', 'Field12\nSTR'), ('2', 'Field13')]),
+                                OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])])
+        elif stage_attributes['delimiter_format_type'] == 'CUSTOM':
+            assert records == ([OrderedDict([('0', 'column1^column2^column3')]),
+                                OrderedDict([('0', 'Field11^Field12^Field13')]),
+                                OrderedDict([('0', 'Field21^Field22^Field23')])])
+        else:
+            assert records == ([OrderedDict([('0', 'column1'), ('1', 'column2'), ('2', 'column3')]),
+                                OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')]),
+                                OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])])
+
+    finally:
+        http_mock.delete_mock()
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
@@ -1390,3 +1457,34 @@ def test_verify_checksum(sdc_builder, sdc_executor, stage_attributes):
 def test_wait_time_between_pages_in_ms(sdc_builder, sdc_executor, stage_attributes):
     pass
 
+
+# util functions
+
+
+def get_file_content(file_contents, delimiter_format, delimiter_character):
+    if delimiter_format in ['EXCEL']:
+        return get_excel_compatible_csv(file_contents)
+    elif delimiter_format in ['POSTGRES_CSV', 'CSV']:
+        return '\n'.join([','.join(t1) for t1 in file_contents])
+    elif delimiter_format == 'RFC4180':
+        #  As per https://tools.ietf.org/html/rfc4180 last record may or may not have line break.
+        return '\n'.join([','.join(t1) for t1 in file_contents]) + '\n'
+    elif delimiter_format in ['TDF', 'POSTGRES_TEXT', 'MYSQL']:
+        return '\n'.join(['\t'.join(t1) for t1 in file_contents])
+    elif delimiter_format in ['CUSTOM', 'POSTGRES_TEXT']:
+        return '\n'.join([delimiter_character.join(t1) for t1 in file_contents])
+    elif delimiter_format == 'MULTI_CHARACTER':
+        return "\n".join(file_contents)
+
+
+def get_excel_compatible_csv(data):
+    content = None
+    queue = io.StringIO()
+    try:
+        data[1][1] = data[1][1] + '\nSTR'  # To test multiple lines scenario in one column.
+        writer = csv.writer(queue, dialect='excel', quotechar='"', quoting=csv.QUOTE_ALL)
+        writer.writerows(data)
+        content = queue.getvalue()
+    finally:
+        queue.close()
+    return content
