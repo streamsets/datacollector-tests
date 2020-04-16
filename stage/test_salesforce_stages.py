@@ -379,13 +379,17 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
 
 
 
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
 @pytest.mark.parametrize(('condition'), [
     'query_without_prefix',
     # Testing of SDC-9067
     'query_with_prefix'
 ])
 @salesforce
-def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, condition):
+def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, api, condition):
     """Create data using Salesforce client and then check if Salesforce origin
     receives them using snapshot.
 
@@ -416,6 +420,7 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, condition):
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     # Changing " with ' and vice versa in following string makes the query execution fail.
     salesforce_origin.set_attributes(soql_query=query,
+                                     use_bulk_api=(api == 'bulk'),
                                      subscribe_for_notifications=False)
 
     trash = pipeline_builder.add_stage('Trash')
@@ -615,6 +620,10 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
 
 
 
+@pytest.mark.parametrize(('api'), [
+    'soap',
+    'bulk'
+])
 @pytest.mark.parametrize(('data_with_from_email'), [
     False,
     # Testing of SDC-7548
@@ -626,7 +635,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
     False
 ])
 @salesforce
-def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data_with_from_email, query_with_time):
+def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api, data_with_from_email, query_with_time):
     """Simple Salesforce Lookup processor test.
     Pipeline will enrich records with the 'FirstName' of contacts by adding a field as 'surName'.
 
@@ -669,6 +678,7 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data
                            salesforceField='LastName',
                            sdcField='/surName')]
     salesforce_lookup.set_attributes(soql_query=query_str,
+                                     use_bulk_api=(api == 'bulk'),
                                      field_mappings=field_mappings)
 
     trash = pipeline_builder.add_stage('Trash')
@@ -1056,7 +1066,8 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
                  "WHERE FirstName LIKE '${record:value(\"/prefix\")}%' "
                  f'and LastName= \'{STR_15_RANDOM}\'')
 
-    salesforce_lookup.set_attributes(soql_query=query_str)
+    salesforce_lookup.set_attributes(soql_query=query_str,
+                                     use_bulk_api=False)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> salesforce_lookup >> trash
@@ -1111,6 +1122,7 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
                            salesforceField='expr0',
                            sdcField='/count')]
     salesforce_lookup.set_attributes(soql_query=query_str,
+                                     use_bulk_api=False,
                                      field_mappings=field_mappings)
 
     trash = pipeline_builder.add_stage('Trash')
