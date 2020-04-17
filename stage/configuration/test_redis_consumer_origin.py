@@ -1,7 +1,6 @@
 import json
 import logging
 import string
-import time
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -462,9 +461,42 @@ def test_parse_nulls(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-def test_pattern(sdc_builder, sdc_executor):
-    pass
+@redis
+@pytest.mark.parametrize('correct_pattern', [True, False])
+def test_pattern(sdc_builder, sdc_executor, redis, correct_pattern, keep_data):
+    """Verify that Redis Consumer origin works when correct pattern is given and gets no records when it isn't."""
+    SAMPLE_DATA = dict(name='Jane Smith', zip_code=27023)
+    data = json.dumps(SAMPLE_DATA)
+    key = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    redis_consumer = pipeline_builder.add_stage('Redis Consumer').set_attributes(data_format='JSON', pattern=[key])
+    trash = pipeline_builder.add_stage('Trash')
+    redis_consumer >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(redis)
+    if not correct_pattern:
+        redis_consumer.pattern = ['Invalid pattern']
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        # redis.Redis.publish returns the number of subscribers a message was delivered to.
+        assert redis.client.publish(key, data) == (1 if correct_pattern else 0)
+        if correct_pattern:
+            output_records = [record.field
+                              for record in snapshot_command.wait_for_finished().snapshot[redis_consumer].output]
+            assert output_records == [SAMPLE_DATA]
+        else:
+            # TODO: A better check would verify that the batch count is increasing but the pipeline output record
+            # count isn't.
+            with pytest.raises(TimeoutError):
+                # Empty batches don't generate snapshots.
+                snapshot_command.wait_for_finished(timeout_sec=10)
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        if not keep_data:
+            redis.client.delete(key)
 
 
 @stub
