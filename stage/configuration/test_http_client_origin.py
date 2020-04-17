@@ -358,14 +358,6 @@ def test_escape_character(sdc_builder, sdc_executor, stage_attributes):
 
 
 @stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'EXCEL', 'excel_header_option': 'IGNORE_HEADER'},
-                                              {'data_format': 'EXCEL', 'excel_header_option': 'NO_HEADER'},
-                                              {'data_format': 'EXCEL', 'excel_header_option': 'WITH_HEADER'}])
-def test_excel_header_option(sdc_builder, sdc_executor, stage_attributes):
-    pass
-
-
-@stub
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'DATAGRAM',
                                                'datagram_packet_format': 'COLLECTD',
                                                'exclude_interval': False},
@@ -479,12 +471,6 @@ def test_ignore_control_characters(sdc_builder, sdc_executor, stage_attributes):
                                                'delimiter_format_type': 'CUSTOM',
                                                'ignore_empty_lines': True}])
 def test_ignore_empty_lines(sdc_builder, sdc_executor, stage_attributes):
-    pass
-
-
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'EXCEL', 'read_all_sheets': False}])
-def test_import_sheets(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
@@ -1032,13 +1018,6 @@ def test_quote_character(sdc_builder, sdc_executor, stage_attributes):
 
 
 @stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'EXCEL', 'read_all_sheets': False},
-                                              {'data_format': 'EXCEL', 'read_all_sheets': True}])
-def test_read_all_sheets(sdc_builder, sdc_executor, stage_attributes):
-    pass
-
-
-@stub
 def test_read_timeout(sdc_builder, sdc_executor):
     pass
 
@@ -1177,17 +1156,6 @@ def test_schema_registry_urls(sdc_builder, sdc_executor, stage_attributes):
                                                'data_format': 'AVRO',
                                                'lookup_schema_by': 'SUBJECT'}])
 def test_schema_subject(sdc_builder, sdc_executor, stage_attributes):
-    pass
-
-
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'EXCEL',
-                                               'excel_header_option': 'WITH_HEADER',
-                                               'skip_cells_with_no_header': False},
-                                              {'data_format': 'EXCEL',
-                                               'excel_header_option': 'WITH_HEADER',
-                                               'skip_cells_with_no_header': True}])
-def test_skip_cells_with_no_header(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
