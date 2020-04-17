@@ -33,6 +33,8 @@ import pytest
 import requests
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string,Version
+from .utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, verify_by_snapshot, \
+    verify_snapshot, get_ids, clean_up, TIMEOUT
 
 CONTACT = 'Contact'
 CDC = 'CDC'
@@ -40,63 +42,13 @@ PUSH_TOPIC = 'PUSH_TOPIC'
 API_VERSION = '47.0'
 COLON = ':'
 PERIOD = '.'
-TIMEOUT = 300
-
 
 logger = logging.getLogger(__name__)
-
-STR_15_RANDOM = ""
-DATA_TO_INSERT = []
-DATA_WITH_FROM_IN_EMAIL = []
-CSV_DATA_TO_INSERT = []
 
 @salesforce
 @pytest.fixture(autouse=True)
 def _set_up_random(salesforce):
-    """" This function is used to generate unique set of values for each test.
-    Every time this function is used, generates a unique RANDOM string to
-    set up the values used in every test."""
-
-    global STR_15_RANDOM
-    STR_15_RANDOM = get_random_string(string.ascii_letters,15)
-    logger.info(f'STR_15_RANDOM : \'{STR_15_RANDOM}\'')
-
-    global DATA_TO_INSERT
-    DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName':  f'{STR_15_RANDOM}', 'Email': 'xtest1@example.com',
-                       'LeadSource': 'Advertisement'},
-                      {'FirstName': 'Test2', 'LastName':  f'{STR_15_RANDOM}', 'Email': 'xtest2@example.com',
-                       'LeadSource': 'Partner'},
-                      {'FirstName': 'Test3', 'LastName':  f'{STR_15_RANDOM}', 'Email': 'xtest3@example.com',
-                       'LeadSource': 'Web'}]
-
-    # For testing of SDC-7548
-    # Since email is used in WHERE clause in lookup processory query,
-    # create data containing 'from' word in emails to verify the bug is fixed.
-    global DATA_WITH_FROM_IN_EMAIL
-    DATA_WITH_FROM_IN_EMAIL = [{'FirstName': 'Test1', 'LastName': f'{STR_15_RANDOM}',
-                                'Email': 'FROMxtest1@example.com', 'LeadSource': 'Advertisement'},
-                               {'FirstName': 'Test2', 'LastName': f'{STR_15_RANDOM}',
-                                'Email': 'xtefromst2@example.com', 'LeadSource': 'Partner'},
-                               {'FirstName': 'Test3', 'LastName': f'{STR_15_RANDOM}',
-                                'Email': 'xtes3@example.comFROM', 'LeadSource': 'Web'}]
-    global CSV_DATA_TO_INSERT
-    CSV_DATA_TO_INSERT = [','.join(DATA_TO_INSERT[0].keys())] + [','.join(item.values()) for item in DATA_TO_INSERT]
-
-    # When the server has too many queries it returns temporary unavailable
-    # This is sleep is to avoid that error
-    time.sleep(10)
-    # Log to know if limits are reached
-    client = salesforce.client
-    limits = client.limits()
-    log_limits = f'Limits: DailyApiRequests: {limits["DailyApiRequests"]["Remaining"]}, ' \
-                 f'DailyBulkApiRequests: {limits["DailyBulkApiRequests"]["Remaining"]}, ' \
-                 f'DailyDurableStreamingApiEvents: {limits["DailyDurableStreamingApiEvents"]["Remaining"]}, ' \
-                 f'HourlyPublishedStandardVolumePlatformEvents: ' \
-                 f'{limits["HourlyPublishedStandardVolumePlatformEvents"]["Remaining"]}, ' \
-                 f'MonthlyPlatformEvents: {limits["MonthlyPlatformEvents"]["Remaining"]} '
-
-    logger.info(log_limits)
-
+    set_up_random(salesforce)
 
 ADD_CUSTOM_FIELD_PACKAGE= f'''<?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
@@ -157,40 +109,6 @@ CONTACTS_FOR_SUBQUERY = 5
 
 CONTACTS_FOR_NO_MORE_DATA = 100
 
-def _get_ids(records, key):
-    """Utility method to extract list of Ids from Bulk API insert/query result.
-
-    Args:
-        records (:obj:`list`): List of records from a Bulk API insert or SOQL query.
-        key (:obj:`str`): Key to extract - 'Id' for queries or 'id' for inserted data.
-
-    Returns:
-        (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
-    """
-    return [{'Id': record[key]}
-            for record in records]
-
-
-def _clean_up(sdc_executor, pipeline, client, contact_ids):
-    """Utility method to delete inserted contacts and stop the pipeline
-
-    Args:
-        sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
-        pipeline (:py:class:`streamsets.sdk.sdc_models.Pipeline`): Pipeline instance to be stopped
-        client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
-        contact_ids (:obj:`list`): List of contacts to be deleted in form [{'Id':'001000000000001'},...]
-    """
-    if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-        logger.info('Stopping pipeline')
-        sdc_executor.stop_pipeline(pipeline)
-
-    try:
-        if contact_ids:
-            logger.info('Deleting records ...')
-            client.bulk.Contact.delete(contact_ids)
-    except:
-        logger.error('Unable to delete records...')
-
 
 @salesforce
 def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
@@ -206,7 +124,7 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
         salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, CSV_DATA_TO_INSERT)
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
 
     salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
     field_mapping = [{'sdcField': '/FirstName', 'salesforceField': 'FirstName'},
@@ -232,19 +150,19 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
         # Using Salesforce connection, read the contents in the Salesforce destination.
         # Changing " with ' and vice versa in following string makes the query execution fail.
         query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
-                     f'FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = \'{STR_15_RANDOM}\''
+                     f"FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = '{TEST_DATA['STR_15_RANDOM']}'"
                      " ORDER BY Id")
         result = client.query(query_str)
 
         read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]},{item["LeadSource"]}'
                      for item in result['records']]
         # Following is used later to delete these records.
-        read_ids = _get_ids(result['records'], 'Id')
+        read_ids = get_ids(result['records'], 'Id')
 
-        assert CSV_DATA_TO_INSERT[1:] == read_data
+        assert TEST_DATA['CSV_DATA_TO_INSERT'][1:] == read_data
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, read_ids)
+        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 
@@ -271,8 +189,8 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Replace field names in raw data, map them back in destination
-    data_to_insert = [item.replace('Email', 'em').replace('LeadSource', 'ls') for item in CSV_DATA_TO_INSERT]
-    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, data_to_insert)
+    TEST_DATA['DATA_TO_INSERT'] = [item.replace('Email', 'em').replace('LeadSource', 'ls') for item in TEST_DATA['CSV_DATA_TO_INSERT']]
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['DATA_TO_INSERT'])
 
     salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
     # FirstName and LastName should be mapped by default
@@ -298,20 +216,20 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
         # Using Salesforce connection, read the contents in the Salesforce destination.
         # Changing " with ' and vice versa in following string makes the query execution fail.
         query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
-                      f'FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = \'{STR_15_RANDOM}\''
+                      f"FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = '{TEST_DATA['STR_15_RANDOM']}'"
                      " ORDER BY Id")
         result = client.query(query_str)
 
         read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]},{item["LeadSource"]}'
                      for item in result['records']]
         # Following is used later to delete these records.
-        read_ids = _get_ids(result['records'], 'Id')
+        read_ids = get_ids(result['records'], 'Id')
 
         # Read data should match the original data, before we changed the field names
-        assert CSV_DATA_TO_INSERT[1:] == read_data
+        assert TEST_DATA['CSV_DATA_TO_INSERT'][1:] == read_data
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, read_ids)
+        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 @salesforce
@@ -331,7 +249,7 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
         salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, CSV_DATA_TO_INSERT)
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
     dev_raw_data_source.stop_after_first_batch = False
 
     salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
@@ -359,23 +277,23 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
         # Using Salesforce connection, read the contents in the Salesforce destination.
         # ORDER BY LastModifiedDate, Email to ensure consistency
         query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
-                     f'FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = \'{STR_15_RANDOM}\''
+                     f"FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = '{TEST_DATA['STR_15_RANDOM']}'"
                      " ORDER BY LastModifiedDate, Email")
         result = client.query(query_str)
 
         read_data = [f'{item["FirstName"]},{item["LastName"]},{item["Email"]},{item["LeadSource"]}'
                      for item in result['records']]
         # Following is used later to delete these records.
-        read_ids = _get_ids(result['records'], 'Id')
+        read_ids = get_ids(result['records'], 'Id')
 
         # Compare only the first batch of data
-        assert CSV_DATA_TO_INSERT[1:] == read_data[:len(CSV_DATA_TO_INSERT)-1]
+        assert TEST_DATA['CSV_DATA_TO_INSERT'][1:] == read_data[:len(TEST_DATA['CSV_DATA_TO_INSERT'])-1]
 
         history = sdc_executor.get_pipeline_history(pipeline)
         assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count > 3
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, read_ids)
+        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 
@@ -408,13 +326,13 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, api, condition
     if condition == 'query_without_prefix':
         query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
                  "WHERE Id > '000000000000000' AND "
-                 f'Email LIKE \'xtest%\' and LastName = \'{STR_15_RANDOM}\''
+                 f"Email LIKE \'xtest%\' and LastName = '{TEST_DATA['STR_15_RANDOM']}'"
                  " ORDER BY Id")
     else:
         # SDC-9067 - redundant object name prefix caused NPE
         query = ("SELECT Contact.Id, Contact.FirstName, Contact.LastName, Contact.Email, Contact.LeadSource "
                  "FROM Contact WHERE Id > '000000000000000' "
-                 f'AND Email LIKE \'xtest%\' and LastName = \'{STR_15_RANDOM}\''
+                 f"AND Email LIKE \'xtest%\' and LastName = '{TEST_DATA['STR_15_RANDOM']}'"
                  " ORDER BY Id")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
@@ -428,7 +346,7 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, api, condition
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, DATA_TO_INSERT, salesforce, DATA_TO_INSERT)
+    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, TEST_DATA['DATA_TO_INSERT'], salesforce, TEST_DATA['DATA_TO_INSERT'])
 
 
 @salesforce
@@ -455,12 +373,12 @@ def test_salesforce_origin_nulls(sdc_builder, sdc_executor, salesforce, api):
     # Specify some fields that we haven't set
     query = ("SELECT Id, FirstName, LastName, Description, HomePhone FROM Contact "
              "WHERE Id > '000000000000000' AND "
-             f'LastName = \'{STR_15_RANDOM}\''
+             f"LastName = '{TEST_DATA['STR_15_RANDOM']}'"
              "ORDER BY Id")
 
-    expected_data = [{'FirstName': 'Test1', 'LastName': STR_15_RANDOM, 'Description': None, 'HomePhone': None},
-                     {'FirstName': 'Test2', 'LastName': STR_15_RANDOM, 'Description': None, 'HomePhone': None},
-                     {'FirstName': 'Test3', 'LastName': STR_15_RANDOM, 'Description': None, 'HomePhone': None}]
+    expected_data = [{'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Description': None, 'HomePhone': None},
+                     {'FirstName': 'Test2', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Description': None, 'HomePhone': None},
+                     {'FirstName': 'Test3', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Description': None, 'HomePhone': None}]
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     salesforce_origin.set_attributes(soql_query=query,
@@ -473,85 +391,6 @@ def test_salesforce_origin_nulls(sdc_builder, sdc_executor, salesforce, api):
     sdc_executor.add_pipeline(pipeline)
 
     verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, expected_data, salesforce, expected_data)
-
-
-def get_dev_raw_data_source(pipeline_builder, raw_data):
-    """Utility method to create a Dev Raw Data Origin containing delimited data
-
-    Args:
-        pipeline_builder (:py:class:`streamsets.sdk.sdc_models.PipelineBuilder`): Pipeline builder instance
-        raw_data (obj:`list`): Data as a list of comma-separated values, including a header row
-
-    Returns:
-        The Dev Raw Data origin as a :py:class:`streamsets.sdk.sdc_models.Stage`
-    """
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='DELIMITED',
-                                       header_line='WITH_HEADER',
-                                       raw_data='\n'.join(raw_data),
-                                       stop_after_first_batch=True)
-    return dev_raw_data_source
-
-
-def verify_snapshot(snapshot, stage, expected_data):
-    """Utility method to verify that a snapshot matches the expected data
-
-    Args:
-        snapshot (:py:class:`streamsets.sdk.sdc_models.Snapshot`): Snapshot containing data to be verified
-        stage (:py:class:`streamsets.sdk.sdc_models.Stage`): Stage after which data is to be verified
-        expected_data (obj:`list`): Expected data as a list of dicts
-
-    Returns:
-        (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
-    """
-    # SDC-10773 - source IDs must be unique
-    source_ids = {record.header['sourceId'] for record in snapshot[stage].output}
-    assert len(source_ids) == len(snapshot[stage].output)
-
-    rows_from_snapshot = [record.field
-                          for record in snapshot[stage].output]
-
-    data_from_snapshot = [{field:record[field] for field in record if field not in ['Id', 'SystemModstamp']}
-                          for record in rows_from_snapshot]
-
-    if data_from_snapshot:
-        if 'FirstName' in data_from_snapshot[0].keys():
-            data_from_snapshot = sorted(data_from_snapshot, key=lambda k: k['FirstName'].value)
-        else:
-            data_from_snapshot = sorted(data_from_snapshot, key=lambda k: k['surName'].value)
-
-        assert data_from_snapshot == expected_data
-
-
-def verify_by_snapshot(sdc_executor, pipeline, stage, expected_data, salesforce, data_to_insert=DATA_TO_INSERT):
-    """Utility method to insert data into Salesforce, start a pipeline, capture a snapshot, verify that the snapshot
-    matches the expected data, and clean up the inserted records.
-
-    Args:
-        sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
-        pipeline (:py:class:`streamsets.sdk.sdc_models.Pipeline`): Pipeline instance
-        stage (:py:class:`streamsets.sdk.sdc_models.Stage`): Stage after which data is to be verified
-        expected_data (obj:`list`): Expected data as a list of dicts
-        salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
-        data_to_insert (obj:`list`): Data to be inserted, as a list of dicts
-
-    Returns:
-        (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
-    """
-    client = salesforce.client
-    inserted_ids = None
-    try:
-        # Using Salesforce client, create rows in Contact.
-        logger.info('Creating rows using Salesforce client ...')
-        inserted_ids = _get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
-
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
-
-        verify_snapshot(snapshot, stage, expected_data)
-
-    finally:
-        _clean_up(sdc_executor, pipeline, client, inserted_ids)
 
 
 @salesforce
@@ -577,7 +416,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
 
     query = ("SELECT Id, FirstName, LastName, Email, LeadSource, SystemModstamp "
              "FROM Contact WHERE SystemModstamp > ${OFFSET} and "
-             f'Lastname = \'{STR_15_RANDOM}\''
+             f"Lastname = '{TEST_DATA['STR_15_RANDOM']}'"
              " ORDER BY SystemModstamp")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
@@ -600,12 +439,12 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        inserted_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
-        verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
+        verify_snapshot(snapshot, salesforce_origin, TEST_DATA['DATA_TO_INSERT'])
 
         sdc_executor.stop_pipeline(pipeline)
 
@@ -616,7 +455,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         assert len(rows_from_snapshot) == 0
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
 
 
 
@@ -654,18 +493,18 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api,
 
     # Parametrizing directly the global variables does not work
     if data_with_from_email:
-        data_to_insert = DATA_WITH_FROM_IN_EMAIL
+        TEST_DATA['DATA_TO_INSERT'] = TEST_DATA['DATA_WITH_FROM_IN_EMAIL']
     else:
-        data_to_insert = DATA_TO_INSERT
+        TEST_DATA['DATA_TO_INSERT'] = TEST_DATA['DATA_TO_INSERT']
 
-    lookup_data = ['Email'] + [row['Email'] for row in data_to_insert]
+    lookup_data = ['Email'] + [row['Email'] for row in TEST_DATA['DATA_TO_INSERT']]
     dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
 
     salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
     # Changing " with ' and vice versa in following string makes the query execution fail.
     query_str = ("SELECT Id, FirstName, LastName, LeadSource FROM Contact "
                  "WHERE Email = '${record:value(\"/Email\")}' AND "
-                 f'LastName=\'{STR_15_RANDOM}\'')
+                 f"Lastname = '{TEST_DATA['STR_15_RANDOM']}'")
 
     if query_with_time:
         # Testing of SDC-10207 - select records that changed before an hour from now -
@@ -686,11 +525,11 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api,
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    LOOKUP_EXPECTED_DATA = copy.deepcopy(data_to_insert)
+    LOOKUP_EXPECTED_DATA = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'])
     for record in LOOKUP_EXPECTED_DATA:
         record['surName'] = record.pop('LastName')
     verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, LOOKUP_EXPECTED_DATA,
-                       salesforce, data_to_insert)
+                       salesforce, TEST_DATA['DATA_TO_INSERT'])
 
 
 @salesforce
@@ -711,7 +550,7 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        contact_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -728,7 +567,7 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
         # Ask for all of the fields we set, so that we can assert their values
         salesforce_lookup.set_attributes(lookup_mode='RETRIEVE',
                                          id_field='/Id',
-                                         salesforce_fields=','.join(DATA_TO_INSERT[0].keys()),
+                                         salesforce_fields=','.join(TEST_DATA['DATA_TO_INSERT'][0].keys()),
                                          object_type=CONTACT,
                                          field_mappings=field_mappings)
 
@@ -741,14 +580,14 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # We need to look for surName field instead of LastName
-        lookup_expected_data = copy.deepcopy(DATA_TO_INSERT)
+        lookup_expected_data = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'])
         for record in lookup_expected_data:
             record['surName'] = record.pop('FirstName')
 
         verify_snapshot(snapshot, salesforce_lookup, lookup_expected_data)
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids)
 
 @sdc_min_version('3.14.0')
 @pytest.mark.parametrize(('missing_values_behavior'), [
@@ -772,7 +611,7 @@ def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforc
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        result = client.bulk.Contact.insert(DATA_TO_INSERT)
+        result = client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT'])
         contact_ids = [{'Id': item['id']}
                        for item in result]
 
@@ -796,7 +635,7 @@ def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforc
         # If we don't find a record in Salesforce, we want to pass the record along the pipeline
         salesforce_lookup.set_attributes(lookup_mode='RETRIEVE',
                                          id_field='/Id',
-                                         salesforce_fields=','.join(DATA_TO_INSERT[0].keys()),
+                                         salesforce_fields=','.join(TEST_DATA['DATA_TO_INSERT'][0].keys()),
                                          object_type=CONTACT,
                                          missing_values_behavior=missing_values_behavior,
                                          field_mappings=field_mappings)
@@ -810,7 +649,7 @@ def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforc
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # We need to look for surName field instead of LastName
-        lookup_expected_data = copy.deepcopy(DATA_TO_INSERT)
+        lookup_expected_data = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'])
         for record in lookup_expected_data:
             record['surName'] = record.pop('FirstName')
 
@@ -870,7 +709,7 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
     # We don't need to populate the ReportsTo field - the error was in retrieving its metadata
     query = ("SELECT Id, Name, (SELECT Id, LastName, ReportsTo.LastName FROM Contacts ORDER BY Id) FROM Account "
              "WHERE Id > '000000000000000' AND "
-             f'Name LIKE \'{STR_15_RANDOM} %\' ORDER BY Id')
+             f"Name LIKE '{TEST_DATA['STR_15_RANDOM']} %' ORDER BY Id")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     salesforce_origin.set_attributes(soql_query=query,
@@ -890,19 +729,19 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
         account_ids = []
         logger.info('Creating accounts using Salesforce client ...')
         for i in range(ACCOUNTS_FOR_SUBQUERY):
-            expected_accounts.append({'Name': f'{STR_15_RANDOM} {i}'})
+            expected_accounts.append({'Name': f"{TEST_DATA['STR_15_RANDOM']} {i}"})
 
-        account_ids = _get_ids(client.bulk.Account.insert(expected_accounts), 'id')
+        account_ids = get_ids(client.bulk.Account.insert(expected_accounts), 'id')
 
         expected_contacts = []
         contact_ids = []
         logger.info('Creating contacts using Salesforce client ...')
         for i in range(len(expected_accounts)):
             for j in range(CONTACTS_FOR_SUBQUERY):
-                contact = {'AccountId': account_ids[i]['Id'], 'LastName': f'{STR_15_RANDOM} {i} {j}'}
+                contact = {'AccountId': account_ids[i]['Id'], 'LastName': f"{TEST_DATA['STR_15_RANDOM']} {i} {j}"}
                 expected_contacts.append(contact)
 
-        contact_ids = _get_ids(client.bulk.Contact.insert(expected_contacts), 'id')
+        contact_ids = get_ids(client.bulk.Contact.insert(expected_contacts), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
@@ -919,7 +758,7 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
         logger.info('Deleting records ...')
         if account_ids:
             client.bulk.Account.delete(account_ids)
-        _clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids)
 
 
 @salesforce
@@ -938,7 +777,7 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    query = f'SELECT COUNT() FROM Contact Where LastName = \'{STR_15_RANDOM}\''
+    query = f"SELECT COUNT() FROM Contact Where LastName = '{TEST_DATA['STR_15_RANDOM']}'"
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     salesforce_origin.set_attributes(soql_query=query,
@@ -956,7 +795,7 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        contact_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
@@ -966,7 +805,7 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
         assert snapshot[salesforce_origin].output[0].field['count'] == 3
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids)
 
 
 @salesforce
@@ -989,7 +828,7 @@ def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
              "MAX(NumberOfEmployees), "
              "MIN(Industry), "
              "SUM(AnnualRevenue) "
-             f'FROM Account where Name like \'{STR_15_RANDOM} %\'')
+             f"FROM Account where Name like '{TEST_DATA['STR_15_RANDOM']} %'")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     salesforce_origin.set_attributes(soql_query=query,
@@ -1007,20 +846,20 @@ def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        data_to_insert = [{'Name': f'{STR_15_RANDOM} 1',
+        TEST_DATA['DATA_TO_INSERT'] = [{'Name': f"{TEST_DATA['STR_15_RANDOM']} 1",
                            'NumberOfEmployees': 1,
                            'Industry': 'Agriculture',
                            'AnnualRevenue': 123 },
-                          {'Name': f'{STR_15_RANDOM} 2',
+                          {'Name': f"{TEST_DATA['STR_15_RANDOM']} 2",
                            'NumberOfEmployees': 2,
                            'Industry': 'Finance',
                            'AnnualRevenue': 456},
-                          {'Name': f'{STR_15_RANDOM} 3',
+                          {'Name': f"{TEST_DATA['STR_15_RANDOM']} 3",
                            'NumberOfEmployees': 3,
                            'Industry': 'Utilities',
                            'AnnualRevenue': 789}]
 
-        account_ids = _get_ids(client.bulk.Account.insert(data_to_insert), 'id')
+        account_ids = get_ids(client.bulk.Account.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
@@ -1064,7 +903,7 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
     # Changing " with ' and vice versa in following string makes the query execution fail.
     query_str = ("SELECT COUNT() FROM Contact "
                  "WHERE FirstName LIKE '${record:value(\"/prefix\")}%' "
-                 f'and LastName= \'{STR_15_RANDOM}\'')
+                 f"AND LastName= '{TEST_DATA['STR_15_RANDOM']}'")
 
     salesforce_lookup.set_attributes(soql_query=query_str,
                                      use_bulk_api=False)
@@ -1079,7 +918,7 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        contact_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
@@ -1089,7 +928,7 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
         assert snapshot[salesforce_lookup].output[0].field['count'].value == 3
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids)
 
 
 @salesforce
@@ -1116,7 +955,7 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
     # LeadSource ordering varies between org types!
     query_str = ("SELECT COUNT(Id), MIN(FirstName), MAX(LastName) FROM Contact "
                  "WHERE FirstName LIKE '${record:value(\"/prefix\")}%' "
-                 f'AND LastName=\'{STR_15_RANDOM}\'')
+                 f"AND LastName='{TEST_DATA['STR_15_RANDOM']}'")
 
     field_mappings = [dict(dataType='STRING',
                            salesforceField='expr0',
@@ -1136,19 +975,19 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
         contact_ids = []
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        contact_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
         # There should be a single row with a /count field containing three strings
         assert len(snapshot[salesforce_lookup].output) == 1
-        assert snapshot[salesforce_lookup].output[0].field['count'].value == str(len(DATA_TO_INSERT))
-        assert snapshot[salesforce_lookup].output[0].field['expr1'].value == DATA_TO_INSERT[0]['FirstName']
-        assert snapshot[salesforce_lookup].output[0].field['expr2'].value == DATA_TO_INSERT[-1]['LastName']
+        assert snapshot[salesforce_lookup].output[0].field['count'].value == str(len(TEST_DATA['DATA_TO_INSERT']))
+        assert snapshot[salesforce_lookup].output[0].field['expr1'].value == TEST_DATA['DATA_TO_INSERT'][0]['FirstName']
+        assert snapshot[salesforce_lookup].output[0].field['expr2'].value == TEST_DATA['DATA_TO_INSERT'][-1]['LastName']
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids)
 
 
 @salesforce
@@ -1174,7 +1013,7 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
     query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
              "WHERE Id > '000000000000000' AND "
              "Email LIKE 'xtest%' "
-             f'AND LastName = \'{STR_15_RANDOM}\''
+             f"AND LastName = '{TEST_DATA['STR_15_RANDOM']}'"
              "ORDER BY Id")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
@@ -1193,11 +1032,11 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
     inserted_ids = None
     try:
         logger.info('Creating rows using Salesforce client ...')
-        inserted_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
-        verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
+        verify_snapshot(snapshot, salesforce_origin, TEST_DATA['DATA_TO_INSERT'])
 
         logger.info('Revoking Salesforce session')
         r = requests.get(f'https://{client.sf_instance}/services/oauth2/revoke',
@@ -1210,10 +1049,10 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
 
         logger.info('Capturing another snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, timeout_sec=TIMEOUT).snapshot
-        verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
+        verify_snapshot(snapshot, salesforce_origin, TEST_DATA['DATA_TO_INSERT'])
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
 
 
 @salesforce
@@ -1234,25 +1073,25 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
 
     aux_email= get_random_string(string.ascii_letters, 10).lower()
 
-    DATA_TO_INSERT = [{'FirstName': 'Test1', 'LastName': f'{STR_15_RANDOM} 1',
-                       'Email': f'{aux_email}1@example.com', 'LeadSource': 'Advertisement'},
-                      {'FirstName': 'Test2', 'LastName': f'{STR_15_RANDOM} 2',
-                       'Email': f'{aux_email}2@example.com', 'LeadSource': 'Partner' },
-                      {'FirstName': 'Test3', 'LastName': f'{STR_15_RANDOM} 3',
-                       'Email': f'{aux_email}3@example.com', 'LeadSource': 'Web'}]
+    data_to_insert = [{'FirstName': 'Test1', 'LastName': f"{TEST_DATA['STR_15_RANDOM']} 1",
+                       'Email': f"{aux_email}1@example.com", 'LeadSource': 'Advertisement'},
+                      {'FirstName': 'Test2', 'LastName': f"{TEST_DATA['STR_15_RANDOM']} 2",
+                       'Email': f"{aux_email}2@example.com", 'LeadSource': 'Partner' },
+                      {'FirstName': 'Test3', 'LastName': f"{TEST_DATA['STR_15_RANDOM']} 3",
+                       'Email': f"{aux_email}3@example.com", 'LeadSource': 'Web'}]
 
-    DATA_TO_INSERT_2 = [{'FirstName': 'XTest1', 'LastName': f'{STR_15_RANDOM} 4',
-                         'Email': f'{aux_email}4@example.com', 'LeadSource': 'Advertisement'},
-                        {'FirstName': 'XTest2', 'LastName': f'{STR_15_RANDOM} 5',
-                         'Email': f'{aux_email}5@example.com', 'LeadSource': 'Partner'},
-                        {'FirstName': 'XTest3', 'LastName': f'{STR_15_RANDOM} 6',
-                         'Email': f'{aux_email}6@example.com','LeadSource': 'Web'}]
+    data_to_insert_2 = [{'FirstName': 'XTest1', 'LastName': f"{TEST_DATA['STR_15_RANDOM']} 4",
+                         'Email': f"{aux_email}4@example.com", 'LeadSource': 'Advertisement'},
+                        {'FirstName': 'XTest2', 'LastName': f"{TEST_DATA['STR_15_RANDOM']} 5",
+                         'Email': f"{aux_email}5@example.com", 'LeadSource': 'Partner'},
+                        {'FirstName': 'XTest3', 'LastName': f"{TEST_DATA['STR_15_RANDOM']} 6",
+                         'Email': f"{aux_email}6@example.com",'LeadSource': 'Web'}]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     query = ("SELECT Id, FirstName, LastName, Email, LeadSource "
              "FROM Contact WHERE Id > '000000000000000' AND Email LIKE '"+ aux_email + "%' and "
-             f'LastName like \'{STR_15_RANDOM} %\' ORDER BY Id')
+             f"LastName like \'{TEST_DATA['STR_15_RANDOM']} %\' ORDER BY Id")
 
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
@@ -1275,12 +1114,12 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        inserted_ids_1 = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        inserted_ids_1 = get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
-        verify_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT)
+        verify_snapshot(snapshot, salesforce_origin, data_to_insert)
 
         # Stage should produce events, and it does, since the fix for SDC-12418
         assert len(snapshot[salesforce_origin].event_records) == 1
@@ -1295,12 +1134,12 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
 
         # Using Salesforce client, create new rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        inserted_ids_2 = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT_2), 'id')
+        inserted_ids_2 = get_ids(client.bulk.Contact.insert(data_to_insert_2), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot_2 = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
 
-        verify_snapshot(snapshot_2, salesforce_origin, DATA_TO_INSERT + DATA_TO_INSERT_2)
+        verify_snapshot(snapshot_2, salesforce_origin, data_to_insert + data_to_insert_2)
 
         # stage should produce events...
         assert len(snapshot[salesforce_origin].event_records) == 1
@@ -1315,7 +1154,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
             inserted_ids += inserted_ids_2
         if len(inserted_ids) == 0:
             inserted_ids = None
-        _clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
 
 
 @salesforce
@@ -1332,7 +1171,7 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    doc_name = STR_15_RANDOM
+    doc_name = TEST_DATA['STR_15_RANDOM']
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     salesforce_origin.set_attributes(soql_query=f'SELECT Id, Body FROM Document WHERE '
@@ -1372,12 +1211,12 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
         body = 'The quick brown fox jumps over the lazy dog'.encode("utf-8")
 
         # Salesforce API wants base64-encoded Body
-        data_to_insert = {'Name': doc_name,
+        TEST_DATA['DATA_TO_INSERT'] = {'Name': doc_name,
                           'FolderId': folder_id,
                           'Body': base64.b64encode(body).decode("utf-8")}
 
         logger.info('Creating Document record using Salesforce client ...')
-        ret = client.Document.create(data_to_insert)
+        ret = client.Document.create(TEST_DATA['DATA_TO_INSERT'])
         inserted_id = ret['id']
 
         logger.info('Starting pipeline and snapshot')
@@ -1419,7 +1258,7 @@ def test_salesforce_destination_datetime(sdc_builder, sdc_executor, salesforce, 
     event_data = {
         "IsAllDayEvent": False,
         "DurationInMinutes": 10,
-        "Location": STR_15_RANDOM,
+        "Location": TEST_DATA['STR_15_RANDOM'],
         "Description": "This is a test event"
     }
 
@@ -1460,10 +1299,10 @@ def test_salesforce_destination_datetime(sdc_builder, sdc_executor, salesforce, 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         query_str = ('SELECT Id, ActivityDateTime, IsAllDayEvent, DurationInMinutes, Description, Location '
-                     f'FROM Event WHERE Location = \'{STR_15_RANDOM}\' ')
+                     f"FROM Event WHERE Location = '{TEST_DATA['STR_15_RANDOM']}'")
         result = client.query(query_str)
 
-        read_ids = _get_ids(result['records'], 'Id')
+        read_ids = get_ids(result['records'], 'Id')
 
         # Raw data source typically produces multiple records event if we only want one
         assert len(result['records']) == 1
@@ -1509,18 +1348,18 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
         logger.info('Creating rows using Salesforce client ...')
 
         # Email value should not exist in the database
-        DATA_TO_INSERT[1]["Email"] = f'{STR_15_RANDOM}_1@example.com'
-        DATA_TO_INSERT[2]["Email"] = f'{STR_15_RANDOM}_2@example.com'
-        inserted_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        TEST_DATA['DATA_TO_INSERT'][1]["Email"] = f"{TEST_DATA['STR_15_RANDOM']}_1@example.com"
+        TEST_DATA['DATA_TO_INSERT'][2]["Email"] = f"{TEST_DATA['STR_15_RANDOM']}_2@example.com"
+        inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         # Relate the created contacts to each other
         # first contact reports to second contact; second contact reports to third
-        csv_data_to_insert = ['Id,ReportsTo.Email']
-        csv_data_to_insert.append(f'{inserted_ids[0]["Id"]},{DATA_TO_INSERT[1]["Email"]}')
-        csv_data_to_insert.append(f'{inserted_ids[1]["Id"]},{DATA_TO_INSERT[2]["Email"]}')
+        TEST_DATA['CSV_DATA_TO_INSERT'] = ['Id,ReportsTo.Email']
+        TEST_DATA['CSV_DATA_TO_INSERT'].append(f"{inserted_ids[0]['Id']},{TEST_DATA['DATA_TO_INSERT'][1]['Email']}")
+        TEST_DATA['CSV_DATA_TO_INSERT'].append(f"{inserted_ids[1]['Id']},{TEST_DATA['DATA_TO_INSERT'][2]['Email']}")
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, csv_data_to_insert)
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
 
         salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
         field_mapping = [{'sdcField': '/Id', 'salesforceField': 'Id'},
@@ -1541,7 +1380,7 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
 
         # Using Salesforce connection, read the contents in the Salesforce destination.
         query_str = (f'SELECT Id, Email, ReportsToId FROM Contact WHERE '
-                     f'LastName = \'{STR_15_RANDOM}\' ORDER BY Id')
+                     f"Lastname = \'{TEST_DATA['STR_15_RANDOM']}\' ORDER BY Id")
         result = client.query(query_str)
 
         # The magic of external id fields - we knitted the contacts together via their emails
@@ -1550,7 +1389,7 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
         assert result['records'][1]['ReportsToId'] == result['records'][2]['Id']
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
 
 
 def create_push_topic(client):
@@ -1563,7 +1402,7 @@ def create_push_topic(client):
         (:obj:`str`) PushTopic record Id
         (:obj:`str`) PushTopic name
     """
-    push_topic_name = STR_15_RANDOM
+    push_topic_name = TEST_DATA['STR_15_RANDOM']
     logger.info(f'Creating PushTopic {push_topic_name} in Salesforce')
     result = client.PushTopic.create({'Name': push_topic_name,
                                       'Query': 'SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact',
@@ -1669,15 +1508,15 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         # updates could flood a channel."
         # REST API in Simple Salesforce can only create one record at a time, so just create one contact
         logger.info('Creating record using Salesforce client...')
-        contact = client.Contact.create(DATA_TO_INSERT[0])
+        contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
 
         logger.info('Taking snapshot')
         snapshot = snapshot_command.wait_for_finished().snapshot
 
         if subscription_type == PUSH_TOPIC:
-            verify_snapshot(snapshot, salesforce_origin, [DATA_TO_INSERT[0]])
+            verify_snapshot(snapshot, salesforce_origin, [TEST_DATA['DATA_TO_INSERT'][0]])
         else:
-            verify_cdc_snapshot(snapshot, salesforce_origin, DATA_TO_INSERT[0])
+            verify_cdc_snapshot(snapshot, salesforce_origin, TEST_DATA['DATA_TO_INSERT'][0])
 
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -1788,7 +1627,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         # updates could flood a channel."
         # REST API in Simple Salesforce can only create one record at a time, so just create one contact
         logger.info('Creating first record using Salesforce client...')
-        contact = client.Contact.create(DATA_TO_INSERT[0])
+        contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
 
         logger.info('Taking snapshot')
         snapshot = snapshot_command.wait_for_finished().snapshot
@@ -1796,10 +1635,10 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         # CDC returns more than just the record fields, so verify_snapshot isn't so useful
         assert len(snapshot[salesforce_origin].output) == 1
         assert snapshot[salesforce_origin].output[0].header.values['salesforce.cdc.recordIds']
-        assert snapshot[salesforce_origin].output[0].field['Email'] == DATA_TO_INSERT[0]['Email']
+        assert snapshot[salesforce_origin].output[0].field['Email'] == TEST_DATA['DATA_TO_INSERT'][0]['Email']
         # CDC returns nested compound fields
-        assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == DATA_TO_INSERT[0]['FirstName']
-        assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == DATA_TO_INSERT[0]['LastName']
+        assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][0]['FirstName']
+        assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][0]['LastName']
 
         logger.info('Stopping pipeline')
         sdc_executor.stop_pipeline(pipeline)
@@ -1807,9 +1646,9 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         # Create another record, setting the custom field, then delete the
         # field, so that the current schema doesn't match the CDC notification
         logger.info('Creating second record using Salesforce client...')
-        data_to_insert = copy.deepcopy(DATA_TO_INSERT[1])
-        data_to_insert['BoolCustField__c'] = True
-        contact2 = client.Contact.create(data_to_insert)
+        TEST_DATA['DATA_TO_INSERT'] = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'][1])
+        TEST_DATA['DATA_TO_INSERT']['BoolCustField__c'] = True
+        contact2 = client.Contact.create(TEST_DATA['DATA_TO_INSERT'])
 
         logger.info('Deleting custom field from Contact object...')
         delete_custom_field_from_contact(metadata)
@@ -1825,11 +1664,11 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
 
         assert len(snapshot[salesforce_origin].output) == 1
         assert snapshot[salesforce_origin].output[0].header.values['salesforce.cdc.recordIds']
-        assert snapshot[salesforce_origin].output[0].field['Email'] == data_to_insert['Email']
-        assert snapshot[salesforce_origin].output[0].field['BoolCustField__c'] == data_to_insert['BoolCustField__c']
+        assert snapshot[salesforce_origin].output[0].field['Email'] == TEST_DATA['DATA_TO_INSERT']['Email']
+        assert snapshot[salesforce_origin].output[0].field['BoolCustField__c'] == TEST_DATA['DATA_TO_INSERT']['BoolCustField__c']
         # CDC returns nested compound fields
-        assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == data_to_insert['FirstName']
-        assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == data_to_insert['LastName']
+        assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT']['FirstName']
+        assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT']['LastName']
 
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -1903,13 +1742,13 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
         # updates could flood a channel."
         # REST API in Simple Salesforce can only create one record at a time, so just create one contact
         logger.info('Creating record using Salesforce client...')
-        contact = client.Contact.create(DATA_TO_INSERT[0])
+        contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
 
         logger.info('Taking snapshot')
         if good_or_bad == 'good':
             snapshot = snapshot_command.wait_for_finished().snapshot
 
-            verify_snapshot(snapshot, salesforce_origin, [DATA_TO_INSERT[0]])
+            verify_snapshot(snapshot, salesforce_origin, [TEST_DATA['DATA_TO_INSERT'][0]])
         else:
             # Pipeline should stop with StageException
             with pytest.raises(Exception):
@@ -1954,7 +1793,7 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
     # triggering no-more-data
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
     salesforce_origin.set_attributes(soql_query="SELECT Id, Name FROM Contact WHERE Id > '${OFFSET}' "
-                                                f'AND LastName = \'{STR_15_RANDOM}\' ORDER BY Id LIMIT 10',
+                                                f"AND LastName = \'{TEST_DATA['STR_15_RANDOM']}\' ORDER BY Id LIMIT 10",
                                      repeat_query='INCREMENTAL',
                                      query_interval='${1 * SECONDS}',
                                      subscribe_for_notifications=False,
@@ -1976,11 +1815,11 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
         data_to_insert = []
         for aux in range(CONTACTS_FOR_NO_MORE_DATA):
             data_to_insert.append({'FirstName': get_random_string(string.ascii_letters, 10).lower(),
-                                   'LastName': f'{STR_15_RANDOM}',
-                                   'Email': f'{get_random_string(string.ascii_letters, 10).lower()}@example.com'})
+                                   'LastName': TEST_DATA['STR_15_RANDOM'],
+                                   'Email': f"{get_random_string(string.ascii_letters, 10).lower()}@example.com"})
 
         logger.info('Creating Contact records using Salesforce client ...')
-        contact_ids = _get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
+        contact_ids = get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
 
         logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline)
@@ -2000,7 +1839,7 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
         assert error_records == 0, f'Observed {error_records} error records (expected 0)'
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids)
 
 
 @salesforce
@@ -2021,10 +1860,10 @@ def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, sal
     try:
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        DATA_TO_INSERT[0]["Email"] = f'{STR_15_RANDOM}_1@example.com'
-        DATA_TO_INSERT[1]["Email"]=  f'{STR_15_RANDOM}_1@example.com'
-        DATA_TO_INSERT[2]["Email"] = f'{STR_15_RANDOM}_2@example.com'
-        inserted_ids = _get_ids(client.bulk.Contact.insert(DATA_TO_INSERT), 'id')
+        TEST_DATA['DATA_TO_INSERT'][0]["Email"] = f"{TEST_DATA['STR_15_RANDOM']}_0@example.com"
+        TEST_DATA['DATA_TO_INSERT'][1]["Email"]=  f"{TEST_DATA['STR_15_RANDOM']}_1@example.com"
+        TEST_DATA['DATA_TO_INSERT'][2]["Email"] = f"{TEST_DATA['STR_15_RANDOM']}_2@example.com"
+        inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         # Link the records via ReportsToId
         logger.info('Updating rows using Salesforce client ...')
@@ -2033,12 +1872,12 @@ def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, sal
         client.bulk.Contact.update(data_for_update)
 
         # Now disconnect the created contacts from each other
-        csv_data_to_insert = ['Id,ReportsTo.Email']
-        csv_data_to_insert.append(f'{inserted_ids[1]["Id"]},')
-        csv_data_to_insert.append(f'{inserted_ids[2]["Id"]},')
+        TEST_DATA['CSV_DATA_TO_INSERT'] = ['Id,ReportsTo.Email']
+        TEST_DATA['CSV_DATA_TO_INSERT'].append(f'{inserted_ids[1]["Id"]},')
+        TEST_DATA['CSV_DATA_TO_INSERT'].append(f'{inserted_ids[2]["Id"]},')
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, csv_data_to_insert)
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
 
         salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
         field_mapping = [{'sdcField': '/Id', 'salesforceField': 'Id'},
@@ -2059,7 +1898,7 @@ def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, sal
 
         # Using Salesforce connection, read the contents in the Salesforce destination.
         query_str = ("SELECT Id, Email, ReportsToId FROM Contact "
-                     f'WHERE Email LIKE \'{STR_15_RANDOM}%\'')
+                     f"WHERE Email LIKE '{TEST_DATA['STR_15_RANDOM']}%'")
         result = client.query(query_str)
 
         # Nobody should report to anybody any more
@@ -2068,7 +1907,7 @@ def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, sal
         assert None == result['records'][2]['ReportsToId']
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
 
 
 @salesforce
@@ -2099,11 +1938,11 @@ def test_salesforce_destination_polymorphic(sdc_builder, sdc_executor, salesforc
 
         # Set the case owner. Even though we're not changing the owner, SDC-13117 would cause an error to
         # be thrown due to the bad syntax for the field name
-        csv_data_to_insert = ['Id,Owner']
-        csv_data_to_insert.append(f'{case_id},{salesforce.username}')
+        TEST_DATA['CSV_DATA_TO_INSERT'] = ['Id,Owner']
+        TEST_DATA['CSV_DATA_TO_INSERT'].append(f'{case_id},{salesforce.username}')
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, csv_data_to_insert)
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
 
         salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
         field_mapping = [{'sdcField': '/Id', 'salesforceField': 'Id'},
@@ -2226,7 +2065,7 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
 
     query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
              "WHERE Id > '000000000000000' AND "
-             f'LastName = \'{STR_15_RANDOM}\' '
+             f"Lastname = \'{TEST_DATA['STR_15_RANDOM']}\' "
              "ORDER BY Id")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
@@ -2240,7 +2079,7 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, DATA_TO_INSERT, salesforce, DATA_TO_INSERT)
+    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, TEST_DATA['DATA_TO_INSERT'], salesforce, TEST_DATA['DATA_TO_INSERT'])
 
 
 def find_dataset(client, name):
@@ -2279,7 +2118,7 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
     id = None
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, CSV_DATA_TO_INSERT)
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
 
         # Delay so that we can stop the pipeline after a single batch is processed
         delay = pipeline_builder.add_stage('Delay')
@@ -2322,7 +2161,7 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
         # Build the identity projection - e.g.
         # q = foreach q generate Email as Email, FirstName as FirstName, LastName as LastName, LeadSource as LeadSource;
         field_list = []
-        for key in DATA_TO_INSERT[0]:
+        for key in TEST_DATA['DATA_TO_INSERT'][0]:
             field_list.append(f'{key} as {key}')
         projection = 'q = foreach q generate ' + ', '.join(field_list) + ';'
 
@@ -2333,7 +2172,7 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
         logger.info('Querying Einstein Analytics')
         response = client.restful('wave/query', method='POST', json={'query': load + projection + ordering})
 
-        assert sorted(DATA_TO_INSERT, key=itemgetter(order_key)) == response['results']['records']
+        assert sorted(TEST_DATA['DATA_TO_INSERT'], key=itemgetter(order_key)) == response['results']['records']
 
     finally:
         if id:
@@ -2396,11 +2235,11 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
 
         query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
                  "WHERE Id > '000000000000000' AND "
-                 f'Email LIKE \'xtest%\' and LastName = \'{STR_15_RANDOM}\''
+                 f"Email LIKE \'xtest%\' and LastName = '{TEST_DATA['STR_15_RANDOM']}'"
                  " ORDER BY Id")
 
-        first_data_to_insert = DATA_TO_INSERT[:-1]
-        second_data_to_insert = DATA_TO_INSERT[-1]
+        first_data_to_insert = TEST_DATA['DATA_TO_INSERT'][:-1]
+        second_data_to_insert = TEST_DATA['DATA_TO_INSERT'][-1]
 
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
         salesforce_origin.set_attributes(query_existing_data=True,
@@ -2422,7 +2261,7 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         inserted_ids = None
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
-        inserted_ids = _get_ids(client.bulk.Contact.insert(first_data_to_insert), 'id')
+        inserted_ids = get_ids(client.bulk.Contact.insert(first_data_to_insert), 'id')
 
         logger.info('Starting pipeline and snapshot')
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
@@ -2449,7 +2288,7 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
             verify_cdc_snapshot(snapshot, salesforce_origin, second_data_to_insert)
 
     finally:
-        _clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(pipeline)

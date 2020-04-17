@@ -1,7 +1,16 @@
+import logging
 import pytest
 
+from streamsets.testframework.markers import salesforce
 from streamsets.testframework.decorators import stub
+from ..utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, verify_by_snapshot
 
+logger = logging.getLogger(__name__)
+
+@salesforce
+@pytest.fixture(autouse=True)
+def _set_up_random(salesforce):
+    set_up_random(salesforce)
 
 @stub
 def test_api_version(sdc_builder, sdc_executor):
@@ -111,11 +120,83 @@ def test_missing_values_behavior(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@salesforce
+@pytest.mark.parametrize('use_bulk_api', [True, False])
 @pytest.mark.parametrize('stage_attributes', [{'multiple_values_behavior': 'FIRST_ONLY'},
+                                              {'multiple_values_behavior': 'ALL_AS_LIST'},
                                               {'multiple_values_behavior': 'SPLIT_INTO_MULTIPLE_RECORDS'}])
-def test_multiple_values_behavior(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_multiple_values_behavior(sdc_builder, sdc_executor, salesforce, stage_attributes, use_bulk_api):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_lookup >> trash
+
+    Args:
+        sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
+        sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
+        salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
+        stage_attributes (:obj:`dict`): Attributes to use in test
+        use_bulk_api (:obj:`bool`): Whether or not to use the Salesforce Bulk API
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    data_to_insert = TEST_DATA['DATA_TO_INSERT']
+
+    lookup_data = ['Email'] + [row['Email'] for row in data_to_insert]
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
+
+    salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
+    # Non-selective query matches all three contacts
+    query_str = ("SELECT Id, FirstName, LastName, LeadSource FROM Contact "
+                 f"WHERE LastName='{TEST_DATA['STR_15_RANDOM']}' ORDER BY FirstName")
+
+    salesforce_lookup.set_attributes(**stage_attributes,
+                                     soql_query=query_str,
+                                     use_bulk_api=use_bulk_api)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> salesforce_lookup >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    if stage_attributes['multiple_values_behavior'] == 'SPLIT_INTO_MULTIPLE_RECORDS':
+        lookup_expected_data = [{'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest1@example.com',
+                                 'LeadSource': 'Advertisement'},
+                                {'FirstName': 'Test2', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest1@example.com',
+                                 'LeadSource': 'Partner'},
+                                {'FirstName': 'Test3', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest1@example.com',
+                                 'LeadSource': 'Web'},
+                                {'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest2@example.com',
+                                 'LeadSource': 'Advertisement'},
+                                {'FirstName': 'Test2', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest2@example.com',
+                                 'LeadSource': 'Partner'},
+                                {'FirstName': 'Test3', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest2@example.com',
+                                 'LeadSource': 'Web'},
+                                {'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest3@example.com',
+                                 'LeadSource': 'Advertisement'},
+                                {'FirstName': 'Test2', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest3@example.com',
+                                 'LeadSource': 'Partner'},
+                                {'FirstName': 'Test3', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest3@example.com',
+                                 'LeadSource': 'Web'}]
+    elif stage_attributes['multiple_values_behavior'] == 'ALL_AS_LIST':
+        lookup_expected_data = [{'FirstName': ['Test1', 'Test2', 'Test3'],
+                                 'LastName': [TEST_DATA['STR_15_RANDOM'], TEST_DATA['STR_15_RANDOM'], TEST_DATA['STR_15_RANDOM']],
+                                 'Email': 'xtest1@example.com', 'LeadSource': ['Advertisement', 'Partner', 'Web']},
+                                {'FirstName': ['Test1', 'Test2', 'Test3'],
+                                 'LastName': [TEST_DATA['STR_15_RANDOM'], TEST_DATA['STR_15_RANDOM'], TEST_DATA['STR_15_RANDOM']],
+                                 'Email': 'xtest2@example.com', 'LeadSource': ['Advertisement', 'Partner', 'Web']},
+                                {'FirstName': ['Test1', 'Test2', 'Test3'],
+                                 'LastName': [TEST_DATA['STR_15_RANDOM'], TEST_DATA['STR_15_RANDOM'], TEST_DATA['STR_15_RANDOM']],
+                                 'Email': 'xtest3@example.com', 'LeadSource': ['Advertisement', 'Partner', 'Web']}]
+    else:  # multiple_values_behavior == FIRST_ONLY
+        lookup_expected_data = [{'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest1@example.com',
+                                 'LeadSource': 'Advertisement'},
+                                {'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest2@example.com',
+                                 'LeadSource': 'Advertisement'},
+                                {'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest3@example.com',
+                                 'LeadSource': 'Advertisement'}]
+
+    verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, lookup_expected_data,
+                       salesforce, data_to_insert, False)
 
 
 @stub
