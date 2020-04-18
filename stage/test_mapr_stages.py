@@ -43,6 +43,9 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
     """
     if not cluster.version[len('mapr'):].startswith('6'):
         pytest.skip('MapR CDC test only runs against cluster with MapR version 6.')
+    if cluster.mep_version == "4.0":
+        pytest.skip('MapR CDC test are written only for MEP 5 and above.')
+
     table_name = get_random_string(string.ascii_letters, 10)
     topic_name = f'{table_name}-topic'
     table_path = f'/user/sdc/{table_name}'
