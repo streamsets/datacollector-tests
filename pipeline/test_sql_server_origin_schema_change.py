@@ -122,6 +122,7 @@ def test_sql_server_cdc_with_cdc_schema_name(sdc_builder, sdc_executor, database
         sql_server_cdc_origin >> jdbc_producer
     """
     schema_name = DEFAULT_SCHEMA_NAME
+    table_prefix = get_random_string(string.ascii_lowercase, 10)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
@@ -132,6 +133,7 @@ def test_sql_server_cdc_with_cdc_schema_name(sdc_builder, sdc_executor, database
                                   maximum_pool_size=no_of_threads+1,
                                   minimum_idle_connections=no_of_threads+1,
                                   new_table_discovery_interval='${1 * SECONDS}',
+                                  table_configs=[{'capture_instance': f'dbo_{table_prefix}_%'}],
                                   number_of_threads=no_of_threads)
 
     dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -155,7 +157,7 @@ def test_sql_server_cdc_with_cdc_schema_name(sdc_builder, sdc_executor, database
         rows_in_database = setup_sample_data(no_of_threads * no_of_records)
 
         for index in range(0, no_of_threads):
-            table_name = get_random_string(string.ascii_lowercase, 20)
+            table_name = f"{table_prefix}_{get_random_string(string.ascii_lowercase, 20)}"
             # split the rows_in_database into no_of_records for each table
             # e.g. for no_of_records=5, the first table inserts rows_in_database[0:5]
             # and the secord table inserts rows_in_database[5:10]
