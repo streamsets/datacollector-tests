@@ -19,6 +19,7 @@ def test_field_to_split(sdc_builder, sdc_executor):
 
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
         dev_raw_data_source.raw_data = json.dumps(DATA)
+        dev_raw_data_source.data_format = 'JSON'
         field_splitter = pipeline_builder.add_stage('Field Splitter').set_attributes(field_to_split='/name',
                                                                                      separator='[ ]')
         trash = pipeline_builder.add_stage('Trash')
