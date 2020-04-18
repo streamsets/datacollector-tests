@@ -566,6 +566,7 @@ def _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, 
 
 
 @cluster('mapr')
+@sdc_min_version('3.7.0')
 def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
     """This test will start MapR Streams producer and consumer pipelines which check for integrity of data
     from a MapR Streams producer to MapR Streams consumer. Both the pipelines run as standalone. Specifically, this
