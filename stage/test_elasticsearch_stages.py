@@ -124,7 +124,7 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
         idx.delete()
 
 
-@sdc_min_version('3.0.0.0') # stop_after_first_batch
+@sdc_min_version('3.7.0') # SDC-10408 Additional Properties
 @elasticsearch
 @pytest.mark.parametrize('additional_properties', ['{}', '{"_retry_on_conflict":3}'])
 def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, additional_properties):
