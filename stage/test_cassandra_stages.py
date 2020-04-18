@@ -86,7 +86,7 @@ def test_cassandra_destination(sdc_builder, sdc_executor, cassandra):
 
 
 @cassandra
-@sdc_min_version('3.11.0')
+@sdc_min_version('3.12.0')
 def test_cassandra_destination_no_batch(sdc_builder, sdc_executor, cassandra):
     """Test for Cassandra destination stage. Support to test Kerberos or plain text only. The pipeline looks like:
 
