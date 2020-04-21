@@ -2035,6 +2035,89 @@ def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cl
         logger.info('Dropping table %s in Hive...', table_name)
         hive_cursor.execute('DROP TABLE {}'.format(table_name))
 
+@sdc_min_version('3.0.0.0')
+@cluster('cdh', 'hdp')
+def test_hdfs_avro_update_schema_stored_externally(sdc_builder, sdc_executor, cluster):
+    """Validate that Hive schema stored as AVRO at external location is correctly updated,
+    when there is a column update/addition to the Hive table
+    The test populates/creates a table with 2 columns: 'name' and 'id'
+    Then the pipeline is stopped, and a new field 'age' is added
+    Verify that the Hive table is updated with new column and that a new AVRO schema file is generated and stored
+    at external location
+
+        dev_raw_data_source >> hive_metadata
+        hive_metadata >> hadoop_fs
+        hive_metadata >> hive_metastore
+    """
+    # based on SDC-13915
+    if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
+        and Version(sdc_builder.version) < Version('3.8.1')):
+        pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    avro_dir = f'/tmp/{get_random_string(string.ascii_lowercase, 20)}'
+    raw_data = dict(id=1, name="testuser")
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source', type='origin')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json.dumps(raw_data),
+                                       stop_after_first_batch=True)
+
+    hive_metadata = pipeline_builder.add_stage('Hive Metadata')
+    hive_metadata.set_attributes(data_format='AVRO',
+                                 database_expression="default",
+                                 external_table=False,
+                                 partition_configuration=[],
+                                 decimal_scale_expression='2',
+                                 decimal_precision_expression='4',
+                                 table_name=table_name)
+
+    hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
+    hadoop_fs.set_attributes(avro_schema_location='HEADER',
+                             data_format='AVRO',
+                             directory_in_header=True,
+                             use_roll_attribute=True)
+
+    hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
+    hive_metastore.set_attributes(stored_as_avro=False, schema_folder_location=avro_dir)
+
+    dev_raw_data_source >> hive_metadata
+    hive_metadata >> hadoop_fs
+    hive_metadata >> hive_metastore
+
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+    hive_cursor = cluster.hive.client.cursor()
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        status = cluster.hdfs.client.status(avro_dir)
+        assert status is not None and status['type'] == 'DIRECTORY'
+        avro_dir_filelist = cluster.hdfs.client.list(avro_dir)
+        assert len(avro_dir_filelist) == 1
+
+        # Stop and restart the pipeline after adding another element in dev_raw_data_source to create an new column
+        # Because of a bug in update_pipeline, we need to re-get a reference to the stage from pipeline,
+        # before we can call update_pipeline
+        dev_raw_data_source = pipeline.stages.get(label=dev_raw_data_source.label)
+        raw_data['age'] = 25 # Add a new element to create a new column in table
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        avro_dir_filelist = cluster.hdfs.client.list(avro_dir)
+        assert len(avro_dir_filelist) == 2
+        table_column_list = list(_get_table_columns_and_type(hive_cursor, None, table_name).keys())
+        assert 'age' in table_column_list
+    finally:
+        # Delete schema location
+        logger.info('Deleting Schema Directory %s in Hadoop FS...', avro_dir)
+        cluster.hdfs.client.delete(avro_dir, recursive=True)
+        logger.info('Dropping table %s in Hive...', table_name)
+        hive_cursor.execute('DROP TABLE `{0}`'.format(table_name))
+
 
 def _get_qualified_table_name(db, table_name):
     return f'`{db}`.`{table_name}`' if db else f'`{table_name}`'
