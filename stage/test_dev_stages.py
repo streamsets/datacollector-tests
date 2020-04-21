@@ -97,16 +97,13 @@ def test_pipeline_metrics(sdc_executor, pipeline):
        which change after some time when again metrics are received,
        Stop the pipeline and confirm that metrics endpoint return empty."""
     sdc_executor.start_pipeline(pipeline)
-
-    first_metrics_json = sdc_executor.api_client.get_pipeline_metrics(pipeline.id)
-    assert first_metrics_json is not None
+    metrics_1 = sdc_executor.get_pipeline_metrics(pipeline)
     sleep(15)
-    second_metrics_json = sdc_executor.api_client.get_pipeline_metrics(pipeline.id)
-    assert second_metrics_json is not None
-    assert first_metrics_json != second_metrics_json
+    metrics_2 = sdc_executor.get_pipeline_metrics(pipeline)
+    assert metrics_1 and metrics_2 and metrics_1 != metrics_2
 
     sdc_executor.stop_pipeline(pipeline)
-    assert sdc_executor.api_client.get_pipeline_metrics(pipeline.id) == {}
+    assert not sdc_executor.get_pipeline_metrics(pipeline)
 
 
 def test_pipeline_snapshot(sdc_executor, pipeline):

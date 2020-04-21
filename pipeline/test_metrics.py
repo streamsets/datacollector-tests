@@ -14,10 +14,9 @@
 
 import pytest
 import logging
-from time import sleep
+import time
 
 from streamsets.testframework.markers import sdc_min_version
-from streamsets.sdk.sdc_models import Metrics
 
 logger = logging.getLogger(__name__)
 
@@ -34,44 +33,34 @@ def sdc_common_hook():
 @sdc_min_version('3.16.0')
 def test_runner_metrics_for_init_and_destroy(sdc_builder, sdc_executor):
     """Ensure that we properly update metrics when the runner is in starting phase."""
-    builder = sdc_builder.get_pipeline_builder()
-    SLEEP_SCRIPT = "sleep(5*1000)"
+    SCRIPT = "sleep(5*1000)"
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Super simple cluster pipeline
-    source = builder.add_stage('Dev Data Generator')
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    groovy_evaluator = pipeline_builder.add_stage('Groovy Evaluator').set_attributes(init_script=SCRIPT,
+                                                                                     destroy_script=SCRIPT,
+                                                                                     script=SCRIPT)
+    trash = pipeline_builder.add_stage('Trash')
 
-    groovy = builder.add_stage('Groovy Evaluator', type='processor')
-    groovy.init_script = SLEEP_SCRIPT
-    groovy.destroy_script = SLEEP_SCRIPT
-    groovy.script = SLEEP_SCRIPT
-
-    trash = builder.add_stage('Trash')
-
-    source >> groovy >> trash
-    pipeline = builder.build()
+    dev_data_generator >> groovy_evaluator >> trash
+    pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    # Start the pipeline, it should take at least 5 seconds (since the sleep) and we check that at least once
-    # we have seen the metrics we're looking for.
+    # Starting pipeline should take at least 5 seconds (because of the sleep script). We fail if we don't see
+    # the metric we're looking for during that time.
     sdc_executor.start_pipeline(pipeline, wait=False)
 
-    count = 0
-    while True:
-        # TLKT-468: SDC object doesn't expose get_pipeline_metrics method
-        metrics_json = sdc_executor.api_client.get_pipeline_metrics(pipeline.id)
-        if metrics_json:
-            metrics = Metrics(metrics_json)
-            logger.info(f"Detected runtime gauge state {metrics.gauge('runner.0.gauge').value['state']}")
-            if metrics.gauge('runner.0.gauge').value['state'] == 'Starting':
-                count += 1
-
-        status = sdc_executor.get_pipeline_status(pipeline).response.json()
-        sleep(0.5)
-        if status.get('status') == 'RUNNING':
-            break
-
-    assert count > 0
-
-    sdc_executor.stop_pipeline(pipeline)
-
-
+    try:
+        while sdc_executor.get_pipeline_status(pipeline).response.json().get('status') != 'RUNNING':
+            metrics = sdc_executor.get_pipeline_metrics(pipeline)
+            if metrics:
+                logger.info('Detected runtime gauge state %s ...', metrics.gauge('runner.0.gauge').value['state'])
+                if metrics.gauge('runner.0.gauge').value['state'] == 'Starting':
+                    break
+            time.sleep(0.5)
+        else:
+            pytest.fail('Pipeline reached RUNNING status without runner gauge state reaching "Starting"')
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
