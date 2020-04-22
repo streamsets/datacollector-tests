@@ -980,6 +980,48 @@ def test_google_storage_destination_error(sdc_builder, sdc_executor, gcp):
 
 @gcp
 @sdc_min_version('3.0.0.0')
+def test_google_storage_error(sdc_builder, sdc_executor, gcp):
+    """Ensure that the error stage for Google Storage works properly"""
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'TEXT'
+    origin.stop_after_first_batch = True
+    origin.raw_data = 'Hello!'
+
+    error_target = builder.add_stage('To Error')
+
+    origin >> error_target
+
+    gcs = builder.add_error_stage('Write to Google Cloud Storage')
+    gcs.bucket = bucket_name
+    gcs.common_prefix = 'gcs-test-error'
+
+    pipeline = builder.build().configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    storage_client = gcp.storage_client
+    created_bucket = storage_client.create_bucket(bucket_name)
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        blob_iter = created_bucket.list_blobs(max_results=1, prefix='gcs-test-error')
+        blobs = [blob for blob in blob_iter]
+        assert len(blobs) == 1
+        blob = blobs[0]
+        # Decode the byte array returned by storage client
+        contents = blob.download_as_string()[1:].decode('ascii')
+        logger.info(f"Loaded raw data: {contents}")
+        sdc_json = json.loads(contents)
+
+        assert  sdc_json['value']['value']['text']['value'] == 'Hello!'
+    finally:
+        created_bucket.delete(force=True)
+
+
+@gcp
+@sdc_min_version('3.0.0.0')
 def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc_executor, gcp):
     """
     Send data to Google cloud storage from Dev Raw Data Source
