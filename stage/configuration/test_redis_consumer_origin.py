@@ -487,11 +487,10 @@ def test_pattern(sdc_builder, sdc_executor, redis, correct_pattern, keep_data):
                               for record in snapshot_command.wait_for_finished().snapshot[redis_consumer].output]
             assert output_records == [SAMPLE_DATA]
         else:
-            # TODO: A better check would verify that the batch count is increasing but the pipeline output record
-            # count isn't.
-            with pytest.raises(TimeoutError):
-                # Empty batches don't generate snapshots.
-                snapshot_command.wait_for_finished(timeout_sec=10)
+            # If the pattern is incorrect, we'd expect the data batch count to grow while the output record count
+            # stays at 0.
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 5)
+            assert sdc_executor.get_pipeline_metrics(pipeline).pipeline.output_record_count == 0
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
