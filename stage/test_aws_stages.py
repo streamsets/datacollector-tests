@@ -175,7 +175,8 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
                                     stream_name=stream_name)
     trash = builder.add_stage('Trash')
     kinesis_consumer >> trash
-    consumer_origin_pipeline = builder.build(title='Kinesis Consumer Stop Resume').configure_for_environment(aws)
+    consumer_origin_pipeline = builder.build(
+        title=f'Kinesis Consumer Stop Resume: {no_of_msg}').configure_for_environment(aws)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
     # run pipeline and capture snapshot
@@ -194,7 +195,7 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         # number of batches to be captured is the ceil of the number of messages divided by
         # the size of the batch -10 by default-
         snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
-                                                 batches=math.ceil(no_of_msg/10), batch_size=10,
+                                                 batches=no_of_msg, batch_size=1,
                                                  timeout_sec=300).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
         output_records = [record.field['text'].value
@@ -211,7 +212,7 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         # number of batches to be captured is the ceil of the number of messages divided by
         # the size of the batch -10 by default-
         snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
-                                                 batches=math.ceil(no_of_msg /10), batch_size=10,
+                                                 batches=no_of_msg, batch_size=1,
                                                  timeout_sec=300).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
         output_records = [record.field['text'].value
@@ -993,7 +994,8 @@ def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
 # (10, 5) -> batch size < number of messages but exactly divisible
 # (5, 3) -> batch size > number of messages but not exactly divisible
 @pytest.mark.parametrize('number_of_messages_sent_and_origin_batch_size', [(10, 10), (10, 5), (5, 3), (3, 5), (5, 10)])
-def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws, number_of_messages_sent_and_origin_batch_size):
+def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
+                                          number_of_messages_sent_and_origin_batch_size):
     """Test for SQS consumer origin stage with max batch size configuration. We do so by publishing data
      to a test queue using SQS client and having a pipeline which reads that data using SQS consumer origin stage.
      We assert the number of input/output and number of batches. The pipeline looks like:
@@ -1010,8 +1012,8 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws, number
     # to decide the number of batches, we will basically divide to get the number of batches
     # and if it is not properly divisible (i.e modulo is non zero), we will add one more batch
     number_of_batches = (1 if max_batch_size >= number_of_messages
-                         else (int(number_of_messages/max_batch_size) + (1 if number_of_messages % max_batch_size > 0 else 0)))
-
+                         else (
+                int(number_of_messages / max_batch_size) + (1 if number_of_messages % max_batch_size > 0 else 0)))
 
     logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, '
                 f'Number of batches be produced : {number_of_batches}')
@@ -1019,7 +1021,7 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws, number
     builder = sdc_builder.get_pipeline_builder()
     amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
     amazon_sqs_consumer.set_attributes(data_format='TEXT',
-                                       max_batch_size_in_messages= max_batch_size,
+                                       max_batch_size_in_messages=max_batch_size,
                                        number_of_messages_per_request=10,
                                        queue_name_prefixes=[queue_name])
     trash = builder.add_stage('Trash')
@@ -1048,6 +1050,7 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws, number
         if queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
             client.delete_queue(QueueUrl=queue_url)
+
 
 @aws('s3')
 def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
