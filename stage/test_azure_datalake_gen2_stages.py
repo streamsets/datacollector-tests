@@ -17,10 +17,15 @@
 import json
 import logging
 import os
+import io
 import string
 import datetime, time
 from operator import itemgetter
 
+import avro
+import avro.schema
+from avro.datafile import DataFileWriter
+from avro.io import DatumWriter
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -32,6 +37,15 @@ logger.setLevel(logging.DEBUG)
 SOURCE_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_datalake_gen2_DataLakeGen2DSource'
 TARGET_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_datalake_gen2_DataLakeGen2DTarget'
 
+TMP = '/tmp/'
+SCHEMA = {
+    'namespace': 'example.avro',
+    'type': 'record',
+    'name': 'Employee',
+    'fields': [
+        {'name': 'name', 'type': 'string'}
+    ]
+}
 
 @pytest.fixture(autouse=True)
 def storage_type_check(azure):
@@ -211,6 +225,54 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
 
         # assert Data Lake files generated
         assert messages == output_records
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
+
+
+@azure('datalake')
+@sdc_min_version('3.9.0')
+def test_datalake_origin_with_avro(sdc_builder, sdc_executor, azure):
+    """Ensure that the origin can properly read Avro document."""
+    directory_name = get_random_string(string.ascii_letters, 10)
+    file_name = get_random_string(string.ascii_letters, 10)
+    file = f'{directory_name}/{file_name}.avro'
+    data = {'name': 'Arvind P.'}
+
+    try:
+        # Create Avro file (with temporary location)
+        with open(f'{TMP}{file_name}', "wb") as data_file:
+            writer = DataFileWriter(data_file, DatumWriter(), avro.schema.Parse(json.dumps(SCHEMA)))
+
+            # Write data using DatumWriter
+            writer.append(data)
+            writer.close()
+
+        # And upload it to ADSL
+        with open(f'{TMP}{file_name}', 'rb') as fp:
+            dl_fs = azure.datalake.file_system
+            dl_fs.mkdir(directory_name)
+            dl_fs.touch(file)
+            dl_fs.write(file, fp.read(), content_type='application/octet-stream')
+
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        trash = builder.add_stage('Trash')
+        origin = builder.add_stage(name=SOURCE_STAGE_NAME)
+        origin.set_attributes(data_format='AVRO',
+                              files_directory=f'/{directory_name}',
+                              file_name_pattern='*')
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(pipeline)
+
+        # start pipeline and read file in ADLS
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(snapshot[origin].output) == 1
+        assert snapshot[origin].output[0].field['name'] == 'Arvind P.'
     finally:
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
         dl_fs.rmdir(directory_name, recursive=True)
