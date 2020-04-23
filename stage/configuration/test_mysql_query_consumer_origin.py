@@ -34,6 +34,9 @@ def test_auto_commit(sdc_builder, sdc_executor, database, stage_attributes):
 @category('basic')
 @pytest.mark.parametrize('stage_attributes', [{'ssl_mode': 'VERIFY_CA'}, {'ssl_mode': 'VERIFY_IDENTITY'}])
 def test_ca_certificate_pem(sdc_builder, sdc_executor, database, stage_attributes):
+    if database.ca_certificate_file_contents is None:
+        pytest.skip("The database isn't configured to support SSL.")
+
     stage_attributes.update({'ca_certificate_pem': database.ca_certificate_file_contents})
     _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes)
 
@@ -246,6 +249,9 @@ def test_sql_query(sdc_builder, sdc_executor, database):
                                               {'ssl_mode': 'VERIFY_CA'},
                                               {'ssl_mode': 'VERIFY_IDENTITY'}])
 def test_ssl_mode(sdc_builder, sdc_executor, database, stage_attributes):
+    if database.ca_certificate_file_contents is None:
+        pytest.skip("The database isn't configured to support SSL.")
+
     if stage_attributes['ssl_mode'] in ('DISABLED', 'REQUIRED'):
         _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes)
     elif stage_attributes['ssl_mode'] in ('VERIFY_CA', 'VERIFY_IDENTITY'):
