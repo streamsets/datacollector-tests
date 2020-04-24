@@ -1,6 +1,28 @@
-import pytest
+# Copyright 2019 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+import json
+import logging
+from string import ascii_lowercase
+
+import pytest
+from google.cloud.bigquery import Dataset, SchemaField, Table
+from streamsets.testframework.markers import gcp, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.decorators import stub
+
+logger = logging.getLogger(__name__)
 
 
 @stub
@@ -253,13 +275,53 @@ def test_on_missing_field(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@gcp
+@sdc_min_version("3.0.0.0")
 @pytest.mark.parametrize('stage_attributes', [{'on_record_error': 'DISCARD'},
                                               {'on_record_error': 'STOP_PIPELINE'},
                                               {'on_record_error': 'TO_ERROR'}])
-def test_on_record_error(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_on_record_error(sdc_builder, sdc_executor, gcp, stage_attributes):
+    """Send data to Google cloud storage from Dev Raw Data Source and generate an error record
+       The pipeline looks like:
+           dev_raw_data_source >> google_cloud_storage
+     """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
 
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    data = dict(id=1)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       stop_after_first_batch=True,
+                                       raw_data=json.dumps(data))
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='destination')
+    google_cloud_storage.set_attributes(bucket=get_random_string(ascii_lowercase, 10),
+                                        partition_prefix=get_random_string(ascii_lowercase, 10),
+                                        data_format='JSON',
+                                        stage_on_record_error=stage_attributes['on_record_error'])
+
+    dev_raw_data_source >> google_cloud_storage
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+    except Exception as e:
+        if stage_attributes['on_record_error'] == 'STOP_PIPELINE':
+            logger.info("Verify that pipeline transitioned to RUN_ERROR state...")
+            status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+            assert status == 'RUN_ERROR'
+            assert 'GCS_09' in e.response['message']
+    finally:
+        if stage_attributes['on_record_error'] == 'TO_ERROR':
+            stage = snapshot[google_cloud_storage.instance_name]
+            logger.info("Verify that destination stage produced 1 error record...")
+            # Verify that we have exactly one record
+            assert len(stage.error_records) == 1
+            assert stage.error_records[0].header['errorCode'] == 'GCS_09'
+            status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+            assert status == 'FINISHED'
 
 @stub
 def test_partition_prefix(sdc_builder, sdc_executor):
