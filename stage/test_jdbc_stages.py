@@ -2259,8 +2259,11 @@ def test_jdbc_multitable_oracle_types(sdc_builder, sdc_executor, database, use_t
         assert record.field['DATA_COLUMN'].type == expected_type
         assert null_record.field['DATA_COLUMN'].type == expected_type
 
-        assert record.field['DATA_COLUMN']._data['value'] == expected_value
         assert null_record.field['DATA_COLUMN'] == None
+        if sql_type == 'XMLType':
+            assert record.field['DATA_COLUMN']._data['value'].strip() == expected_value
+        else:
+            assert record.field['DATA_COLUMN']._data['value'] == expected_value
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
