@@ -488,6 +488,9 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api,
         data (:obj:`list`): Dataset to use in test
         query_with_time (:obj:`bool`): Whether or not to filter results by time
     """
+    if api == 'bulk' and Version(sdc_builder.version) < Version('3.16.0'):
+        pytest.skip('Skipping... Bulk API is not supported in Salesforce Lookup Processor until 3.16.0')
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
 
@@ -905,8 +908,7 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
                  "WHERE FirstName LIKE '${record:value(\"/prefix\")}%' "
                  f"AND LastName= '{TEST_DATA['STR_15_RANDOM']}'")
 
-    salesforce_lookup.set_attributes(soql_query=query_str,
-                                     use_bulk_api=False)
+    salesforce_lookup.set_attributes(soql_query=query_str)
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> salesforce_lookup >> trash
@@ -961,7 +963,6 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
                            salesforceField='expr0',
                            sdcField='/count')]
     salesforce_lookup.set_attributes(soql_query=query_str,
-                                     use_bulk_api=False,
                                      field_mappings=field_mappings)
 
     trash = pipeline_builder.add_stage('Trash')
