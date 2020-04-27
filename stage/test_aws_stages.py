@@ -192,8 +192,7 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        # number of batches to be captured is the ceil of the number of messages divided by
-        # the size of the batch -10 by default-
+        # number of batches to be captured is the number of messages, batch_size is 1
         snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
                                                  batches=no_of_msg, batch_size=1,
                                                  timeout_sec=300).snapshot
@@ -209,8 +208,7 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        # number of batches to be captured is the ceil of the number of messages divided by
-        # the size of the batch -10 by default-
+        # number of batches to be captured is the number of messages, batch_size is 1
         snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
                                                  batches=no_of_msg, batch_size=1,
                                                  timeout_sec=300).snapshot
