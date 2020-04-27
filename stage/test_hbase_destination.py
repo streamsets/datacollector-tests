@@ -31,8 +31,8 @@ SDC_RPC_PORT = 20000
 
 @pytest.fixture(autouse=True)
 def version_check(sdc_builder, cluster):
-    if cluster.version == 'cdh6.0.0' and Version('3.5.0') <= Version(sdc_builder.version) < Version('3.6.0'):
-        pytest.skip('HBase destination is not included in streamsets-datacollector-cdh_6_0-lib in SDC 3.5')
+    if cluster.version.startswith('cdh6.0') and Version(sdc_builder.version) < Version('3.7.0'):
+        pytest.skip('HBase destination is not included in streamsets-datacollector-cdh_6_0-lib until SDC 3.7.0 (SDC-9976)')
 
 
 @cluster('cdh', 'hdp')
