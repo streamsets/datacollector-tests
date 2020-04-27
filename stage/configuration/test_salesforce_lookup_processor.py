@@ -1,7 +1,7 @@
 import logging
 import pytest
 
-from streamsets.testframework.markers import salesforce
+from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.decorators import stub
 from ..utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, verify_by_snapshot
 
@@ -121,6 +121,7 @@ def test_missing_values_behavior(sdc_builder, sdc_executor, stage_attributes):
 
 
 @salesforce
+@sdc_min_version('3.16.0')
 @pytest.mark.parametrize('use_bulk_api', [True, False])
 @pytest.mark.parametrize('stage_attributes', [{'multiple_values_behavior': 'FIRST_ONLY'},
                                               {'multiple_values_behavior': 'ALL_AS_LIST'},
