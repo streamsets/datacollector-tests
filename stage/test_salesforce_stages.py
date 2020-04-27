@@ -1124,7 +1124,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         # Stage should produce events, and it does, since the fix for SDC-12418
         assert len(snapshot[salesforce_origin].event_records) == 1
         assert snapshot[salesforce_origin].event_records[0].header.values['sdc.event.type'] == 'no-more-data'
-        assert snapshot[salesforce_origin].event_records[0].field['record-count'] == len(DATA_TO_INSERT)
+        assert snapshot[salesforce_origin].event_records[0].field['record-count'] == len(data_to_insert)
 
         # Pipeline stops, but if it changes in a future version
         sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED', timeout_sec=TIMEOUT)
@@ -1144,7 +1144,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         # stage should produce events...
         assert len(snapshot[salesforce_origin].event_records) == 1
         assert snapshot[salesforce_origin].event_records[0].header.values['sdc.event.type'] == 'no-more-data'
-        assert snapshot[salesforce_origin].event_records[0].field['record-count'] == len(DATA_TO_INSERT_2)
+        assert snapshot[salesforce_origin].event_records[0].field['record-count'] == len(data_to_insert_2)
 
     finally:
         inserted_ids = []
