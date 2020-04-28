@@ -3397,13 +3397,15 @@ for (step = 0; step < 1000; step++) {
 
 @database
 @sdc_min_version('3.16.0')
-def test_multitable_quote_column_names(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('table_name,offset_name', [
+    ('table', 'column'),
+    ('USER', 'DATABASE'),
+    ('table_' + get_random_string(string.ascii_letters, 10), 'column_' + get_random_string(string.ascii_letters, 10))
+])
+def test_multitable_quote_column_names(sdc_builder, sdc_executor, database, table_name, offset_name):
     """
     Ensure that we properly quote all table and column names when querying the database.
     """
-    table_name = "table_" + get_random_string(string.ascii_letters, 10)
-    offset_name = "column_" + get_random_string(string.ascii_letters, 10)
-
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('JDBC Multitable Consumer')
