@@ -3,6 +3,7 @@ import logging
 
 import pytest
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
