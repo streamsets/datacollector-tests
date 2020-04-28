@@ -1523,11 +1523,11 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
             s3_origin >> trash
     """
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
-    n_files = 200
+    n_files = 10
     records_in_file = 1000
 
     # Create test data files
-    data_file_filename = 'file.txt'
+    data_file_filename = 'file-{}.txt'
     records = [f'Record {i}' for i in range(records_in_file)]
 
     # Build pipeline.
@@ -1539,7 +1539,7 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
                              delimiter_element='/root/records/record',
                              prefix_pattern=f'{s3_key}/*.txt',
                              read_order=read_order,
-                             max_batch_size_in_records=100)
+                             max_batch_size_in_records=10)
 
     trash = builder.add_stage('Trash')
 
@@ -1558,15 +1558,15 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
     try:
         # Insert objects into S3.
         for i in range(n_files):
-            client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_filename}',
+            client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_filename.format(i)}',
                               Body='\n'.join(records).encode('ascii'))
 
-        # Read 10 batches & stop the pipeline
-        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_batch_count(10)
+        # Start and stop the pipeline to have an offset different than -1 in an existing file
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_batch_count(1)
         sdc_executor.stop_pipeline(s3_origin_pipeline)
 
         # Update prefix_pattern so that no file is found
-        s3_origin.set_attributes(delimiter_element=f'{s3_key}/*.xml')
+        s3_origin_pipeline.stages.get(label=s3_origin.label).set_attributes(prefix_pattern=f'{s3_key}/*.xml')
         sdc_executor.update_pipeline(s3_origin_pipeline)
 
         # Restart the pipeline and wait until it reads all data
