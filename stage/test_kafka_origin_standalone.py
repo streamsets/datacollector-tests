@@ -1008,6 +1008,9 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 
 
     basic_data_formats = ['CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
 
+    # This is temporal hack until something like STF-1110 gets implemented
+    logger.info(f"Snapshot raw data: {snapshot._data}")
+
     # Verify snapshot data.
     if data_format in basic_data_formats:
         record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
