@@ -1,7 +1,40 @@
+
+# Copyright 2020 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import logging
+import os
+import string
+import tempfile
+
 import pytest
+from streamsets.testframework.markers import ftp, sftp, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+
+REMOTE_DESTINATION_STAGE = 'com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget'
+REMOTE_EXECUTOR_STAGE = 'com_streamsets_pipeline_stage_executor_remote_RemoteLocationDExecutor'
+
+EXISTING_FILE_DATA = 'This is old information'
+INPUT_DATA = 'Hello World'
+FTP_CHROOT_DIR = '/'
+SFTP_CHROOT_DIR = '/sftp_dir'
+
+pytestmark = sdc_min_version('3.16.0')
+
+logger = logging.getLogger(__name__)
 
 from streamsets.testframework.decorators import stub
-
 
 @stub
 @pytest.mark.parametrize('stage_attributes', [{'authentication': 'NONE'},
@@ -196,3 +229,317 @@ def test_use_client_certificate_for_ftps(sdc_builder, sdc_executor, stage_attrib
 def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
 
+
+def _create_file_on_local_fs_pipeline(sdc_builder, local_tmp_directory):
+    # Build source file pipeline logic
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=INPUT_DATA, stop_after_first_batch=True)
+
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(directory_template=local_tmp_directory, data_format='TEXT')
+
+    dev_raw_data_source >> local_fs
+    return builder.build('Dev Raw Data to Local FS - Producer Pipeline')
+
+
+def _create_producer_consumer_pipeline(sdc_builder, local_tmp_directory, file_name):
+    """Helper function to create 2 pipelines:
+
+    1.  Producer pipeline to create a local file in running SDC's docker container
+        Pipeline looks like:
+            Dev Raw Data Source >> Local FS
+
+    2.  Consumer Pipeline that reads from Local FS and writes to FTP/SFTP Destination.
+        Destination is connected to FTP/SFTP Executor which is the stage that is being tested here.
+        The Executor stage is configured to point to the same server as the Destination stage.
+        Pipeline looks like:
+            Local FS  >>  FTP/SFTP Destination
+            Local FS  >=  Pipeline Finisher
+                          FTP/SFTP Destination >= FTP/SFTP Executor
+
+    The basic operation of the consumer pipeline is as follows:
+        1.  Read the file from local tmpfs and write to FTP/SFTP Destination
+        2.  Perform Post Processing Action on the file specified by the file_name_expression in the remote location
+    """
+    local_fs_pipeline = _create_file_on_local_fs_pipeline(sdc_builder, local_tmp_directory)
+
+    # Build Consumer Pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='WHOLE_FILE', file_name_pattern='sdc*', files_directory=local_tmp_directory)
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+
+    destination_stage = builder.add_stage(name=REMOTE_DESTINATION_STAGE)
+    destination_stage.set_attributes(file_name_expression=file_name)
+
+    executor_stage = builder.add_stage(name=REMOTE_EXECUTOR_STAGE)
+
+    directory >> destination_stage >= executor_stage
+    directory >= pipeline_finished_executor
+
+    test_executor_pipeline = builder.build('Local FS - Remote Target - Remote Executor -- Consumer Pipeline')
+    return local_fs_pipeline, test_executor_pipeline
+
+
+def _execute_producer_pipeline(sdc_executor, local_fs_pipeline):
+    # Start source file creation pipeline and assert file has been created with expected number of records
+    sdc_executor.start_pipeline(local_fs_pipeline).wait_for_finished()
+    history = sdc_executor.get_pipeline_history(local_fs_pipeline)
+
+    assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+    assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+
+
+@ftp
+def test_ftp_delete_file(sdc_builder, sdc_executor, ftp):
+    _test_delete_file(sdc_builder, sdc_executor, ftp, FTP_CHROOT_DIR)
+
+
+@sftp
+def test_sftp_delete_file(sdc_builder, sdc_executor, sftp):
+    _test_delete_file(sdc_builder, sdc_executor, sftp, SFTP_CHROOT_DIR)
+
+
+def _test_delete_file(sdc_builder, sdc_executor, client, chroot_dir):
+    """Test delete functionality.
+        Verify that the file has been deleted from the remote location after pipeline
+        has finished.
+    """
+    file_name = get_random_string(string.ascii_letters, 10)
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
+                                                                              tmp_directory,
+                                                                              file_name)
+
+    sdc_executor.add_pipeline(local_fs_pipeline)
+    _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
+
+    executor_pipeline.configure_for_environment(client)
+
+    executor_stage = executor_pipeline[3]
+    executor_stage.set_attributes(task='DELETE_FILE', file_name_expression=file_name)
+    sdc_executor.add_pipeline(executor_pipeline)
+
+    try:
+        sdc_executor.start_pipeline(executor_pipeline).wait_for_finished()
+
+        logger.info("Checking if file %s is present on the remote server at path: %s ...",
+                    file_name, chroot_dir)
+        assert file_name not in client.list_files(chroot_dir)
+    finally:
+        pass  # No cleanup required here
+
+
+@ftp
+def test_ftp_move_file(sdc_builder, sdc_executor, ftp):
+    _test_move_file(sdc_builder, sdc_executor, ftp, FTP_CHROOT_DIR)
+
+
+@sftp
+def test_sftp_move_file(sdc_builder, sdc_executor, sftp):
+    _test_move_file(sdc_builder, sdc_executor, sftp, SFTP_CHROOT_DIR)
+
+
+def _test_move_file(sdc_builder, sdc_executor, client, chroot_dir):
+    """Test move functionality.
+        Verify that the file has been moved from it's current directory to the new directory in the remote location
+        The new directory did not contain the file previously
+    """
+    file_name = get_random_string(string.ascii_letters, 10)
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
+                                                                              tmp_directory,
+                                                                              file_name)
+
+    sdc_executor.add_pipeline(local_fs_pipeline)
+    _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
+
+    executor_pipeline.configure_for_environment(client)
+
+    executor_stage = executor_pipeline[3]
+    target_dir = get_random_string(string.ascii_letters, 10)
+    executor_stage.set_attributes(task='MOVE_FILE',
+                                  file_name_expression=file_name,
+                                  target_directory=target_dir)
+    sdc_executor.add_pipeline(executor_pipeline)
+
+    new_location = os.path.join(chroot_dir, target_dir)
+    try:
+        sdc_executor.start_pipeline(executor_pipeline).wait_for_finished()
+
+        logger.info("Checking if file %s is present on the remote server at path: %s ...",
+                    file_name, chroot_dir)
+        assert file_name not in client.list_files(chroot_dir)
+        logger.info("Checking if file %s is present on the remote server at new location: %s ...",
+                    file_name, new_location)
+        assert file_name in client.list_files(new_location)
+    finally:
+        client.rm(os.path.join(new_location, file_name))
+        client.rmdir(new_location)
+
+
+@ftp
+def test_ftp_move_overwrite_if_file_already_exists(sdc_builder, sdc_executor, ftp):
+    _test_move_overwrite_if_file_already_exists(sdc_builder, sdc_executor, ftp, FTP_CHROOT_DIR)
+
+
+@sftp
+def test_sftp_move_overwrite_if_file_already_exists(sdc_builder, sdc_executor, sftp):
+    _test_move_overwrite_if_file_already_exists(sdc_builder, sdc_executor, sftp, SFTP_CHROOT_DIR)
+
+
+def _test_move_overwrite_if_file_already_exists(sdc_builder, sdc_executor, client, chroot_dir):
+    """Test move functionality.
+    Verify that the file has been moved from it's current directory to the new directory in the remote location
+    The new directory did contain the a file with the filename previously.
+    Verify that the old file has been overridden with the contents of the new file
+    """
+    file_name = get_random_string(string.ascii_letters, 10)
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
+                                                                              tmp_directory,
+                                                                              file_name)
+
+    sdc_executor.add_pipeline(local_fs_pipeline)
+    _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
+
+    executor_pipeline.configure_for_environment(client)
+
+    executor_stage = executor_pipeline[3]
+    target_dir = get_random_string(string.ascii_letters, 10)
+    executor_stage.set_attributes(task='MOVE_FILE',
+                                  file_name_expression=file_name,
+                                  target_directory=target_dir,
+                                  file_exists_action='OVERWRITE')
+    sdc_executor.add_pipeline(executor_pipeline)
+
+    new_location = os.path.join(chroot_dir, target_dir)
+    try:
+        client.mkdir(new_location)
+        client.put_string(os.path.join(new_location, file_name), EXISTING_FILE_DATA)
+
+        sdc_executor.start_pipeline(executor_pipeline).wait_for_finished()
+
+        logger.info("Checking if file %s is present on the remote server at path: %s ...",
+                    file_name, chroot_dir)
+        assert file_name not in client.list_files(chroot_dir)
+        logger.info("Checking if file %s is present on the remote server at new location: %s ...",
+                    file_name, new_location)
+        assert file_name in client.list_files(new_location)
+        logger.info("Checking that the existing file %s at location %s has been overwritten with newer file...",
+                    file_name, new_location)
+        assert client.get_string(os.path.join(new_location, file_name)).rstrip('\n') == INPUT_DATA
+    finally:
+        client.rm(os.path.join(new_location, file_name))
+        client.rmdir(new_location)
+
+
+@ftp
+def test_ftp_move_send_to_error_if_file_already_exists(sdc_builder, sdc_executor, ftp):
+    _test_move_send_to_error_if_file_already_exists(sdc_builder, sdc_executor, ftp, FTP_CHROOT_DIR)
+
+
+@sftp
+def test_sftp_move_send_to_error_if_file_already_exists(sdc_builder, sdc_executor, sftp):
+    _test_move_send_to_error_if_file_already_exists(sdc_builder, sdc_executor, sftp, SFTP_CHROOT_DIR)
+
+
+def _test_move_send_to_error_if_file_already_exists(sdc_builder, sdc_executor, client, chroot_dir):
+    """Test move functionality.
+    Verify that the file has been note moved from it's current directory to the new directory in the remote location
+    The new directory did contain the a file with the filename previously.
+    Verify that the executor stage produced an error record
+    Verify that the new file is still present in it's current location
+    Verify that the old file's contents have not been changed
+    """
+    file_name = get_random_string(string.ascii_letters, 10)
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
+                                                                              tmp_directory,
+                                                                              file_name)
+
+    sdc_executor.add_pipeline(local_fs_pipeline)
+    _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
+
+    executor_pipeline.configure_for_environment(client)
+
+    executor_stage = executor_pipeline[3]
+    target_dir = get_random_string(string.ascii_letters, 10)
+    executor_stage.set_attributes(task='MOVE_FILE',
+                                  file_name_expression=file_name,
+                                  target_directory=target_dir,
+                                  file_exists_action='TO_ERROR')
+    sdc_executor.add_pipeline(executor_pipeline)
+
+    new_location = os.path.join(chroot_dir, target_dir)
+    try:
+        client.mkdir(new_location)
+        client.put_string(os.path.join(new_location, file_name), EXISTING_FILE_DATA)
+
+        snapshot = sdc_executor.capture_snapshot(executor_pipeline, start_pipeline=True).snapshot
+        sdc_executor.get_pipeline_status(executor_pipeline).wait_for_status('FINISHED')
+
+        logger.info("Checking if file %s is STILL present on the remote server at path: %s ...",
+                    file_name, chroot_dir)
+        assert file_name in client.list_files(chroot_dir)
+        logger.info("Checking if file %s is present on the remote server at new location: %s ...",
+                    file_name, new_location)
+        assert file_name in client.list_files(new_location)
+        logger.info("Checking that the existing file %s at location %s has NOT been overwritten with newer file...",
+                    file_name, new_location)
+        assert client.get_string(os.path.join(new_location, file_name)) == EXISTING_FILE_DATA
+
+        logger.info("Checking for 'file already exists' error code in executor stage's error records")
+        assert 'REMOTE_LOCATION_EXECUTOR_04' in [record.header['errorCode']
+                                                 for record in snapshot[executor_stage].error_records]
+    finally:
+        client.rm(os.path.join(chroot_dir, file_name))
+        client.rm(os.path.join(new_location, file_name))
+        client.rmdir(new_location)
+
+
+@ftp
+def test_ftp_file_specified_by_file_path_not_present(sdc_builder, sdc_executor, ftp):
+    _test_file_specified_by_file_path_not_present(sdc_builder, sdc_executor, ftp, FTP_CHROOT_DIR)
+
+
+@sftp
+def test_sftp_file_specified_by_file_path_not_present(sdc_builder, sdc_executor, sftp):
+    _test_file_specified_by_file_path_not_present(sdc_builder, sdc_executor, sftp, SFTP_CHROOT_DIR)
+
+
+def _test_file_specified_by_file_path_not_present(sdc_builder, sdc_executor, client, chroot_dir):
+    """Test to verify that error record is generated when file is not present in remote server
+    """
+    file_name = get_random_string(string.ascii_letters, 10)
+    nonexistent_file_name = get_random_string(string.ascii_letters, 10)
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+
+    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
+                                                                              tmp_directory,
+                                                                              file_name)
+
+    sdc_executor.add_pipeline(local_fs_pipeline)
+    _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
+
+    executor_pipeline.configure_for_environment(client)
+
+    executor_stage = executor_pipeline[3]
+    executor_stage.set_attributes(task='DELETE_FILE', file_name_expression=nonexistent_file_name)
+    sdc_executor.add_pipeline(executor_pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(executor_pipeline, start_pipeline=True).snapshot
+
+        logger.info("Checking for 'file not present' error code in executor stage's error records")
+        assert 'REMOTE_LOCATION_EXECUTOR_02' in [record.header['errorCode']
+                                                 for record in snapshot[executor_stage].error_records]
+    finally:
+        client.rm(os.path.join(chroot_dir, file_name))  # This file is remaining from when destination stage copied it
