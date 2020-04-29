@@ -520,8 +520,9 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api,
                            salesforceField='LastName',
                            sdcField='/surName')]
     salesforce_lookup.set_attributes(soql_query=query_str,
-                                     use_bulk_api=(api == 'bulk'),
                                      field_mappings=field_mappings)
+    if Version(sdc_builder.version) >= Version('3.16.0'):
+        salesforce_lookup.set_attributes(use_bulk_api=(api == 'bulk'))
 
     trash = pipeline_builder.add_stage('Trash')
     dev_raw_data_source >> salesforce_lookup >> trash
