@@ -3538,3 +3538,56 @@ def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
+
+# SDC-14489: JDBC Multitable origin must escape string columns
+@database
+@pytest.mark.parametrize('input_string', [
+    "::problematical::value::",
+    "=another=problematical=value="
+])
+def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, input_string):
+    """Ensure that problematical values in String-typed offset column are covered, e.g. our special separator '::'."""
+    builder = sdc_builder.get_pipeline_builder()
+    table_name = get_random_string(string.ascii_letters, 10)
+
+    origin = builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs = [{"tablePattern": f'{table_name}'}]
+    origin.max_batch_size_in_records = 10
+
+    trash = builder.add_stage('Trash')
+
+    origin >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+    # Work-arounding STF behavior of upper-casing table name configuration
+    origin.table_configs[0]["tablePattern"] = f'{table_name}'
+
+    # Creating table with primary key that is String
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.String(60), primary_key=True, quote=True),
+        quote=True
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), [{'id': input_string}])
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # There should be no errors reported
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.JDBCMultitableConsumer_01.errorRecords.counter').count == 0
+        assert history.latest.metrics.counter('stage.JDBCMultitableConsumer_01.stageErrors.counter').count == 0
+
+        # And verify that we properly read that one record
+        assert len(snapshot[origin].output) == 1
+        assert snapshot[origin].output[0].get_field_data('/id') == input_string
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
