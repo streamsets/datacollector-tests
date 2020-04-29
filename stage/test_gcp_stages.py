@@ -934,52 +934,6 @@ def test_google_storage_destination(sdc_builder, sdc_executor, gcp):
 
 @gcp
 @sdc_min_version('3.0.0.0')
-def test_google_storage_destination_error(sdc_builder, sdc_executor, gcp):
-    """
-    Send data to Google cloud storage from Dev Raw Data Source
-    bucket is not created and
-    confirm that ten error records are generated.
-
-    The pipeline looks like:
-        dev_raw_data_source >> google_cloud_storage
-    """
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-
-    data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
-
-    dev_raw_data_source.set_attributes(data_format='TEXT',
-                                       stop_after_first_batch=True,
-                                       raw_data='\n'.join(data))
-    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='destination')
-
-    google_cloud_storage.set_attributes(bucket='X',
-                                        common_prefix='gcs-test',
-                                        partition_prefix='${YYYY()}/${MM()}/${DD()}/${hh()}/${mm()}',
-                                        data_format='TEXT',
-                                        stage_on_record_error='TO_ERROR')
-
-    dev_raw_data_source >> google_cloud_storage
-
-    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
-
-    sdc_executor.add_pipeline(pipeline)
-
-    logger.info('Starting GCS Destination pipeline and waiting for it to produce records'
-                ' and transition to finished...')
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
-
-    stage = snapshot[google_cloud_storage.instance_name]
-    assert len(stage.error_records) == 10
-    for _ in range(0, 10):
-        assert 'CONTAINER_0001' == stage.error_records[_].header['errorCode']
-
-
-@gcp
-@sdc_min_version('3.0.0.0')
 def test_google_storage_error(sdc_builder, sdc_executor, gcp):
     """Ensure that the error stage for Google Storage works properly"""
     bucket_name = get_random_string(ascii_lowercase, 10)
@@ -1088,7 +1042,7 @@ def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc
     stage = snapshot[google_cloud_storage.instance_name]
     assert len(stage.error_records) == 10
     for _ in range(0, 10):
-        assert 'CONTAINER_0001' == stage.error_records[_].header['errorCode']
+        assert 'GCS_09' == stage.error_records[_].header['errorCode']
 
     msgs_to_be_received = 10
     results = []
@@ -1114,7 +1068,7 @@ def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc
     msgs_received = [json.loads(message.data.decode(encoding='UTF-8', errors='ignore'))['header']['errorCode'] for
                      message in results]
 
-    assert msgs_received == ['CONTAINER_0001'] * 10
+    assert msgs_received == ['GCS_09'] * 10
 
     pubsub_subscriber_client.delete_subscription(subscription_path)
     pubsub_publisher_client.delete_topic(topic_path)
