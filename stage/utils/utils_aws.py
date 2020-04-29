@@ -13,10 +13,16 @@
 # limitations under the License.
 
 # A module providing utils for working with AWS
-
+import boto3
+from botocore import UNSIGNED
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
+
 def allow_public_access(client, s3_bucket, allow_list, allow_write):
+    """Changes permissions on s3_bucket to publicly allow listing and/or writing.  Make sure to pair it with
+    restore_public_access to restore the permissions to their original settings.
+    """
     try:
         public_access_block = client.get_public_access_block(Bucket=s3_bucket)
     except ClientError as e:
@@ -71,6 +77,7 @@ def allow_public_access(client, s3_bucket, allow_list, allow_write):
 
 
 def restore_public_access(client, s3_bucket, public_access_block, bucket_policy):
+    """Restores the original permissions on s3_bucket, after calling allow_public_access."""
     if bucket_policy:
         client.put_bucket_policy(Bucket=s3_bucket, Policy=bucket_policy['Policy'])
     else:
@@ -81,3 +88,17 @@ def restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
             Bucket=s3_bucket,
             PublicAccessBlockConfiguration=public_access_block['PublicAccessBlockConfiguration']
         )
+
+
+def configure_stage_for_anonymous(s3_stage):
+    """Configures s3_stage for anonymous credentials"""
+    # Blanking out the credentials isn't necessary with anonymous, but we're doing it here just in case to ensure
+    # that we'll actually be doing things anonymously and not accidentally using the credentials
+    s3_stage.set_attributes(authentication_method='WITH_ANONYMOUS_CREDENTIALS', access_key_id='', secret_access_key='')
+
+
+def create_anonymous_client():
+    """Creates an anonymous s3 client.  This is useful if you need to read an object created by an anonymous user, which
+    the normal client won't have access to.
+    """
+    return boto3.client('s3', config=Config(signature_version=UNSIGNED))

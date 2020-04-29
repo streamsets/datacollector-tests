@@ -25,7 +25,8 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-from .utils.utils_aws import allow_public_access, restore_public_access
+from .utils.utils_aws import allow_public_access, restore_public_access, configure_stage_for_anonymous, \
+    create_anonymous_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -365,11 +366,13 @@ def test_s3_destination(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('3.16.0')
 def test_s3_destination_anonymous(sdc_builder, sdc_executor, aws):
     """Test for S3 target stage. We do so by running a dev raw data source generator to S3 destination
     sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
     been ingested by the pipeline. We use a record deduplicator processor in between dev raw data source origin
-    and S3 destination in order to determine exactly what has been ingested. The pipeline looks like:
+    and S3 destination in order to determine exactly what has been ingested. Uses anonymous credentials.
+    The pipeline looks like:
 
     S3 Destination pipeline:
         dev_raw_data_source >> record_deduplicator >> s3_destination
@@ -418,6 +421,8 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
         s3_destination.set_attributes(use_server_side_encryption=True,
                                       server_side_encryption_option='KMS',
                                       aws_kms_key_arn=aws.kms_key_arn)
+    if anonymous:
+        configure_stage_for_anonymous(s3_destination)
 
     # TLKT-248: Add ability to directly read events from snapshots
     identity = builder.add_stage('Dev Identity')
@@ -432,15 +437,12 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
     s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(s3_dest_pipeline)
 
-    if anonymous:
-        s3_destination.set_attributes(access_key_id='', secret_access_key='')
-
     client = aws.s3
     public_access_block = None
     bucket_policy = None
     try:
         if anonymous:
-            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, False, True)
+            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, True, True)
 
         # start pipeline and capture pipeline messages to assert
         snapshot = sdc_executor.capture_snapshot(s3_dest_pipeline, start_pipeline=True).snapshot
@@ -456,7 +458,8 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
         assert len(list_s3_objs['Contents']) == 1
 
         # read data from S3 to assert it is what got ingested into the pipeline
-        s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+        client_to_read = create_anonymous_client() if anonymous else client
+        s3_obj_key = client_to_read.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
 
         # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
         s3_contents = s3_obj_key['Body'].read().decode().strip()
@@ -522,6 +525,27 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
         dev_raw_data_source >> record_deduplicator >> s3_executor
                                                    >> to_error
     """
+    _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, False)
+
+
+@aws('s3')
+@sdc_min_version('3.16.0')
+def test_s3_executor_create_object_anonymous(sdc_builder, sdc_executor, aws):
+    """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 executor
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been created by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    and S3 destination in order to limit number of objects to one. Uses anonymous credentials.
+
+    For recent SDC versions we also check that the corresponding 'file-created' event is generated.
+
+    S3 Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> s3_executor
+                                                   >> to_error
+    """
+    _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, True)
+
+
+def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, anonymous):
     # Setup test static.
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
@@ -541,6 +565,8 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
                                task='CREATE_NEW_OBJECT',
                                object=s3_key,
                                content='${record:value("/company")}')
+    if anonymous:
+        configure_stage_for_anonymous(s3_executor)
 
     dev_raw_data_source >> record_deduplicator >> s3_executor
     record_deduplicator >> to_error
@@ -549,7 +575,12 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
     sdc_executor.add_pipeline(s3_exec_pipeline)
 
     client = aws.s3
+    public_access_block = None
+    bucket_policy = None
     try:
+        if anonymous:
+            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, True, True)
+
         # Start pipeline and stop after processing the record.
         snapshot = sdc_executor.capture_snapshot(s3_exec_pipeline, start_pipeline=True, batch_size=1).snapshot
         sdc_executor.stop_pipeline(s3_exec_pipeline)
@@ -559,8 +590,10 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
         assert len(list_s3_objs['Contents']) == 1
 
         # Read data from S3 to assert it is what got ingested into the pipeline.
-        s3_contents = [client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
-                       for s3_content in list_s3_objs['Contents']]
+        client_to_read = create_anonymous_client() if anonymous else client
+        s3_contents = [
+            client_to_read.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
+            for s3_content in list_s3_objs['Contents']]
 
         assert s3_contents[0] == 'StreamSets Inc.'
 
@@ -571,6 +604,7 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
             assert events[0].header.values['sdc.event.type'] == 'file-created'
 
     finally:
+        restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
@@ -1117,6 +1151,18 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
 @sdc_min_version('3.11.0')
 def test_s3_error_destination(sdc_builder, sdc_executor, aws):
     """Test sending records to S3 error destination."""
+    _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, False)
+
+
+@aws('s3')
+@sdc_min_version('3.16.0')
+def test_s3_error_destination_anonymous(sdc_builder, sdc_executor, aws):
+    """Test sending records to S3 error destination with anonymous credentials."""
+    _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, True)
+
+
+def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
+    s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/errDest-{get_random_string()}/'
     random_string = get_random_string(string.ascii_letters, 10)
     random_raw_json_str = '{{"text":"{0}"}}'.format(random_string)
@@ -1124,9 +1170,11 @@ def test_s3_error_destination(sdc_builder, sdc_executor, aws):
     builder = sdc_builder.get_pipeline_builder()
     s3_err = builder.add_error_stage('Write to Amazon S3')
     s3_err.set_attributes(
-        bucket=aws.s3_bucket_name,
+        bucket=s3_bucket,
         common_prefix=s3_key
     )
+    if anonymous:
+        configure_stage_for_anonymous(s3_err)
 
     origin = builder.add_stage('Dev Raw Data Source', type='origin')
     origin.set_attributes(
@@ -1148,7 +1196,12 @@ def test_s3_error_destination(sdc_builder, sdc_executor, aws):
     sdc_executor.add_pipeline(pipeline)
 
     client = aws.s3
+    public_access_block = None
+    bucket_policy = None
     try:
+        if anonymous:
+            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, True, True)
+
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
 
         # We should have exactly one file in the bucket
@@ -1165,6 +1218,8 @@ def test_s3_error_destination(sdc_builder, sdc_executor, aws):
             prefix_pattern=f'{s3_key}*',
             max_batch_size_in_records=100
         )
+        if anonymous:
+            configure_stage_for_anonymous(s3_origin)
         trash = builder.add_stage('Trash')
         finisher = builder.add_stage('Pipeline Finisher Executor')
         finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
@@ -1178,6 +1233,7 @@ def test_s3_error_destination(sdc_builder, sdc_executor, aws):
         assert snapshot[s3_origin].output[0].get_field_data('/text') == random_string
 
     finally:
+        restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in
                                    client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}

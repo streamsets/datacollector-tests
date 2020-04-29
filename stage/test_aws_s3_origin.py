@@ -25,7 +25,7 @@ from streamsets.testframework.markers import aws, sdc_min_version, large
 from streamsets.testframework.utils import get_random_string, Version
 from xlwt import Workbook
 
-from .utils.utils_aws import allow_public_access, restore_public_access
+from .utils.utils_aws import allow_public_access, restore_public_access, configure_stage_for_anonymous
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +311,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     s3_origin_pipeline.configuration['shouldRetry'] = False
 
     if anonymous:
-        s3_origin.set_attributes(access_key_id='', secret_access_key='')
+        configure_stage_for_anonymous(s3_origin)
 
     sdc_executor.add_pipeline(s3_origin_pipeline)
 
