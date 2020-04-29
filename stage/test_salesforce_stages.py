@@ -2227,6 +2227,7 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
     pipeline = None
     subscription_id = None
     contact = None
+    inserted_ids = None
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -2260,7 +2261,6 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         sdc_executor.add_pipeline(pipeline)
 
         client = salesforce.client
-        inserted_ids = None
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(first_data_to_insert), 'id')
