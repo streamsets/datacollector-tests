@@ -233,6 +233,7 @@ def test_s3_origin_multithreaded(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('3.16.0')
 def test_s3_origin_anonymous(sdc_builder, sdc_executor, aws):
     """Tests accessing a public object where we can list bucket contents."""
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
@@ -240,6 +241,7 @@ def test_s3_origin_anonymous(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('3.16.0')
 def test_s3_origin_anonymous_no_list(sdc_builder, sdc_executor, aws):
     """Tests accessing a public object where we cannot list bucket contents."""
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
