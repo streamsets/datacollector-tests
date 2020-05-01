@@ -896,6 +896,7 @@ def get_kafka_consumer_stage(pipeline_builder, cluster):
     # Default stage configuration.
     kafka_consumer.set_attributes(data_format='TEXT',
                                   batch_wait_time_in_ms=20000,
+                                  max_batch_size_in_records=10,
                                   topic=get_random_string(string.ascii_letters, 10),
                                   kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
@@ -913,6 +914,7 @@ def get_kafka_consumer_stage_since_sdc_3_6_0(pipeline_builder, cluster):
     # Default stage configuration.
     kafka_consumer.set_attributes(data_format='TEXT',
                                   batch_wait_time_in_ms=20000,
+                                  max_batch_size_in_records=10,
                                   topic=get_random_string(string.ascii_letters, 10))
 
     return kafka_consumer
