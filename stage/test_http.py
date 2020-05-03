@@ -15,6 +15,7 @@
 import json
 import logging
 import string
+import time
 import http.client as httpclient
 from collections import namedtuple
 
@@ -490,3 +491,47 @@ def test_http_server_multiple_application_ids(sdc_builder, sdc_executor):
         assert resp.status == 403
     finally:
         sdc_executor.stop_pipeline(pipeline)
+
+@http
+@sdc_min_version("3.16.0")
+def test_http_client_wrong_pagination_field(sdc_builder, sdc_executor, http_client):
+    """HTTP Client Origin with some an invalid page link field must throw an StageException HTTP_66"""
+    dataArr = {'Name': f'Example', 'data':[{'id': 2, 'foo':2}]}
+
+    expected_data = json.dumps(dataArr)
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        http_source = builder.add_stage('HTTP Client', type='origin')
+        http_source.set_attributes(data_format='JSON', http_method='GET',
+                                             resource_url=mock_uri,
+                                             mode='POLLING',
+                                             pagination_mode='LINK_FIELD',
+                                             next_page_link_prefix=f'{mock_uri}&starting_after=',
+                                             next_page_link_field="/pageField",
+                                             stop_condition="1==0",
+                                             result_field_path="/data")
+        trash = builder.add_stage('Trash')
+
+        http_source >> trash
+        pipeline = builder.build(title='HTTP Client Origin wrong page field')
+        sdc_executor.add_pipeline(pipeline)
+
+        # Pipeline should stop with StageExcception
+        with pytest.raises(Exception):
+            sdc_executor.start_pipeline(pipeline)
+            time.sleep(10)
+            sdc_executor.stop_pipeline(pipeline)
+
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        message = sdc_executor.get_pipeline_status(pipeline).response.json().get('message')
+        assert 'RUN_ERROR' == status
+        assert 'HTTP_66 -' in message
+
+    finally:
+        http_mock.delete_mock()
