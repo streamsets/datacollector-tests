@@ -575,3 +575,45 @@ def test_http_client_propagate_all_records(sdc_builder, sdc_executor, http_clien
 
     finally:
         http_mock.delete_mock()
+
+@http
+@sdc_min_version("3.16.0")
+def test_http_client_http_status_on_header(sdc_builder, sdc_executor, http_client):
+    """HTTP Client Origin with the config 'Records for Remaining Statuses' set generates a record when gets a response
+    different than the 200 OK HTTP Status. In this test we will simulate it gets a 404 HTTP Status and we will
+    check a record is created"""
+    dataArr = {'Name': f'Example'}
+
+    expected_data = json.dumps(dataArr)
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        http_source = builder.add_stage('HTTP Client', type='origin')
+        http_source.set_attributes(data_format='JSON', http_method='GET',
+                                   resource_url=mock_uri,
+                                   mode='POLLING',
+                                   records_for_remaining_statuses=True
+                                   )
+        trash = builder.add_stage('Trash')
+
+        http_source >> trash
+        pipeline = builder.build(title='HTTP Client Origin HTTP-Status on header')
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # ensure HTTP GET result has at least 1 record
+        num_of_els = len(snapshot[http_source.instance_name].output)
+        assert num_of_els > 0
+        # it has the HTTP-Status on header
+        for x in range(num_of_els):
+            assert 'HTTP-Status' in snapshot[http_source.instance_name].output[x].header.values
+
+    finally:
+        http_mock.delete_mock()
