@@ -535,3 +535,43 @@ def test_http_client_wrong_pagination_field(sdc_builder, sdc_executor, http_clie
 
     finally:
         http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("3.16.0")
+def test_http_client_propagate_all_records(sdc_builder, sdc_executor, http_client):
+    """HTTP Client Origin with the config 'Records for Remaining Statuses' set generates a record when gets a response
+    different than the 200 OK HTTP Status. In this test we will simulate it gets a 404 HTTP Status and we will
+    check a record is created"""
+    dataArr = {'Name': f'Example'}
+
+    expected_data = json.dumps(dataArr)
+    mock_path = get_random_string(string.ascii_letters, 10)
+    mock_wrong_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_wrong_uri = f'{http_mock.pretend_url}/{mock_wrong_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        http_source = builder.add_stage('HTTP Client', type='origin')
+        http_source.set_attributes(data_format='JSON', http_method='GET',
+                                   resource_url=mock_wrong_uri,
+                                   mode='POLLING',
+                                   records_for_remaining_statuses=True
+                                   )
+        trash = builder.add_stage('Trash')
+
+        http_source >> trash
+        pipeline = builder.build(title='HTTP Client Origin propagates 404 record')
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # ensure HTTP GET result has 1 records
+        assert len(snapshot[http_source.instance_name].output) == 1
+        assert snapshot[http_source.instance_name].output[0].header.values['HTTP-Status']=='404'
+
+    finally:
+        http_mock.delete_mock()
