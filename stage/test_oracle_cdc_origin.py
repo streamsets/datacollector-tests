@@ -987,20 +987,25 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
             connection.execute(f'INSERT INTO {table_name} VALUES({i})')
         txn.commit()
 
-        # Build the pipeline. We will use a extremely small 'duration_of_directory_extraction' to force the
-        # pipeline to fail.
+        # Build the pipeline.
         builder = sdc_builder.get_pipeline_builder()
-        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
-                                                   database=database,
-                                                   sdc_builder=sdc_builder,
-                                                   pipeline_builder=builder,
-                                                   batch_size=1,
-                                                   buffer_locally=True,
-                                                   src_table_name=table_name,
-                                                   initial_change='SCN',
-                                                   start_scn=start_scn,
-                                                   dictionary_source='DICT_FROM_REDO_LOGS',
-                                                   duration_of_directory_extraction='${2 * MINUTES}')
+        oracle_cdc_params = dict(connection=connection,
+                                 database=database,
+                                 sdc_builder=sdc_builder,
+                                 pipeline_builder=builder,
+                                 batch_size=1,
+                                 buffer_locally=True,
+                                 src_table_name=table_name,
+                                 initial_change='SCN',
+                                 start_scn=start_scn,
+                                 dictionary_source='DICT_FROM_REDO_LOGS')
+
+        if Version(sdc_builder.version) < Version('3.16.0'):
+            # In versions < 3.16 the user has to define a maximum time to look back for a valid
+            # dictionary. From 3.16 onward this is not required anymore.
+            oracle_cdc_params['duration_of_directory_extraction'] = '${2 * MINUTES}'
+
+        oracle_cdc = _get_oracle_cdc_client_origin(**oracle_cdc_params)
         trash = builder.add_stage('Trash')
         oracle_cdc >> trash
         pipeline = builder.build().configure_for_environment(database)
