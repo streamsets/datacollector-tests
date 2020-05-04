@@ -350,6 +350,8 @@ def test_kafka_consumer_key_capture_modes(sdc_builder, sdc_executor, cluster, co
 
     # Validate result
     snapshot = snapshot_command.snapshot
+    # This is temporal hack until something like STF-1110 gets implemented
+    logger.info(f"Snapshot raw data: {snapshot._data}")
     assert snapshot is not None
     output = snapshot[pipeline.origin_stage].output
 
