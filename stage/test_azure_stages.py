@@ -123,7 +123,8 @@ def test_azure_event_hub_consumer_resume_offset(sdc_builder, sdc_executor, azure
         send_records = [{'Body': f'Event {msg}'} for msg in range(10)]
         eh_service_bus.send_event(event_hub_name, json.dumps(send_records))
 
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
+                                                 timeout_sec=180).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=True)
 
         result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].field
@@ -134,7 +135,8 @@ def test_azure_event_hub_consumer_resume_offset(sdc_builder, sdc_executor, azure
         send_records2 = [{'Body': f'Event {msg}'} for msg in range(10, 20)]
         eh_service_bus.send_event(event_hub_name, json.dumps(send_records2))
 
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
+                                                 timeout_sec=180).snapshot
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
 
         result_record = snapshot[azure_iot_event_hub_consumer.instance_name].output[0].field
