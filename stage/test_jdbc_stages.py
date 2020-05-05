@@ -356,6 +356,26 @@ def _get_random_name(database, prefix='', length=5):
     return name
 
 
+def _get_random_schema_name(database, prefix='', length=5):
+    """Generate a random string to use as a database schema name.
+
+    It handles letter case according to the database type, forcing upper-case (e.g. Oracle) or lower-case
+    (e.g. Postgres).
+
+    For Oracle databases 'C##' is prepended to the final name. This is a workaround needed to work against
+    Oracle multitenant databases (e.g. our Oracle 19c environment), since common users (schemas) must be start
+    with that prefix.
+
+    Args:
+        database: a :obj:`streamsets.testframework.environment.Database` object.
+        prefix: (:obj:`str`) add a prefix to the generated name. Default: ''.
+        length: (:obj:`int`) number of characters of the generated name (without counting ``prefix``).
+
+    """
+    prefix = f'C##{prefix}' if isinstance(database, OracleDatabase) else prefix
+    return _get_random_name(database, prefix=prefix, length=length)
+
+
 def _create_table(table_name, database, schema_name=None):
     """Helper function to create a table with two columns: id (int, PK) and name (str).
 
@@ -405,6 +425,7 @@ def _create_schema(schema_name, database):
     """
     if isinstance(database, OracleDatabase):
         database.engine.execute('CREATE USER {user} IDENTIFIED BY {pwd}'.format(user=schema_name, pwd=schema_name))
+        database.engine.execute('ALTER USER {user} QUOTA UNLIMITED ON USERS'.format(user=schema_name))
         database.engine.execute('GRANT CONNECT, RESOURCE TO {user}'.format(user=schema_name))
     else:
         schema = sqlalchemy.schema.CreateSchema(schema_name)
@@ -1708,9 +1729,9 @@ def test_jdbc_producer_multischema(sdc_builder, sdc_executor, database):
                                record_deduplicator >> trash
 
     """
-    schema1_name = _get_random_name(database, prefix='stf_schema_')
-    schema2_name = _get_random_name(database, prefix='stf_schema_')
-    schema3_name = _get_random_name(database, prefix='stf_schema_')
+    schema1_name = _get_random_schema_name(database, prefix='stf_schema_')
+    schema2_name = _get_random_schema_name(database, prefix='stf_schema_')
+    schema3_name = _get_random_schema_name(database, prefix='stf_schema_')
     table_name = _get_random_name(database, prefix='stf_table_')
 
     _create_schema(schema1_name, database)
@@ -1787,9 +1808,9 @@ def test_jdbc_producer_multischema_multitable(sdc_builder, sdc_executor, databas
                                record_deduplicator >> trash
 
     """
-    schema1_name = _get_random_name(database, prefix='stf_schema_')
-    schema2_name = _get_random_name(database, prefix='stf_schema_')
-    schema3_name = _get_random_name(database, prefix='stf_schema_')
+    schema1_name = _get_random_schema_name(database, prefix='stf_schema_')
+    schema2_name = _get_random_schema_name(database, prefix='stf_schema_')
+    schema3_name = _get_random_schema_name(database, prefix='stf_schema_')
     table1_name = _get_random_name(database, prefix='stf_table_')
     table2_name = _get_random_name(database, prefix='stf_table_')
     table3_name = _get_random_name(database, prefix='stf_table_')
