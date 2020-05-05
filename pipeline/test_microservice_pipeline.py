@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import http.client as httpclient
+import requests
 
-from streamsets.testframework.markers import sdc_min_version
+from requests.auth import HTTPBasicAuth
 
-@sdc_min_version('3.14.0')
+
+HTTP_LISTENING_PORT = 8234
+
+
 def test_microservice_template_pipeline(sdc_executor):
     """Try creating Microservice pipeline using default template.
        Ensure that there are no validation or other other issues.
@@ -34,7 +37,6 @@ def test_microservice_template_pipeline(sdc_executor):
     sdc_executor.validate_pipeline(pipeline)
 
 
-@sdc_min_version('3.14.0')
 def test_microservice_pipeline_response(sdc_builder, sdc_executor):
     """Test Microservice Pipeline Response. The pipeline would look like:
 
@@ -42,33 +44,133 @@ def test_microservice_pipeline_response(sdc_builder, sdc_executor):
 
     """
 
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-
-    rest_service_source = pipeline_builder.add_stage('REST Service')
-    rest_service_source.http_listening_port = 8234
-    rest_service_source.application_id = 'TEST_ID_FIRST'
-
-    send_response_target = pipeline_builder.add_stage('Send Response to Origin')
-    send_response_target.status_code = 201
-    send_response_target.response_headers = [{'key': 'SAMPLE_RESPONSE_HEADER', 'value': 'test'}]
-
-    rest_service_source >> send_response_target
-
-    pipeline = pipeline_builder.build('REST Sample Pipeline')
+    pipeline = _create_microservice_pipeline(sdc_builder)
+    pipeline.origin_stage.list_of_application_ids = [{"appId": 'TEST_ID_FIRST'}]
+    pipeline.stages[1].status_code = 201
+    pipeline.stages[1].response_headers = [{'key': 'SAMPLE_RESPONSE_HEADER', 'value': 'test'}]
     sdc_executor.add_pipeline(pipeline)
-
     sdc_executor.validate_pipeline(pipeline)
-
     try:
         sdc_executor.start_pipeline(pipeline)
 
         # Try a GET request using sample data with a valid Application-ID and we should expect
         # a custom response 201 and custom response header.
-        http_res = httpclient.HTTPConnection(sdc_executor.server_host, 8234)
-        http_res.request('GET', '/', '{"f1": "abc"}', {'X-SDC-APPLICATION-ID': 'TEST_ID_FIRST'})
-        resp = http_res.getresponse()
-        assert resp.status == 201
-        assert resp.getheader('SAMPLE_RESPONSE_HEADER') == 'test'
+        rest_service_url = f'http://{sdc_executor.server_host}:{HTTP_LISTENING_PORT}'
+        resp = requests.get(rest_service_url, headers={'X-SDC-APPLICATION-ID': 'TEST_ID_FIRST'})
+        assert resp.status_code == 201
+        assert resp.headers['SAMPLE_RESPONSE_HEADER'] == 'test'
 
     finally:
         sdc_executor.stop_pipeline(pipeline)
+
+
+def test_with_no_application_id(sdc_builder, sdc_executor):
+    """Test Microservice Pipeline with no application Id. """
+
+    pipeline = _create_microservice_pipeline(sdc_builder)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.validate_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        rest_service_url = f'http://{sdc_executor.server_host}:{HTTP_LISTENING_PORT}'
+        resp = requests.post(rest_service_url, json={"f1": "abc"})
+        _validate_response_json(resp)
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
+def test_rest_service_multiple_application_ids(sdc_builder, sdc_executor):
+    """Test Microservice Pipeline with multiple application Ids. """
+
+    pipeline = _create_microservice_pipeline(sdc_builder)
+    pipeline.origin_stage.list_of_application_ids = [{"appId": 'TEST_ID_FIRST'}, {"appId": 'TEST_ID_SECOND'}]
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.validate_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        rest_service_url = f'http://{sdc_executor.server_host}:{HTTP_LISTENING_PORT}'
+        resp = requests.post(rest_service_url, headers={'X-SDC-APPLICATION-ID': 'TEST_ID_FIRST'}, json={"f1": "abc"})
+        assert resp.status_code == 200
+
+        resp = requests.post(rest_service_url, headers={'X-SDC-APPLICATION-ID': 'TEST_ID_SECOND'}, json={"f1": "abc"})
+        assert resp.status_code == 200
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
+def test_rest_service_with_gateway_and_no_auth(sdc_builder, sdc_executor):
+    """Test Microservice Pipeline with gateway enabled and with no gateway authentication. """
+    pipeline = _create_microservice_pipeline(sdc_builder)
+    pipeline.origin_stage.use_api_gateway = True
+    pipeline.origin_stage.gateway_service_name = 'service1'
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.validate_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        rest_service_url = f'{sdc_executor.api_client.server_url}/public-rest/v1/gateway/service1'
+        _validate_rest_service(rest_service_url, None)
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
+def test_rest_service_with_gateway_and_auth(sdc_builder, sdc_executor):
+    """Test Microservice Pipeline with gateway enabled and with gateway authentication. """
+    pipeline = _create_microservice_pipeline(sdc_builder)
+    pipeline.origin_stage.use_api_gateway = True
+    pipeline.origin_stage.gateway_service_name = 'service2'
+    pipeline.origin_stage.require_gateway_authentication = True
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.validate_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        rest_service_url = f'{sdc_executor.api_client.server_url}/rest/v1/gateway/service2'
+        _validate_rest_service(rest_service_url, HTTPBasicAuth('admin', 'admin'))
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
+def test_calling_gateway_api_with_invalid_service_name(sdc_executor):
+    """Test calling gateway REST API with invalid service name """
+    rest_service_url = f'{sdc_executor.api_client.server_url}/public-rest/v1/gateway/invalid'
+    resp = requests.get(rest_service_url)
+    assert resp.status_code == 500
+    resp_json = resp.json()
+    assert resp_json['RemoteException'] is not None
+    msg = 'java.lang.IllegalStateException: No entry found in the gateway registry for the service name: invalid'
+    assert resp_json['RemoteException']['message'] == msg
+
+
+def _create_microservice_pipeline(sdc_builder):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    rest_service_source = pipeline_builder.add_stage('REST Service')
+    rest_service_source.http_listening_port = HTTP_LISTENING_PORT
+    send_response_target = pipeline_builder.add_stage('Send Response to Origin')
+    rest_service_source >> send_response_target
+    pipeline = pipeline_builder.build()
+    return pipeline
+
+
+def _validate_rest_service(rest_service_url, auth):
+    resp = requests.get(rest_service_url, auth=auth)
+    assert resp.status_code == 200
+
+    resp = requests.post(rest_service_url, headers={'X-Requested-By': 'test'}, json={"f1": "abc"}, auth=auth)
+    _validate_response_json(resp)
+
+    resp = requests.put(rest_service_url, headers={'X-Requested-By': 'test'}, json={"f1": "abc"}, auth=auth)
+    _validate_response_json(resp)
+
+    resp = requests.delete(rest_service_url, headers={'X-Requested-By': 'test'}, auth=auth)
+    assert resp.status_code == 200
+
+    resp = requests.head(rest_service_url)
+    assert resp.status_code == 200
+
+
+def _validate_response_json(resp):
+    assert resp.status_code == 200
+    resp_json = resp.json()
+    assert resp_json['httpStatusCode'] == 200
+    assert resp_json['data'] is not None
+    assert len(resp_json['data']) == 1
+    assert resp_json['data'][0]['f1'] == 'abc'
