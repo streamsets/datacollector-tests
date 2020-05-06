@@ -114,7 +114,9 @@ def test_required_fields(sdc_builder, sdc_executor, database, keep_data):
 
     COLUMNS = [sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, autoincrement=False),
                sqlalchemy.Column('name', sqlalchemy.String(100))]
-    table_name = get_random_string()
+    # For postgres/oracle database If table's  name are mixed-case then it is required to put quotes in table's name to
+    # do any operation.Data collector does not add quotes and hence we are creating table name with lower case letters.
+    table_name = get_random_string().lower()
     table = create_table(database, COLUMNS, table_name)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
