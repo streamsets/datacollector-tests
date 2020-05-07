@@ -6,7 +6,7 @@ from streamsets.testframework.markers import category, sdc_min_version
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.sdc_min_version('3.16.0'), pytest.mark.database('mysql')]
+pytestmark = [pytest.mark.sdc_min_version('3.17.0'), pytest.mark.database('mysql')]
 
 
 @stub
