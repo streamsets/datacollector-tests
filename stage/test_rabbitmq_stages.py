@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import string
 
@@ -243,3 +244,82 @@ def test_rabbitmq_rabbitmq_consumer_no_queue(sdc_builder, sdc_executor, rabbitmq
         assert e.message.startswith("RABBITMQ_10")
     else:
         assert False
+
+
+@rabbitmq
+def test_rabbitmq_rabbitmq_consumer_wrong_format(sdc_builder, sdc_executor, rabbitmq):
+    """Test for RabbitMQ consumer origin stage. We do so by publishing data to a test queue using RabbitMQ client and
+    having a pipeline which reads that data using RabbitMQ consumer origin stage. Data is then asserted for what is
+    published at RabbitMQ client and what we read in the pipeline snapshot.
+    Ten records are treated. The second have wrong format an should be sent to error. The rest ones should be read.
+    The batch size is set up to 1. It makes the connector to fail SDC-14644
+    The pipeline looks like:
+
+    RabbitMQ Consumer pipeline:
+        rabbitmq_consumer >> trash
+    """
+    # Build consumer pipeline.
+    name = get_random_string(string.ascii_letters, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    # We set to use default exchange and hence exchange does not need to be pre-created or given.
+    rabbitmq_consumer = builder.add_stage('RabbitMQ Consumer')
+    rabbitmq_consumer.set_attributes(name=name,
+                                     data_format='JSON',
+                                     durable=True,
+                                     auto_delete=False,
+                                     on_record_error='TO_ERROR',
+                                     max_batch_size_in_records=1,
+                                     bindings=[dict(name=name,
+                                                    type='DIRECT',
+                                                    durable=True,
+                                                    autoDelete=False)])
+    trash = builder.add_stage('Trash')
+
+    rabbitmq_consumer >> trash
+
+    consumer_origin_pipeline = builder.build(title='RabbitMQ Consumer pipeline').configure_for_environment(rabbitmq)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    # Create input message and expected message.
+    expected_messages = [{'msg': f'Message {i}'} for i in range(10) if i != 2]
+    input_messages = [json.dumps(msg) for msg in expected_messages]
+    input_messages.insert(1, '{"msg":')  #  Bad formatted JSON: no closing brace, no value.
+
+    connection = rabbitmq.blocking_connection
+    channel = connection.channel()
+
+    # About default exchange routing: https://www.rabbitmq.com/tutorials/amqp-concepts.html
+    channel.queue_declare(queue=name, durable=True, exclusive=False, auto_delete=False)
+    channel.confirm_delivery()
+    for msg in input_messages:
+        try:
+            channel.basic_publish(exchange="",
+                                  routing_key=name,  # Routing key has to be same as queue name.
+                                  body=msg,
+                                  properties=pika.BasicProperties(content_type='text/plain', delivery_mode=1),
+                                  mandatory=True)
+        except:
+            logger.warning('Message %s could not be sent.', msg)
+
+    channel.close()
+    connection.close()
+
+    # Messages are published, read through the pipeline and assert.
+    snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
+                                             batches=10, batch_size=1).wait_for_finished().snapshot
+
+    # Second message produced an error - the last error in the list
+
+    error_msg = sdc_executor.get_stage_errors(consumer_origin_pipeline, rabbitmq_consumer)[0].error_code
+    assert error_msg == 'RABBITMQ_04'
+
+    sdc_executor.stop_pipeline(consumer_origin_pipeline)
+    output_records = [record.field
+                      for batch in snapshot.snapshot_batches
+                      for record in batch.stage_outputs[rabbitmq_consumer.instance_name].output]
+
+    # Datacollector does not guarantee the order of the messages, so we sort them.
+    assert sorted(output_records, key=lambda rec: rec['msg'].value) == expected_messages
