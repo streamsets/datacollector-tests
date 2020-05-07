@@ -15,7 +15,7 @@ ROWS_IN_DATABASE = [
     {'id': 3, 'name': 'Paul Pogba'}
 ]
 
-pytestmark = [pytest.mark.sdc_min_version('3.16.0'), pytest.mark.database('mysql')]
+pytestmark = [pytest.mark.sdc_min_version('3.17.0'), pytest.mark.database('mysql')]
 
 
 @stub
