@@ -40,6 +40,28 @@ Operations = namedtuple('Operations', ['rows', 'cdc_op_types', 'sdc_op_types', '
 # pylint: disable=pointless-statement, too-many-locals
 
 
+@pytest.fixture(scope='module', autouse=True)
+def create_logminer_dictionary(database):
+    """Fixture to ensure there will exist a LogMiner dictionary before running the Oracle CDC tests"""
+    connection = database.engine.connect()
+    query = ("SELECT THREAD#, SEQUENCE# FROM V$ARCHIVED_LOG WHERE DICTIONARY_END = 'YES' "
+             "AND STATUS = 'A' ORDER BY FIRST_CHANGE# DESC")
+    result = connection.execute(query).first()
+    if result is not None:
+        thread, seq = result
+        query = (f"SELECT * FROM V$ARCHIVED_LOG WHERE THREAD# = {thread} AND SEQUENCE# = ("
+                 f"SELECT MAX(SEQUENCE#) FROM V$ARCHIVED_LOG WHERE THREAD# = {thread} "
+                 f"AND SEQUENCE# <= {seq} AND DICTIONARY_BEGIN = 'YES')")
+        result = connection.execute(query).first()
+        if result is not None:
+            logger.info('LogMiner dictionary found. No needs to create one.')
+            return
+
+    logger.info('No LogMiner dictionary found. Creating one...')
+    connection.execute('BEGIN DBMS_LOGMNR_D.BUILD(OPTIONS => DBMS_LOGMNR_D.STORE_IN_REDO_LOGS); END;')
+    logger.info('LogMiner dictionary ready.')
+
+
 @sdc_min_version('3.6.0')
 @database('oracle')
 def test_decimal_attributes(sdc_builder, sdc_executor, database):
@@ -971,7 +993,6 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
     table_name = f'STF_{get_random_string(string.ascii_lowercase)}'
     connection = database.engine.connect()
     input_data = [1, 2, 3, 4, 5]
-    num_records = len(input_data)
 
     try:
         # Create table and dictionary
@@ -1025,6 +1046,82 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
         connection.execute(f'DROP TABLE {table_name}')
 
 
+@database('oracle')
+@pytest.mark.parametrize('dictionary_source', ['DICT_FROM_REDO_LOGS', 'DICT_FROM_ONLINE_CATALOG'])
+def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary_source):
+    """Test LogMiner session switches.
+
+    In particular we want to check the stage is able to open subsequent LogMiner session windows after the
+    initial one, especially when using DICT_FROM_ONLINE_CATALOG, which involves keeping the LogMiner
+    dictionary between sessions.
+
+    To ensure Oracle CDC actually switches between LogMiner sessions, we perform two database transactions
+    which are separated in time by more than the configured LogMiner session window, and configure Oracle CDC
+    to consume both transactions.
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
+    connection = database.engine.connect()
+    txn1_data = [1, 2, 3, 4, 5]
+    txn2_data = [11, 12, 13, 14, 15]
+    session_window_secs = 10
+
+    try:
+        # Create and populate table. Use 2 transactions that will be separated in time by more than the
+        # configured LogMiner session window. This will force they must be consumed in different LogMiner
+        # sessions.
+        logger.info('Create and populate table %s...', table_name)
+        connection.execute(f'CREATE TABLE {table_name} (ID NUMBER PRIMARY KEY)')
+        sleep(3)  # Avoiding Oracle CDC to create a DDL event for the previous CREATE TABLE until TLKT-467 be
+                  # solved.
+        start_date = _get_current_oracle_time(connection=connection).strftime('%d-%m-%Y %H:%M:%S')
+
+        txn1 = connection.begin()
+        for i in txn1_data:
+            connection.execute(f'INSERT INTO {table_name} VALUES({i})')
+        txn1.commit()
+        sleep(session_window_secs * 2)
+
+        txn2 = connection.begin()
+        for i in txn2_data:
+            connection.execute(f'INSERT INTO {table_name} VALUES({i})')
+        txn2.commit()
+
+        # Build the pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   batch_size=1,
+                                                   buffer_locally=True,
+                                                   src_table_name=table_name,
+                                                   initial_change='DATE',
+                                                   start_date=start_date,
+                                                   dictionary_source=dictionary_source,
+                                                   maximum_transaction_length=session_window_secs - 1,
+                                                   logminer_session_window=session_window_secs)
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Start pipeline, populate table with data 1 and wait for the pipeline to consume it.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=240,
+                                                 batches=len(txn1_data + txn2_data), batch_size=1).snapshot
+        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_records = [snapshot.snapshot_batches[i][oracle_cdc.instance_name].output[0]
+                       for i in range(len(snapshot))]
+        consumed_data = [rec.field['ID'].value for rec in sdc_records]
+        assert sorted(consumed_data) == txn1_data + txn2_data
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f'DROP TABLE {table_name}')
+
+
 def _setup_table(database, table_name, create_primary_key=True):
     db_engine = database.engine
     logger.info('Creating source table %s in %s database ...', table_name, database.type)
@@ -1043,6 +1140,11 @@ def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bu
     kwargs.setdefault('db_time_zone', 'UTC')
     kwargs.setdefault('maximum_transaction_length', '${1 * MINUTES}')
     kwargs.setdefault('initial_change', 'DATE')
+    if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.16.0'):
+        # In versions < 3.16 the user has to define a maximum time to look back for a valid dictionary. From
+        # 3.16 onward this is not required anymore. By default avoid to set an specific duration and use all
+        # the redo logs instead.
+        kwargs.setdefault('duration_of_directory_extraction', -1)
 
     start = _get_current_oracle_time(connection=connection)
     kwargs.setdefault('start_date', start.strftime('%d-%m-%Y %H:%M:%S'))
