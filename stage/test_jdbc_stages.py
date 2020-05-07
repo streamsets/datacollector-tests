@@ -3564,7 +3564,8 @@ def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured
 @database
 @pytest.mark.parametrize('input_string', [
     "::problematical::value::",
-    "=another=problematical=value="
+    "=another=problematical=value=",
+    ""
 ])
 def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, input_string):
     """Ensure that problematical values in String-typed offset column are covered, e.g. our special separator '::'."""
