@@ -1025,7 +1025,8 @@ def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
 # (3. 5), (5, 10) -> batch size > number of messages
 # (10, 5) -> batch size < number of messages but exactly divisible
 # (5, 3) -> batch size > number of messages but not exactly divisible
-@pytest.mark.parametrize('number_of_messages_sent_and_origin_batch_size', [(10, 10), (10, 5), (5, 3), (3, 5), (5, 10)])
+@pytest.mark.parametrize('number_of_messages_sent_and_origin_batch_size',
+                         [(10, 10), (10, 5), (5, 3), (3, 5), (5, 10), (100, 20)])
 def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
                                           number_of_messages_sent_and_origin_batch_size):
     """Test for SQS consumer origin stage with max batch size configuration. We do so by publishing data
@@ -1043,9 +1044,7 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
     # if number of messages > max_batch_size, we will have more than 1 batch
     # to decide the number of batches, we will basically divide to get the number of batches
     # and if it is not properly divisible (i.e modulo is non zero), we will add one more batch
-    number_of_batches = (1 if max_batch_size >= number_of_messages
-                         else (
-                int(number_of_messages / max_batch_size) + (1 if number_of_messages % max_batch_size > 0 else 0)))
+    number_of_batches = number_of_messages // max_batch_size + int(number_of_messages % max_batch_size > 0)
 
     logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, '
                 f'Number of batches be produced : {number_of_batches}')
@@ -1066,9 +1065,14 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
     logger.info('Creating %s SQS queue on AWS ...', queue_name)
     queue_url = client.create_queue(QueueName=queue_name)['QueueUrl']
     try:
-        message_entries = [{'Id': str(i), 'MessageBody': 'Message {0}'.format(i)} for i in range(number_of_messages)]
-        sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
-        if len(sent_response.get('Successful', [])) != number_of_messages:
+        all_responses = []
+        for batch in range(number_of_messages // 10 + int(number_of_messages % 10 > 0)):
+            message_entries = [{'Id': str(i), 'MessageBody': 'Message {}'.format(i)}
+                               for i in range(batch * 10, min(number_of_messages, (batch + 1) * 10))]
+            sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
+            for message in sent_response.get('Successful', []):
+                all_responses.append(message)
+        if len(all_responses) != number_of_messages:
             raise Exception('Test messages not successfully sent to the queue %s', queue_name)
 
         sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_batch_count(number_of_batches)
