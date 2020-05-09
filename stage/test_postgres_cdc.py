@@ -128,6 +128,70 @@ def _delete(connection, table):
     return operations_data
 
 
+@sdc_min_version('3.16.0')
+@database('postgresql')
+@pytest.mark.parametrize('poll_interval', [1, 1000])
+def test_stop_start(sdc_builder, sdc_executor, database, poll_interval, keep_data):
+    """Records are neither dropped, nor duplicated when a pipeline is stopped and then started in
+    the midst of ingesting data.
+
+    Runs with two poll intervals to verify that the Batch Wait Time (ms) configuration is respected.
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    SAMPLE_DATA = [dict(id=i, name=f'Martin_{i}') for i in range(20)]
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = sqlalchemy.Table(table_name,
+                             sqlalchemy.MetaData(),
+                             sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                             sqlalchemy.Column('name', sqlalchemy.String(20)))
+    replication_slot = get_random_string(string.ascii_lowercase, 10)
+
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        postgresql_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+        postgresql_cdc_client.set_attributes(batch_wait_time_in_ms=5000,
+                                             max_batch_size_in_records=10,
+                                             poll_interval=poll_interval,
+                                             replication_slot=replication_slot)
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        # We want the pipeline to stop automatically part-way through processing batch 1 and at the end of batch 2.
+        pipeline_finisher.set_attributes(preconditions=[
+            "${record:value('/change[0]/columnvalues[0]') == 5 or record:value('/change[0]/columnvalues[0]') == 19}"
+        ])
+        postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        table.create(database.engine)
+        with database.engine.connect().execution_options(autocommit=True) as connection:
+            for row in SAMPLE_DATA:
+                connection.execute(table.insert(), row)
+        # Pipeline will stop once it sees id=5.
+        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED')
+
+        # Since we stop gracefully, we expect to see the entire first batch (records with id=0 through id=9)
+        # written to the destination.
+        # Within the field, column names are stored in a list (e.g. ['id', 'name']) and so are
+        # column values (e.g. [1, 'Martin_1']). We use zip to help us combine each instance into a dictionary.
+        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                for record in wiretap.output_records] == SAMPLE_DATA[:10]
+        # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
+        wiretap.reset()
+        logger.info('Starting pipeline for the second time ...')
+        # Again, pipeline will stop on its own, this time when it processes the last record (id=19).
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        # We expect to see records with id=10 through id=19 (i.e. no duplicated or missing records).
+        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                for record in wiretap.output_records] == SAMPLE_DATA[10:20]
+    finally:
+        table.drop(database.engine)
+        database.deactivate_and_drop_replication_slot(replication_slot)
+
+
 @database('postgresql')
 @sdc_min_version('3.4.0')
 def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
