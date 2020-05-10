@@ -15,6 +15,7 @@
 import requests
 
 from requests.auth import HTTPBasicAuth
+from streamsets.testframework.markers import sdc_min_version
 
 
 HTTP_LISTENING_PORT = 8234
@@ -37,6 +38,7 @@ def test_microservice_template_pipeline(sdc_executor):
     sdc_executor.validate_pipeline(pipeline)
 
 
+@sdc_min_version('3.16.0')
 def test_microservice_pipeline_response(sdc_builder, sdc_executor):
     """Test Microservice Pipeline Response. The pipeline would look like:
 
@@ -64,6 +66,7 @@ def test_microservice_pipeline_response(sdc_builder, sdc_executor):
         sdc_executor.stop_pipeline(pipeline)
 
 
+@sdc_min_version('3.16.0')
 def test_with_no_application_id(sdc_builder, sdc_executor):
     """Test Microservice Pipeline with no application Id. """
 
@@ -79,6 +82,7 @@ def test_with_no_application_id(sdc_builder, sdc_executor):
         sdc_executor.stop_pipeline(pipeline)
 
 
+@sdc_min_version('3.16.0')
 def test_rest_service_multiple_application_ids(sdc_builder, sdc_executor):
     """Test Microservice Pipeline with multiple application Ids. """
 
@@ -98,6 +102,7 @@ def test_rest_service_multiple_application_ids(sdc_builder, sdc_executor):
         sdc_executor.stop_pipeline(pipeline)
 
 
+@sdc_min_version('3.16.0')
 def test_rest_service_with_gateway_and_no_auth(sdc_builder, sdc_executor):
     """Test Microservice Pipeline with gateway enabled and with no gateway authentication. """
     pipeline = _create_microservice_pipeline(sdc_builder)
@@ -113,6 +118,7 @@ def test_rest_service_with_gateway_and_no_auth(sdc_builder, sdc_executor):
         sdc_executor.stop_pipeline(pipeline)
 
 
+@sdc_min_version('3.16.0')
 def test_rest_service_with_gateway_and_auth(sdc_builder, sdc_executor):
     """Test Microservice Pipeline with gateway enabled and with gateway authentication. """
     pipeline = _create_microservice_pipeline(sdc_builder)
@@ -129,6 +135,7 @@ def test_rest_service_with_gateway_and_auth(sdc_builder, sdc_executor):
         sdc_executor.stop_pipeline(pipeline)
 
 
+@sdc_min_version('3.16.0')
 def test_calling_gateway_api_with_invalid_service_name(sdc_executor):
     """Test calling gateway REST API with invalid service name """
     rest_service_url = f'{sdc_executor.api_client.server_url}/public-rest/v1/gateway/invalid'
