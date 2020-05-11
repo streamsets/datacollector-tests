@@ -1,5 +1,6 @@
 import requests
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.utils import Version
 
 APPLICATION_ID = 'keanu'
 HTTP_LISTENING_PORT = 8000
@@ -11,7 +12,10 @@ def test_status_code(sdc_builder, sdc_executor):
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         rest_service = pipeline_builder.add_stage('REST Service')
-        rest_service.application_id = APPLICATION_ID
+        if Version(sdc_builder.version) < Version('3.16.0'):
+            rest_service.application_id = APPLICATION_ID
+        else:
+            rest_service.list_of_application_ids = [{"appId": 'admin'}]
         rest_service.http_listening_port = HTTP_LISTENING_PORT
 
         send_response_to_origin = pipeline_builder.add_stage('Send Response to Origin')
@@ -29,3 +33,4 @@ def test_status_code(sdc_builder, sdc_executor):
                             headers={'X-SDC-APPLICATION-ID': APPLICATION_ID}).status_code == STATUS_CODE
     finally:
         sdc_executor.stop_pipeline(pipeline)
+

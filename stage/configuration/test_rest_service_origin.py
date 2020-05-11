@@ -3,6 +3,7 @@ import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.utils import Version
 
 
 KEYSTORE_FILE_PATH = 'resources/tls/keystore.jks'
@@ -519,10 +520,17 @@ def test_keystore_file(sdc_builder, sdc_executor, stage_attributes):
     """
     builder = sdc_builder.get_pipeline_builder()
     rest_srv = builder.add_stage('REST Service')
-    rest_srv.set_attributes(keystore_type=KEYSTORE_TYPE,
-                            keystore_password=KEYSTORE_PASSWORD,
-                            application_id='admin',
-                            **stage_attributes)
+
+    if Version(sdc_builder.version) < Version('3.16.0'):
+        rest_srv.set_attributes(keystore_type=KEYSTORE_TYPE,
+                                keystore_password=KEYSTORE_PASSWORD,
+                                application_id='admin',
+                                **stage_attributes)
+    else:
+        rest_srv.set_attributes(keystore_type=KEYSTORE_TYPE,
+                                keystore_password=KEYSTORE_PASSWORD,
+                                list_of_application_ids = [{"appId": 'admin'}],
+                                **stage_attributes)
     trash = builder.add_stage('Trash')
     rest_srv >> trash
 
@@ -1060,3 +1068,4 @@ def test_validate_schema(sdc_builder, sdc_executor, stage_attributes):
 @sdc_min_version('3.4.0')
 def test_xml_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
+
