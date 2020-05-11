@@ -5,7 +5,7 @@ import pytest
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import category, cluster, credentialstore, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -862,10 +862,17 @@ def test_topic_list(sdc_builder, sdc_executor, cluster):
     topic_name = get_random_string()
     kafka_multitopic_consumer = builder.add_stage('Kafka Multitopic Consumer',
                                                   library=cluster.kafka.standalone_stage_lib)
-    kafka_multitopic_consumer.set_attributes(auto_offset_reset='EARLIEST',
-                                             batch_wait_time_in_ms=2000,
-                                             data_format='TEXT',
-                                             topic_list=[topic_name])
+
+    if Version(sdc_builder.version) < Version('3.7.0'):
+        kafka_multitopic_consumer.set_attributes(batch_wait_time_in_ms=2000,
+                                                 data_format='TEXT',
+                                                 topic_list=[topic_name])
+        kafka_multitopic_consumer.configuration_properties = [{ 'key':'auto.offset.reset', 'value': 'earliest'}]
+    else:
+        kafka_multitopic_consumer.set_attributes(auto_offset_reset='EARLIEST',
+                                                 batch_wait_time_in_ms=2000,
+                                                 data_format='TEXT',
+                                                 topic_list=[topic_name])
 
     trash = builder.add_stage(label='Trash')
     kafka_multitopic_consumer >> trash
@@ -936,3 +943,4 @@ def test_value_deserializer(sdc_builder, sdc_executor, cluster, stage_attributes
                                               {'data_format': 'WHOLE_FILE', 'verify_checksum': True}])
 def test_verify_checksum(sdc_builder, sdc_executor, cluster, stage_attributes):
     pass
+

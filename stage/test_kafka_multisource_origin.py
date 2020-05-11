@@ -20,7 +20,7 @@ import pytest
 from streamsets.testframework.environments import cloudera
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -142,9 +142,13 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
 
     origin = get_kafka_multitopic_consumer_stage(builder, cluster)
     origin.topic_list = [topic]
-    origin.auto_offset_reset = 'EARLIEST'
     origin.consumer_group = get_random_string(string.ascii_letters, 10)
     origin.batch_wait_time_in_ms = 100
+
+    if Version(sdc_builder.version) < Version('3.7.0'):
+        origin.configuration_properties = [{ 'key':'auto.offset.reset', 'value': 'earliest'}]
+    else:
+        origin.auto_offset_reset = 'EARLIEST'
 
     delay = builder.add_stage('Delay')
     delay.delay_between_batches = 5*1000
@@ -564,3 +568,4 @@ def verify_kafka_origin_results(kafka_multitopic_consumer_pipeline, sdc_executor
             assert 'timestamp' in element['values']
             assert 'timestampType' in element['values']
         assert message == str(record_field[0])
+
