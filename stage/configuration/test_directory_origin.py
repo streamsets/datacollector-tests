@@ -24,6 +24,7 @@ from collections import OrderedDict
 import pytest
 from streamsets.sdk.utils import Version
 from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from stage.utils.utils_xml import get_xml_output_field
@@ -2200,7 +2201,9 @@ def test_directory_no_read_permissions(sdc_builder, sdc_executor, shell_executor
                              files_directory=file_path,
                              file_name_pattern='*')
     trash = pipeline_builder.add_stage('Trash')
+
     directory >> trash
+
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
@@ -2208,7 +2211,7 @@ def test_directory_no_read_permissions(sdc_builder, sdc_executor, shell_executor
     try:
         sdc_executor.validate_pipeline(pipeline)
         assert False, 'Should not reach here'
-    except Exception as error:
+    except ValidationError as error:
         assert error.issues['issueCount'] == 1
 
         assert 'SPOOLDIR_38' in error.issues['stageIssues']['Directory_01'][0]['message']
@@ -2469,3 +2472,4 @@ def execute_pipeline(sdc_executor, directory, pipeline):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     output_records = snapshot[directory].output
     return output_records
+
