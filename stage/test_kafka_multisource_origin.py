@@ -80,7 +80,7 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh', 'kafka')
-@sdc_min_version('3.6.0')
+@sdc_min_version('3.7.0')
 def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, cluster):
     """Check that accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
     which timestamp >= Auto Offset Reset Timestamp configuration value.
@@ -146,7 +146,7 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
     origin.batch_wait_time_in_ms = 100
 
     if Version(sdc_builder.version) < Version('3.7.0'):
-        origin.configuration_properties = [{ 'key':'auto.offset.reset', 'value': 'earliest'}]
+        origin.configuration_properties = [{'key': 'auto.offset.reset', 'value': 'earliest'}]
     else:
         origin.auto_offset_reset = 'EARLIEST'
 
@@ -210,9 +210,13 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
 
     kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(builder, cluster)
     kafka_multitopic_consumer.topic_list = [topic]
-    kafka_multitopic_consumer.auto_offset_reset = 'EARLIEST'
     kafka_multitopic_consumer.consumer_group = get_random_string(string.ascii_letters, 10)
     kafka_multitopic_consumer.batch_wait_time_in_ms = 100
+
+    if Version(sdc_builder.version) < Version('3.7.0'):
+        kafka_multitopic_consumer.configuration_properties = [{'key': 'auto.offset.reset', 'value': 'earliest'}]
+    else:
+        kafka_multitopic_consumer.auto_offset_reset = 'EARLIEST'
 
     trash = builder.add_stage(label='Trash')
 
@@ -274,8 +278,12 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
 
     produce_kafka_messages_list(kafka_multitopic_consumer.topic_list[0], cluster, messages, 'TEXT')
 
-    kafka_multitopic_consumer.set_attributes(auto_offset_reset='EARLIEST',
-                                             consumer_group=kafka_consumer_group,
+    if Version(sdc_builder.version) < Version('3.7.0'):
+        kafka_multitopic_consumer.configuration_properties = [{'key': 'auto.offset.reset', 'value': 'earliest'}]
+    else:
+        kafka_multitopic_consumer.auto_offset_reset = 'EARLIEST'
+
+    kafka_multitopic_consumer.set_attributes(consumer_group=kafka_consumer_group,
                                              max_batch_size_in_records=10,
                                              batch_wait_time_in_ms=30000)
 
@@ -568,4 +576,5 @@ def verify_kafka_origin_results(kafka_multitopic_consumer_pipeline, sdc_executor
             assert 'timestamp' in element['values']
             assert 'timestampType' in element['values']
         assert message == str(record_field[0])
+
 
