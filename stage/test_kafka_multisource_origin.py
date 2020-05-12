@@ -49,34 +49,24 @@ def sdc_common_hook():
 def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     """Check that timestamp and timestamp type are included in record header. Verifies that for previous versions of
     kafka (< 0.10), a validation issue is thrown.
-
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
     """
-    stage_libs = cluster.sdc_stage_libs
+    INPUT_DATA = 'Hello World from SDC & DPM!'
+    EXPECTED_OUTPUT = [{'text': 'Hello World from SDC & DPM!'}]
 
-    message = 'Hello World from SDC & DPM!'
-    expected = '{\'text\': Hello World from SDC & DPM!}'
-
-    # Build the Kafka consumer pipeline with Standalone mode.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(builder, cluster)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster)
     kafka_multitopic_consumer.set_attributes(include_timestamps=True)
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_multitopic_consumer >> [trash, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    trash = builder.add_stage(label='Trash')
-    kafka_multitopic_consumer >> trash
-    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, message.encode(), 'TEXT')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, INPUT_DATA.encode(), 'TEXT')
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_multitopic_consumer].output] == EXPECTED_OUTPUT
+    assert all('timestamp' in record.header.values for record in snapshot[kafka_multitopic_consumer].output)
+    assert all('timestampType' in record.header.values for record in snapshot[kafka_multitopic_consumer].output)
 
 
 @cluster('cdh', 'kafka')
@@ -84,45 +74,43 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
 def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, cluster):
     """Check that accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
     which timestamp >= Auto Offset Reset Timestamp configuration value.
-
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
     """
-    stage_libs = cluster.sdc_stage_libs
-
-    if ('streamsets-datacollector-apache-kafka_0_9-lib' in stage_libs or
-            'streamsets-datacollector-apache-kafka_0_8-lib' in stage_libs or
-            'streamsets-datacollector-cdh_kafka_2_1-lib' in stage_libs or
-            'streamsets-datacollector-apache-kafka_0_10-lib' in stage_libs):
+    if any(stage_lib in cluster.sdc_stage_libs for stage_lib in ['streamsets-datacollector-apache-kafka_0_9-lib',
+                                                                 'streamsets-datacollector-apache-kafka_0_8-lib',
+                                                                 'streamsets-datacollector-cdh_kafka_2_1-lib',
+                                                                 'streamsets-datacollector-apache-kafka_0_10-lib']):
         pytest.skip('Test only designed to run on Kafka version >= 0.10.1')
 
-    messages = [f'message{i}' for i in range(1, 5)]
-    expected = [f'{{\'text\': message{i}}}' for i in range(3, 5)]
+    INPUT_DATA = [f'message{i}' for i in range(5)]
+    EXPECTED_OUTPUT = [{'text': f'message{i}'} for i in range(3, 5)]
 
     # Build the Kafka consumer pipeline with Standalone mode.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(builder, cluster)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster)
 
-    timestamp = produce_kafka_messages_in_different_timestamp(kafka_multitopic_consumer.topic_list[0], cluster, messages, 'TEXT', 2)
+    # Send first 3 messages, save the timestamp to use, then send the last 2.
+    for i in range(3):
+        producer = cluster.kafka.producer()
+        producer.send(kafka_multitopic_consumer.topic_list[0], INPUT_DATA[i].encode())
+        producer.flush()
+    time.sleep(30)
+    timestamp = int(time.time() * 1000)
+    for i in range(3, 5):
+        producer = cluster.kafka.producer()
+        producer.send(kafka_multitopic_consumer.topic_list[0], INPUT_DATA[i].encode())
+        producer.flush()
 
     kafka_multitopic_consumer.set_attributes(auto_offset_reset='TIMESTAMP',
-                                  auto_offset_reset_timestamp_in_ms=int(timestamp),
-                                  consumer_group=get_random_string(string.ascii_letters, 10))
+                                             auto_offset_reset_timestamp_in_ms=timestamp,
+                                             consumer_group=get_random_string())
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_multitopic_consumer >> [trash, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    trash = builder.add_stage(label='Trash')
-    kafka_multitopic_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Standalone pipeline').configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_multitopic_consumer].output] == EXPECTED_OUTPUT
 
 
 # SDC-10501: Option to enable/disable Kafka auto commit Offsets
@@ -523,30 +511,6 @@ def produce_kafka_messages_list(topic, cluster, message_list, data_format):
             producer.send(topic, message.encode())
 
     producer.flush()
-
-
-def produce_kafka_messages_in_different_timestamp(topic, cluster, messages, data_format, num_messages_to_send_first):
-    """send num_messages_to_send_first messages, sleep 30 seconds, then send the rest of the messages and return the
-    timestamp value after the 30 seconds sleep (<= timestamp of first message in second batch and >= last message in
-    first batch)
-    """
-    timestamp = -1
-    if num_messages_to_send_first < len(messages):
-        # Send first batch of messages.
-        for i in range(0, num_messages_to_send_first):
-            message = messages[i]
-            produce_kafka_messages(topic, cluster, message.encode(), data_format)
-
-        # Sleep for 30 seconds.
-        time.sleep(30)
-        timestamp = int(time.time() * 1000)
-
-        # Send second batch of messages.
-        for j in range(num_messages_to_send_first, len(messages)):
-            message = messages[j]
-            produce_kafka_messages(topic, cluster, message.encode(), data_format)
-
-    return timestamp
 
 
 def verify_kafka_origin_results(kafka_multitopic_consumer_pipeline, sdc_executor, message, data_format):
