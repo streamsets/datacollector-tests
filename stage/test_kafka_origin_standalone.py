@@ -16,38 +16,22 @@ import base64
 import io
 import json
 import logging
+import os
 import string
+import textwrap
 import time
 
-import avro
+import avro, avro.datafile
 import pytest
-from avro.datafile import DataFileWriter
-
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+
 from stage.utils.utils_xml import get_xml_output_field
 
 logger = logging.getLogger(__name__)
 
-# Specify a port for SDC RPC stages to use.
-SDC_RPC_PORT = 20000
 SNAPSHOT_TIMEOUT_SEC = 120
-
-# Protobuf file path relative to $SDC_RESOURCES.
-PROTOBUF_FILE_PATH = 'resources/protobuf/addressbook.desc'
-
-SCHEMA = {
-    'namespace': 'example.avro',
-    'type': 'record',
-    'name': 'Employee',
-    'fields': [
-        {'name': 'name', 'type': 'string'},
-        {'name': 'age', 'type': 'int'},
-        {'name': 'emails', 'type': {'type': 'array', 'items': 'string'}},
-        {'name': 'boss', 'type': ['Employee', 'null']}
-    ]
-}
 
 
 @pytest.fixture(autouse=True)
@@ -58,35 +42,25 @@ def kafka_check(cluster):
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
-    """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
-    Specifically, this would look like:
+    """Kafka Consumer origin parses basic text formatted messages."""
+    MESSAGE = 'Hello World from SDC & DPM!'
+    EXPECTED = {'text': 'Hello World from SDC & DPM!'}
+    topic = get_random_string()
 
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(data_format='TEXT', batch_wait_time_in_ms=20_000, topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    message = 'Hello World from SDC & DPM!'
-    expected = '{\'text\': Hello World from SDC & DPM!}'
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE.encode())
+    producer.flush()
 
-    # Build the Kafka consumer pipeline with Standalone mode.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Standalone pipeline').configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED]
 
 
 @cluster('cdh', 'kafka')
@@ -100,159 +74,86 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     """
     stage_libs = cluster.sdc_stage_libs
 
-    message = 'Hello World from SDC & DPM!'
-    expected = '{\'text\': Hello World from SDC & DPM!}'
+    MESSAGE = 'Hello World from SDC & DPM!'
+    EXPECTED_OUTPUT = {'text': 'Hello World from SDC & DPM!'}
 
-    # Build the Kafka consumer pipeline with Standalone mode.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-    kafka_consumer.set_attributes(include_timestamps=True)
+    topic = get_random_string()
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Standalone pipeline').configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='TEXT',
+                                  include_timestamps=True,
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
 
-    if ('streamsets-datacollector-apache-kafka_0_9-lib' in stage_libs or
-            'streamsets-datacollector-apache-kafka_0_8-lib' in stage_libs):
+    if any(stage_lib in cluster.sdc_stage_libs for stage_lib in ['streamsets-datacollector-apache-kafka_0_9-lib',
+                                                                 'streamsets-datacollector-apache-kafka_0_8-lib']):
         with pytest.raises(Exception) as e:
-            sdc_executor.start_pipeline(kafka_consumer_pipeline)
-
-        assert ('KAFKA_75 - Inherited timestamps from Kafka are enabled but not supported in this Kafka version'
-                in e.value.message)
+            sdc_executor.start_pipeline(pipeline)
+            assert ('KAFKA_75 - Inherited timestamps from Kafka are enabled but not supported in this Kafka version'
+                    in e.value.message)
     else:
-        try:
-            # Publish messages to Kafka and verify using snapshot if the same messages are received.
-            produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
-            verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT_TIMESTAMP')
-        finally:
-            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        producer = cluster.kafka.producer()
+        producer.send(topic, MESSAGE.encode())
+        producer.flush()
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
+        assert all('timestamp' in record.header.values for record in snapshot[kafka_consumer].output)
+        assert all('timestampType' in record.header.values for record in snapshot[kafka_consumer].output)
 
 
 @cluster('cdh', 'kafka')
 @sdc_min_version('3.7.0')
 def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, cluster):
-    """Check that accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
-    which timestamp >= Auto Offset Reset Timestamp configuration value.
-
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
+    """Accessing a topic for first time using TIMESTAMP offset strategy retrieves messages
+    with timestamp >= Auto Offset Reset Timestamp configuration value.
     """
-    stage_libs = cluster.sdc_stage_libs
+    INPUT_DATA = [f'message{i}' for i in range(5)]
+    EXPECTED_OUTPUT = [{'text': f'message{i}'} for i in range(3, 5)]
+    topic = get_random_string()
 
-    messages = [f'message{i}' for i in range(1, 5)]
-    expected = [f'{{\'text\': message{i}}}' for i in range(3, 5)]
+    # Send first 3 messages, save the timestamp to use, then send the last 2.
+    for i in range(3):
+        producer = cluster.kafka.producer()
+        producer.send(topic, INPUT_DATA[i].encode())
+        producer.flush()
+    time.sleep(10)
+    timestamp = int(time.time() * 1000)
+    for i in range(3, 5):
+        producer = cluster.kafka.producer()
+        producer.send(topic, INPUT_DATA[i].encode())
+        producer.flush()
 
-    # Build the Kafka consumer pipeline with Standalone mode.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage_since_sdc_3_6_0(builder, cluster)
-
-    timestamp = produce_kafka_messages_in_different_timestamp(kafka_consumer.topic, cluster, messages, 'TEXT', 2)
-
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
     kafka_consumer.set_attributes(auto_offset_reset='TIMESTAMP',
-                                  auto_offset_reset_timestamp_in_ms=int(timestamp),
-                                  consumer_group=get_random_string(string.ascii_letters, 10))
+                                  auto_offset_reset_timestamp_in_ms=timestamp,
+                                  batch_wait_time_in_ms=20_000,
+                                  consumer_group=get_random_string(),
+                                  data_format='TEXT',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Standalone pipeline').configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    if ('streamsets-datacollector-apache-kafka_0_9-lib' in stage_libs or
-            'streamsets-datacollector-apache-kafka_0_8-lib' in stage_libs or
-            'streamsets-datacollector-cdh_kafka_2_1-lib' in stage_libs or
-            'streamsets-datacollector-apache-kafka_0_10-lib' in stage_libs):
+    sdc_executor.add_pipeline(pipeline)
+    if any(stage_lib in cluster.sdc_stage_libs for stage_lib in ['streamsets-datacollector-apache-kafka_0_9-lib',
+                                                                 'streamsets-datacollector-apache-kafka_0_8-lib',
+                                                                 'streamsets-datacollector-cdh_kafka_2_1-lib',
+                                                                 'streamsets-datacollector-apache-kafka_0_10-lib']):
         with pytest.raises(Exception) as e:
-            sdc_executor.start_pipeline(kafka_consumer_pipeline)
-
-        assert ('KAFKA_76 - Auto Offset Reset = \'Timestamp\' can only be used for Kafka version >= 0.10.1.0'
+            sdc_executor.start_pipeline(pipeline)
+        assert ("KAFKA_76 - Auto Offset Reset = 'Timestamp' can only be used for Kafka version >= 0.10.1.0"
                 in e.value.message)
     else:
-        try:
-            # Publish messages to Kafka and verify using snapshot if the same messages are received.
-
-            verify_kafka_origin_results_timestamp(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
-        finally:
-            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-
-
-@cluster('cdh', 'kafka')
-def test_kafka_origin_multiple_partitions(sdc_builder, sdc_executor, cluster):
-    """Write simple text messages into Kafka and confirm that Kafka successfully reads them using different partitions.
-    Specifically, this would look like:
-
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
-
-    message = 'Hello World from SDC & DPM!'
-    expected = '{\'text\': Hello World from SDC & DPM!}'
-
-    # Build the Kafka consumer pipeline with Standalone mode.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Standalone pipeline').configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'WITH_KEY')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-
-
-@cluster('cdh', 'kafka')
-@sdc_min_version('3.0.0.0')
-def test_kafka_multi_origin_standalone(sdc_builder, sdc_executor, cluster):
-    """Write simple text messages into Kafka and confirm that MultiTopic origin can read them.
-    Specifically, this would look like:
-
-    Kafka Multi Topic Consumer Origin pipeline with standalone mode:
-        kafka_multitopic_consumer >> trash
-    """
-
-    message = 'Hello World from SDC & DPM!'
-    expected = '{\'text\': Hello World from SDC & DPM!}'
-
-    # Build the Kafka consumer pipeline with Standalone mode.
-    builder = sdc_builder.get_pipeline_builder()
-
-    topic_name = get_random_string(string.ascii_letters, 10)
-    kafka_multitopic_consumer = builder.add_stage('Kafka Multitopic Consumer')
-    kafka_multitopic_consumer.set_attributes(data_format='TEXT',
-                                             batch_wait_time_in_ms=2000,
-                                             topic_list=[topic_name],
-                                             configuration_properties=[{'key': 'auto.offset.reset',
-                                                                        'value': 'earliest'}])
-
-    trash = builder.add_stage(label='Trash')
-    kafka_multitopic_consumer >> trash
-    kafka_multitopic_consumer_pipeline = builder.build(title='Kafka Multitopic').configure_for_environment(cluster)
-    kafka_multitopic_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-    kafka_multitopic_consumer_pipeline.configuration['shouldRetry'] = False
-
-    sdc_executor.add_pipeline(kafka_multitopic_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(topic_name, cluster, message.encode(), 'TEXT')
-        verify_kafka_origin_results(kafka_multitopic_consumer_pipeline, sdc_executor, expected, 'TEXT')
-    finally:
-        sdc_executor.stop_pipeline(kafka_multitopic_consumer_pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        assert [record.field for record in snapshot[kafka_consumer].output] == EXPECTED_OUTPUT
 
 
 @cluster('cdh', 'kafka')
@@ -301,176 +202,105 @@ def test_kafka_multi_origin_standalone_honor_prod_batch_size(sdc_builder, sdc_ex
     assert metrics.counter("pipeline.batchInputRecords.counter").count == max_records
 
 
-
+@pytest.mark.parametrize('data_type', ['ARRAY', 'ARRAY_OF_OBJECTS', 'OBJECT'])
 @cluster('cdh', 'kafka')
-def test_kafka_origin_string_records(sdc_builder, sdc_executor, cluster):
-    """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
-    Specifically, this would look like:
+def test_kafka_origin_json(sdc_builder, sdc_executor, data_type, cluster):
+    """Kafka Consumer parses JSON in a variety of data types."""
+    # We map data_type to input data as well as the expected output.
+    DATA_TYPE = {'ARRAY': ['Alex', 'Xavi'],
+                 'ARRAY_OF_OBJECTS': [{'Alex': 'Developer'}, {'Xavi': 'Developer'}],
+                 'OBJECT': {'Alex': 'Developer', 'Xavi': 'Developer'}}
+    message, expected_output = json.dumps(DATA_TYPE[data_type]), DATA_TYPE[data_type]
 
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
+    topic = get_random_string()
 
-    message = 'This is a String record'
-    expected = '{\'text\': This is a String record}'
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='JSON',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    # Build the Kafka consumer pipeline with Standalone mode.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
+    producer = cluster.kafka.producer()
+    producer.send(topic, message.encode())
+    producer.flush()
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Standalone pipeline').configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'TEXT')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-
-
-@cluster('cdh', 'kafka')
-def test_kafka_origin_multiple_json_objects_single_record(sdc_builder, sdc_executor, cluster):
-    """Write json objects messages into Kafka and confirm that Kafka successfully reads them.
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
-
-    message = {'Alex': 'Developer', 'Xavi': 'Developer'}
-    expected = '{\'Alex\': Developer, \'Xavi\': Developer}'
-
-    json_test_basic_structure(sdc_builder, sdc_executor, cluster, message, expected)
-
-
-@cluster('cdh', 'kafka')
-def test_kafka_origin_multiple_json_objects_multiple_records(sdc_builder, sdc_executor, cluster):
-    """Write json objects messages into Kafka and confirm that Kafka successfully reads them.
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
-
-    message = [{'Alex': 'Developer'}, {'Xavi': 'Developer'}]
-    expected = '[{\'Alex\': Developer}, {\'Xavi\': Developer}]'
-
-    json_test_basic_structure(sdc_builder, sdc_executor, cluster, message, expected)
-
-
-@cluster('cdh', 'kafka')
-def test_kafka_origin_json_array(sdc_builder, sdc_executor, cluster):
-    """Write json array messages into Kafka and confirm that Kafka successfully reads them.
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
-
-    message = ['Alex', 'Xavi']
-    expected = '[Alex, Xavi]'
-
-    json_test_basic_structure(sdc_builder, sdc_executor, cluster, message, expected)
-
-
-def json_test_basic_structure(sdc_builder, sdc_executor, cluster, message, expected):
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='JSON')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin JSON pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, json.dumps(message).encode(), 'JSON')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'JSON')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [expected_output]
 
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_xml_record(sdc_builder, sdc_executor, cluster):
-    """Write xml messages into Kafka and confirm that Kafka successfully reads them.
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
+    """Kafka Consumer parses XML data."""
+    MESSAGE = textwrap.dedent("""\
+                              <developers>
+                                <developer>Alex</developer>
+                                <developer>Xavi</developer>
+                              </developers>
+                              """)
+    EXPECTED_OUTPUT_ROOT_ELEMENT_PRESERVED = {'developers': {'developer': [{'value': 'Alex'}, {'value': 'Xavi'}]}}
+    EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED = {'developer': [{'value': 'Alex'}, {'value': 'Xavi'}]}
+    topic = get_random_string()
 
-    message = '<developers><developer>Alex</developer><developer>Xavi</developer></developers>'
-    expected = '{\'developer\': [{\'value\': Alex}, {\'value\': Xavi}]}'
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='XML',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE.encode())
+    producer.flush()
 
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='XML')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin XML pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'XML')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'XML')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field
+            for record
+            in snapshot[kafka_consumer].output] == ([EXPECTED_OUTPUT_ROOT_ELEMENT_PRESERVED]
+                                                    if getattr(kafka_consumer, 'preserve_root_element', False)
+                                                    else [EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED])
 
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_xml_record_delimiter_element(sdc_builder, sdc_executor, cluster):
-    """Write xml messages into Kafka and confirm that Kafka successfully reads them. Delimiter element
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
+    """Kafka Consumer parses XML data with a specified delimiter element."""
+    MESSAGE = textwrap.dedent("""\
+                              <developers>
+                                <developer>Alex</developer>
+                                <developer>Xavi</developer>
+                              </developers>
+                              """)
+    EXPECTED_OUTPUT_ROOT_ELEMENT_PRESERVED = [{'developer': {'value': 'Alex'}}, {'developer': {'value': 'Xavi'}}]
+    EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED = [{'value': 'Alex'}, {'value': 'Xavi'}]
+    topic = get_random_string()
 
-    message = '<developers><developer>Alex</developer><developer>Xavi</developer></developers>'
-    expected = ['{\'value\': Alex}', '{\'value\': Xavi}']
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='XML',
+                                  delimiter_element='developer',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE.encode())
+    producer.flush()
 
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='XML', delimiter_element='developer')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin XML pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'XML')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'XML_MULTI_ELEMENT')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field
+            for record
+            in snapshot[kafka_consumer].output] == (EXPECTED_OUTPUT_ROOT_ELEMENT_PRESERVED
+                                                    if getattr(kafka_consumer, 'preserve_root_element', False)
+                                                    else EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED)
 
 
 @cluster('cdh', 'kafka')
@@ -479,157 +309,144 @@ def test_kafka_origin_csv_record(sdc_builder, sdc_executor, cluster):
     Kafka Consumer Origin pipeline with standalone mode:
         kafka_consumer >> trash
     """
+    MESSAGE = 'Alex,Xavi,Tucu,Martin'
+    EXPECTED_OUTPUT = {'0': 'Alex', '1': 'Xavi', '2': 'Tucu', '3': 'Martin'}
 
-    message = 'Alex,Xavi,Tucu,Martin'
-    expected = 'OrderedDict([(\'0\', Alex), (\'1\', Xavi), (\'2\', Tucu), (\'3\', Martin)])'
+    topic = get_random_string()
 
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='DELIMITED',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE.encode())
+    producer.flush()
 
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='DELIMITED')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin CSV pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'CSV')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'CSV')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
 
 
 @cluster('cdh', 'kafka')
-def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
-    """Write avro text messages into Kafka standalone and confirm that Kafka successfully reads them.
-    Specifically, this would look like:
+def test_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
+    """Kafka Consumer parses Avro records with a schema."""
+    DATA = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
+    SCHEMA = {'namespace': 'example.avro',
+              'type': 'record',
+              'name': 'Employee',
+              'fields': [{'name': 'name', 'type': 'string'},
+                         {'name': 'age', 'type': 'int'},
+                         {'name': 'emails', 'type': {'type': 'array', 'items': 'string'}},
+                         {'name': 'boss', 'type': ['Employee', 'null']}]}
+    topic = get_random_string()
 
-    Kafka Consumer Origin pipeline:
-        kafka_consumer >>  trash
-    """
-
-    msg = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
-    expected = ('OrderedDict([(\'name\', boss), (\'age\', 60), (\'emails\', [boss@company.com, boss2@company.com]),'
-                ' (\'boss\', None)])')
-
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='AVRO',
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(avro_schema=json.dumps(SCHEMA),
                                   avro_schema_location='INLINE',
-                                  avro_schema=json.dumps(SCHEMA))
+                                  batch_wait_time_in_ms=20_000,
+                                  data_format='AVRO',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
+    binary_stream = io.BytesIO()
+    binary_encoder = avro.io.BinaryEncoder(binary_stream)
+    datum_writer = avro.io.DatumWriter(avro.schema.Parse(kafka_consumer.avro_schema))
+    datum_writer.write(DATA, binary_encoder)
+    producer = cluster.kafka.producer()
+    producer.send(topic, binary_stream.getvalue())
+    producer.flush()
 
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin AVRO Pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'AVRO')
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [DATA]
 
 
 @cluster('cdh', 'kafka')
-def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster):
-    """Write avro text messages into Kafka standalone configuring the producer without a schema
-    and confirm that Kafka successfully reads them.
-    Specifically, this would look like:
+def test_avro_records_without_schema(sdc_builder, sdc_executor, cluster):
+    """Kafka Consumer parses Avro records without a schema."""
+    DATA = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
+    SCHEMA = {'namespace': 'example.avro',
+              'type': 'record',
+              'name': 'Employee',
+              'fields': [{'name': 'name', 'type': 'string'},
+                         {'name': 'age', 'type': 'int'},
+                         {'name': 'emails', 'type': {'type': 'array', 'items': 'string'}},
+                         {'name': 'boss', 'type': ['Employee', 'null']}]}
+    topic = get_random_string()
 
-    Kafka Consumer Origin pipeline:
-        kafka_consumer >>  trash
-    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(avro_schema=json.dumps(SCHEMA),
+                                  avro_schema_location='SOURCE',
+                                  batch_wait_time_in_ms=20_000,
+                                  data_format='AVRO',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    msg = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
-    expected = ('OrderedDict([(\'name\', boss), (\'age\', 60), (\'emails\', [boss@company.com, boss2@company.com]),'
-                ' (\'boss\', None)])')
+    binary_stream = io.BytesIO()
+    datum_writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
+    with avro.datafile.DataFileWriter(writer=binary_stream, datum_writer=datum_writer,
+                                      writer_schema=avro.schema.Parse(json.dumps(SCHEMA))) as data_file_writer:
+        data_file_writer.append(DATA)
+        data_file_writer.flush()
+        raw_bytes = binary_stream.getvalue()
+    producer = cluster.kafka.producer()
+    producer.send(topic, raw_bytes)
+    producer.flush()
 
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='AVRO',
-                                  avro_schema_location='SOURCE')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin AVRO Pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO_WITHOUT_SCHEMA')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'AVRO_WITHOUT_SCHEMA')
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [DATA]
 
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
-    """Write a text message using UDP datagram mode SYSLOG.
-    Specifically, this would look like:
+    """Kafka Consumer parses syslog data."""
+    MESSAGE = ('rO0ABXeOAAAAAQAAAAEAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAAAFw8MzQ+MSAyMDEzLTA2LTI4VDA2Oj'
+               'E0OjU2LjAwMCswMjowMCBteW1hY2hpbmUgc3U6ICdzdSByb290JyBmYWlsZWQgZm9yIGxvbnZpY2sgb24gL2Rldi9wdHMvOA==')
+    EXPECTED_OUTPUT = {
+        'facility': 4,
+        'host': 'mymachine',
+        'priority': 34,
+        'raw': "<34>1 2013-06-28T06:14:56.000+02:00 mymachine su: 'su root' failed for lonvick on /dev/pts/8",
+        'receiverAddr': '127.0.0.1:2000',
+        'receiverPort': 2000,
+        'remaining': "su: 'su root' failed for lonvick on /dev/pts/8",
+        'senderAddr': '127.0.0.1:3000',
+        'senderPort': 3000,
+        'severity': 2,
+        'timestamp': 1372392896000,
+        'version': 1
+    }
+    topic = get_random_string()
 
-    Kafka Consumer Origin pipeline:
-        kafka_consumer >>  trash
-    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='DATAGRAM',
+                                  datagram_packet_format='SYSLOG',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    message = ("rO0ABXeOAAAAAQAAAAEAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAAAFw8MzQ+MSAyMDEzLTA2LTI4VDA2Oj"
-               "E0OjU2LjAwMCswMjowMCBteW1hY2hpbmUgc3U6ICdzdSByb290JyBmYWlsZWQgZm9yIGxvbnZpY2sgb24gL2Rldi9wdHMvOA==")
-    expected = (
-        '{\'severity\': 2, \'senderPort\': 3000, \'receiverAddr\': 127.0.0.1:2000, \'host\': mymachine, \'raw\': '
-        '<34>1 2013-06-28T06:14:56.000+02:00 mymachine su: \'su root\' failed for lonvick on /dev/pts/8, '
-        '\'senderAddr\': 127.0.0.1:3000, \'priority\': 34, \'facility\': 4, \'version\': 1, \'receiverPort\': 2000, '
-        '\'remaining\': su: \'su root\' failed for lonvick on /dev/pts/8, \'timestamp\': 1372392896000}')
+    producer = cluster.kafka.producer()
+    producer.send(topic, base64.b64decode(MESSAGE))
+    producer.flush()
 
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_packet_format='SYSLOG')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-
-    kafka_consumer_pipeline = builder.build(
-        title='Kafka Origin UDP-Datagram-Syslog Pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(message), 'SYSLOG')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'SYSLOG')
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
 
 
 @cluster('cdh', 'kafka')
@@ -661,7 +478,10 @@ def test_kafka_origin_binary_record(sdc_builder, sdc_executor, cluster):
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'BINARY')
+        producer = cluster.kafka.producer()
+        producer.send(kafka_consumer.topic, message.encode())
+        producer.flush()
+
         verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'BINARY')
 
     finally:
@@ -708,7 +528,10 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'NETFLOW')
+        producer = cluster.kafka.producer()
+        producer.send(kafka_consumer.topic, base64.b64decode(msg64packet))
+        producer.flush()
+
         verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'NETFLOW')
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
@@ -716,14 +539,8 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_collectd_message(sdc_builder, sdc_executor, cluster):
-    """Write a text message using UDP datagram mode COLLECTD.
-    Specifically, this would look like:
-
-    Kafka Consumer Origin pipeline:
-        kafka_consumer >>  trash
-    """
-
-    msg64packet = (
+    """Kafka Consumer origin parses COLLECTD message."""
+    MESSAGE = (
         'rO0ABXoAAAQAAAAAAQAAAAMAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAABVkCAAAoLmo9Of+LakZDcogiJUJa2iIO1'
         '+Fl9GzuT86v9yB0HXN1c2VyAAAAMWlwLTE5Mi0xNjgtNDItMjM4LnVzLXdlc3QtMi5jb21wdXRlLmludGVybmFsAAAIAAwVa65L6bcTJwAJAA'
         'wAAAACgAAAAAACAA5pbnRlcmZhY2UAAAMACGxvMAAABAAOaWZfZXJyb3JzAAAGABgAAgICAAAAAAAAAAAAAAAAAAAAAAAIAAwVa65L6bZ8KAA'
@@ -742,154 +559,134 @@ def test_kafka_origin_collectd_message(sdc_builder, sdc_executor, cluster):
         'AGAACAgIAAAAAAAAAAAAAAAAAAAAAAAQAD2lmX3BhY2tldHMAAAYAGAACAgIAAAAAAAAAAAAAAAAAAAAAAAgADBVrrkvpuMMqAAQADmlmX2Vy'
         'cm9ycwAABgAYAAICAgAAAAAAAAAAAAAAAAAAAAAAAwAIZW4yAAAEAA5pZl9vY3RldHMAAAYAGAACAgIAAAAAAAAAAAAAAAAAAAAAAAgADBVrr'
         'kvpuMdcAAQADmlmX2Vycm9ycwAABgAYAAICAgAAAAAAAAAAAAAAAAAAAAA=')
+    # Only looking at the first record being captured.
+    EXPECTED_OUTPUT = {'plugin_instance': 'lo0',
+                       'plugin': 'interface',
+                       'tx': 0,
+                       'rx': 0,
+                       'host': 'ip-192-168-42-238.us-west-2.compute.internal',
+                       'time_hires': 1543518938371396391,
+                       'type': 'if_errors'}
+    topic = get_random_string()
 
-    expected = (
-        '{\'plugin_instance\': lo0, \'plugin\': interface, \'tx\': 0, \'rx\': 0, \'host\': ip-192-168-42-238.us-west-2.'
-        'compute.internal, \'time_hires\': 1543518938371396391, \'type\': if_errors}')
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='DATAGRAM',
+                                  datagram_data_format='COLLECTD',
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
+    producer = cluster.kafka.producer()
+    producer.send(topic, base64.b64decode(MESSAGE))
+    producer.flush()
 
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_data_format='COLLECTD')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-
-    kafka_consumer_pipeline = builder.build(
-        title='Kafka Origin UDP-Datagram-COLLECTD Pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'COLLECTD')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'COLLECTD')
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert snapshot[kafka_consumer].output[0].field == EXPECTED_OUTPUT
 
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_log_record(sdc_builder, sdc_executor, cluster):
-    """Write log messages into Kafka and confirm that Kafka successfully reads them.
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
+    """Kafka Consumer origin processes Log4j records."""
+    MESSAGE = '200 [main] DEBUG org.StreamSets.Log4j unknown - This is a sample log message'
+    EXPECTED_OUTPUT = {'category': 'org.StreamSets.Log4j',
+                       'message': 'This is a sample log message',
+                       'ndc': 'unknown',
+                       'relativetime': '200',
+                       'severity': 'DEBUG',
+                       'thread': 'main'}
+    topic = get_random_string()
 
-    message = ('+20150320 [15:53:31,161] DEBUG PipelineConfigurationValidator - Pipeline \'test:preview\' validation. '
-               'valid=true, canPreview=true, issuesCount=0 - ')
-
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='LOG',
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='LOG',
                                   log_format='LOG4J',
-                                  retain_original_line=True,
-                                  on_parse_error='INCLUDE_AS_STACK_TRACE')
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin LOG pipeline').configure_for_environment(cluster)
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE.encode())
+    producer.flush()
 
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'LOG')
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 'LOG')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-
-
-def produce_kafka_messages_protobuf(topic, sdc_builder, sdc_executor, cluster, message):
-    # Build the Kafka destination pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    builder.add_error_stage('Discard')
-
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = message
-
-    kafka_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
-                                          library=cluster.kafka.standalone_stage_lib)
-    kafka_destination.topic = topic
-    kafka_destination.set_attributes(data_format='PROTOBUF', message_type='Contact',
-                                     protobuf_descriptor_file=PROTOBUF_FILE_PATH)
-
-    dev_raw_data_source >> kafka_destination
-    kafka_destination_pipeline = builder.build(
-        title='Kafka Origin PROTOBUF pipeline(Producer)').configure_for_environment(cluster)
-
-    kafka_destination_pipeline.configuration['rateLimit'] = 1
-
-    sdc_executor.add_pipeline(kafka_destination_pipeline)
-    sdc_executor.start_pipeline(kafka_destination_pipeline).wait_for_pipeline_batch_count(10)
-
-    sdc_executor.stop_pipeline(kafka_destination_pipeline)
-    history = sdc_executor.get_pipeline_history(kafka_destination_pipeline)
-    msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
-    assert msgs_sent_count != 0
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
 
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_protobuf_record(sdc_builder, sdc_executor, cluster):
-    """Write protobuf messages into Kafka and confirm that Kafka successfully reads them.
+    """Kafka Consumer parses records in protobuf format."""
 
-    For this test, ./resources/protobuf/addressbook.desc needs to be placed in
-    $SDC_RESOURCES/resources/protobuf directory.
+    # Message comes from generating Python source files from the proto file and using them as follows:
+    # >>> import addressbook_pb2
+    # >>> from google.protobuf.internal.encoder import _VarintBytes
+    # >>> contact = addressbook_pb2.Contact()
+    # >>> contact.first_name = 'Martin'
+    # >>> contact.last_name = 'Balzamo'
+    # >>> _VarintBytes(contact.ByteSize()) + contact.SerializeToString()
+    # b'\x11\n\x06Martin\x12\x07Balzamo'
+    #
+    # Note that the VarintBytes call be omitted if each Kafka message contains one protobuf message
+    # (i.e. kafka_consumer.delimited_messages = False).
+    MESSAGE = b'\x11\n\x06Martin\x12\x07Balzamo'
+    MESSAGE_TYPE = 'Contact'
+    EXPECTED_OUTPUT = {'first_name': 'Martin', 'last_name': 'Balzamo'}
+    topic = get_random_string()
 
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
+    protobuf_proto_file_contents = textwrap.dedent("""\
+                                                   syntax = "proto2";
 
-    message = '{"first_name": "Martin","last_name": "Balzamo"}'
-    expected = '(\'first_name\', Martin), (\'last_name\', Balzamo)'
+                                                   message AddressBook {
+                                                       repeated Contact contacts = 1;
+                                                   };
 
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
+                                                   message Contact {
+                                                     required string first_name = 1;
+                                                     required string last_name = 2;
+                                                   };
 
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
+                                                   message SearchResult {
+                                                       repeated Contact contacts = 1;
+                                                   };
+                                                   """)
+    protobuf_file_string = get_random_string()
+    protobuf_proto_filename = f'{protobuf_file_string}.proto'
+    protobuf_proto_filepath = os.path.join('/tmp/', protobuf_proto_filename)
+    sdc_executor.write_file(protobuf_proto_filepath, protobuf_proto_file_contents)
 
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='PROTOBUF', message_type='Contact',
-                                  protobuf_descriptor_file=PROTOBUF_FILE_PATH, delimited_messages=True)
+    protobuf_descriptor_filename = f'{protobuf_file_string}.desc'
+    sdc_executor.execute_shell(f'protoc -o ${{SDC_RESOURCES}}/{protobuf_descriptor_filename} '
+                               f'-I /tmp {protobuf_proto_filename}')
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE)
+    producer.flush()
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin PROTOBUF pipeline').configure_for_environment(cluster)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                  data_format='PROTOBUF',
+                                  message_type=MESSAGE_TYPE,
+                                  protobuf_descriptor_file=protobuf_descriptor_filename,
+                                  topic=topic)
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> pipeline_finisher
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        produce_kafka_messages_protobuf(kafka_consumer.topic, sdc_builder, sdc_executor, cluster, message)
-
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'PROTOBUF')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
 
 
 def get_kafka_consumer_stage(pipeline_builder, cluster):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     # Default on error action.
     pipeline_builder.add_error_stage('Discard')
-
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
                                                 type='origin',
                                                 library=cluster.kafka.standalone_stage_lib)
@@ -899,103 +696,7 @@ def get_kafka_consumer_stage(pipeline_builder, cluster):
                                   max_batch_size_in_records=10,
                                   topic=get_random_string(string.ascii_letters, 10),
                                   kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
-
     return kafka_consumer
-
-
-def get_kafka_consumer_stage_since_sdc_3_6_0(pipeline_builder, cluster):
-    """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
-    # Default on error action.
-    pipeline_builder.add_error_stage('Discard')
-
-    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
-                                                type='origin',
-                                                library=cluster.kafka.standalone_stage_lib)
-    # Default stage configuration.
-    kafka_consumer.set_attributes(data_format='TEXT',
-                                  batch_wait_time_in_ms=20000,
-                                  max_batch_size_in_records=10,
-                                  topic=get_random_string(string.ascii_letters, 10))
-
-    return kafka_consumer
-
-
-def produce_kafka_messages(topic, cluster, message, data_format):
-    """Send basic messages to Kafka"""
-    # Get Kafka producer
-    producer = cluster.kafka.producer()
-
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'TEXT', 'JSON']
-
-    # Write records into Kafka depending on the data_format.
-    if data_format in basic_data_formats:
-        producer.send(topic, message)
-
-    elif data_format == 'WITH_KEY':
-        producer.send(topic, message, key=get_random_string(string.ascii_letters, 10).encode())
-
-    elif data_format == 'AVRO':
-        writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
-        bytes_writer = io.BytesIO()
-        encoder = avro.io.BinaryEncoder(bytes_writer)
-        writer.write(message, encoder)
-        raw_bytes = bytes_writer.getvalue()
-        producer.send(topic, raw_bytes)
-
-    elif data_format == 'AVRO_WITHOUT_SCHEMA':
-        bytes_writer = io.BytesIO()
-        datum_writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
-        data_file_writer = DataFileWriter(writer=bytes_writer, datum_writer=datum_writer,
-                                          writer_schema=avro.schema.Parse(json.dumps(SCHEMA)))
-        data_file_writer.append(message)
-        data_file_writer.flush()
-        raw_bytes = bytes_writer.getvalue()
-        data_file_writer.close()
-        producer.send(topic, raw_bytes)
-
-    producer.flush()
-
-
-def produce_kafka_messages_in_different_timestamp(topic, cluster, messages, data_format, num_messages_to_send_first):
-    """send num_messages_to_send_first messages, sleep 30 seconds, then send the rest of the messages and return the
-    timestamp value after the 30 seconds sleep (<= timestamp of first message in second batch and >= last message in
-    first batch)
-    """
-    timestamp = -1
-    if num_messages_to_send_first < len(messages):
-        # Send first batch of messages.
-        for i in range(0, num_messages_to_send_first):
-            message = messages[i]
-            produce_kafka_messages(topic, cluster, message.encode(), data_format)
-
-        # Sleep for 30 seconds.
-        time.sleep(30)
-        timestamp = int(time.time() * 1000)
-
-        # Send second batch of messages.
-        for j in range(num_messages_to_send_first, len(messages)):
-            message = messages[j]
-            produce_kafka_messages(topic, cluster, message.encode(), data_format)
-
-    return timestamp
-
-
-def verify_kafka_origin_results_timestamp(kafka_consumer_pipeline, sdc_executor, message, data_format):
-    """Start, stop pipeline and verify results using snapshot"""
-
-    # Start Pipeline.
-    snapshot_pipeline_command = sdc_executor.capture_snapshot(kafka_consumer_pipeline, start_pipeline=True, wait=False)
-
-    logger.debug('Finish the snapshot and verify')
-    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
-    snapshot = snapshot_command.snapshot
-
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
-
-    # Verify snapshot data.
-    if data_format in basic_data_formats:
-        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        assert message == [str(record_field[0]), str(record_field[1])]
 
 
 def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, data_format):
@@ -1008,50 +709,14 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, 
     snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
     snapshot = snapshot_command.snapshot
 
-    basic_data_formats = ['CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
-
     # This is temporal hack until something like STF-1110 gets implemented
     logger.info(f"Snapshot raw data: {snapshot._data}")
 
     # Verify snapshot data.
-    if data_format in basic_data_formats:
-        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        assert message == str(record_field[0])
-
-    elif data_format == 'XML':
-        output_data = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output][0]
-        record_field = get_xml_output_field(kafka_consumer_pipeline[0], output_data, 'developers')
-        assert message == str(record_field)
-
-    elif data_format == 'LOG':
-        stage = snapshot[kafka_consumer_pipeline[0].instance_name]
-        assert 0 == len(stage.error_records)
-        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        assert message == str(record_field[0]['originalLine'])
-
-    elif data_format == 'BINARY':
+    if data_format == 'BINARY':
         record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
         assert message == record_field[0]
-
-    elif data_format == 'PROTOBUF':
-        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        assert message in str(record_field[0])
-
-    elif data_format == 'XML_MULTI_ELEMENT':
-        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        assert message[0] in str(record_field[0])
-        assert message[1] in str(record_field[1])
-
     elif data_format == 'NETFLOW':
         record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
         assert message[0] in str(record_field)
         assert message[1] in str(record_field)
-
-    elif data_format == 'TEXT_TIMESTAMP':
-        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        record_header = [record.header for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        for element in record_header:
-            logger.debug('ELEMENT: %s', element['values'])
-            assert 'timestamp' in element['values']
-            assert 'timestampType' in element['values']
-        assert message == str(record_field[0])
