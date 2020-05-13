@@ -1,7 +1,7 @@
 import logging
+import textwrap
 
 import pytest
-
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import category, cluster, credentialstore, sdc_min_version
@@ -20,7 +20,7 @@ def kafka_check(cluster):
         pytest.skip('Kafka tests require Kafka to be installed on the cluster')
 
 
-@stub
+@cluster('cdh', 'kafka')
 @category('basic')
 @pytest.mark.parametrize('stage_attributes', [{'allow_extra_columns': False,
                                                'data_format': 'DELIMITED',
@@ -29,7 +29,51 @@ def kafka_check(cluster):
                                                'data_format': 'DELIMITED',
                                                'header_line': 'WITH_HEADER'}])
 def test_allow_extra_columns(sdc_builder, sdc_executor, cluster, stage_attributes):
-    pass
+    """Depending on whether Allow Extra Columns is enabled, Kafka Consumer origin either handles records with an
+    unexpected number of columns or sends such records to error while sending compliant records to output.
+    """
+    MESSAGE = textwrap.dedent("""\
+                              column1,column2,column3
+                              Field11,Field12,Field13,Field14,Field15
+                              Field21,Field22,Field23
+                              """)
+    EXPECTED_OUTPUT_ALLOW_EXTRA_COLUMNS = [{'column1': 'Field11',
+                                            'column2': 'Field12',
+                                            'column3': 'Field13',
+                                            '_extra_01': 'Field14',
+                                            '_extra_02': 'Field15'},
+                                           {'column1': 'Field21',
+                                            'column2': 'Field22',
+                                            'column3': 'Field23'}]
+    EXPECTED_OUTPUT_DISALLOW_EXTRA_COLUMNS = [{'column1': 'Field21',
+                                               'column2': 'Field22',
+                                               'column3': 'Field23'}]
+    CANNOT_PARSE_RECORD_ERROR_CODE = 'KAFKA_37'
+    topic = get_random_string()
+
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE.encode())
+    producer.flush()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(topic=topic,
+                                  **stage_attributes)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    if stage_attributes['allow_extra_columns']:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT_ALLOW_EXTRA_COLUMNS
+    else:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+        assert [record.header['errorCode'] for record in wiretap.error_records] == [CANNOT_PARSE_RECORD_ERROR_CODE]
+        assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT_DISALLOW_EXTRA_COLUMNS
 
 
 @stub
