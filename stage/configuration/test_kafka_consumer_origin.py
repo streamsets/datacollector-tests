@@ -394,7 +394,7 @@ def test_ignore_control_characters(sdc_builder, sdc_executor, cluster, stage_att
     pass
 
 
-@stub
+@cluster('cdh', 'kafka')
 @category('basic')
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED',
                                                'delimiter_format_type': 'CUSTOM',
@@ -403,7 +403,37 @@ def test_ignore_control_characters(sdc_builder, sdc_executor, cluster, stage_att
                                                'delimiter_format_type': 'CUSTOM',
                                                'ignore_empty_lines': True}])
 def test_ignore_empty_lines(sdc_builder, sdc_executor, cluster, stage_attributes):
-    pass
+    """Ignore Empty Lines configuration skips past empty lines in delimited files if enabled."""
+    MESSAGE = textwrap.dedent("""\
+                              Field11|Field12|Field13
+
+                              Field21|Field22|Field23
+                              """)
+    EXPECTED_DATA_IGNORE_EMPTY_LINES_ENABLED = [{'0': 'Field11', '1': 'Field12', '2': 'Field13'},
+                                                {'0': 'Field21', '1': 'Field22', '2': 'Field23'}]
+    EXPECTED_DATA_IGNORE_EMPTY_LINES_DISABLED = [{'0': 'Field11', '1': 'Field12', '2': 'Field13'},
+                                                 {'0': ''},
+                                                 {'0': 'Field21', '1': 'Field22', '2': 'Field23'}]
+    topic = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(topic=topic,
+                                  **stage_attributes)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE.encode())
+    producer.flush()
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == (EXPECTED_DATA_IGNORE_EMPTY_LINES_ENABLED
+                                                                   if kafka_consumer.ignore_empty_lines
+                                                                   else EXPECTED_DATA_IGNORE_EMPTY_LINES_DISABLED)
 
 
 @stub
