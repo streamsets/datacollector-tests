@@ -130,6 +130,43 @@ def test_pipeline_preview(sdc_executor, pipeline):
     assert preview_data.output[0].field['emp_id'].value == '123456'
 
 
+@sdc_min_version('3.16.0')
+def test_delimited_data(sdc_executor, sdc_builder):
+    """Test delimited data format with 2 records, the first one containing an extra, unexpected column.
+    We verify that the first one is sent to error and the second one is processed correctly so we have recovered
+    properly from the ParserException
+
+    The pipeline looks like:
+    dev_raw_data_source >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    data = 'Name,Position\nAlex,Developer,1\nXavi,Developer'
+    expected = {'Name': 'Xavi', 'Position': 'Developer'}
+    expected_error = {'columns': ['Alex', 'Developer', '1'], 'headers': ['Name', 'Position']}
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> trash
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
+    assert [record.field for record in snapshot[dev_raw_data_source].output] == [expected]
+    assert [record.field for record in snapshot[dev_raw_data_source].error_records] == [expected_error]
+
+    history = sdc_executor.get_pipeline_history(pipeline)
+    assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 2
+    assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+    assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 1
+
+
 @sdc_min_version('3.5.1')
 def test_validate(sdc_executor, pipeline_with_events):
     """Validate pipeline with events on origin side."""
