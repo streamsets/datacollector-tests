@@ -2234,6 +2234,8 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         if subscription_type == PUSH_TOPIC:
             subscription_id, push_topic_name = create_push_topic(client)
         else:
+            if Version(sdc_builder.version) < Version('3.7.0'):
+                pytest.skip('CDC Feature requires minimum SDC version 3.7.0')
             subscription_id = enable_cdc(client)
 
         query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
