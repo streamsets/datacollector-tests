@@ -175,11 +175,32 @@ def test_convert_hi_res_time_and_interval(sdc_builder, sdc_executor, cluster, st
     pass
 
 
-@stub
+@cluster('cdh', 'kafka')
 @category('basic')
+@pytest.mark.parametrize('custom_delimiter', ['@', '^'])
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT', 'use_custom_delimiter': True}])
-def test_custom_delimiter(sdc_builder, sdc_executor, cluster, stage_attributes):
-    pass
+def test_custom_delimiter(sdc_builder, sdc_executor, cluster, stage_attributes, custom_delimiter):
+    """Custom Delimiter attribute of the stage is validated for two different custom delimiters."""
+    message = f'Text1,{custom_delimiter}Text2:{custom_delimiter}Text3'
+    EXPECTED_OUTPUT = [{'text': 'Text1,'}, {'text': 'Text2:'}, {'text': 'Text3'}]
+    topic = get_random_string()
+
+    producer = cluster.kafka.producer()
+    producer.send(topic, message.encode())
+    producer.flush()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(custom_delimiter=custom_delimiter,
+                                  topic=topic,
+                                  **stage_attributes)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT
 
 
 @stub
