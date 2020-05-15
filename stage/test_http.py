@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gssapi
 import json
 import logging
+import requests
 import string
 import time
 import http.client as httpclient
 from collections import namedtuple
+from requests_gssapi import HTTPSPNEGOAuth
 
 import pytest
 from pretenders.common.constants import FOREVER
-from streamsets.testframework.markers import http, sdc_min_version
+from streamsets.testframework.markers import http, sdc_min_version, spnego
 from streamsets.testframework.utils import get_random_string
 from streamsets.sdk.utils import Version
 
@@ -617,3 +620,47 @@ def test_http_client_http_status_on_header(sdc_builder, sdc_executor, http_clien
 
     finally:
         http_mock.delete_mock()
+
+
+@spnego
+@sdc_min_version("3.16.0")
+def test_http_server_with_spnego(sdc_builder, sdc_executor, http_client):
+    # The goal of this test is to verify the http server origin which is configured to use SPNEGO/Kerberos
+    # authentication. As part of the test, a HTTP Server stage is configured with SPENGO/Kerberos authentication and the
+    # pipeline started. A connection is attempted where the client has not yet authenticated with kerberos. This should
+    # fail with a 401 response. The next step is to login on the client (in this case the STF container) and then do a
+    # get and a post (with some random data) and verify that the response code is a 200.
+    try:
+        builder = sdc_builder.get_pipeline_builder()
+        http_server = builder.add_stage('HTTP Server', type='origin')
+        http_server.set_attributes(use_kerberos_with_spnego_authentication=True,
+                                   kerberos_realm=http_client.kerberos_realm,
+                                   http_spnego_principal=http_client.service_principal,
+                                   keytab_file=http_client.service_keytab_path,
+                                   data_format='JSON')
+        trash = builder.add_stage('Trash')
+        http_server >> trash
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        gssapi_auth = HTTPSPNEGOAuth(mech=http_client.spnego_auth_mechanism)
+
+        server_url = 'http://{}:8000'.format(sdc_executor.fqdn)
+
+        # Test connection without credentials. This should fail with 401.
+        response = requests.get(server_url, auth=gssapi_auth)
+        assert response.status_code == 401
+
+        # Get Kerberos credentials.
+        http_client.kerberos_login()
+
+        # Test connections after getting credentials.
+        response = requests.get(server_url, auth=gssapi_auth)
+        assert response.status_code == 200
+
+        response = requests.post(server_url, auth=gssapi_auth, data='{"foo": "bar"}')
+        assert response.status_code == 200
+
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
