@@ -683,6 +683,47 @@ def test_kafka_origin_protobuf_record(sdc_builder, sdc_executor, cluster):
     assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
 
 
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.17.0')
+def test_kafka_origin_csv_record_header_missmatch(sdc_builder, sdc_executor, cluster):
+    """Write csv messages into Kafka and confirm that Kafka successfully reads them.
+
+    Test delimited data format with 2 records, the first one containing an extra, unexpected column.
+    We verify that the first one is sent to error and the second one is processed correctly so we have recovered
+    properly from the ParserException
+
+    Kafka Consumer Origin pipeline with standalone mode:
+        kafka_consumer >> trash
+    """
+
+    data = 'Name,Position\nAlex,Developer,1\nXavi,Developer'
+    expected = {'Name': 'Xavi', 'Position': 'Developer'}
+    expected_error = {'columns': ['Alex', 'Developer', '1'], 'headers': ['Name', 'Position']}
+
+    topic = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(header_line='WITH_HEADER',
+                                  batch_wait_time_in_ms=20_000,
+                                  data_format='DELIMITED',
+                                  topic=topic)
+    trash = pipeline_builder.add_stage('Trash')
+    kafka_consumer >> trash
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    producer = cluster.kafka.producer()
+    producer.send(topic, data.encode())
+    producer.flush()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_consumer].output] == [expected]
+    assert [record.field for record in snapshot[kafka_consumer].error_records] == [expected_error]
+
+    sdc_executor.stop_pipeline(pipeline)
+
+
 def get_kafka_consumer_stage(pipeline_builder, cluster):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     # Default on error action.
