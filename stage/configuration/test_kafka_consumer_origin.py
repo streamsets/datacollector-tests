@@ -413,7 +413,7 @@ def test_import_sheets(sdc_builder, sdc_executor, cluster, stage_attributes):
     pass
 
 
-@stub
+@cluster('cdh', 'kafka')
 @category('basic')
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'TEXT',
                                                'include_custom_delimiter': False,
@@ -422,7 +422,31 @@ def test_import_sheets(sdc_builder, sdc_executor, cluster, stage_attributes):
                                                'include_custom_delimiter': True,
                                                'use_custom_delimiter': True}])
 def test_include_custom_delimiter(sdc_builder, sdc_executor, cluster, stage_attributes):
-    pass
+    """Depending on whether Include Custom Delimiter attribute is enabled, Kafka Consumer will include custom delimiter
+    as part of text field value, otherwise it will be treated as a delimiter element."""
+    CUSTOM_DELIMITER = '@'
+    MESSAGE = f'f1{CUSTOM_DELIMITER}f2{CUSTOM_DELIMITER}f3'
+    EXPECTED_OUTPUT = ([{'text': f'f1{CUSTOM_DELIMITER}'}, {'text': f'f2{CUSTOM_DELIMITER}'}, {'text': 'f3'}]
+                       if stage_attributes['include_custom_delimiter']
+                       else [{'text': 'f1'}, {'text': 'f2'}, {'text': 'f3'}])
+    topic = get_random_string()
+
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE.encode())
+    producer.flush()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(custom_delimiter=CUSTOM_DELIMITER,
+                                  topic=topic,
+                                  **stage_attributes)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT
 
 
 @stub
