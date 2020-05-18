@@ -985,6 +985,171 @@ def test_orace_cdc_events(sdc_builder, sdc_executor, database):
 
 
 @database('oracle')
+def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
+    """Test Oracle CDC can track new tables created after the pipeline initialization.
+
+    Besides to validate the origin consumes the records inserted in the new table, the test also validates the
+    corresponding DDL events are also created (CREATE and TRUNCATE events).
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
+    table_pattern = f'{table_prefix}%'
+    sports_table = f'{table_prefix}_SPORTS'
+    connection = database.engine.connect()
+
+    sports_data1 = [(1, 'Kelly Slater', 'Surf'),
+                    (2, 'Steve Caballero', 'Skateboard'),
+                    (3, 'Andre Botha', 'Bodyboard')]
+
+    sports_data2 = [(4, 'Magnus Carlsen', 'Chess'),
+                    (5, 'Xin Xu', 'Table tennis'),
+                    (6, 'Michael van Gerwen', 'Darts')]
+
+    # Event info is: table name, event type, schema.
+    expected_events = [(sports_table, 'CREATE', {'ID': 'NUMERIC', 'PLAYER': 'VARCHAR', 'SPORT': 'VARCHAR'}),
+                       (sports_table, 'TRUNCATE', {})]
+
+    try:
+        # Build the pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   batch_size=1,
+                                                   buffer_locally=True,
+                                                   src_table_name=table_pattern,
+                                                   initial_change='LATEST',
+                                                   dictionary_source='DICT_FROM_REDO_LOGS')
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Start pipeline, create table and populate
+        snapshot_cmd = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False,
+                                                     batches=len(sports_data1 + sports_data2), batch_size=1)
+
+        connection.execute(f'CREATE TABLE {sports_table} (ID NUMBER PRIMARY KEY, '
+                           'PLAYER VARCHAR2(50), SPORT VARCHAR2(50))')
+        for id, name, sport in sports_data1:
+            connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
+
+        connection.execute(f'TRUNCATE TABLE {sports_table}')
+        for id, name, sport in sports_data2:
+            connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
+
+        snapshot = snapshot_cmd.wait_for_finished(timeout_sec=240).snapshot
+        sdc_executor.stop_pipeline(pipeline, force=True)
+
+        sdc_events = [(event.header.values['oracle.cdc.table'],
+                       event.header.values['sdc.event.type'],
+                       event.field)
+                      for batch in snapshot.snapshot_batches
+                      for event in batch[oracle_cdc.instance_name].event_records]
+        assert sdc_events == expected_events
+
+        sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
+                       for batch in snapshot.snapshot_batches
+                       for record in batch[oracle_cdc.instance_name].output]
+        assert sdc_records == sports_data1 + sports_data2
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', sports_table, database.type)
+        connection.execute(f'DROP TABLE {sports_table}')
+
+
+@database('oracle')
+def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
+    """Test that tables dropped before being chached by Oracle CDC origin are correctly ingored.
+
+    There are three cases regarding the tables potentially tracked by the stage:
+    - The table have been created before pipeline initialization and is still present.
+    - The table is created after the pipeline initialization.
+    - The table have been created and removed before the pipeline initialization.
+
+    Since the stage needs the table schema to create CDC records for a table, it cannot handle the last
+    case. This test check that Oracle CDC correctly ignores removed tables and that no spurious events are
+    generated for them. To do so, we create two tables, insert records and drop one of them; then check that
+    only the remaining table generated CDC records and events.
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
+    table_pattern = f'{table_prefix}%'
+    sports_table = f'{table_prefix}_SPORTS'
+    cities_table = f'{table_prefix}_CITY'
+    connection = database.engine.connect()
+
+    sports_data = [(1, 'Kelly Slater', 'Surf'),
+                   (2, 'Steve Caballero', 'Skateboard'),
+                   (3, 'Andre Botha', 'Bodyboard')]
+
+    cities_data = [(1, 'Glasgow', 'Scotland'),
+                   (2, 'Cork', 'Ireland'),
+                   (3, 'Lisbon', 'Portugal')]
+
+    # Event info is: table name, event type, schema.
+    expected_events = [(sports_table, 'STARTUP', {'ID': 'NUMERIC', 'PLAYER': 'VARCHAR', 'SPORT': 'VARCHAR'}),
+                       (sports_table, 'CREATE', {})]
+
+    try:
+        start_scn = _get_last_scn(connection)
+
+        connection.execute(f'CREATE TABLE {cities_table} (ID NUMBER PRIMARY KEY, CITY VARCHAR2(50), '
+                           'COUNTRY VARCHAR2(50))')
+        for id, city, country in cities_data:
+            connection.execute(f"INSERT INTO {cities_table} VALUES({id}, '{city}', '{country}')")
+        connection.execute(f'DROP TABLE {cities_table}')
+
+        connection.execute(f'CREATE TABLE {sports_table} (ID NUMBER PRIMARY KEY, '
+                           'PLAYER VARCHAR2(50), SPORT VARCHAR2(50))')
+        for id, name, sport in sports_data:
+            connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
+
+        # Build the pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   batch_size=1,
+                                                   buffer_locally=True,
+                                                   src_table_name=table_pattern,
+                                                   initial_change='SCN',
+                                                   start_scn=start_scn,
+                                                   dictionary_source='DICT_FROM_REDO_LOGS')
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Start pipeline, create table and populate
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=240,
+                                                 batches=len(sports_data), batch_size=1).snapshot
+        sdc_executor.stop_pipeline(pipeline, force=True)
+
+        sdc_events = [(event.header.values['oracle.cdc.table'],
+                       event.header.values['sdc.event.type'],
+                       event.field)
+                      for batch in snapshot.snapshot_batches
+                      for event in batch[oracle_cdc.instance_name].event_records]
+        assert sdc_events == expected_events
+
+        sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
+                       for batch in snapshot.snapshot_batches
+                       for record in batch[oracle_cdc.instance_name].output]
+        assert sdc_records == sports_data
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', sports_table, database.type)
+        connection.execute(f'DROP TABLE {sports_table}')
+
+
+@database('oracle')
 @pytest.mark.parametrize('initial_change', ['DATE', 'SCN', 'LATEST'])
 def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
     """Test Initial Change config.
