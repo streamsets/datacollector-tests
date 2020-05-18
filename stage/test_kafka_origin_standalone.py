@@ -638,49 +638,33 @@ def test_kafka_origin_protobuf_record(sdc_builder, sdc_executor, cluster):
     MESSAGE_TYPE = 'Contact'
     EXPECTED_OUTPUT = {'first_name': 'Martin', 'last_name': 'Balzamo'}
     topic = get_random_string()
+    protobuf_descriptor_filename = f'{get_random_string()}.desc'
 
-    protobuf_proto_file_contents = textwrap.dedent("""\
-                                                   syntax = "proto2";
+    # We keep a pre-compiled Protobuf descriptor file in the stages/resources/protobuf folder. We write this
+    # into the Data Collector instance's SDC_RESOURCES folder.
+    try:
+        with open(os.path.join(os.path.dirname(__file__), 'resources', 'protobuf', 'addressbook.desc'), 'rb') as f:
+            sdc_executor.write_file(f'${{SDC_RESOURCES}}/{protobuf_descriptor_filename}', f.read().decode('latin-1'))
+        producer = cluster.kafka.producer()
+        producer.send(topic, MESSAGE)
+        producer.flush()
 
-                                                   message AddressBook {
-                                                       repeated Contact contacts = 1;
-                                                   };
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+        kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
+                                      data_format='PROTOBUF',
+                                      message_type=MESSAGE_TYPE,
+                                      protobuf_descriptor_file=protobuf_descriptor_filename,
+                                      topic=topic)
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        kafka_consumer >> pipeline_finisher
+        pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-                                                   message Contact {
-                                                     required string first_name = 1;
-                                                     required string last_name = 2;
-                                                   };
-
-                                                   message SearchResult {
-                                                       repeated Contact contacts = 1;
-                                                   };
-                                                   """)
-    protobuf_file_string = get_random_string()
-    protobuf_proto_filename = f'{protobuf_file_string}.proto'
-    protobuf_proto_filepath = os.path.join('/tmp/', protobuf_proto_filename)
-    sdc_executor.write_file(protobuf_proto_filepath, protobuf_proto_file_contents)
-
-    protobuf_descriptor_filename = f'{protobuf_file_string}.desc'
-    sdc_executor.execute_shell(f'protoc -o ${{SDC_RESOURCES}}/{protobuf_descriptor_filename} '
-                               f'-I /tmp {protobuf_proto_filename}')
-    producer = cluster.kafka.producer()
-    producer.send(topic, MESSAGE)
-    producer.flush()
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='PROTOBUF',
-                                  message_type=MESSAGE_TYPE,
-                                  protobuf_descriptor_file=protobuf_descriptor_filename,
-                                  topic=topic)
-    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
-    pipeline = pipeline_builder.build().configure_for_environment(cluster)
-
-    sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
+    finally:
+        sdc_executor.execute_shell(f'rm ${{SDC_RESOURCES}}/{protobuf_descriptor_filename}')
 
 
 @cluster('cdh', 'kafka')

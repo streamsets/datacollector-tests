@@ -1,0 +1,16 @@
+// To generate the python protobuf interface call:
+// $ protoc addressbook.proto --python_out .
+syntax = "proto2";
+
+message AddressBook {
+    repeated Contact contacts = 1;
+};
+
+message Contact {
+  required string first_name = 1;
+  required string last_name = 2;
+};
+
+message SearchResult {
+    repeated Contact contacts = 1;
+};
