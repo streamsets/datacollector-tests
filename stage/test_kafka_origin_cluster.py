@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
-SNAPSHOT_TIMEOUT_SEC = 150
+SNAPSHOT_TIMEOUT_SEC = 200
 MAX_BATCH_WAIT_TIME = 30
 
 MIN_SDC_VERSION_WITH_SPARK_2_LIB = Version('3.3.0')
@@ -54,6 +54,7 @@ SCHEMA = {
 def port():
     return random.randrange(20000, 25000)
 
+
 @pytest.fixture(autouse=True)
 def kafka_check(cluster):
     if isinstance(cluster, ClouderaManagerCluster) and not hasattr(cluster, 'kafka'):
@@ -71,6 +72,14 @@ def spark2_check(cluster):
         pytest.skip('Kafka tests require Spark 2 to be installed on the cluster')
 
 
+@pytest.fixture(autouse=True)
+def check_ssl_supported(cluster, sdc_builder):
+    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
+            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
+        pytest.skip('Kafka cluster mode test only '
+                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+
+
 @cluster('cdh')
 def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
@@ -86,12 +95,7 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     """
 
     message = 'Hello World from SDC & DPM!'
-    expected = '{\'text\': Hello World from SDC & DPM!}'
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+    expected = {'text': 'Hello World from SDC & DPM!'}
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -140,12 +144,7 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
     """
 
     message = 'Hello World from SDC & DPM!'
-    expected = '{\'text\': Hello World from SDC & DPM!}'
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+    expected = {'text': 'Hello World from SDC & DPM!'}
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -189,9 +188,8 @@ def test_kafka_origin_multiple_json_objects_single_record_cluster(sdc_builder, s
         sdc_rpc_origin >> trash
     """
     message = {'Alex': 'Developer', 'Xavi': 'Developer'}
-    expected = '{\'Alex\': Developer, \'Xavi\': Developer}'
 
-    json_test(sdc_builder, sdc_executor, cluster, message, expected, port)
+    json_test(sdc_builder, sdc_executor, cluster, message, message, port)
 
 
 @cluster('cdh')
@@ -205,9 +203,8 @@ def test_kafka_origin_multiple_json_objects_multiple_records_cluster(sdc_builder
     """
 
     message = [{'Alex': 'Developer'}, {'Xavi': 'Developer'}]
-    expected = '[{\'Alex\': Developer}, {\'Xavi\': Developer}]'
 
-    json_test(sdc_builder, sdc_executor, cluster, message, expected, port)
+    json_test(sdc_builder, sdc_executor, cluster, message, message, port)
 
 
 @cluster('cdh')
@@ -221,9 +218,8 @@ def test_kafka_origin_json_array_cluster(sdc_builder, sdc_executor, cluster, por
     """
 
     message = ['Alex', 'Xavi']
-    expected = '[Alex, Xavi]'
 
-    json_test(sdc_builder, sdc_executor, cluster, message, expected, port)
+    json_test(sdc_builder, sdc_executor, cluster, message, message, port)
 
 
 @cluster('cdh')
@@ -238,12 +234,7 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
     """
 
     message = '<developers><developer>Alex</developer><developer>Xavi</developer></developers>'
-    expected = '{\'developer\': [{\'value\': Alex}, {\'value\': Xavi}]}'
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+    expected = {'developers': {'developer': [{'value': 'Alex'}, {'value': 'Xavi'}]}}
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -289,12 +280,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
     """
 
     message = '<developers><developer>Alex</developer><developer>Xavi</developer></developers>'
-    expected = ['{\'developer\': {\'value\': Alex}}', '{\'developer\': {\'value\': Xavi}}']
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+    expected = [{'developer': {'value': 'Alex'}}, {'developer': {'value': 'Xavi'}}]
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -341,12 +327,7 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster, port):
     """
 
     message = 'Alex,Xavi,Tucu,Martin'
-    expected = 'OrderedDict([(\'0\', Alex), (\'1\', Xavi), (\'2\', Tucu), (\'3\', Martin)])'
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+    expected = {'0': 'Alex', '1': 'Xavi', '2': 'Tucu', '3': 'Martin'}
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -393,11 +374,6 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster, port):
 
     message = 'Binary Text Example'
     expected = message.encode()
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -446,13 +422,6 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster, po
     """
 
     msg = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
-    expected = ('OrderedDict([(\'name\', boss), (\'age\', 60), (\'emails\', [boss@company.com, boss2@company.com]),'
-                ' (\'boss\', None)])')
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -480,7 +449,7 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster, po
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'AVRO')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg, 'AVRO')
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -502,13 +471,6 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster,
     """
 
     msg = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
-    expected = ('OrderedDict([(\'name\', boss), (\'age\', 60), (\'emails\', [boss@company.com, boss2@company.com]),'
-                ' (\'boss\', None)])')
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -537,7 +499,7 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster,
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO_WITHOUT_SCHEMA')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected,
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg,
                                     'AVRO_WITHOUT_SCHEMA')
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
@@ -563,16 +525,12 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster, port):
                    "LTA2LTI4VDA2OjE0OjU2LjAwMCswMjowMCBteW1hY2hpbmUgc3U6ICdzdSByb290JyBmYWlsZWQgZm9yIGxvbnZpY"
                    "2sgb24gL2Rldi9wdHMvOA==")
 
-    expected = (
-        '{\'severity\': 2, \'senderPort\': 3000, \'receiverAddr\': 127.0.0.1:2000, \'host\': mymachine, \'raw\': '
-        '<34>1 2013-06-28T06:14:56.000+02:00 mymachine su: \'su root\' failed for lonvick on /dev/pts/8, '
-        '\'senderAddr\': 127.0.0.1:3000, \'priority\': 34, \'facility\': 4, \'version\': 1, \'receiverPort\': 2000, '
-        '\'remaining\': su: \'su root\' failed for lonvick on /dev/pts/8, \'timestamp\': 1372392896000}')
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+    expected = {'severity': 2, 'senderPort': 3000, 'receiverAddr': '127.0.0.1:2000',
+                'host': 'mymachine',
+                'raw': '<34>1 2013-06-28T06:14:56.000+02:00 mymachine su: \'su root\' failed for lonvick on /dev/pts/8',
+                'senderAddr': '127.0.0.1:3000',
+                'priority': 34, 'facility': 4, 'version': 1, 'receiverPort': 2000,
+                'remaining': 'su: \'su root\' failed for lonvick on /dev/pts/8', 'timestamp': 1372392896000}
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -635,11 +593,6 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster, port):
                    'B5SzUv49Wa8QAAAAAAAAAAAAAAAQAAAfhnyqIyZ8qiMgA1FbUAABEAAAAAAAAAAAA=')
 
     expected = ['\'srcaddr\': -138304357', '\'first\': 1432355575064']
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -712,14 +665,13 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster, port):
         'cm9ycwAABgAYAAICAgAAAAAAAAAAAAAAAAAAAAAAAwAIZW4yAAAEAA5pZl9vY3RldHMAAAYAGAACAgIAAAAAAAAAAAAAAAAAAAAAAAgADBVrr'
         'kvpuMdcAAQADmlmX2Vycm9ycwAABgAYAAICAgAAAAAAAAAAAAAAAAAAAAA=')
 
-    expected = (
-        '{\'plugin_instance\': lo0, \'plugin\': interface, \'tx\': 0, \'rx\': 0, \'host\': ip-192-168-42-238.us-west-2.'
-        'compute.internal, \'time_hires\': 1543518938371396391, \'type\': if_errors}')
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
+    expected = {'plugin_instance': 'lo0',
+                'plugin': 'interface',
+                'tx': 0,
+                'rx': 0,
+                'host': 'ip-192-168-42-238.us-west-2.compute.internal',
+                'time_hires': 1543518938371396391,
+                'type': 'if_errors'}
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -769,11 +721,6 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster, port):
 
     message = ('+20150320 [15:53:31,161] DEBUG PipelineConfigurationValidator - Pipeline \'test:preview\' validation. '
                'valid=true, canPreview=true, issuesCount=0 - ')
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -859,7 +806,7 @@ def produce_kafka_messages(topic, cluster, message, data_format):
     """Send basic messages to Kafka"""
     producer = cluster.kafka.producer()
 
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'PROTOBUF', 'TEXT', 'JSON']
+    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'NETFLOW', 'COLLECTD', 'BINARY', 'LOG', 'PROTOBUF', 'JSON', 'TEXT']
 
     # Write records into Kafka depending on the data_format.
     if data_format in basic_data_formats:
@@ -901,19 +848,13 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
     snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
     snapshot = snapshot_command.snapshot
 
-    basic_data_formats = ['CSV', 'SYSLOG', 'COLLECTD', 'PROTOBUF', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
+    basic_data_formats = ['JSON', 'CSV', 'SYSLOG', 'PROTOBUF', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
 
     # Verify snapshot data.
     if data_format in basic_data_formats:
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
-        assert message == str(record_field[0])
+        assert [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output] == [message]
 
-    elif data_format == 'XML':
-        output_data = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output][0]
-        record_field = get_xml_output_field(kafka_consumer_pipeline[0], output_data, 'developers')
-        assert message == str(record_field)
-
-    elif data_format == 'BINARY':
+    elif data_format in {'TEXT', 'BINARY', 'XML', 'COLLECTD'}:
         record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
         assert message == record_field[0]
 
@@ -925,8 +866,8 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
 
     elif data_format == 'XML_MULTI_ELEMENT':
         record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
-        assert message[0] == str(record_field[0])
-        assert message[1] == str(record_field[1])
+        assert message[0] == record_field[0]
+        assert message[1] == record_field[1]
 
     elif data_format == 'NETFLOW':
         record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
@@ -936,11 +877,6 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
 
 def json_test(sdc_builder, sdc_executor, cluster, message, expected, port):
     """Generic method to tests using JSON format"""
-
-    if (Version(sdc_builder.version) < MIN_SDC_VERSION_WITH_SPARK_2_LIB and
-            ('kafka' in cluster.kerberized_services or cluster.kafka.is_ssl_enabled)):
-        pytest.skip('Kafka cluster mode test only '
-                    f'runs against cluster with the non-secured Kafka for SDC version {sdc_builder.version}.')
 
     # Build the Kafka consumer pipeline.
     builder = sdc_builder.get_pipeline_builder()
