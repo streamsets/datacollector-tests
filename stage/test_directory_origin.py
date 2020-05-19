@@ -1705,3 +1705,71 @@ def read_csv_file(file_path, delimiter, remove_header=False):
     if remove_header:
         rows = rows[1:]
     return rows
+
+
+@sdc_min_version('3.8.0')
+def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
+    """Test that directory origin can stop and resume.
+    test4.csv file from resources directory is used.
+    The test reads the first ten records, stops and resume.
+        directory >> [trash, finisher]
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='DELIMITED', header_line='WITH_HEADER', file_name_pattern='test4.csv',
+                             file_name_pattern_mode='GLOB', file_post_processing='NONE',
+                             files_directory='/resources/resources/directory_origin', read_order='LEXICOGRAPHICAL',
+                             batch_size_in_recs=1, )
+    trash = pipeline_builder.add_stage('Trash')
+
+
+
+    pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher_executor.set_attributes(preconditions=['${record:value(\'/Name\') == \'Gino Wehner\'}'],
+                                              on_record_error='DISCARD')
+
+    directory >> [trash, pipeline_finisher_executor]
+
+    directory_pipeline = pipeline_builder.build(
+        title='test_directory_stop_resume')
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1,
+                                             batches=10, wait_for_statuses=['FINISHED'], timeout_sec=120).snapshot
+
+    # assert all the data captured have the same raw_data
+
+    output_records = [record for batch in snapshot.snapshot_batches
+                        for record in batch.stage_outputs[directory.instance_name].output]
+
+    output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
+                                  output_records]
+
+    temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
+    data_from_csv_files = [f'{row[0]},{row[1]},{row[2]}' for row in temp_data_from_csv_file]
+
+    assert len(data_from_csv_files[0:10]) == len(output_records_text_fields)
+    assert sorted(data_from_csv_files[0:10]) == sorted(output_records_text_fields)
+
+    directory_pipeline.stages.get(label=pipeline_finisher_executor.label).set_attributes(
+        preconditions=['${record:value(\'/Name\') == \'Dean Hartmann\'}'])
+    sdc_executor.update_pipeline(directory_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1,
+                                             batches=40, wait_for_statuses=['FINISHED'], timeout_sec=120).snapshot
+
+    # assert all the data captured have the same raw_data
+
+    output_records = [record for batch in snapshot.snapshot_batches
+                        for record in batch.stage_outputs[directory.instance_name].output]
+
+    output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
+                                  output_records]
+
+    temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
+    data_from_csv_files = [f'{row[0]},{row[1]},{row[2]}' for row in temp_data_from_csv_file]
+
+    assert len(data_from_csv_files[10:50]) == len(output_records_text_fields)
+    assert sorted(data_from_csv_files[10:50]) == sorted(output_records_text_fields)
+    assert output_records_text_fields[0] ==  'Porter Bode,Real-Estate Director,25007'
