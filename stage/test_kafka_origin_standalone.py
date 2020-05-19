@@ -17,7 +17,6 @@ import io
 import json
 import logging
 import os
-import string
 import textwrap
 import time
 
@@ -27,11 +26,7 @@ from streamsets.testframework.environments.cloudera import ClouderaManagerCluste
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-from stage.utils.utils_xml import get_xml_output_field
-
 logger = logging.getLogger(__name__)
-
-SNAPSHOT_TIMEOUT_SEC = 120
 
 
 @pytest.fixture(autouse=True)
@@ -49,9 +44,10 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(data_format='TEXT', batch_wait_time_in_ms=20_000, topic=topic)
+    kafka_consumer.set_attributes(data_format='TEXT', topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -59,8 +55,8 @@ def test_kafka_origin_standalone(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [EXPECTED]
 
 
 @cluster('cdh', 'kafka')
@@ -81,12 +77,12 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='TEXT',
+    kafka_consumer.set_attributes(data_format='TEXT',
                                   include_timestamps=True,
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     sdc_executor.add_pipeline(pipeline)
@@ -102,10 +98,10 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
         producer.send(topic, MESSAGE.encode())
         producer.flush()
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
-        assert all('timestamp' in record.header.values for record in snapshot[kafka_consumer].output)
-        assert all('timestampType' in record.header.values for record in snapshot[kafka_consumer].output)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
+        assert all('timestamp' in record.header.values for record in wiretap.output_records)
+        assert all('timestampType' in record.header.values for record in wiretap.output_records)
 
 
 @cluster('cdh', 'kafka')
@@ -123,7 +119,7 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
         producer = cluster.kafka.producer()
         producer.send(topic, INPUT_DATA[i].encode())
         producer.flush()
-    time.sleep(10)
+    time.sleep(5)
     timestamp = int(time.time() * 1000)
     for i in range(3, 5):
         producer = cluster.kafka.producer()
@@ -134,12 +130,12 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
     kafka_consumer.set_attributes(auto_offset_reset='TIMESTAMP',
                                   auto_offset_reset_timestamp_in_ms=timestamp,
-                                  batch_wait_time_in_ms=20_000,
                                   consumer_group=get_random_string(),
                                   data_format='TEXT',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     sdc_executor.add_pipeline(pipeline)
@@ -152,8 +148,8 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
         assert ("KAFKA_76 - Auto Offset Reset = 'Timestamp' can only be used for Kafka version >= 0.10.1.0"
                 in e.value.message)
     else:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        assert [record.field for record in snapshot[kafka_consumer].output] == EXPECTED_OUTPUT
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT
 
 
 @pytest.mark.parametrize('data_type', ['ARRAY', 'ARRAY_OF_OBJECTS', 'OBJECT'])
@@ -170,11 +166,11 @@ def test_kafka_origin_json(sdc_builder, sdc_executor, data_type, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='JSON',
+    kafka_consumer.set_attributes(data_format='JSON',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -182,8 +178,8 @@ def test_kafka_origin_json(sdc_builder, sdc_executor, data_type, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [expected_output]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [expected_output]
 
 
 @cluster('cdh', 'kafka')
@@ -201,11 +197,11 @@ def test_kafka_origin_xml_record(sdc_builder, sdc_executor, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='XML',
+    kafka_consumer.set_attributes(data_format='XML',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -213,12 +209,12 @@ def test_kafka_origin_xml_record(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field
-            for record
-            in snapshot[kafka_consumer].output] == ([EXPECTED_OUTPUT_ROOT_ELEMENT_PRESERVED]
-                                                    if getattr(kafka_consumer, 'preserve_root_element', False)
-                                                    else [EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED])
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == ([EXPECTED_OUTPUT_ROOT_ELEMENT_PRESERVED]
+                                                                   if getattr(kafka_consumer,
+                                                                              'preserve_root_element',
+                                                                              False)
+                                                                   else [EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED])
 
 
 @cluster('cdh', 'kafka')
@@ -236,12 +232,12 @@ def test_kafka_origin_xml_record_delimiter_element(sdc_builder, sdc_executor, cl
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='XML',
+    kafka_consumer.set_attributes(data_format='XML',
                                   delimiter_element='developer',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -249,12 +245,12 @@ def test_kafka_origin_xml_record_delimiter_element(sdc_builder, sdc_executor, cl
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field
-            for record
-            in snapshot[kafka_consumer].output] == (EXPECTED_OUTPUT_ROOT_ELEMENT_PRESERVED
-                                                    if getattr(kafka_consumer, 'preserve_root_element', False)
-                                                    else EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == (EXPECTED_OUTPUT_ROOT_ELEMENT_PRESERVED
+                                                                   if getattr(kafka_consumer,
+                                                                              'preserve_root_element',
+                                                                              False)
+                                                                   else EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED)
 
 
 @cluster('cdh', 'kafka')
@@ -270,11 +266,11 @@ def test_kafka_origin_csv_record(sdc_builder, sdc_executor, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='DELIMITED',
+    kafka_consumer.set_attributes(data_format='DELIMITED',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -282,8 +278,8 @@ def test_kafka_origin_csv_record(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
 
 
 @cluster('cdh', 'kafka')
@@ -303,11 +299,11 @@ def test_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
     kafka_consumer.set_attributes(avro_schema=json.dumps(SCHEMA),
                                   avro_schema_location='INLINE',
-                                  batch_wait_time_in_ms=20_000,
                                   data_format='AVRO',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     binary_stream = io.BytesIO()
@@ -319,8 +315,8 @@ def test_avro_records_with_schema(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [DATA]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [DATA]
 
 
 @cluster('cdh', 'kafka')
@@ -340,11 +336,11 @@ def test_avro_records_without_schema(sdc_builder, sdc_executor, cluster):
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
     kafka_consumer.set_attributes(avro_schema=json.dumps(SCHEMA),
                                   avro_schema_location='SOURCE',
-                                  batch_wait_time_in_ms=20_000,
                                   data_format='AVRO',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     binary_stream = io.BytesIO()
@@ -359,8 +355,8 @@ def test_avro_records_without_schema(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [DATA]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [DATA]
 
 
 @cluster('cdh', 'kafka')
@@ -386,12 +382,12 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='DATAGRAM',
+    kafka_consumer.set_attributes(data_format='DATAGRAM',
                                   datagram_packet_format='SYSLOG',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -399,96 +395,81 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
 
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_binary_record(sdc_builder, sdc_executor, cluster):
-    """Write binary messages into Kafka and confirm that Kafka successfully reads them.
-    Kafka Consumer Origin pipeline with standalone mode:
-        kafka_consumer >> trash
-    """
+    """Kafka Consumer origin reads binary messages."""
+    MESSAGES = [b'message 1', b'message 2']
+    EXPECTED_OUTPUT = [b'message 1', b'message 2']
+    topic = get_random_string()
 
-    message = 'Binary Text Example'
-    expected = message.encode()
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(data_format='BINARY',
+                                  topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
+    producer = cluster.kafka.producer()
+    for message in MESSAGES:
+        producer.send(topic, message)
+    producer.flush()
 
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='BINARY')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Origin BINARY pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        producer = cluster.kafka.producer()
-        producer.send(kafka_consumer.topic, message.encode())
-        producer.flush()
-
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'BINARY')
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT
 
 
 @cluster('cdh', 'kafka')
 def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster):
-    """Write a text message using UDP datagram mode NETFLOW.
-    Specifically, this would look like:
+    """Kafka Consumer origin processes UDP datagram mode NETFLOW messages."""
+    MESSAGE = ('rO0ABXoAAAIqAAAAAQAAAAIAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAAAfgABQAKAAAAAFVFcOIBWL'
+               'IwAAAAAAAAAAD3waSb49Wa8QAAAAAAAAAAAAAAAQAAAFlnyqItZ8qiLQA1JA8AABEAAAAAAAAAAAD3waSb49Wa8QAAAAAAAAAA'
+               'AAAAAQAAAFlnyqItZ8qiLQA1+ioAABEAAAAAAAAAAAD3waSb49Wa8QAAAAAAAAAAAAAAAQAAAFlnyqItZ8qiLQA1SWAAABEAAA'
+               'AAAAAAAAD55boV49Wa8QAAAAAAAAAAAAAAAQAAAFlnyqIvZ8qiLwA1q94AABEAAAAAAAAAAAB/472549Wa8QAAAAAAAAAAAAAA'
+               'AQAAAFlnyqIvZ8qiLwA1IlYAABEAAAAAAAAAAAB/472549Wa8QAAAAAAAAAAAAAAAQAAAFlnyqIvZ8qiLwA1l5sAABEAAAAAAA'
+               'AAAAB/472549Wa8QAAAAAAAAAAAAAAAQAAAFlnyqIvZ8qiLwA1u4EAABEAAAAAAAAAAAD55boV49Wa8QAAAAAAAAAAAAAAAQAA'
+               'AFlnyqIvZ8qiLwA14OQAABEAAAAAAAAAAAAtZyl349Wa8QAAAAAAAAAAAAAAAQAAArhnyqIxZ8qiMQA11FQAABEAAAAAAAAAAA'
+               'B5SzUv49Wa8QAAAAAAAAAAAAAAAQAAAfhnyqIyZ8qiMgA1FbUAABEAAAAAAAAAAAA=')
+    # The expected output is huge, so we assert only number of records processed and the contents of the first message.
+    # Note that the 'id' field is generated uniquely, so we exclude it from our expected output.
+    EXPECTED_OUTPUT_FIRST_RECORD = {'count': 10, 'dOctets': 89, 'dPkts': 1, 'dst_mask': 0, 'dstaddr': -472540431,
+                                    'dstaddr_s': '227.213.154.241', 'dstas': 0, 'dstport': 9231, 'engineid': 0,
+                                    'enginetype': 0, 'first': 1432355575059, 'flowseq': 0,
+                                    'last': 1432355575059, 'length': 504, 'nanos': 22590000, 'nexthop': 0,
+                                    'nexthop_s': '0.0.0.0', 'packetid': '2a9ac4fc-7c25-1000-8080-808080808080',
+                                    'proto': 17, 'raw_first': 1741333037, 'raw_last': 1741333037, 'raw_sampling': 0,
+                                    'readerId': '/127.0.0.1:2000', 'samplingint': 0, 'samplingmode': 0,
+                                    'seconds': 1430614242, 'sender': '/127.0.0.1', 'snmpinput': 0, 'snmponput': 0,
+                                    'src_mask': 0, 'srcaddr': -138304357, 'srcaddr_s': '247.193.164.155',
+                                    'srcas': 0, 'srcport': 53, 'tcp_flags': 0, 'timestamp': 1430614242022, 'tos': 0,
+                                    'uptime': 0, 'version': 5}
+    topic = get_random_string()
 
-    Kafka Consumer Origin pipeline:
-        kafka_consumer >>  trash
-    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(data_format='DATAGRAM',
+                                  datagram_data_format='NETFLOW',
+                                  topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-    msg64packet = ('rO0ABXoAAAIqAAAAAQAAAAIAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAAAfgABQAKAAAAAFVFcOIBWL'
-                   'IwAAAAAAAAAAD3waSb49Wa8QAAAAAAAAAAAAAAAQAAAFlnyqItZ8qiLQA1JA8AABEAAAAAAAAAAAD3waSb49Wa8QAAAAAAAAAA'
-                   'AAAAAQAAAFlnyqItZ8qiLQA1+ioAABEAAAAAAAAAAAD3waSb49Wa8QAAAAAAAAAAAAAAAQAAAFlnyqItZ8qiLQA1SWAAABEAAA'
-                   'AAAAAAAAD55boV49Wa8QAAAAAAAAAAAAAAAQAAAFlnyqIvZ8qiLwA1q94AABEAAAAAAAAAAAB/472549Wa8QAAAAAAAAAAAAAA'
-                   'AQAAAFlnyqIvZ8qiLwA1IlYAABEAAAAAAAAAAAB/472549Wa8QAAAAAAAAAAAAAAAQAAAFlnyqIvZ8qiLwA1l5sAABEAAAAAAA'
-                   'AAAAB/472549Wa8QAAAAAAAAAAAAAAAQAAAFlnyqIvZ8qiLwA1u4EAABEAAAAAAAAAAAD55boV49Wa8QAAAAAAAAAAAAAAAQAA'
-                   'AFlnyqIvZ8qiLwA14OQAABEAAAAAAAAAAAAtZyl349Wa8QAAAAAAAAAAAAAAAQAAArhnyqIxZ8qiMQA11FQAABEAAAAAAAAAAA'
-                   'B5SzUv49Wa8QAAAAAAAAAAAAAAAQAAAfhnyqIyZ8qiMgA1FbUAABEAAAAAAAAAAAA=')
+    producer = cluster.kafka.producer()
+    producer.send(topic, base64.b64decode(MESSAGE))
+    producer.flush()
 
-    expected = ['\'srcaddr\': -138304357', '\'first\': 1432355575064']
-
-    # Build the Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    kafka_consumer = get_kafka_consumer_stage(builder, cluster)
-
-    # Override default configuration.
-    kafka_consumer.set_attributes(data_format='DATAGRAM', datagram_data_format='NETFLOW')
-
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
-
-    kafka_consumer_pipeline = builder.build(
-        title='Kafka Origin UDP-Datagram-Netflow Pipeline').configure_for_environment(cluster)
-
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    sdc_executor.add_pipeline(kafka_consumer_pipeline)
-
-    try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        producer = cluster.kafka.producer()
-        producer.send(kafka_consumer.topic, base64.b64decode(msg64packet))
-        producer.flush()
-
-        verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, expected, 'NETFLOW')
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    output_records = [record.field for record in wiretap.output_records]
+    assert len(output_records) == 10 and all(item in output_records[0].items()
+                                             for item in EXPECTED_OUTPUT_FIRST_RECORD.items())
 
 
 @cluster('cdh', 'kafka')
@@ -525,12 +506,12 @@ def test_kafka_origin_collectd_message(sdc_builder, sdc_executor, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='DATAGRAM',
+    kafka_consumer.set_attributes(data_format='DATAGRAM',
                                   datagram_data_format='COLLECTD',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -538,8 +519,8 @@ def test_kafka_origin_collectd_message(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert snapshot[kafka_consumer].output[0].field == EXPECTED_OUTPUT
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert wiretap.output_records[0].field == EXPECTED_OUTPUT
 
 
 @cluster('cdh', 'kafka')
@@ -556,12 +537,12 @@ def test_kafka_origin_log_record(sdc_builder, sdc_executor, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                  data_format='LOG',
+    kafka_consumer.set_attributes(data_format='LOG',
                                   log_format='LOG4J',
                                   topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_consumer >> pipeline_finisher
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -569,8 +550,8 @@ def test_kafka_origin_log_record(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
 
 
 @cluster('cdh', 'kafka')
@@ -605,18 +586,18 @@ def test_kafka_origin_protobuf_record(sdc_builder, sdc_executor, cluster):
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-        kafka_consumer.set_attributes(batch_wait_time_in_ms=20_000,
-                                      data_format='PROTOBUF',
+        kafka_consumer.set_attributes(data_format='PROTOBUF',
                                       message_type=MESSAGE_TYPE,
                                       protobuf_descriptor_file=protobuf_descriptor_filename,
                                       topic=topic)
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        kafka_consumer >> pipeline_finisher
+        kafka_consumer >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        assert [record.field for record in snapshot[kafka_consumer].output] == [EXPECTED_OUTPUT]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
     finally:
         sdc_executor.execute_shell(f'rm ${{SDC_RESOURCES}}/{protobuf_descriptor_filename}')
 
@@ -642,12 +623,12 @@ def test_kafka_origin_csv_record_header_missmatch(sdc_builder, sdc_executor, clu
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-    kafka_consumer.set_attributes(header_line='WITH_HEADER',
-                                  batch_wait_time_in_ms=20_000,
-                                  data_format='DELIMITED',
+    kafka_consumer.set_attributes(data_format='DELIMITED',
+                                  header_line='WITH_HEADER',
                                   topic=topic)
-    trash = pipeline_builder.add_stage('Trash')
-    kafka_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     producer = cluster.kafka.producer()
@@ -655,47 +636,6 @@ def test_kafka_origin_csv_record_header_missmatch(sdc_builder, sdc_executor, clu
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_consumer].output] == [expected]
-    assert [record.field for record in snapshot[kafka_consumer].error_records] == [expected_error]
-
-    sdc_executor.stop_pipeline(pipeline)
-
-
-def get_kafka_consumer_stage(pipeline_builder, cluster):
-    """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
-    # Default on error action.
-    pipeline_builder.add_error_stage('Discard')
-    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer',
-                                                type='origin',
-                                                library=cluster.kafka.standalone_stage_lib)
-    # Default stage configuration.
-    kafka_consumer.set_attributes(data_format='TEXT',
-                                  batch_wait_time_in_ms=20000,
-                                  max_batch_size_in_records=10,
-                                  topic=get_random_string(string.ascii_letters, 10),
-                                  kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
-    return kafka_consumer
-
-
-def verify_kafka_origin_results(kafka_consumer_pipeline, sdc_executor, message, data_format):
-    """Start, stop pipeline and verify results using snapshot"""
-
-    # Start Pipeline.
-    snapshot_pipeline_command = sdc_executor.capture_snapshot(kafka_consumer_pipeline, start_pipeline=True, wait=False)
-
-    logger.debug('Finish the snapshot and verify')
-    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
-    snapshot = snapshot_command.snapshot
-
-    # This is temporal hack until something like STF-1110 gets implemented
-    logger.info(f"Snapshot raw data: {snapshot._data}")
-
-    # Verify snapshot data.
-    if data_format == 'BINARY':
-        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        assert message == record_field[0]
-    elif data_format == 'NETFLOW':
-        record_field = [record.field for record in snapshot[kafka_consumer_pipeline[0].instance_name].output]
-        assert message[0] in str(record_field)
-        assert message[1] in str(record_field)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [expected]
+    assert [record.field for record in wiretap.error_records] == [expected_error]
