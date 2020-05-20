@@ -489,16 +489,16 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
 
 
 @database('postgresql')
-@sdc_min_version('3.16.0')
-def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_executor, database):
+@sdc_min_version('3.4.0')
+@pytest.mark.parametrize(('batch_size'), [1, 10, 100, 1000])
+def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_executor, database, batch_size):
     """Basic test that inserts to a Postgres table with multiple threads,
-    and validates via timeout checking that all CDCs are received,
-    and not filtered, by SDC
+    and validates using a wire tap the records processed.
     Here `Initial Change` config. is at default value = `From the latest change`.
     With this, the origin processes all changes that occur after pipeline is started.
 
     The pipeline looks like:
-        postgres_cdc_client >> trash
+        postgres_cdc_client >> [pipeline_finesher, wiretap]
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
@@ -509,20 +509,30 @@ def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_exe
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
-                                       max_batch_size_in_records=1,
+                                       max_batch_size_in_records=batch_size,
                                        poll_interval=POLL_INTERVAL,
                                        replication_slot=replication_slot_name)
-    trash = pipeline_builder.add_stage('Trash')
-    postgres_cdc_client >> trash
+    wiretap = pipeline_builder.add_wiretap()
+
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    # We want the pipeline to stop automatically part-way through processing batch 1 and at the end of batch 2.
+    pipeline_finisher.set_attributes(preconditions=[
+        "${record:value('/change[0]/columnvalues[0]') == -1}"
+    ])
+
+    postgres_cdc_client >> [wiretap.destination, pipeline_finisher]
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        start_command = sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
+
         # Create table and then perform insert operations with various threads at the same time.
         table = _create_table_in_database(table_name, database)
         connections = [database.engine.connect() for _ in range(NUM_THREADS)]
+
+        expected = []
 
         def inserter_thread(connection, table, id, amount):
             for i in range(amount):
@@ -532,12 +542,12 @@ def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_exe
                         NAME_COLUMN: get_random_string(string.ascii_lowercase, 10)
                     }
                 ]
-                _insert(
+                expected.append(_insert(
                     connection=connection,
                     table=table,
                     insert_rows=insert_rows,
                     create_txn=True
-                )
+                ))
 
         thread_pool = [
             threading.Thread(
@@ -553,10 +563,25 @@ def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_exe
         for thread in thread_pool:
             thread.join()
 
-        start_command.wait_for_pipeline_batch_count(TOTAL_THREADING_RECORDS)
+        final_row = [{ PRIMARY_KEY: -1,NAME_COLUMN: 'Last Record'}]
+        expected.append(_insert(
+            connection=connections[0],
+            table=table,
+            insert_rows=final_row,
+            create_txn=True
+        ))
+        pipeline_cmd.wait_for_finished(timeout_sec=60)
+
+        output = [record.get_field_data('/change[0]/columnvalues')
+                  for record in wiretap.output_records]
+
+        expected_values = sorted([record[0].columnvalues for record in expected], key=lambda key:key[0])
+        output_values = sorted(output, key=lambda key:key[0].value)
+
+        assert expected_values == output_values
 
     finally:
-        if pipeline:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
