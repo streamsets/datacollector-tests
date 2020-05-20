@@ -984,6 +984,95 @@ def test_orace_cdc_events(sdc_builder, sdc_executor, database):
         connection.execute(f'DROP TABLE {sports_table}')
 
 
+@sdc_min_version('3.1.0.0')
+@database('oracle')
+def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
+    """Test Oracle CDC table exclusion patterns.
+
+    The test configures an Oracle CDC stage to consume tables matching a defined name pattern, but excluding
+    any table among them matching the exclusion name pattern (see `table_config` variable for this
+    configuration). Then two tables are created and populated, one of them with a name that should be excluded
+    according to the configuration. The Oracle CDC output (records and events) is examined to validate this
+    behavior.
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
+    sports_table1 = f'{table_prefix}_SPORT1'
+    sports_table2 = f'{table_prefix}_SPORT2'
+    table_config = dict(schema=database.username.upper(),
+                        table=f'{table_prefix}%',
+                        excludePattern='.*_SPORT1')
+    connection = database.engine.connect()
+
+    sports_data1 = [(1, 'Kelly Slater', 'Surf'),
+                    (2, 'Steve Caballero', 'Skateboard'),
+                    (3, 'Andre Botha', 'Bodyboard')]
+
+    sports_data2 = [(4, 'Magnus Carlsen', 'Chess'),
+                    (5, 'Xin Xu', 'Table tennis'),
+                    (6, 'Michael van Gerwen', 'Darts')]
+
+    # Event info is: table name, event type, schema.
+    expected_events = [(sports_table2, 'STARTUP', {'ID': 'NUMERIC', 'PLAYER': 'VARCHAR', 'SPORT': 'VARCHAR'}),
+                       (sports_table2, 'CREATE', {})]
+
+    try:
+        start_scn = _get_last_scn(connection)
+        logger.info('Initial SCN will be %s', start_scn)
+
+        # Create and populate the tables.
+        connection.execute(f'CREATE TABLE {sports_table1} '
+                           '(ID NUMBER PRIMARY KEY, PLAYER VARCHAR2(50), SPORT VARCHAR2(50))')
+        connection.execute(f'CREATE TABLE {sports_table2} '
+                           '(ID NUMBER PRIMARY KEY, PLAYER VARCHAR2(50), SPORT VARCHAR2(50))')
+
+        for id, name, sport in sports_data1:
+            connection.execute(f"INSERT INTO {sports_table1} VALUES({id}, '{name}', '{sport}')")
+        for id, name, sport in sports_data2:
+            connection.execute(f"INSERT INTO {sports_table2} VALUES({id}, '{name}', '{sport}')")
+
+        # Build the pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   batch_size=1,
+                                                   buffer_locally=True,
+                                                   dictionary_source='DICT_FROM_REDO_LOGS',
+                                                   tables=[table_config],
+                                                   initial_change='SCN',
+                                                   start_scn=start_scn)
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Start pipeline and check only cities data is consumed by Oracle CDC origin.
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=240,
+                                                 batches=len(sports_data2), batch_size=1).snapshot
+        sdc_executor.stop_pipeline(pipeline, force=True)
+
+        sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
+                       for batch in snapshot.snapshot_batches
+                       for record in batch[oracle_cdc.instance_name].output]
+        assert sdc_records == sports_data2
+
+        sdc_events = [(event.header.values['oracle.cdc.table'],
+                       event.header.values['sdc.event.type'],
+                       event.field)
+                      for batch in snapshot.snapshot_batches
+                      for event in batch[oracle_cdc.instance_name].event_records]
+        assert sdc_events == expected_events
+
+    finally:
+        logger.info('Dropping tables %s and %s ...', sports_table1, sports_table2)
+        connection.execute(f'DROP TABLE {sports_table1}')
+        connection.execute(f'DROP TABLE {sports_table2}')
+
+
 @database('oracle')
 def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
     """Test Oracle CDC can track new tables created after the pipeline initialization.
@@ -1387,7 +1476,7 @@ def _setup_table(database, table_name, create_primary_key=True):
 
 
 def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder, buffer_locally,
-                                  src_table_name, batch_size=BATCH_SIZE, **kwargs):
+                                  src_table_name=None, batch_size=BATCH_SIZE, **kwargs):
     kwargs.setdefault('dictionary_source', 'DICT_FROM_ONLINE_CATALOG')
     kwargs.setdefault('logminer_session_window', '${10 * MINUTES}')
     kwargs.setdefault('db_time_zone', 'UTC')
@@ -1398,6 +1487,16 @@ def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bu
         # 3.16 onward this is not required anymore. By default avoid to set an specific duration and use all
         # the redo logs instead.
         kwargs.setdefault('duration_of_directory_extraction', -1)
+
+    if src_table_name is not None:
+        if Version(sdc_builder.version) >= Version('3.1.0.0'):
+            tables = [{'schema': database.username.upper(), 'table': src_table_name, 'excludePattern': ''}]
+            kwargs.setdefault('tables', tables)
+        else:
+            kwargs.setdefault('schema_name', database.username.upper())
+            kwargs.setdefault('tables', [src_table_name])
+    elif 'tables' not in kwargs.keys():
+        raise Exception("Either 'tables' or 'src_table_name' must be passed as argument.")
 
     start = _get_current_oracle_time(connection=connection)
     kwargs.setdefault('start_date', start.strftime('%d-%m-%Y %H:%M:%S'))
@@ -1411,15 +1510,8 @@ def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bu
 
     oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
 
-    if Version(sdc_builder.version) >= Version('3.1.0.0'):
-        tables = [{'schema': database.username.upper(), 'table': src_table_name, 'excludePattern': ''}]
-    else:
-        oracle_cdc_client.set_attributes(schema_name=database.username.upper())
-        tables = [src_table_name]
-
     return oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
                                             max_batch_size_in_records=batch_size,
-                                            tables=tables,
                                             **kwargs)
 
 
