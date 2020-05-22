@@ -15,6 +15,7 @@
 import logging
 import string
 import threading
+import time
 from collections import namedtuple
 
 import pytest
@@ -49,9 +50,10 @@ CHECK_REP_SLOT_QUERY = 'select slot_name from pg_replication_slots;'
 
 POLL_INTERVAL = "${1 * SECONDS}"
 
-INSERTS_PER_THREAD = 1000
+INSERTS_PER_THREAD = 500
 NUM_THREADS = 10
 TOTAL_THREADING_RECORDS = INSERTS_PER_THREAD * NUM_THREADS
+
 
 def _create_table_in_database(table_name, database):
     metadata = sqlalchemy.MetaData()
@@ -193,7 +195,7 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         # We expect to see records with id=10 through id=19 (i.e. no duplicated or missing records).
         assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-               for record in wiretap.output_records] == SAMPLE_DATA[10:20]
+                for record in wiretap.output_records] == SAMPLE_DATA[10:20]
 
         # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
         wiretap.reset()
@@ -225,6 +227,135 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
         assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
                 for record in wiretap.output_records] == SAMPLE_DATA[30:40]
     finally:
+        table.drop(database.engine)
+        database.deactivate_and_drop_replication_slot(replication_slot)
+
+
+@sdc_min_version('3.16.0')
+@database('postgresql')
+@pytest.mark.parametrize('start_from', ['DATE', 'LSN'])
+@pytest.mark.parametrize('create_slot', [True, False])
+def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, create_slot):
+    """
+    We test that start from LSN and Date works as expected, for that we insert some data, get the date/lsn and insert
+    some more data, after that we verify that we only process the second batch inserted.
+
+    After that we insert a third batch of records and start again the pipeline to verify that we don't read any
+    duplicated record.
+
+    Apart from that we also included a case where the replication slot is created by the pipeline it set during the
+    start, in that case we need to insert new data after it gets created so, there is a fourth batch of records that is
+    inserted and processed.
+    """
+
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    SAMPLE_DATA = [dict(id=f'1{i}', name=f'Alex_{i}') for i in range(20)]
+    SAMPLE_DATA_2 = [dict(id=f'2{i}', name=f'Martin_{i}') for i in range(20)]
+    SAMPLE_DATA_3 = [dict(id=f'3{i}', name=f'Santhosh_{i}') for i in range(20)]
+    SAMPLE_DATA_4 = [dict(id=f'4{i}', name=f'Tucu_{i}') for i in range(20)]
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = sqlalchemy.Table(table_name,
+                             sqlalchemy.MetaData(),
+                             sqlalchemy.Column('id', sqlalchemy.String(20), primary_key=True),
+                             sqlalchemy.Column('name', sqlalchemy.String(20)))
+    replication_slot = get_random_string(string.ascii_lowercase, 10)
+
+    try:
+        table.create(database.engine)
+
+        if create_slot:
+            # create replication slot
+            with database.engine.connect().execution_options(autocommit=True) as connection:
+                connection.execute(
+                    f'SELECT * FROM pg_create_logical_replication_slot(\'{replication_slot}\', \'wal2json\')')
+
+        # insert first batch of data
+        with database.engine.connect().execution_options(autocommit=True) as connection:
+            for row in SAMPLE_DATA:
+                connection.execute(table.insert(), row)
+
+        if start_from is 'DATE':
+            # get timestamp from database and timezone
+            time.sleep(5)
+            with database.engine.connect().execution_options(autocommit=True) as connection:
+                date = connection.execute('SELECT CURRENT_TIMESTAMP').first()[0]
+                timezone = str(connection.execute('SHOW timezone').first()[0])
+        else:
+            # get current lsn from replication slot
+            with database.engine.connect().execution_options(autocommit=True) as connection:
+                start_lsn = str(connection.execute('select pg_current_wal_lsn()').first()[0])
+
+        # insert second batch of data
+        with database.engine.connect().execution_options(autocommit=True) as connection:
+            for row in SAMPLE_DATA_2:
+                connection.execute(table.insert(), row)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        postgresql_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+        postgresql_cdc_client.set_attributes(replication_slot=replication_slot,
+                                             initial_change=start_from,
+                                             poll_interval=1)
+
+        if start_from is 'DATE':
+            postgresql_cdc_client.set_attributes(start_date=date.strftime('%m-%d-%Y %H:%M:%S'),
+                                                 db_time_zone=timezone)
+        else:
+            postgresql_cdc_client.set_attributes(start_lsn=start_lsn)
+
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finisher.set_attributes(preconditions=[
+            "${record:value('/change[0]/columnvalues[0]') == 219"
+            " or record:value('/change[0]/columnvalues[0]') == 319"
+            " or record:value('/change[0]/columnvalues[0]') == 419}"])
+        postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        if create_slot:
+            # We manually created the slot in the test so the data that we inserted after it will be available
+            expected_data = SAMPLE_DATA_2
+        else:
+            # Since the pipeline has created the replication slot we are inserting data now to make it available
+            expected_data = SAMPLE_DATA_4
+            sdc_executor.wait_for_pipeline_status(pipeline, 'RUNNING', timeout_sec=120)
+            # insert first batch of data
+            with database.engine.connect().execution_options(autocommit=True) as connection:
+                for row in SAMPLE_DATA_4:
+                    connection.execute(table.insert(), row)
+
+        # Pipeline will stop once it sees id=219 or 419 if the pipelines creates the replication slot
+        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=120)
+
+        # Since we stop gracefully, we expect to see the entire first batch (records with id=0 through id=9)
+        # written to the destination.
+        # Within the field, column names are stored in a list (e.g. ['id', 'name']) and so are
+        # column values (e.g. [1, 'Martin_1']). We use zip to help us combine each instance into a dictionary.
+        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                for record in wiretap.output_records] == expected_data
+
+        wiretap.reset()
+
+        # insert second batch of data
+        with database.engine.connect().execution_options(autocommit=True) as connection:
+            for row in SAMPLE_DATA_3:
+                connection.execute(table.insert(), row)
+
+        sdc_executor.start_pipeline(pipeline)
+
+        # Pipeline will stop once it sees id=319.
+        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=120)
+
+        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                for record in wiretap.output_records] == SAMPLE_DATA_3
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         table.drop(database.engine)
         database.deactivate_and_drop_replication_slot(replication_slot)
 
@@ -395,8 +526,8 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
                                        max_batch_size_in_records=1,
                                        poll_interval=POLL_INTERVAL,
                                        tables=[{'schema': 'public',
-                                               'excludePattern': table_name_deny,
-                                               'table': table_name_allow}])
+                                                'excludePattern': table_name_deny,
+                                                'table': table_name_allow}])
     trash = pipeline_builder.add_stage('Trash')
     postgres_cdc_client >> trash
 
@@ -600,20 +731,20 @@ def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_exe
         for thread in thread_pool:
             thread.join()
 
-        final_row = [{ PRIMARY_KEY: -1,NAME_COLUMN: 'Last Record'}]
+        final_row = [{PRIMARY_KEY: -1, NAME_COLUMN: 'Last Record'}]
         expected.append(_insert(
             connection=connections[0],
             table=table,
             insert_rows=final_row,
             create_txn=True
         ))
-        pipeline_cmd.wait_for_finished(timeout_sec=60)
+        pipeline_cmd.wait_for_finished(timeout_sec=120)
 
         output = [record.get_field_data('/change[0]/columnvalues')
                   for record in wiretap.output_records]
 
-        expected_values = sorted([record[0].columnvalues for record in expected], key=lambda key:key[0])
-        output_values = sorted(output, key=lambda key:key[0].value)
+        expected_values = sorted([record[0].columnvalues for record in expected], key=lambda key: key[0])
+        output_values = sorted(output, key=lambda key: key[0].value)
 
         assert expected_values == output_values
 
