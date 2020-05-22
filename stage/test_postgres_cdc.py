@@ -251,6 +251,10 @@ def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, 
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
 
+    if start_from is 'LSN' and \
+            int(database.host.replace('postgres-cdc-', '').replace('.cluster', '').split('.')[0]) < 10:
+        pytest.skip('LSN test cannot be executed in versions < 10.')
+
     SAMPLE_DATA = [dict(id=f'1{i}', name=f'Alex_{i}') for i in range(20)]
     SAMPLE_DATA_2 = [dict(id=f'2{i}', name=f'Martin_{i}') for i in range(20)]
     SAMPLE_DATA_3 = [dict(id=f'3{i}', name=f'Santhosh_{i}') for i in range(20)]
