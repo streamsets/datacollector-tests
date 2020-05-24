@@ -156,52 +156,6 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
         assert [record.field for record in snapshot[kafka_consumer].output] == EXPECTED_OUTPUT
 
 
-@cluster('cdh', 'kafka')
-def test_kafka_multi_origin_standalone_honor_prod_batch_size(sdc_builder, sdc_executor, cluster):
-    """Verify that MultiTopic origin uses the 'production.maxBatchSize' value from SDC properties as the effective
-    batch size if that value is less than the user configured batch size in pipeline.
-    """
-
-    # Build the Multi-topic Kafka consumer pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-
-    topic_name = get_random_string(string.ascii_letters, 10)
-    max_records = 10000
-    max_batches = 10
-    kafka_multitopic_consumer = builder.add_stage('Kafka Multitopic Consumer')
-    # Increase the user configured batch size and wait time to a higher value.
-    kafka_multitopic_consumer.set_attributes(data_format='TEXT',
-                                             max_batch_size_in_records=100000,
-                                             batch_wait_time_in_ms=60000,
-                                             topic_list=[topic_name],
-                                             consumer_group=get_random_string(string.ascii_letters, 10),
-                                             configuration_properties=[{'key': 'auto.offset.reset',
-                                                                        'value': 'earliest'}])
-    trash = builder.add_stage(label='Trash')
-    kafka_multitopic_consumer >> trash
-    kafka_multitopic_consumer_pipeline = builder.build(title='Kafka Multitopic Honor Production Batch Size'). \
-        configure_for_environment(cluster)
-    kafka_multitopic_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-    kafka_multitopic_consumer_pipeline.configuration['shouldRetry'] = False
-
-    sdc_executor.add_pipeline(kafka_multitopic_consumer_pipeline)
-
-    producer = cluster.kafka.producer()
-    logger.info('Number of Messages to be produced: %s', max_records)
-
-    for _ in range(max_records):
-        producer.send(topic_name, 'Hello World!'.encode())
-    producer.flush()
-    # After SDC-13487, the batch size in SDC properties should be honored. So a batch size of 1000 (default in SDC
-    # props) should be used rather than 100,000 which is configured on the pipeline. With batch size of 1000, and
-    # max records as 10000, the pipeline should have 10 batches within the configured timeout.
-    sdc_executor.start_pipeline(kafka_multitopic_consumer_pipeline).wait_for_pipeline_batch_count(max_batches,
-                                                                                                  timeout_sec=180)
-    sdc_executor.stop_pipeline(kafka_multitopic_consumer_pipeline)
-    metrics = sdc_executor.get_pipeline_history(kafka_multitopic_consumer_pipeline).latest.metrics
-    assert metrics.counter("pipeline.batchInputRecords.counter").count == max_records
-
-
 @pytest.mark.parametrize('data_type', ['ARRAY', 'ARRAY_OF_OBJECTS', 'OBJECT'])
 @cluster('cdh', 'kafka')
 def test_kafka_origin_json(sdc_builder, sdc_executor, data_type, cluster):
