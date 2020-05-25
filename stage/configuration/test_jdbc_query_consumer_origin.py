@@ -1,7 +1,31 @@
+# Copyright 2020 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import logging
+import string
+
 import pytest
-
+import sqlalchemy
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.utils import get_random_string
 
+logger = logging.getLogger(__name__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Lionel Messi'},
+    {'id': 2, 'name': 'Christiano Ronaldo'},
+    {'id': 3, 'name': 'Paul Pogba'}
+]
 
 @stub
 def test_additional_jdbc_configuration_properties(sdc_builder, sdc_executor):
@@ -38,10 +62,13 @@ def test_create_jdbc_header_attributes(sdc_builder, sdc_executor, stage_attribut
     pass
 
 
-@stub
 @pytest.mark.parametrize('stage_attributes', [{'disable_query_validation': False}, {'disable_query_validation': True}])
-def test_disable_query_validation(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_disable_query_validation(sdc_builder, sdc_executor, stage_attributes, database):
+    """The validation disable is really useful only for non-compliant databases that we don't actually support, so this
+       test focuses on making sure that the origin still works with both query validation set on/off. It doesn't test
+       what that config option does (or leads to).
+    """
+    _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes)
 
 
 @stub
@@ -213,3 +240,52 @@ def test_use_credentials(sdc_builder, sdc_executor, stage_attributes):
 def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
 
+
+
+def _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes=None):
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    sql_query = f'SELECT * FROM {table_name} WHERE id > ${{OFFSET}} ORDER BY id'
+    mysql_query_consumer = pipeline_builder.add_stage('JDBC Query Consumer')
+    mysql_query_consumer.set_attributes(sql_query=sql_query,
+                                        initial_offset='0',
+                                        offset_column='id',
+                                        **stage_attributes if stage_attributes else {})
+    trash = pipeline_builder.add_stage('Trash')
+    mysql_query_consumer >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32))
+    )
+    try:
+        logger.info('Creating table %s ...', table_name)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into database ...')
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        rows_from_snapshot = [record.field['name']
+                              for record in snapshot[pipeline.stages[0]].output]
+        assert rows_from_snapshot == [row['name'] for row in ROWS_IN_DATABASE]
+
+    finally:
+        _clean_up(database, table, table_name)
+
+
+def _clean_up(database, table, table_name):
+    logger.info('Dropping table %s in %s database...', table_name, database.type)
+    table.drop(database.engine)
