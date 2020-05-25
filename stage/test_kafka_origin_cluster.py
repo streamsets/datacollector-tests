@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
-SNAPSHOT_TIMEOUT_SEC = 200
+SNAPSHOT_TIMEOUT_SEC = 300
 MAX_BATCH_WAIT_TIME = 30
 
 MIN_SDC_VERSION_WITH_SPARK_2_LIB = Version('3.3.0')
