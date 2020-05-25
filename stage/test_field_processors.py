@@ -606,7 +606,79 @@ def test_field_splitter(sdc_builder, sdc_executor):
     assert source_sub_field not in record_1 and source_sub_field not in record_2 and source_sub_field not in record_3
 
 
-def test_field_type_converter(sdc_builder, sdc_executor):
+def test_field_type_converter_by_field_type(sdc_builder, sdc_executor):
+    """Test field type converter processor. We will use one stage to test field by field type conversion.
+    The pipeline would look like:
+
+        dev_raw_data_source >> field_type_converter_fields >> trash
+    """
+    utc_datetime_str = '1978-01-05 19:38:01'
+    utc_datetime = datetime.strptime(utc_datetime_str, '%Y-%m-%d %H:%M:%S')
+    utc_datetime_in_int = int(utc_datetime.strftime('%s')) * 1000  #multiply by 1000 to account for milliseconds
+    raw_str_value = 'hello again!'
+    # note, date time here is in UTC. Each map is an SDC record to process.
+    raw_col = [{'amInteger': 123}, {'amDouble': 12345.6789115}, {'amString': 'hello'}, {'amBool': True},
+               {'amDateTime': utc_datetime_str}, {'amString2': raw_str_value}, {'amZonedDateTime': None}]
+
+    raw_data = json.dumps(raw_col)
+    field_type_converter_configs = [
+        {
+            'fields': ['/amInteger'],
+            'targetType': 'BYTE',
+            'dataLocale': 'en,US'
+        }, {
+            'fields': ['/amDouble'],
+            'targetType': 'INTEGER',
+            'dataLocale': 'en,US'
+        }, {
+            'fields': ['/amString'],
+            'targetType': 'CHAR'
+        }, {
+            'fields': ['/amBool'],
+            'targetType': 'BOOLEAN'
+        }, {
+            'fields': ['/amDateTime'],
+            'targetType': 'DATETIME',
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS'
+        }, {
+            'fields': ['/amString2'],
+            'targetType': 'BYTE_ARRAY'
+        }, {
+            'fields': ['/amZonedDateTime'],
+            'targetType': 'ZONED_DATETIME'
+        }
+    ]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
+                                               field_type_converter_configs=field_type_converter_configs)
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_type_converter_fields >> trash
+    pipeline = pipeline_builder.build('Field Type Converter pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    # assert field by field type conversion
+    field_output = snapshot[field_type_converter_fields.instance_name].output
+    assert field_output[0].field['amInteger'].type == 'BYTE'
+    assert field_output[1].field['amDouble'].type == 'INTEGER'
+    assert field_output[2].field['amString'].type == 'CHAR'
+    assert field_output[3].field['amBool'].type == 'BOOLEAN'
+    assert field_output[4].field['amDateTime'].type == 'DATETIME'
+    assert field_output[5].field['amString2'].type == 'BYTE_ARRAY'
+    assert field_output[6].field['amZonedDateTime'].type == 'ZONED_DATETIME'
+    # assert value which can be compared
+    assert utc_datetime_in_int == int(field_output[4].field['amDateTime'].value.timestamp() * 1000)
+    assert 'b\'' + raw_str_value + '\'' == str(field_output[5].field['amString2'].value)
+
+
+def test_field_type_converter_by_data_type(sdc_builder, sdc_executor):
     """Test field type converter processor. We will use two stages to test field by field type conversion and
     data type conversion. The pipeline would look like:
 
@@ -618,7 +690,8 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     """
     utc_datetime_str = '1978-01-05 19:38:01'
     utc_datetime = datetime.strptime(utc_datetime_str, '%Y-%m-%d %H:%M:%S')
-    utc_datetime_in_int = int(utc_datetime.strftime('%s')) * 1000  # multiply by 1000 to account for milliseconds
+    # add an hour and multiply by 1000 to account for milliseconds
+    utc_datetime_in_int = (int(utc_datetime.strftime('%s')) + 3600) * 1000
     raw_str_value = 'hello again!'
     # note, date time here is in UTC. Each map is an SDC record to process.
     raw_col = [{'amInteger': 123}, {'amDouble': 12345.6789115}, {'amString': 'hello'}, {'amBool': True},
@@ -708,15 +781,6 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    # assert field by field type conversion
-    field_output = snapshot[field_type_converter_fields.instance_name].output
-    assert field_output[0].field['amInteger'].type == 'BYTE'
-    assert field_output[1].field['amDouble'].type == 'INTEGER'
-    assert field_output[2].field['amString'].type == 'CHAR'
-    assert field_output[3].field['amBool'].type == 'BOOLEAN'
-    assert field_output[4].field['amDateTime'].type == 'DATETIME'
-    assert field_output[5].field['amString2'].type == 'BYTE_ARRAY'
-    assert field_output[6].field['amZonedDateTime'].type == 'ZONED_DATETIME'
     # assert data type conversion
     type_output = snapshot[field_type_converter_types.instance_name].output
     assert type_output[0].field['amInteger'].type == 'DECIMAL'
@@ -729,6 +793,7 @@ def test_field_type_converter(sdc_builder, sdc_executor):
     # assert values which can be compared
     assert utc_datetime_in_int == int(type_output[4].field['amDateTime'].value)
     assert raw_str_value == type_output[5].field['amString2'].value
+
 
 def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     """
