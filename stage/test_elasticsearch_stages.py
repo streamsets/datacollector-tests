@@ -15,6 +15,7 @@
 import logging
 import string
 import time
+import json
 
 import pytest
 from elasticsearch_dsl import DocType, Index, Search as ESSearch
@@ -179,6 +180,77 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, addition
     finally:
         # Clean up test data in ES
         idx = Index(es_index)
+        idx.delete()
+
+
+@sdc_min_version('3.17.0')
+@elasticsearch
+def test_elasticsearch_target_additional_properties(sdc_builder, sdc_executor, elasticsearch):
+    """
+    Elasticsearch target pipeline, adding additional properties, where specifies every routing with the value of the
+    shard's record. It checks if the value of the record-label is added correctly to the property routing at
+    ElasticSearch query.
+        dev_raw_data_source >> es_target
+    """
+    # Test static
+    index_values = []
+    for j in range(4):
+        index_values.append(get_random_string(string.ascii_letters, 10).lower())
+
+    raw_data = [{"text": "Record1", "index": index_values[0], "mapping": get_random_string(string.ascii_letters, 10).lower(),
+                 "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": "record1"},
+                {"text": "Record2", "index": index_values[1], "mapping": get_random_string(string.ascii_letters, 10).lower(),
+                 "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": "record2"},
+                {"text": "Record3", "index": index_values[2], "mapping": get_random_string(string.ascii_letters, 10).lower(),
+                 "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": "record3"},
+                {"text": "Record4", "index": index_values[3], "mapping": get_random_string(string.ascii_letters, 10).lower(),
+                 "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": None}]
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  stop_after_first_batch=True,
+                                                                                  raw_data='\n'.join(json.dumps(rec)
+                                                                                                     for rec in raw_data))
+    es_target = builder.add_stage('Elasticsearch', type='destination')
+    es_target.set_attributes(default_operation='INDEX', document_id='${record:value(\'/doc_id\')}',
+                             index='${record:value(\'/index\')}', mapping='${record:value(\'/mapping\')}',
+                             additional_properties='{\"_routing\":${record:value(\'/shard\')}}')
+
+    dev_raw_data_source >> es_target
+    es_target_pipeline = builder.build(title='ES target pipeline').configure_for_environment(elasticsearch)
+
+    sdc_executor.add_pipeline(es_target_pipeline)
+    try:
+        elasticsearch.connect()
+
+        # Make sure that the index exists properly before running the test
+        index = Index(index_values[0])
+        index.create()
+        assert index.refresh()
+
+        # Run pipeline with additional properties
+        sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
+
+        es_response = []
+        for i in index_values:
+            es_search = ESSearch(index=i)
+            response = es_search.execute()
+            es_response.append(response[0])
+            time.sleep(5)
+
+        assert len(es_response) == 4
+        for r in es_response:
+            assert r
+            if r.text == "Record4":
+                for attribute in r.meta:
+                    assert attribute != "routing"
+            else:
+                assert r.shard == r.meta.routing
+
+    finally:
+        # Clean up test data in ES
+        idx = Index(index_values[0])
         idx.delete()
 
 
