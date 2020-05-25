@@ -802,7 +802,6 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     This test creates a raw data -> converter -> trash pipeline.  The raw data will contain a decimal (in STRING form) with a high
     precision.  The converter will convert this to DECIMAL type, and we assert that all digits were preserved in the process.
     """
-
     decimal_str_val = '11235813213455.55342113853211';
     raw_data = json.dumps([{'largeDecimal': decimal_str_val}])
     field_type_converter_configs = [
@@ -814,8 +813,24 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
             'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'
         }
     ]
-    whole_type_converter_configs = []
 
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    trash = pipeline_builder.add_stage('Trash')
+
+    # 1st pipeline where check field type before use Field Type Converter
+    dev_raw_data_source >> trash
+    pipeline_test = pipeline_builder.build('Field without Converter')
+    sdc_executor.add_pipeline(pipeline_test)
+    snapshot_test = sdc_executor.capture_snapshot(pipeline_test, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline_test)
+
+    # assert field coming out of origin is STRING (sanity check)
+    raw_output = snapshot_test[dev_raw_data_source.instance_name].output
+    assert raw_output[0].field['largeDecimal'].type == 'STRING'
+
+    # 2nd pipeline with Field Type Converter
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
@@ -831,9 +846,6 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    # assert field coming out of origin is STRING (sanity check)
-    raw_output = snapshot[dev_raw_data_source.instance_name].output
-    assert raw_output[0].field['largeDecimal'].type == 'STRING'
     # assertions on field coming out of field type converter
     field_output = snapshot[field_type_converter_fields.instance_name].output
     # assert the type
