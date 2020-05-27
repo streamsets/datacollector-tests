@@ -3569,6 +3569,9 @@ def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured
 ])
 def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, input_string):
     """Ensure that problematical values in String-typed offset column are covered, e.g. our special separator '::'."""
+    if database.type == 'Oracle' and not input_string:
+        pytest.skip("Oracle doesn't support concept of empty string - it always converts it to NULL which is invalid for primary key.")
+
     builder = sdc_builder.get_pipeline_builder()
     table_name = get_random_string(string.ascii_letters, 10)
 
