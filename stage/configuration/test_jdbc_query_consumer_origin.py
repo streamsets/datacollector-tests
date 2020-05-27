@@ -17,6 +17,7 @@ import string
 import pytest
 import sqlalchemy
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ ROWS_IN_DATABASE = [
     {'id': 2, 'name': 'Christiano Ronaldo'},
     {'id': 3, 'name': 'Paul Pogba'}
 ]
+
 
 @stub
 def test_additional_jdbc_configuration_properties(sdc_builder, sdc_executor):
@@ -62,6 +64,7 @@ def test_create_jdbc_header_attributes(sdc_builder, sdc_executor, stage_attribut
     pass
 
 
+@database
 @pytest.mark.parametrize('stage_attributes', [{'disable_query_validation': False}, {'disable_query_validation': True}])
 def test_disable_query_validation(sdc_builder, sdc_executor, stage_attributes, database):
     """The validation disable is really useful only for non-compliant databases that we don't actually support, so this
@@ -239,7 +242,6 @@ def test_use_credentials(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'use_credentials': True}])
 def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
-
 
 
 def _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes=None):
