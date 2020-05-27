@@ -1591,3 +1591,59 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
                                        'Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
+
+@aws('s3')
+def test_s3_whole_file_empty_directory(sdc_builder, sdc_executor, aws):
+    """Tests that a file is read and an empty directory does not stop the pipeline with an error.
+    SDC-14835 - The pipeline looks like:
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+    """
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    # File Name starts with B. Directory AAAAAA comes first.
+    s3_directory_name = f'{s3_key}/AAAAAA/'
+    s3_file_name = f'{s3_key}/B{get_random_string()}.txt'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern=f'**/*',
+                             read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/')
+
+    wiretap = builder.add_wiretap()
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+    s3_origin >> wiretap.destination
+    s3_origin >= finisher
+
+    s3_origin_pipeline = builder.build(title='Amazon S3 directory empty whole file').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    test_data = [f'Message {i}' for i in range(10)]
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=aws.s3_bucket_name, Key=s3_directory_name)
+        client.put_object(Bucket=aws.s3_bucket_name, Key=s3_file_name,
+                          Body='\n'.join(test_data).encode('ascii'))
+
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+
+        assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == [s3_file_name]
+
+    finally:
+        # If no files have been processed we need to stop the pipeline, otherwise it will be finished
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
+                                       'Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
