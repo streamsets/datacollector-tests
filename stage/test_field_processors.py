@@ -691,7 +691,7 @@ def test_field_type_converter_by_data_type(sdc_builder, sdc_executor):
     utc_datetime_str = '1978-01-05 19:38:01'
     utc_datetime = datetime.strptime(utc_datetime_str, '%Y-%m-%d %H:%M:%S')
     # add an hour and multiply by 1000 to account for milliseconds
-    utc_datetime_in_int = (int(utc_datetime.strftime('%s')) + 3600) * 1000
+    utc_datetime_in_int = int(utc_datetime.strftime('%s')) * 1000
     raw_str_value = 'hello again!'
     # note, date time here is in UTC. Each map is an SDC record to process.
     raw_col = [{'amInteger': 123}, {'amDouble': 12345.6789115}, {'amString': 'hello'}, {'amBool': True},
