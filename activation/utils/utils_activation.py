@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 
 REGISTRATION_ENDPOINT = 'https://test.registration.streamsets.com/register'
 ACTIVATION_SUPPORT_SDC_MIN_VERSION = '3.15.0'
-SDC_ACTIVATION_DEFAULT_EMAIL_SUBJECT = 'StreamSets Data Collector Activation'
 
 
 def register_sdc(sdc):
-    email_id = os.environ['SDC_ACTIVATION_TEST_EMAIL_ID']
+    # use email alias to be able to find the correct one
+    email_id = os.environ['SDC_ACTIVATION_TEST_EMAIL_ID'].replace('@', f'+{sdc.id}@')
     data = {
         "activationUrl": REGISTRATION_ENDPOINT,
         "company": "Streamsets",
@@ -51,7 +51,8 @@ def register_sdc(sdc):
 
 
 def register_and_activate_sdc(sdc):
-    email_id = os.environ['SDC_ACTIVATION_TEST_EMAIL_ID']
+    # use email alias to be able to find the correct one
+    email_id = os.environ['SDC_ACTIVATION_TEST_EMAIL_ID'].replace('@', f'+{sdc.id}@')
     email_password = os.environ['SDC_ACTIVATION_TEST_EMAIL_PASSWORD']
 
     register_sdc(sdc)
@@ -60,7 +61,7 @@ def register_and_activate_sdc(sdc):
     time.sleep(20)
 
     # parse_email to get activation_key
-    parsed_email = parse_email(email_id, email_password, SDC_ACTIVATION_DEFAULT_EMAIL_SUBJECT)
+    parsed_email = parse_email(email_id, email_password)
     email_soup = BeautifulSoup(parsed_email['body'], 'lxml')
     activation_key = email_soup.find(string=re.compile('^--------SDC ACTIVATION KEY--------'))
     logger.debug('activation_key')
