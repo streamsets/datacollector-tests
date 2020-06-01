@@ -152,6 +152,49 @@ def test_pulsar_consumer(sdc_builder, sdc_executor, pulsar):
 
 @pulsar
 @sdc_min_version('3.5.0')
+def test_pulsar_consumer_with_parameters(sdc_builder, sdc_executor, pulsar):
+    """Make sure that pulsar's topic name is properly resolved with pipeline parameters."""
+    sub_name = get_random_string(string.ascii_letters, 10)
+    consumer_name = get_random_string(string.ascii_letters, 10)
+    topic_name = get_random_string(string.ascii_letters, 10)
+    max_records = 100
+    input_text = 'Hello World!'
+
+    builder = sdc_builder.get_pipeline_builder()
+    pulsar_consumer = builder.add_stage('Pulsar Consumer').set_attributes(subscription_name=sub_name,
+                                                                          consumer_name=consumer_name,
+                                                                          topic="${TOPIC_NAME}",
+                                                                          data_format='TEXT',
+                                                                          max_batch_size_in_records=max_records)
+    trash = builder.add_stage('Trash')
+
+    pulsar_consumer >> trash
+
+    pipeline = builder.build(title='Pulsar Consumer pipeline').configure_for_environment(pulsar)
+    pipeline.add_parameters(TOPIC_NAME=topic_name)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = pulsar.client
+    admin = pulsar.admin
+    try:
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+
+        producer = client.create_producer(topic_name)
+        for _ in range(max_records):
+            producer.send(input_text.encode())
+
+        snapshot = snapshot_command.wait_for_finished().snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output_records = [record.field['text'] for record in snapshot[pulsar_consumer.instance_name].output]
+        assert output_records == [input_text] * 10 # 10 hardcoded for snapshot batch size
+    finally:
+        producer.close() # all producer/consumers need to be closed before topic can be deleted without force
+        client.close()
+        admin.delete_topic(producer.topic())
+
+
+@pulsar
+@sdc_min_version('3.5.0')
 def test_pulsar_producer(sdc_builder, sdc_executor, pulsar):
     """Test for Pulsar producer target stage. We do so by publishing data to a test topic using Pulsar producer
     stage and then read the data from that topic using Pulsar client. We assert the data from the client to what has
