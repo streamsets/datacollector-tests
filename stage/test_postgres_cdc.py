@@ -50,7 +50,7 @@ CHECK_REP_SLOT_QUERY = 'select slot_name from pg_replication_slots;'
 
 POLL_INTERVAL = "${1 * SECONDS}"
 
-INSERTS_PER_THREAD = 500
+INSERTS_PER_THREAD = 20
 NUM_THREADS = 10
 TOTAL_THREADING_RECORDS = INSERTS_PER_THREAD * NUM_THREADS
 
@@ -88,10 +88,11 @@ def _insert(connection, table, insert_rows=INSERT_ROWS, create_txn=False):
     return operations_data
 
 
-def _update(connection, table):
+def _update(connection, table, update_rows=UPDATE_ROWS):
     txn = connection.begin()
+
     try:
-        for row in UPDATE_ROWS:
+        for row in update_rows:
             connection.execute(table.update().where(table.c.id == row[PRIMARY_KEY]).values(name=row[NAME_COLUMN]))
         txn.commit()
     except:
@@ -100,7 +101,7 @@ def _update(connection, table):
 
     # Prepare expected data to compare for verification against snapshot data.
     operations_data = []
-    for row in UPDATE_ROWS:
+    for row in update_rows:
         operations_data.append(OperationsData(KIND_FOR_UPDATE,
                                               table.name,
                                               [PRIMARY_KEY, NAME_COLUMN],
@@ -109,10 +110,11 @@ def _update(connection, table):
     return operations_data
 
 
-def _delete(connection, table):
+def _delete(connection, table, delete_rows=DELETE_ROWS):
     txn = connection.begin()
+
     try:
-        for row in DELETE_ROWS:
+        for row in delete_rows:
             connection.execute(table.delete().where(table.c.id == row[PRIMARY_KEY]))
         txn.commit()
     except:
@@ -121,7 +123,7 @@ def _delete(connection, table):
 
     # Prepare expected data to compare for verification against snapshot data.
     operations_data = []
-    for row in DELETE_ROWS:
+    for row in delete_rows:
         operations_data.append(OperationsData(KIND_FOR_DELETE,
                                               table.name,
                                               None,  # No columnnames expected.
@@ -661,9 +663,9 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
 
 @database('postgresql')
 @sdc_min_version('3.4.0')
-@pytest.mark.parametrize(('batch_size'), [1, 10, 100, 1000])
-def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_executor, database, batch_size):
-    """Basic test that inserts to a Postgres table with multiple threads,
+@pytest.mark.parametrize(('batch_size'), [1,10,100,1000])
+def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder, sdc_executor, database, batch_size):
+    """Basic test that inserts/update/delete to a Postgres table with multiple threads,
     and validates using a wire tap the records processed.
     Here `Initial Change` config. is at default value = `From the latest change`.
     With this, the origin processes all changes that occur after pipeline is started.
@@ -679,10 +681,12 @@ def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_exe
     pipeline_builder = sdc_builder.get_pipeline_builder()
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
                                        max_batch_size_in_records=batch_size,
                                        poll_interval=POLL_INTERVAL,
-                                       replication_slot=replication_slot_name)
+                                       replication_slot=replication_slot_name,
+                                       batch_wait_time_in_ms=3000
+                                       )
     wiretap = pipeline_builder.add_wiretap()
 
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
@@ -719,6 +723,22 @@ def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_exe
                     insert_rows=insert_rows,
                     create_txn=True
                 ))
+                insert_rows = [
+                    {
+                        PRIMARY_KEY: id * amount + i,
+                        NAME_COLUMN: get_random_string(string.ascii_lowercase, 10)
+                    }
+                ]
+                expected.append(_update(
+                    connection=connection,
+                    table=table,
+                    update_rows=insert_rows
+                ))
+                expected.append(_delete(
+                    connection=connection,
+                    table=table,
+                    delete_rows=insert_rows
+                ))
 
         thread_pool = [
             threading.Thread(
@@ -743,13 +763,31 @@ def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_exe
         ))
         pipeline_cmd.wait_for_finished(timeout_sec=120)
 
-        output = [record.get_field_data('/change[0]/columnvalues')
-                  for record in wiretap.output_records]
+        output = []
+        for record in wiretap.output_records:
+            if record.get_field_data('/change[0]/kind')=='delete':
+                output.append({'type':'delete', 'value': record.get_field_data('/change[0]/oldkeys/keyvalues')})
+            if record.get_field_data('/change[0]/kind')=='insert':
+                output.append({'type':'insert', 'value': record.get_field_data('/change[0]/columnvalues')})
+            if record.get_field_data('/change[0]/kind')=='update':
+                output.append({'type':'update', 'value': record.get_field_data('/change[0]/columnvalues')})
 
-        expected_values = sorted([record[0].columnvalues for record in expected], key=lambda key: key[0])
-        output_values = sorted(output, key=lambda key: key[0].value)
+        output_sorted_values = sorted(output, key=lambda key: f'{key["value"][0]}|{key["type"]}')
 
-        assert expected_values == output_values
+
+        expected_values = []
+        for record in expected:
+            if record[0].kind == 'delete':
+                expected_values.append({'type':'delete', 'value': record[0].oldkeys.keyvalues})
+            if record[0].kind == 'insert':
+                expected_values.append({'type': 'insert', 'value': record[0].columnvalues})
+            if record[0].kind == 'update':
+                expected_values.append({'type': 'update', 'value': record[0].columnvalues})
+
+        expected_sorted_values= sorted(expected_values, key=lambda key: f'{key["value"][0]}|{key["type"]}')
+
+        assert len(expected_sorted_values) == len(output_sorted_values)
+        assert expected_sorted_values == output_sorted_values
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -758,3 +796,4 @@ def test_postgres_cdc_client_multiple_concurrent_insertions(sdc_builder, sdc_exe
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
