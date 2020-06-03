@@ -19,7 +19,7 @@ import string
 import pytest
 
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import aws, sftp
+from streamsets.testframework.markers import aws, sdc_min_version, sftp
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,69 @@ def test_sftp_origin_whole_file_to_s3(sdc_builder, sdc_executor, sftp, aws, read
         # compare the S3 bucket contents against the original whole file contents
         assert len(s3_contents[0]) == len(raw_text_data)
         assert s3_contents[0] == raw_text_data
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('s3')
+@sftp
+@sdc_min_version('3.17.0')
+def test_sftp_origin_whole_file_to_s3_no_read_permission(sdc_builder, sdc_executor, sftp, aws):
+    """This is a test for SDC-14867.  It creates a file with no read permissions and creates one more file
+     with read permissions, when the pipeline runs we will start ingesting from the second file and first
+     file is skipped and an error is reported.
+    """
+
+    prefix = get_random_string(string.ascii_letters, 5)
+
+    sftp_file_name1 = f'{prefix}{get_random_string(string.ascii_letters, 10)}.txt'
+    raw_text_data = get_random_string(string.printable, 6000000)
+    sftp.put_string(os.path.join(sftp.path, sftp_file_name1), raw_text_data)
+    sftp.chmod(os.path.join(sftp.path, sftp_file_name1), 000)
+
+    sftp_file_name2 = f'{prefix}{get_random_string(string.ascii_letters, 10)}.txt'
+    raw_text_data = get_random_string(string.printable, 6000000)
+    sftp.put_string(os.path.join(sftp.path, sftp_file_name2), raw_text_data)
+
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_BUCKET_PREFIX}/{prefix}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    sftp_ftp_client = builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+    sftp_ftp_client.set_attributes(file_name_pattern = f'{prefix}*',
+                                   data_format = 'WHOLE_FILE',
+                                   batch_wait_time_in_ms = 10000,
+                                   max_batch_size_in_records = 1)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.file_name_expression = "${record:value('/fileInfo/filename')}"
+    s3_destination.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', partition_prefix=s3_key)
+
+    sftp_ftp_client >> s3_destination
+    sftp_to_s3_pipeline = builder.build().configure_for_environment(aws, sftp)
+    sdc_executor.add_pipeline(sftp_to_s3_pipeline)
+
+    client = aws.s3
+    try:
+        sdc_executor.start_pipeline(sftp_to_s3_pipeline).wait_for_pipeline_batch_count(5)
+
+        error_msgs = sdc_executor.get_stage_errors(sftp_to_s3_pipeline, sftp_ftp_client)
+        sdc_executor.stop_pipeline(sftp_to_s3_pipeline)
+
+        assert len(error_msgs) == 1
+        assert error_msgs[0].error_code == 'REMOTE_DOWNLOAD_10'
+
+        # assert only one object in s3
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']
+        assert len(list_s3_objs) == 1
+
+        # assert the object in s3 is file2 which has read permissions
+        assert list_s3_objs[0]['Key'] == f'{s3_key}/sdc-{sftp_file_name2}'
+
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}

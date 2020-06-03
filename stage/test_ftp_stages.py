@@ -517,6 +517,69 @@ def test_ftp_origin_SDC_Record(sdc_builder, sdc_executor, ftp):
     assert snapshot[sftp_ftp_client].output[1].field == json_data[1]
 
 
+@sdc_min_version('3.17.0')
+@ftp
+def test_ftp_origin_whole_file_to_s3_no_read_permission(sdc_builder, sdc_executor, ftp):
+    """This is a test for SDC-14867.  It creates a file with no read permissions and creates one more file
+     with read permissions, when the pipeline runs we will start ingesting from the second file and first
+     file is skipped and an error is reported. We also drop another file when the pipeline is running and
+     see whether that is also picked up rightly.
+    """
+    prefix = get_random_string(string.ascii_letters, 5)
+
+    ftp_file_name1 = f'{prefix}{get_random_string(string.ascii_letters, 10)}.txt'
+    ftp_file_name2 = f'{prefix}{get_random_string(string.ascii_letters, 10)}.txt'
+    ftp_file_name3 = f'{prefix}{get_random_string(string.ascii_letters, 10)}.txt'
+
+    raw_text_data = get_random_string(string.printable, 1000)
+
+    ftp.put_string(ftp_file_name1, raw_text_data)
+    ftp.chmod(ftp_file_name1, 000)
+
+    ftp.put_string(ftp_file_name2, raw_text_data)
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    sftp_ftp_client = builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+    sftp_ftp_client.set_attributes(file_name_pattern = f'{prefix}*',
+                                   data_format = 'WHOLE_FILE',
+                                   batch_wait_time_in_ms = 10000,
+                                   max_batch_size_in_records = 1)
+
+    trash = builder.add_stage('Trash')
+
+    wiretap = builder.add_wiretap()
+
+    sftp_ftp_client >> [wiretap.destination, trash]
+    sftp_to_trash_pipeline = builder.build().configure_for_environment(ftp)
+    sdc_executor.add_pipeline(sftp_to_trash_pipeline)
+    try:
+        # Wait to capture snapshot till 5 batches
+        start_command = sdc_executor.start_pipeline(sftp_to_trash_pipeline)
+        start_command.wait_for_pipeline_batch_count(2)
+
+        ftp.put_string(ftp_file_name3, raw_text_data)
+        start_command.wait_for_pipeline_batch_count(5)
+
+        error_msgs = sdc_executor.get_stage_errors(sftp_to_trash_pipeline, sftp_ftp_client)
+
+        # Verify the stage error message
+        assert 'REMOTE_DOWNLOAD_10' in [e.error_code for e in error_msgs]
+
+        actual_records = [record.field['fileInfo']['filename'] for record in wiretap.output_records]
+        sdc_executor.stop_pipeline(sftp_to_trash_pipeline)
+        wiretap.reset()
+
+        assert [ftp_file_name2, ftp_file_name3] == actual_records
+    finally:
+        # Delete the test SFTP origin files we created
+        ftp.chmod(ftp_file_name1, 700)
+        for ftp_file_name in [ftp_file_name1, ftp_file_name2, ftp_file_name3]:
+            logger.debug('Removing file at %s/%s on FTP server ...', ftp.path, ftp_file_name)
+            ftp.rm(ftp_file_name)
+
+
 @ftp
 @sdc_min_version('3.9.0')
 def test_ftp_destination(sdc_builder, sdc_executor, ftp):
