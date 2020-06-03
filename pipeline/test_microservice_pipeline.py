@@ -13,10 +13,9 @@
 # limitations under the License.
 
 import requests
-
 from requests.auth import HTTPBasicAuth
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
-
 
 HTTP_LISTENING_PORT = 8234
 
@@ -47,7 +46,12 @@ def test_microservice_pipeline_response(sdc_builder, sdc_executor):
     """
 
     pipeline = _create_microservice_pipeline(sdc_builder)
-    pipeline.origin_stage.list_of_application_ids = [{"appId": 'TEST_ID_FIRST'}]
+
+    if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.17.0'):
+        pipeline.origin_stage.list_of_application_ids = [{"appId": 'TEST_ID_FIRST'}]
+    elif Version(sdc_builder.version) >= Version('3.17.0'):
+        pipeline.origin_stage.list_of_application_ids = [{"credential": 'TEST_ID_FIRST'}]
+
     pipeline.stages[1].status_code = 201
     pipeline.stages[1].response_headers = [{'key': 'SAMPLE_RESPONSE_HEADER', 'value': 'test'}]
     sdc_executor.add_pipeline(pipeline)
@@ -87,7 +91,13 @@ def test_rest_service_multiple_application_ids(sdc_builder, sdc_executor):
     """Test Microservice Pipeline with multiple application Ids. """
 
     pipeline = _create_microservice_pipeline(sdc_builder)
-    pipeline.origin_stage.list_of_application_ids = [{"appId": 'TEST_ID_FIRST'}, {"appId": 'TEST_ID_SECOND'}]
+
+    if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.17.0'):
+        pipeline.origin_stage.list_of_application_ids = [{"appId": 'TEST_ID_FIRST'}, {"appId": 'TEST_ID_SECOND'}]
+    elif Version(sdc_builder.version) >= Version('3.17.0'):
+        pipeline.origin_stage.list_of_application_ids = [{"credential": 'TEST_ID_FIRST'},
+                                                         {"credential": 'TEST_ID_SECOND'}]
+
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.validate_pipeline(pipeline)
     try:

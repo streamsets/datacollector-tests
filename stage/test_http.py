@@ -12,21 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gssapi
+import http.client as httpclient
 import json
 import logging
+import pytest
 import requests
 import string
 import time
-import http.client as httpclient
 from collections import namedtuple
-from requests_gssapi import HTTPSPNEGOAuth
-
-import pytest
 from pretenders.common.constants import FOREVER
+from requests_gssapi import HTTPSPNEGOAuth
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import http, sdc_min_version, spnego
 from streamsets.testframework.utils import get_random_string
-from streamsets.sdk.utils import Version
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +40,17 @@ logger = logging.getLogger(__name__)
 #    docker run -d --name myhttpmockserver --net=cluster pretenders/pretenders:1.4
 #
 
+
 @pytest.fixture(scope='module')
 def http_server_pipeline(sdc_builder, sdc_executor):
     """HTTP Server pipeline fixture."""
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     http_server = pipeline_builder.add_stage('HTTP Server')
-    if Version(sdc_builder.version) >= Version('3.14.0'):
-        http_server.list_of_application_ids = [{"appId":'${APPLICATION_ID}'}]
+    if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.17.0'):
+        http_server.list_of_application_ids = [{"appId": '${APPLICATION_ID}'}]
+    elif Version(sdc_builder.version) >= Version('3.17.0'):
+        http_server.list_of_application_ids = [{"credential": '${APPLICATION_ID}'}]
     else:
         http_server.application_id = '${APPLICATION_ID}'
     http_server.data_format = 'JSON'
@@ -462,13 +463,18 @@ def test_http_server_multiple_application_ids(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     http_server = pipeline_builder.add_stage('HTTP Server')
-    http_server.list_of_application_ids = [{"appId":'TEST_ID_FIRST'},{"appId":'TEST_ID_SECOND'}]
+
+    if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.17.0'):
+        http_server.list_of_application_ids = [{"appId": 'TEST_ID_FIRST'}, {"appId": 'TEST_ID_SECOND'}]
+    elif Version(sdc_builder.version) >= Version('3.17.0'):
+        http_server.list_of_application_ids = [{"credential": 'TEST_ID_FIRST'}, {"credential": 'TEST_ID_SECOND'}]
+
     http_server.data_format = 'JSON'
     http_server.http_listening_port = 9999
 
     trash = pipeline_builder.add_stage('Trash')
 
-    http_server >>  trash
+    http_server >> trash
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 

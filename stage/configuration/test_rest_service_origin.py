@@ -521,16 +521,18 @@ def test_keystore_file(sdc_builder, sdc_executor, stage_attributes):
     builder = sdc_builder.get_pipeline_builder()
     rest_srv = builder.add_stage('REST Service')
 
-    if Version(sdc_builder.version) < Version('3.16.0'):
-        rest_srv.set_attributes(keystore_type=KEYSTORE_TYPE,
-                                keystore_password=KEYSTORE_PASSWORD,
-                                application_id='admin',
-                                **stage_attributes)
+    if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.17.0'):
+        app_id = [{"appId": 'admin'}]
+    elif Version(sdc_builder.version) >= Version('3.17.0'):
+        app_id = [{"credential": 'admin'}]
     else:
-        rest_srv.set_attributes(keystore_type=KEYSTORE_TYPE,
-                                keystore_password=KEYSTORE_PASSWORD,
-                                list_of_application_ids = [{"appId": 'admin'}],
-                                **stage_attributes)
+        app_id = 'admin'
+
+    rest_srv.set_attributes(keystore_type=KEYSTORE_TYPE,
+                            keystore_password=KEYSTORE_PASSWORD,
+                            application_id=app_id,
+                            **stage_attributes)
+
     trash = builder.add_stage('Trash')
     rest_srv >> trash
 

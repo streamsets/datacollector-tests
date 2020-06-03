@@ -347,8 +347,10 @@ def test_keystore_file(sdc_builder, sdc_executor, stage_attributes):
                                keystore_password=KEYSTORE_PASSWORD,
                                data_format='JSON',
                                **stage_attributes)
-    if Version(sdc_builder.version) >= Version('3.14.0'):
-        http_server.list_of_application_ids = [{'appId': 'admin'}]
+    if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.17.0'):
+        http_server.list_of_application_ids = [{"appId": 'admin'}]
+    elif Version(sdc_builder.version) >= Version('3.17.0'):
+        http_server.list_of_application_ids = [{"credential": 'admin'}]
     else:
         http_server.application_id = 'admin'
     trash = builder.add_stage('Trash')
