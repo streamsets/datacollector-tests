@@ -152,54 +152,65 @@ def test_jdbc_consumer_offset_resume(sdc_builder, sdc_executor, database):
 
 
 @database
-def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database):
-    """Ensure that the Query consumer works properly in non-incremental mode."""
+@pytest.mark.parametrize('batch_size', [1, 3, 10])
+def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batch_size):
+    """Ensure that the Query consumer works properly in non-incremental mode.
+
+    We test the stage with different batch sizes, since the logic is different depending on the whole table
+    fit in a batch or not (see e.g. SDC-14882 for an issue with the second case).
+
+    Pipeline:  jdbc_consumer >> trash
+               jdbc_consumer >= finisher
+
+    """
     if database.type == 'Oracle':
         pytest.skip("This test depends on proper case for column names that Oracle auto-uppers.")
 
-    metadata = sqlalchemy.MetaData()
+    num_records = 8
+    input_data = [{'id': i, 'name': get_random_string()} for i in range(num_records)]
     table_name = get_random_string(string.ascii_lowercase, 20)
-    table = sqlalchemy.Table(
-        table_name,
-        metadata,
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-        sqlalchemy.Column('name', sqlalchemy.String(32))
-    )
+    sql_query = f'SELECT * FROM {table_name} ORDER BY id ASC'
 
+    # Create pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
-
     origin = pipeline_builder.add_stage('JDBC Query Consumer')
-    origin.incremental_mode = False
-    origin.sql_query = 'SELECT * FROM {0} ORDER BY id ASC'.format(table_name)
-
+    origin.set_attributes(incremental_mode=False,
+                          sql_query=sql_query,
+                          max_batch_size_in_records=batch_size)
     trash = pipeline_builder.add_stage('Trash')
-    origin >> trash
-
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
-    origin >= finisher
 
+    origin >> trash
+    origin >= finisher
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     try:
+        # Create and populate table
         logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(table_name,
+                                 sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column('name', sqlalchemy.String(32)))
         table.create(database.engine)
         connection = database.engine.connect()
-        connection.execute(table.insert(), ROWS_IN_DATABASE)
+        connection.execute(table.insert(), input_data)
 
-        # Run the pipeline N times, it should always read the same
+        # Run the pipeline and check the stage consumed all the expected records. Repeat several times to
+        # ensure non-incremental mode works as expected after restarting the pipeline.
         for i in range(3):
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-            assert len(snapshot[origin].output) == len(ROWS_IN_DATABASE)
-
-            assert snapshot[origin].output[0].get_field_data('/id') == 1
-            assert snapshot[origin].output[1].get_field_data('/id') == 2
-            assert snapshot[origin].output[2].get_field_data('/id') == 3
-
-            # TLKT-249: Add wait_for_finished to get_status object
+            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                     start_pipeline=True,
+                                                     batches=math.ceil(num_records / batch_size),
+                                                     batch_size=batch_size).snapshot
+            sdc_records = [record.field
+                           for batch in snapshot.snapshot_batches
+                           for record in batch[origin.instance_name].output]
+            assert sdc_records == input_data
             sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+
     finally:
-        logger.info('Jdbc No More Data: Dropping table %s in %s database...', table_name, database.type)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
 
