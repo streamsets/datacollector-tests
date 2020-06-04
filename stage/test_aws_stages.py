@@ -1152,6 +1152,58 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+def test_s3_whole_file_transfer_existing_file(sdc_builder, sdc_executor, aws):
+    """Test simple scenario of moving files from source to target using WHOLE_FILE_FORMAT."""
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+    s3_dest_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+    data = 'Completely random string that is transferred as whole file format.'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
+                          prefix_pattern=f'{s3_key}/*',
+                          max_batch_size_in_records=100)
+
+    target = builder.add_stage('Amazon S3', type='destination')
+    target.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE', partition_prefix=s3_dest_key,
+                          file_name_expression='output.txt', object_name_prefix='', file_exists='TO_ERROR')
+
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    origin >> target
+    origin >= finisher
+
+    pipeline = builder.build().configure_for_environment(aws)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # We create both input as well as output file
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}input.txt', Body=data.encode('ascii'))
+        logger.info(f"Pre creating output file {s3_dest_key}output.txt")
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_dest_key}output.txt', Body=data.encode('ascii'))
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.AmazonS3_02.inputRecords.counter').count == 1
+        assert history.latest.metrics.counter('stage.AmazonS3_02.outputRecords.counter').count == 0
+        assert history.latest.metrics.counter('stage.AmazonS3_02.errorRecords.counter').count == 1
+
+    finally:
+        logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+        logger.info('Deleting output S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_dest_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_dest_key)
+
+
+@aws('s3')
 @sdc_min_version('3.11.0')
 def test_s3_error_destination(sdc_builder, sdc_executor, aws):
     """Test sending records to S3 error destination."""
