@@ -266,7 +266,7 @@ def _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes=None):
         table_name,
         metadata,
         sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-        sqlalchemy.Column('name', sqlalchemy.String(32))
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True)
     )
     try:
         logger.info('Creating table %s ...', table_name)
