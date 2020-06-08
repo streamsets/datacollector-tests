@@ -493,6 +493,72 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
 
 
 @database('oracle')
+def test_long_sql_statements(sdc_builder, sdc_executor, database):
+    """Test Oracle CDC correctly handles long SQL statements.
+
+    When querying LogMiner content (i.e. V$LOGMNR_CONTENT view), any database operation whose SQL statement is
+    longer than 4000 bytes is split into several records. In that case, Oracle CDC must join the partial SQL
+    statements to build the corresponding SDC record.
+
+    This test creates several SQL insertions longer than 4000 bytes and checks Oracle CDC correctly generates
+    the corresponding records, with no data loss.
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
+    connection = database.engine.connect()
+
+    # We will use VARCHAR values with 4000 bytes (the max size allowed for this data type). Thus the resulting
+    # SQL insert statements will be longer than 4000 bytes.
+    max_size = 4000  # max size in bytes for a VARCHAR
+    input_data = [{'ID': i, 'NAME': get_random_string(string.ascii_lowercase, max_size)} for i in range(5)]
+
+    try:
+        start_scn = _get_last_scn(connection)
+        # Create table and populate with long values.
+        table = sqlalchemy.Table(table_name,
+                                 sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('ID', sqlalchemy.Integer),
+                                 sqlalchemy.Column('NAME', sqlalchemy.types.VARCHAR(length=max_size)))
+        table.create(database.engine)
+        for rec in input_data:
+            connection.execute(table.insert(rec))
+
+        # Build and start the pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   buffer_locally=True,
+                                                   src_table_name=table_name,
+                                                   batch_size=1,
+                                                   initial_change='SCN',
+                                                   start_scn=start_scn,
+                                                   parse_sql_query=True)
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True,
+                                                 timeout_sec=240, batches=len(input_data),
+                                                 batch_size=1).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        # Check there is no data loss.
+        sdc_records = [record.field
+                       for batch in snapshot.snapshot_batches
+                       for record in batch[oracle_cdc.instance_name].output]
+        assert sdc_records == input_data
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True])
 def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_locally):
     """Tests SDC-8359. The basic premise of the test:
