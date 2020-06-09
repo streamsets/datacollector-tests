@@ -167,7 +167,7 @@ def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database,
         pytest.skip("This test depends on proper case for column names that Oracle auto-uppers.")
 
     num_records = 8
-    input_data = [{'id': i, 'name': get_random_string()} for i in range(num_records)]
+    input_data = [{'id': i, 'name': get_random_string()} for i in range(1, num_records + 1)]
     table_name = get_random_string(string.ascii_lowercase, 20)
     sql_query = f'SELECT * FROM {table_name} ORDER BY id ASC'
 
