@@ -796,4 +796,3 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder, sdc_exe
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
-        database.deactivate_and_drop_replication_slot(replication_slot_name)
