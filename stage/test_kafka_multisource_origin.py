@@ -461,6 +461,47 @@ def test_kafka_preview_not_committing_offset(sdc_builder, sdc_executor, cluster)
         sdc_executor.stop_pipeline(pipeline)
 
 
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.16.1')
+def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
+    """Ensure that no data is lost when committed offset is shifted from batch size"""
+    builder = sdc_builder.get_pipeline_builder()
+    origin = get_kafka_multitopic_consumer_stage(builder, cluster)
+
+    trash = builder.add_stage(label='Trash')
+    origin >> trash
+
+    pipeline = builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    pipeline.configuration['executionMode'] = 'STANDALONE'
+
+    sdc_executor.add_pipeline(pipeline)
+
+    consumed_messages = 0
+
+    sdc_executor.start_pipeline(pipeline)
+    # Produce 200 messages, not enough for one batch
+    produce_kafka_messages_list(origin.topic_list[0], cluster, [f'msg-{i}' for i in range(200)], 'TEXT')
+    # Produce 1000 messages, size of a batch. With the previous 200 there will be a shift in the offset
+    produce_kafka_messages_list(origin.topic_list[0], cluster, [f'msg-{i}' for i in range(200, 1200)], 'TEXT')
+    # Wait for messages to be consumed
+    time.sleep(5)
+    # Stop pipeline and get message count
+    sdc_executor.stop_pipeline(pipeline)
+    history = sdc_executor.get_pipeline_history(pipeline)
+    consumed_messages += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+    # Restart pipeline
+    sdc_executor.start_pipeline(pipeline)
+    # Wait for all messages to be consumed
+    time.sleep(20)
+    # Stop pipeline, get message count and assert no data loss
+    sdc_executor.stop_pipeline(pipeline)
+    history = sdc_executor.get_pipeline_history(pipeline)
+    consumed_messages += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    assert consumed_messages == 1200
+
+
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     cluster_version = cluster.version[3:]
