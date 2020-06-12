@@ -18,6 +18,7 @@ import pytest
 import time
 from bson import binary, DBRef, decimal128
 from string import ascii_letters
+import json
 
 from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk.utils import Version
@@ -672,6 +673,55 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
         logger.info('Verifying docs received with PyMongo...')
         assert [item['text'] for item in mongodb.engine[mongodb_dest.database][mongodb_dest.collection].find()] == DATA
 
+    finally:
+        logger.info('Dropping %s database...', mongodb_dest.database)
+        mongodb.engine.drop_database(mongodb_dest.database)
+
+
+@mongodb
+def test_mongodb_destination_update_on_nested_key(sdc_builder, sdc_executor, mongodb):
+    """Ensure that an update on a document with a nested unique field is correctly executed"""
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+    record = {"f1": {"f2": "a"}, "f3": "b"}
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=json.dumps(record))
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
+                                                          'headerAttributeExpression': '3'}]
+
+    mongodb_dest = pipeline_builder.add_stage('MongoDB', type='destination')
+    mongodb_dest.set_attributes(database=get_random_string(ascii_letters, 5),
+                                collection=get_random_string(ascii_letters, 10),
+                                unique_key_field=['/f1/f2'])
+
+    dev_raw_data_source >> expression_evaluator >> mongodb_dest
+
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # Change value of field which will be updated
+        record["f3"] = "c"
+
+        # Create document in MongoDB using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then document is created in that collection.
+        logger.info('Adding document into %s collection using PyMongo...', mongodb_dest.collection)
+        mongodb_database = mongodb.engine[mongodb_dest.database]
+        mongodb_collection = mongodb_database[mongodb_dest.collection]
+        inserted_doc = mongodb_collection.insert_one(record)
+        assert inserted_doc is not None
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        logger.info('Verifying docs updated with PyMongo...')
+        mongodb_documents = [doc for doc in mongodb.engine[mongodb_dest.database][mongodb_dest.collection].find()]
+        assert len(mongodb_documents) == 1
+        assert mongodb_documents[0]["f3"] == "b"
     finally:
         logger.info('Dropping %s database...', mongodb_dest.database)
         mongodb.engine.drop_database(mongodb_dest.database)
