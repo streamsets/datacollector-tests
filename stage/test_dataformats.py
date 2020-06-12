@@ -398,3 +398,26 @@ def test_delimited_quoted_newline(sdc_builder, sdc_executor):
 
     snapshot_records = [record.field for record in snapshot.snapshot_batches[0][source.instance_name].output]
     assert snapshot_records == [{"a": "dexxxf", "b": "g", "c": "h"}]
+
+
+def test_delimited_escape_multichar(sdc_builder, sdc_executor):
+    """Ensure that delimited data with newlines between quotes are correctly parsed"""
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'DELIMITED'
+    source.header_line = 'WITH_HEADER'
+    source.delimiter_format_type = 'MULTI_CHARACTER'
+    source.raw_data = 'a||b||c\n"de\\||f"||g||h'
+
+    trash = builder.add_stage('Trash')
+
+    source >> trash
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    snapshot_records = [record.field for record in snapshot.snapshot_batches[0][source.instance_name].output]
+    assert snapshot_records == [{"a": "de||f", "b": "g", "c": "h"}]
