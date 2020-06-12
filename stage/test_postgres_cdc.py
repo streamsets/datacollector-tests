@@ -795,3 +795,98 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder, sdc_exe
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
+
+
+@database('postgresql')
+@sdc_min_version('3.8.1')
+def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor, database):
+    """ Test filtering for inserts/updates/deletes to multiple Postgres table
+        1. Random table name for "table[1]", "table[2]", "table[3]", "table[4]"
+        2. Filter in "table[1]", "table[2]", "table[3]"
+        3. Insert/update/delete for the four tables
+        4. Should see updates for "table[1], [2] and [3]" only
+        The pipeline looks like:
+        postgres_cdc_client >> trash """
+
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    table_name = [get_random_string(string.ascii_lowercase, 20) for _ in range(4)]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+                                       replication_slot=replication_slot_name,
+                                       max_batch_size_in_records=1,
+                                       poll_interval=POLL_INTERVAL,
+                                       tables=[{'schema': 'public',
+                                                'excludePattern': '',
+                                                'table': table_name[i]} for i in range(3)
+                                               ])
+    trash = pipeline_builder.add_stage('Trash')
+    postgres_cdc_client >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create tables and then perform insert, update and delete operations.
+        table = [_create_table_in_database(name, database) for name in table_name]
+
+        # Database operations done after pipeline start will be captured by CDC.
+        # Hence start the pipeline but do not wait for the capture to be finished.
+        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, batch_size=1,
+                                                         batches=9)
+
+        connection = database.engine.connect()
+        expected_operations_data = []
+        for i in range(3):
+            expected_operations_data += _insert(connection=connection, table=table[i])
+            expected_operations_data += _update(connection=connection, table=table[i])
+            expected_operations_data += _delete(connection=connection, table=table[i])
+
+        # inserts/updates/deletes in table 3 should not be processed
+        _insert(connection=connection, table=table[3])
+        _update(connection=connection, table=table[3])
+        _delete(connection=connection, table=table[3])
+
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        # Verify snapshot data is received in exact order as expected.
+        operation_index = 0
+
+        records_in_snapshot = [record for batch in snapshot.snapshot_batches
+                               for record in batch[postgres_cdc_client.instance_name].output]
+
+        # Each snapshot record includes 3 records
+        assert len(records_in_snapshot) * 3 == len(expected_operations_data)
+        for record in records_in_snapshot:
+
+            if record.get_field_data('/change'):
+                # Since we performed each operation (insert, update and delete) on 3 rows,
+                # each CDC  record change contains a list of 3 elements.
+                for i in range(3):
+                    if operation_index >= len(expected_operations_data):
+                        break
+                    expected = expected_operations_data[operation_index]
+                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                    # For delete operation there are no columnnames and columnvalues fields.
+                    if expected.kind != KIND_FOR_DELETE:
+                        assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                        assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+                    if expected.kind != KIND_FOR_INSERT:
+                        # For update and delete operations verify extra information about old keys.
+                        assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
+                    operation_index += 1
+
+    finally:
+        if pipeline:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        for t in table:
+            t.drop(database.engine)
+            logger.info('Table: %s dropped.', t.name)
