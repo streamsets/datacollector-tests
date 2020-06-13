@@ -1,7 +1,34 @@
+# Copyright 2020 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import pytest
+import string
+import logging
+import sqlalchemy
 
+from streamsets.testframework.environments.databases import OracleDatabase
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import database
+from streamsets.testframework.utils import get_random_string
 
+logger = logging.getLogger(__name__)
+
+LOOKUP_TABLE_DATA = [
+    {'id': 1, 'dept': 'mt', 'name': 'Arvind'},
+    {'id': 2, 'dept': 'mt', 'name': 'Girish'},
+    {'id': 3, 'dept': 'extra', 'name': 'Dima'}
+]
 
 @stub
 def test_additional_jdbc_configuration_properties(sdc_builder, sdc_executor):
@@ -115,12 +142,53 @@ def test_missing_values_behavior(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+
+@database
 @pytest.mark.parametrize('stage_attributes', [{'multiple_values_behavior': 'ALL_AS_LIST'},
                                               {'multiple_values_behavior': 'FIRST_ONLY'},
                                               {'multiple_values_behavior': 'SPLIT_INTO_MULTIPLE_RECORDS'}])
-def test_multiple_values_behavior(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_multiple_values_behavior(sdc_builder, sdc_executor, database, stage_attributes):
+    """Ensure that Multiple Values Behavior works as expected for all the options."""
+    if isinstance(database, OracleDatabase):
+        pytest.skip('This test does not support oracle and its upper casing of column names.')
+
+    # Create the lookup table
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_and_populate_lookup_table(table_name, database)
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON',
+                          raw_data='{"dept": "mt"}')
+
+    lookup = builder.add_stage('JDBC Lookup')
+    query_str = f"SELECT name FROM {table_name} WHERE dept = '${{record:value('/dept')}}' ORDER BY id ASC"
+    column_mappings = [dict(dataType='USE_COLUMN_TYPE', columnName='name', field='/name')]
+    lookup.set_attributes(sql_query=query_str, column_mappings=column_mappings, **stage_attributes)
+
+    trash = builder.add_stage('Trash')
+    source >> lookup >> trash
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        output = snapshot[lookup].output
+
+        if stage_attributes['multiple_values_behavior'] == 'FIRST_ONLY':
+            assert len(output) == 1
+            assert output[0].field['name'] == 'Arvind'
+        if stage_attributes['multiple_values_behavior'] == 'ALL_AS_LIST':
+            assert len(output) == 1
+            assert output[0].field['name'] == ['Arvind', 'Girish']
+        if stage_attributes['multiple_values_behavior'] == 'SPLIT_INTO_MULTIPLE_RECORDS':
+            assert len(output) == 2
+            assert output[0].field['name'] == 'Arvind'
+            assert output[1].field['name'] == 'Girish'
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
 
 
 @stub
@@ -192,3 +260,21 @@ def test_use_credentials(sdc_builder, sdc_executor, stage_attributes):
 def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
 
+
+def _create_and_populate_lookup_table(name, database):
+    """Create common lookup table and fill it with data."""
+    table = sqlalchemy.Table(name,
+                             sqlalchemy.MetaData(),
+                             sqlalchemy.Column('id', sqlalchemy.Integer, quote=True),
+                             sqlalchemy.Column('dept', sqlalchemy.String(32), quote=True),
+                             sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+                             quote=True
+                             )
+    logger.info('Creating table %s in %s database ...', name, database.type)
+    table.create(database.engine)
+
+    logger.info('Adding %s rows into %s database ...', len(LOOKUP_TABLE_DATA), database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), LOOKUP_TABLE_DATA)
+
+    return table
