@@ -1647,3 +1647,51 @@ def test_s3_whole_file_empty_directory(sdc_builder, sdc_executor, aws):
                                    client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
                                        'Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
+
+# SDC-14922: S3 Origin does not properly continue processing files after error in parsing
+@aws('s3')
+def test_s3_continue_processing_after_file_error(sdc_builder, sdc_executor, aws):
+    """Ensure that the origin continues processing data after one of the input files error-ed out."""
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern=f'**/*',
+                          read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/')
+
+    wiretap = builder.add_wiretap()
+
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+    origin >> wiretap.destination
+    origin >= finisher
+
+    pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/a.json", Body='{"id": 1}'.encode('ascii'))
+        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/b.json", Body='Not JSON'.encode('ascii'))
+        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/c.json", Body='{"id": 2}'.encode('ascii'))
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == 2
+        assert records[0].field['id'] == 1
+        assert records[1].field['id'] == 2
+    finally:
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
+                                       'Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
