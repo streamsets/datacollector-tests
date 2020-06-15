@@ -662,8 +662,8 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
 
 
 @database('postgresql')
-@sdc_min_version('3.4.0')
-@pytest.mark.parametrize(('batch_size'), [1,10,100,1000])
+@sdc_min_version('3.16.0')
+@pytest.mark.parametrize('batch_size', [1, 10, 100, 1000])
 def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder, sdc_executor, database, batch_size):
     """Basic test that inserts/update/delete to a Postgres table with multiple threads,
     and validates using a wire tap the records processed.
@@ -765,26 +765,25 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder, sdc_exe
 
         output = []
         for record in wiretap.output_records:
-            if record.get_field_data('/change[0]/kind')=='delete':
-                output.append({'type':'delete', 'value': record.get_field_data('/change[0]/oldkeys/keyvalues')})
-            if record.get_field_data('/change[0]/kind')=='insert':
-                output.append({'type':'insert', 'value': record.get_field_data('/change[0]/columnvalues')})
-            if record.get_field_data('/change[0]/kind')=='update':
-                output.append({'type':'update', 'value': record.get_field_data('/change[0]/columnvalues')})
+            if record.get_field_data('/change[0]/kind') == 'delete':
+                output.append({'type': 'delete', 'value': record.get_field_data('/change[0]/oldkeys/keyvalues')})
+            if record.get_field_data('/change[0]/kind') == 'insert':
+                output.append({'type': 'insert', 'value': record.get_field_data('/change[0]/columnvalues')})
+            if record.get_field_data('/change[0]/kind') == 'update':
+                output.append({'type': 'update', 'value': record.get_field_data('/change[0]/columnvalues')})
 
         output_sorted_values = sorted(output, key=lambda key: f'{key["value"][0]}|{key["type"]}')
-
 
         expected_values = []
         for record in expected:
             if record[0].kind == 'delete':
-                expected_values.append({'type':'delete', 'value': record[0].oldkeys.keyvalues})
+                expected_values.append({'type': 'delete', 'value': record[0].oldkeys.keyvalues})
             if record[0].kind == 'insert':
                 expected_values.append({'type': 'insert', 'value': record[0].columnvalues})
             if record[0].kind == 'update':
                 expected_values.append({'type': 'update', 'value': record[0].columnvalues})
 
-        expected_sorted_values= sorted(expected_values, key=lambda key: f'{key["value"][0]}|{key["type"]}')
+        expected_sorted_values = sorted(expected_values, key=lambda key: f'{key["value"][0]}|{key["type"]}')
 
         assert len(expected_sorted_values) == len(output_sorted_values)
         assert expected_sorted_values == output_sorted_values
