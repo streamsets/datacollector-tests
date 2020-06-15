@@ -1314,6 +1314,68 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
 
 
+# SDC-14931: Excel parsing can throw DATA_PARSER_02 - Parser error: 'java.util.NoSuchElementException'
+@aws('s3')
+@sdc_min_version('3.10.0')
+def test_s3_excel_last_sheet_empty(sdc_builder, sdc_executor, aws):
+    """Ensure that when the last sheet have only header line but no data, no errors will be generated."""
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    # Create the Excel file on the fly
+    file_excel = io.BytesIO()
+    workbook = Workbook()
+    sheet = workbook.add_sheet('A') # First sheet contains header row and one data row
+    sheet.write(0, 0, 'A')
+    sheet.write(1, 0, 'a')
+    sheet = workbook.add_sheet('B') # Second sheet only contains header row
+    sheet.write(0, 0, 'B')
+    workbook.save(file_excel)
+    file_excel.seek(0)
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.bucket = s3_bucket
+    origin.data_format = 'EXCEL'
+    origin.prefix_pattern = f'{s3_key}*'
+    origin.excel_header_option = 'WITH_HEADER'
+
+    wiretap = builder.add_wiretap()
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+    origin >> wiretap.destination
+    origin >= finisher
+
+    pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
+
+        # Read the file off the bucket
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field['A'] == 'a'
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        # TLKT-564: sdc_models.Metrics support every metric type except of meter
+        assert history.latest.metrics._data['meters']['stage.AmazonS3_01.errorRecords.meter']['count'] == 0
+        assert history.latest.metrics._data['meters']['stage.AmazonS3_01.stageErrors.meter']['count'] == 0
+    finally:
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
 @aws('s3')
 @sdc_min_version('3.11.0')
 def test_s3_origin_events(sdc_builder, sdc_executor, aws):
