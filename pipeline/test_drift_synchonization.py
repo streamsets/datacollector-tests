@@ -1771,7 +1771,7 @@ def test_native_parquet_timestamps(sdc_builder, sdc_executor, cluster):
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         # Need to wait for 45 seconds until mapreduce jobs are finished.
-        time.sleep(45)
+        time.sleep(120)
         hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
         hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
         hive_values = [list(row) for row in hive_cursor.fetchall()]
