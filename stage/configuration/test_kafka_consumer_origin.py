@@ -943,7 +943,7 @@ def test_topic(sdc_builder, sdc_executor, cluster):
     kafka_consumer = builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
     # Default stage configuration.
     kafka_consumer.set_attributes(data_format='TEXT',
-                                  batch_wait_time_in_ms=100,
+                                  batch_wait_time_in_ms=100000,
                                   topic=topic_name)
 
     trash = builder.add_stage(label='Trash')
