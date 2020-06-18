@@ -528,7 +528,6 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
 
     postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                        replication_slot=replication_slot_name,
-                                       max_batch_size_in_records=1,
                                        poll_interval=POLL_INTERVAL,
                                        tables=[{'schema': 'public',
                                                 'excludePattern': table_name_deny,
@@ -540,38 +539,41 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
     sdc_executor.add_pipeline(pipeline)
 
     try:
+
+        # Create tables before pipeline starts
+        table_allow = _create_table_in_database(table_name_allow, database)
+        table_deny = _create_table_in_database(table_name_deny, database)
+
         # Database operations done after pipeline start will be captured by CDC.
-        # Hence start the pipeline but do not wait for the capture to be finished.
         snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
 
         # Create table and then perform insert, update and delete operations.
-        table_allow = _create_table_in_database(table_name_allow, database)
-        table_deny = _create_table_in_database(table_name_deny, database)
         connection = database.engine.connect()
+
+        _insert(connection=connection, table=table_deny)
+        _update(connection=connection, table=table_deny)
+        _delete(connection=connection, table=table_deny)
 
         expected_operations_data = _insert(connection=connection, table=table_allow)
         expected_operations_data += _update(connection=connection, table=table_allow)
         expected_operations_data += _delete(connection=connection, table=table_allow)
 
-        actual_operations_data = expected_operations_data.copy()
-
-        actual_operations_data += _insert(connection=connection, table=table_deny)
-        actual_operations_data += _update(connection=connection, table=table_deny)
-        actual_operations_data += _delete(connection=connection, table=table_deny)
-
         snapshot = snapshot_command.wait_for_finished().snapshot
+        records_in_snapshot = [record for batch in snapshot.snapshot_batches
+                               for record in batch[postgres_cdc_client.instance_name].output]
+
+        # Verify snapshot data lenght * 3 - three inserts/updates/deletes per record - is equal
+        # to snapshot length
+        assert len(expected_operations_data) == len(records_in_snapshot) * 3
 
         # Verify snapshot data is received in exact order as expected.
         operation_index = 0
-
-        for record in snapshot[postgres_cdc_client.instance_name].output:
+        for record in records_in_snapshot:
             # No need to worry about DDL related CDC records. e.g. table creation etc.
             if record.get_field_data('/change'):
                 # Since we performed each operation (insert, update and delete) on 3 rows,
                 # each CDC  record change contains a list of 3 elements.
                 for i in range(3):
-                    if operation_index >= len(expected_operations_data):
-                        break
                     expected = expected_operations_data[operation_index]
                     assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
                     assert expected.table == record.get_field_data(f'/change[{i}]/table')
