@@ -325,3 +325,71 @@ def test_offset_upgrade(sdc_builder, sdc_executor, elasticsearch):
         # Clean up test data in ES
         idx = Index(es_index)
         idx.delete()
+
+
+@sdc_min_version('3.17.0')
+@elasticsearch
+def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsearch):
+    """
+    Elasticsearch target pipeline where specifies two different formats for the credential values.
+    First, it checks if the previous format "username:password" is also valid and then update the pipeline with the new
+    format, user name and password into two different fields, and checks again.
+        dev_raw_data_source >> es_target
+    """
+    # Test static
+    es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
+    es_mapping = get_random_string(string.ascii_letters, 10)
+    es_doc_id = get_random_string(string.ascii_letters, 10)
+    raw_str = 'Hello World!'
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  stop_after_first_batch=True,
+                                                                                  raw_data=raw_str)
+    es_target = builder.add_stage('Elasticsearch', type='destination')
+    es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index, mapping=es_mapping,
+                             use_security=True, user_name="elastic:changeme", password="")
+
+    dev_raw_data_source >> es_target
+    es_target_pipeline = builder.build(title='ES target pipeline').configure_for_environment(elasticsearch)
+    es_target_pipeline.configuration["shouldRetry"] = False
+
+    sdc_executor.add_pipeline(es_target_pipeline)
+
+    try:
+        elasticsearch.connect()
+
+        # Make sure that the index exists properly before running the test
+        index = Index(es_index)
+        index.create()
+        assert index.refresh()
+
+        # Run pipeline and read credential values from Elasticsearch to assert
+        sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
+
+        es_search = ESSearch(index=es_index)
+        es_response = _es_search_with_retry(es_search)
+        # assert data ingest
+        assert raw_str == es_response[0].text
+        # Assert the previous format is also valid
+        assert es_target.user_name == "elastic:changeme" and es_target.password == ""
+
+        es_target = es_target_pipeline.stages.get(label=es_target.label)
+        # Change credentials format from the previous "username:password" to the new one.
+        es_target.set_attributes(user_name="elastic", password="changeme")
+        sdc_executor.update_pipeline(es_target_pipeline)
+        # Run the pipeline again and read credential values from Elasticsearch to assert
+        sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
+
+        es_search = ESSearch(index=es_index)
+        es_response = _es_search_with_retry(es_search)
+        # assert data ingest
+        assert raw_str == es_response[0].text
+        # Assert the new format is valid
+        assert es_target.user_name == "elastic" and es_target.password == "changeme"
+
+    finally:
+        # Clean up test data in ES
+        idx = Index(es_index)
+        idx.delete()
