@@ -502,7 +502,27 @@ def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
     assert consumed_messages == 1200
 
 
-def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
+@cluster('cdh', 'kafka')
+@sdc_min_version('3.17.0')
+def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
+    INPUT_DATA = 'Hello World from SDC & DPM!'
+    EXPECTED_OUTPUT = [{'text': 'Hello World from SDC & DPM!'}]
+    TOPIC_NAME = 'test-topic'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, [TOPIC_NAME])
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_multitopic_consumer >> [trash, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+    produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, INPUT_DATA.encode(), 'TEXT')
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    assert [record.field for record in snapshot[kafka_multitopic_consumer].output] == EXPECTED_OUTPUT
+
+
+def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list=None):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     cluster_version = cluster.version[3:]
     stages_library = cluster.kafka.standalone_stage_lib
@@ -517,10 +537,13 @@ def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster):
     kafka_multitopic_consumer = pipeline_builder.add_stage('Kafka Multitopic Consumer',
                                                 type='origin',
                                                 library=stages_library)
+
+    if topic_list is None:
+        topic_list = [get_random_string(string.ascii_letters, 10)]
     # Default stage configuration.
     kafka_multitopic_consumer.set_attributes(data_format='TEXT',
                                   batch_wait_time_in_ms=20000,
-                                  topic_list=[get_random_string(string.ascii_letters, 10)])
+                                  topic_list=topic_list)
 
     return kafka_multitopic_consumer
 
