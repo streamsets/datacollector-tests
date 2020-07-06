@@ -341,6 +341,7 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
     es_mapping = get_random_string(string.ascii_letters, 10)
     es_doc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
+    credentials = elasticsearch.username + ':' + elasticsearch.password
 
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -349,7 +350,7 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
                                                                                   raw_data=raw_str)
     es_target = builder.add_stage('Elasticsearch', type='destination')
     es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index, mapping=es_mapping,
-                             use_security=True, user_name="elastic:changeme", password="")
+                             use_security=True, user_name=credentials, password="")
 
     dev_raw_data_source >> es_target
     es_target_pipeline = builder.build(title='ES target pipeline').configure_for_environment(elasticsearch)
@@ -370,6 +371,7 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
 
         es_search = ESSearch(index=es_index)
         es_response = _es_search_with_retry(es_search)
+
         # assert data ingest
         assert raw_str == es_response[0].text
         # Assert the previous format is also valid
@@ -377,7 +379,7 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
 
         es_target = es_target_pipeline.stages.get(label=es_target.label)
         # Change credentials format from the previous "username:password" to the new one.
-        es_target.set_attributes(user_name="elastic", password="changeme")
+        es_target.set_attributes(user_name=elasticsearch.username, password=elasticsearch.password)
         sdc_executor.update_pipeline(es_target_pipeline)
         # Run the pipeline again and read credential values from Elasticsearch to assert
         sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
