@@ -17,6 +17,7 @@ import json
 import logging
 
 from streamsets.testframework.markers import aws, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -111,3 +112,50 @@ def test_field_encrypt(sdc_builder, sdc_executor, aws):
     # Decrypt received value using aws_encryption_sdk for verification purpose.
     actual_value, _ = aws.decrypt(ciphertext_encoded.value)
     assert actual_value == expected_plaintext
+
+
+@sdc_min_version('3.17.0')
+def test_field_encrypt_el(sdc_builder, sdc_executor):
+    """Test to verify that EL functions work by using Base64 EL
+    Use processor to encrypt and decrypt data with a random key that
+    is encoded using an EL
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_encrypt >> field_decrypt >> trash
+    """
+
+    expected_plaintext = MESSAGE_TEXT
+    raw_data = json.dumps(dict(message=MESSAGE_TEXT))
+
+    key = get_random_string(length=32)
+
+    key_el = "${base64:encodeString('" + key + "', false, 'utf-8')}"
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    field_encrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_encrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_NO_KDF',
+                                 base64_encoded_key=key_el,
+                                 data_key_caching=False,
+                                 frame_size=4096,
+                                 mode='ENCRYPT',
+                                 fields=['/message'])
+    field_decrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_decrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_NO_KDF',
+                                 base64_encoded_key=key_el,
+                                 data_key_caching=False,
+                                 frame_size=4096,
+                                 mode='DECRYPT',
+                                 fields=['/message'])
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> field_encrypt >> field_decrypt >> trash
+    pipeline = pipeline_builder.build('Field Encryption Pipeline Base64 EL')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    decrypted_value = snapshot[field_decrypt.instance_name].output[0].get_field_data('/message')
+
+    assert decrypted_value == expected_plaintext
