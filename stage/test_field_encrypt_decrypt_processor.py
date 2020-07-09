@@ -16,12 +16,20 @@ import base64
 import json
 import logging
 
+import pytest
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
 MESSAGE_TEXT = 'ABCDEF'
+
+
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-crypto-lib')
+    return hook
 
 
 @aws('kms')
