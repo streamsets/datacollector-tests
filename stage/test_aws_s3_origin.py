@@ -1504,6 +1504,78 @@ def test_s3_read_large_file(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@pytest.mark.parametrize('file_exists', [True, False])
+def test_s3_single_file_in_directory_no_wildcards(sdc_builder, sdc_executor, aws, file_exists):
+    """Tests that a single file is read from a directory.
+    The pipeline stops with a finisher.
+    When parameter file_exists is false tests that no-more-data event is triggered.
+    Common prefix + prefix pattern has NO wildcards.
+    Test for bug fixed in SDC-15066 - The pipeline looks like:
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+        s3_origin >= finisher
+    """
+    s3_bucket = aws.s3_bucket_name
+    # / at the end of the common prefix should be explicit
+    s3_common_prefix = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc/'
+    s3_file_name = f'{get_random_string()}.txt'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern=s3_file_name,
+                            common_prefix = s3_common_prefix)
+
+    wiretap = builder.add_wiretap()
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+    s3_origin >> wiretap.destination
+    s3_origin >= finisher
+
+    s3_origin_pipeline = builder.build(title=f'S3 single file - File Exist {file_exists}').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    test_data = [f'Message {i}' for i in range(10)]
+    try:
+        # Insert objects into S3.
+        if file_exists:
+            file_key = f'{s3_common_prefix}{s3_file_name}'
+        else:
+            file_key = f'{s3_common_prefix}{s3_file_name}xxx'
+
+        client.put_object(Bucket=aws.s3_bucket_name, Key=file_key,
+                          Body='\n'.join(test_data).encode('ascii'))
+
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+
+        if file_exists:
+            assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == [
+                f'{s3_common_prefix}{s3_file_name}']
+        else:
+            assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == []
+
+        assert 0 == len(sdc_executor.get_stage_errors(s3_origin_pipeline, s3_origin))
+
+    finally:
+        # If no files have been processed we need to stop the pipeline, otherwise it will be finished
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name,
+                                                          Prefix=f'{s3_common_prefix}{s3_file_name}')[
+                                       'Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
+
+@aws('s3')
 @pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
 def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_executor, aws, read_order):
     """ This test is for xml data format, which was not working properly when reset with file offset.
