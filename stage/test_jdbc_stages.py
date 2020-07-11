@@ -2780,13 +2780,13 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
     ('TINYINT', '-128', 'SHORT', -128),
     ('TINYINT UNSIGNED', '255', 'SHORT', 255),
     ('SMALLINT', '-32768', 'SHORT', -32768),
-    ('SMALLINT UNSIGNED', '65535', 'SHORT', -1),  # Support for unsigned isn't entirely correct!
+    ('SMALLINT UNSIGNED', '65535', 'INTEGER', '65535'),
     ('MEDIUMINT', '-8388608', 'INTEGER', '-8388608'),
-    ('MEDIUMINT UNSIGNED', '16777215', 'INTEGER', '16777215'),
+    ('MEDIUMINT UNSIGNED', '16777215', 'LONG', '16777215'),
     ('INT', '-2147483648', 'INTEGER', '-2147483648'),
-    ('INT UNSIGNED', '4294967295', 'INTEGER', '-1'),  # Support for unsigned isn't entirely correct!
+    ('INT UNSIGNED', '4294967295', 'LONG', '4294967295'),
     ('BIGINT', '-9223372036854775807', 'LONG', '-9223372036854775807'),
-    ('BIGINT UNSIGNED', '18446744073709551615', 'LONG', '-1'),  # Support for unsigned isn't entirely correct!
+    ('BIGINT UNSIGNED', '18446744073709551615', 'DECIMAL', '18446744073709551615'),
     ('DECIMAL(5, 2)', '5.20', 'DECIMAL', '5.20'),
     ('NUMERIC(5, 2)', '5.20', 'DECIMAL', '5.20'),
     ('FLOAT', '5.2', 'FLOAT', '5.2'),
