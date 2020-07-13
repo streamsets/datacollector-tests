@@ -19,11 +19,9 @@ import os
 import string
 import tempfile
 import textwrap
-import time
 from collections import OrderedDict
 
 import pytest
-from streamsets.sdk.utils import Version
 from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.markers import sdc_min_version
@@ -156,24 +154,27 @@ def test_directory_origin_configuration_archive_directory(sdc_builder, sdc_execu
                                                           shell_executor, file_writer,
                                                           file_post_processing):
     """Verify that the Archive Directory configuration is used when archiving files as part of post-processing."""
-    files_directory = os.path.join('/tmp', get_random_string())
+    base_directory = os.path.join('/tmp', get_random_string())
+    files_directory = os.path.join(base_directory, 'a', 'b', 'c')
     archive_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'keepingjoe.txt'
     FILE_CONTENTS = "Machi's not the Kid"
 
     try:
-        logger.debug('Creating files directory %s ...', files_directory)
-        shell_executor(f'mkdir {files_directory}')
+        logger.info('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir -p {files_directory}')
         file_writer(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
 
-        logger.debug('Creating archive directory %s ...', archive_directory)
+        logger.info('Creating archive directory %s ...', archive_directory)
         shell_executor(f'mkdir {archive_directory}')
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         directory = pipeline_builder.add_stage('Directory')
         directory.set_attributes(archive_directory=archive_directory,
                                  data_format='TEXT',
-                                 files_directory=files_directory,
+                                 read_order='TIMESTAMP',
+                                 process_subdirectories=True,
+                                 files_directory=base_directory,
                                  file_name_pattern=FILE_NAME,
                                  file_post_processing=file_post_processing)
         trash = pipeline_builder.add_stage('Trash')
@@ -184,16 +185,21 @@ def test_directory_origin_configuration_archive_directory(sdc_builder, sdc_execu
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         record = snapshot[directory].output[0]
         assert record.field['text'] == FILE_CONTENTS
+        assert record.header.values['file'] == os.path.join(files_directory, FILE_NAME)
+
         sdc_executor.stop_pipeline(pipeline)
         # Confirm that the file has been archived by taking another snapshot and asserting to its emptiness.
         sdc_executor.reset_origin(pipeline)
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         assert not snapshot[directory].output
+        sdc_executor.stop_pipeline(pipeline)
 
         logger.info('Verifying that file %s was moved as part of post-processing ...', FILE_NAME)
         pipeline_builder = sdc_builder.get_pipeline_builder()
         directory = pipeline_builder.add_stage('Directory')
         directory.set_attributes(data_format='TEXT',
+                                 read_order='TIMESTAMP',
+                                 process_subdirectories=True,
                                  files_directory=archive_directory,
                                  file_name_pattern=FILE_NAME)
         trash = pipeline_builder.add_stage('Trash')
@@ -204,9 +210,10 @@ def test_directory_origin_configuration_archive_directory(sdc_builder, sdc_execu
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         record = snapshot[directory].output[0]
         assert record.field['text'] == FILE_CONTENTS
-
+        assert record.header.values['file'] == os.path.join(archive_directory, 'a', 'b', 'c', FILE_NAME)
+        sdc_executor.stop_pipeline(pipeline)
     finally:
-        shell_executor(f'rm -r {files_directory} {archive_directory}')
+        shell_executor(f'rm -r {base_directory} {archive_directory}')
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
 
