@@ -68,6 +68,7 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type,
                     insert_fragment, expected_type, expected_value):
     """Test all feasible types using query consumer"""
 
+    pytest.skip("Branded JDBC stages are disabled in SDC")
     # Set up table
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
