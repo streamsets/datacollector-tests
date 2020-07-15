@@ -626,9 +626,8 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
-        sdc_executor.stop_pipeline(pipeline=pipeline,
-                                   force=True)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=300).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         def compare_output(output_records, rows):
             assert len(output_records) == len(rows)
@@ -644,9 +643,9 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         long_txn.commit()
 
         # Pre-3.1.0.0, this times out
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
-        sdc_executor.stop_pipeline(pipeline=pipeline,
-                                   force=True)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=300).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
         # assert all the data captured have the same raw_data
         output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
         compare_output(output, rows_c2)
