@@ -17,6 +17,7 @@ import pytest
 import uuid
 
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.utils import Version
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -162,6 +163,12 @@ def test_start_pipeline_processor(sdc_builder, sdc_executor):
     till pipeline1 completes execution and then start pipeline2.
     """
 
+    start_pipeline_stage_label = 'Start Pipeline'
+    metrics_output_generated = False
+    if Version(sdc_builder.version) >= Version('3.17.0'):
+        start_pipeline_stage_label = 'Start Pipelines'
+        metrics_output_generated = True
+
     # Pipeline - pipeline1
     pipeline1 = _create_batch_pipeline(sdc_builder, 'test_start_pipeline_processor1')
     sdc_executor.add_pipeline(pipeline1)
@@ -173,8 +180,11 @@ def test_start_pipeline_processor(sdc_builder, sdc_executor):
 
     # Chain Pipeline Execution Sample (start_pipeline1 >> start_pipeline2 >> pipeline_finisher)
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    start_pipeline1 = pipeline_builder.add_stage('Start Pipeline', type='origin')
-    start_pipeline1.unique_task_name = 'task1'
+    start_pipeline1 = pipeline_builder.add_stage(start_pipeline_stage_label, type='origin')
+    if Version(sdc_builder.version) >= Version('3.17.0'):
+        start_pipeline1.task_name = 'task1'
+    else:
+        start_pipeline1.unique_task_name = 'task1'
     start_pipeline1.pipelines = [
         {
             'pipelineIdType': 'ID',
@@ -182,8 +192,11 @@ def test_start_pipeline_processor(sdc_builder, sdc_executor):
         }
     ]
 
-    start_pipeline2 = pipeline_builder.add_stage('Start Pipeline', type='processor')
-    start_pipeline2.unique_task_name = 'task2'
+    start_pipeline2 = pipeline_builder.add_stage(start_pipeline_stage_label, type='processor')
+    if Version(sdc_builder.version) >= Version('3.17.0'):
+        start_pipeline2.task_name = 'task2'
+    else:
+        start_pipeline2.unique_task_name = 'task2'
     start_pipeline2.pipelines = [
         {
             'pipelineIdType': 'TITLE',
@@ -204,18 +217,36 @@ def test_start_pipeline_processor(sdc_builder, sdc_executor):
     # Assert start_pipeline1 record output
     start_pipeline1_output = snapshot[start_pipeline1.instance_name].output
     assert len(start_pipeline1_output) == 1
-    _validate_start_pipeline_output(start_pipeline1_output[0].field['orchestratorTasks'], 'task1', pipeline1, True)
+    _validate_start_pipeline_output(start_pipeline1_output[0].field['orchestratorTasks'],
+                                    'task1',
+                                    pipeline1,
+                                    True,
+                                    metrics_output_generated)
 
     # Assert start_pipeline2 record output - start_pipeline2 output should contain output of both pipelines
     start_pipeline2_output = snapshot[start_pipeline2.instance_name].output
     assert len(start_pipeline2_output) == 1
-    _validate_start_pipeline_output(start_pipeline2_output[0].field['orchestratorTasks'], 'task1', pipeline1, True)
-    _validate_start_pipeline_output(start_pipeline2_output[0].field['orchestratorTasks'], 'task2', pipeline2, True)
+    _validate_start_pipeline_output(start_pipeline2_output[0].field['orchestratorTasks'],
+                                    'task1',
+                                    pipeline1,
+                                    True,
+                                    metrics_output_generated)
+    _validate_start_pipeline_output(start_pipeline2_output[0].field['orchestratorTasks'],
+                                    'task2',
+                                    pipeline2,
+                                    True,
+                                    metrics_output_generated)
 
 
 @sdc_min_version('3.16.0')
 def test_wait_for_completion_processor(sdc_builder, sdc_executor):
     """Test Wait For Pipeline Completion Processor."""
+
+    start_pipeline_stage_label = 'Start Pipeline'
+    wait_for_completion_stage_label = 'Wait for Pipeline Completion'
+    if Version(sdc_builder.version) >= Version('3.17.0'):
+        start_pipeline_stage_label = 'Start Pipelines'
+        wait_for_completion_stage_label = 'Wait for Pipelines'
 
     # Pipeline - pipeline1
     pipeline1 = _create_batch_pipeline(sdc_builder, 'test_wait_for_completion_processor')
@@ -229,8 +260,11 @@ def test_wait_for_completion_processor(sdc_builder, sdc_executor):
     dev_raw_data_source1 = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source1.stop_after_first_batch = True
 
-    start_pipeline1 = pipeline_builder.add_stage('Start Pipeline', type='processor')
-    start_pipeline1.unique_task_name = 'task1'
+    start_pipeline1 = pipeline_builder.add_stage(start_pipeline_stage_label, type='processor')
+    if Version(sdc_builder.version) >= Version('3.17.0'):
+        start_pipeline1.task_name = 'task1'
+    else:
+        start_pipeline1.unique_task_name = 'task1'
     start_pipeline1.run_in_background = True
     start_pipeline1.pipelines = [
         {
@@ -239,8 +273,11 @@ def test_wait_for_completion_processor(sdc_builder, sdc_executor):
         }
     ]
 
-    start_pipeline2 = pipeline_builder.add_stage('Start Pipeline', type='processor')
-    start_pipeline2.unique_task_name = 'task2'
+    start_pipeline2 = pipeline_builder.add_stage(start_pipeline_stage_label, type='processor')
+    if Version(sdc_builder.version) >= Version('3.17.0'):
+        start_pipeline2.task_name = 'task2'
+    else:
+        start_pipeline2.unique_task_name = 'task2'
     start_pipeline2.run_in_background = True
     start_pipeline2.pipelines = [
         {
@@ -249,7 +286,7 @@ def test_wait_for_completion_processor(sdc_builder, sdc_executor):
         }
     ]
 
-    wait_for_pipeline_completion = pipeline_builder.add_stage('Wait for Pipeline Completion')
+    wait_for_pipeline_completion = pipeline_builder.add_stage(wait_for_completion_stage_label)
     trash = pipeline_builder.add_stage('Trash')
 
     dev_raw_data_source1 >> [start_pipeline1, start_pipeline2]
@@ -277,7 +314,7 @@ def test_wait_for_completion_processor(sdc_builder, sdc_executor):
     # Assert wait_for_pipeline_completion record output
     wait_for_pipeline_completion_output = snapshot[wait_for_pipeline_completion.instance_name].output
     assert len(wait_for_pipeline_completion_output) == 1
-    _validate_start_pipeline_output(wait_for_pipeline_completion_output[0].field['orchestratorTasks'], 'task2', pipeline2, True)
+    _validate_start_pipeline_output(wait_for_pipeline_completion_output[0].field['orchestratorTasks'], 'task1', pipeline1, True)
     _validate_start_pipeline_output(wait_for_pipeline_completion_output[0].field['orchestratorTasks'], 'task2', pipeline2, True)
 
 
@@ -290,7 +327,11 @@ def _create_batch_pipeline(sdc_builder, title):
     return pipeline_builder.build(title)
 
 
-def _validate_start_pipeline_output(orchestrator_tasks_field, task_name, pipeline, check_for_completion):
+def _validate_start_pipeline_output(orchestrator_tasks_field,
+                                    task_name,
+                                    pipeline,
+                                    check_for_completion,
+                                    check_metrics=False):
     assert orchestrator_tasks_field is not None
     assert orchestrator_tasks_field[task_name] is not None
 
@@ -314,4 +355,15 @@ def _validate_start_pipeline_output(orchestrator_tasks_field, task_name, pipelin
                 assert pipeline_results[key]['finishedSuccessfully'] == True
                 assert pipeline_results[key]['pipelineStatus'] == 'FINISHED'
                 assert pipeline_results[key]['pipelineStatusMessage'] is not None
+            if check_metrics:
+                assert pipeline_results[key]['pipelineMetrics'] is not None
+                assert pipeline_results[key]['pipelineMetrics']['pipeline'] is not None
+                assert pipeline_results[key]['pipelineMetrics']['pipeline']['inputRecords'] == 1
+                assert pipeline_results[key]['pipelineMetrics']['pipeline']['outputRecords'] == 1
+                assert pipeline_results[key]['pipelineMetrics']['pipeline']['errorRecords'] == 0
+                assert pipeline_results[key]['pipelineMetrics']['pipeline']['errorMessages'] == 0
+                assert pipeline_results[key]['pipelineMetrics']['stages'] is not None
+
+
+
 
