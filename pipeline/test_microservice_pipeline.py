@@ -157,6 +157,22 @@ def test_calling_gateway_api_with_invalid_service_name(sdc_executor):
     assert resp_json['RemoteException']['message'] == msg
 
 
+@sdc_min_version('3.17.0')
+def test_fetching_pipeline_with_square_brackets_id(sdc_executor):
+    """Test fetching pipeline with square brackets in the pipeline Id.
+       Passing auto_generate_pipeline_id=False, to generate pipelineId using pipeline title.
+    """
+    create_pipeline_response = sdc_executor.api_client.create_pipeline(
+        pipeline_title="[Testing] Sample Microservice pipeline using template",
+        auto_generate_pipeline_id=False,
+        pipeline_type="MICROSERVICE").response.json()
+    assert create_pipeline_response is not None
+
+    pipeline_id = create_pipeline_response['pipelineId']
+    pipeline = sdc_executor.pipelines.get(id=pipeline_id)
+    assert pipeline is not None
+
+
 def _create_microservice_pipeline(sdc_builder):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     rest_service_source = pipeline_builder.add_stage('REST Service')
