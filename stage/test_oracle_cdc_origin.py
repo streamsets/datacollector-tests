@@ -839,11 +839,11 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
 # We don't suppport float/double
 # And general LOB things (clob, blob, long, nclob)
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
-    ('number','1', 'DECIMAL', '1'),
+    ('number', '1', 'DECIMAL', '1'),
     ('char(2)', "'AB'", 'STRING', 'AB'),
     ('varchar(4)', "'ABCD'", 'STRING', 'ABCD'),
     ('varchar2(4)', "'NVAR'", 'STRING', 'NVAR'),
-    ('nchar(3)',"'NCH'", 'STRING', 'NCH'),
+    ('nchar(3)', "'NCH'", 'STRING', 'NCH'),
     ('nvarchar2(4)', "'NVAR'", 'STRING', 'NVAR'),
 #    ('binary_float', '1.0', 'FLOAT', '1.0'),
 #    ('binary_double', '2.0', 'DOUBLE', '2.0'),
@@ -910,6 +910,162 @@ def test_all_types(sdc_builder, sdc_executor, database, sql_type, insert_fragmen
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('3.6.0')
+@database('oracle')
+@pytest.mark.parametrize('sql_type, insert_fragment, expected_values', [
+    ('binary_float', '1.0', ['1.0E+000']),
+    ('binary_double', '1.0', ['1.0E+000']),
+    ('timestamp with time zone', "TIMESTAMP'1998-1-3 6:00:00-5:00'", ['1998-01-03T06:00:00-05:00']),
+    ('timestamp with local time zone', "TIMESTAMP'1998-1-4 6:00:00-5:00'", ['1998-01-04T11:00:00Z[UTC]']),
+    ('long', "'VALUE EXAMPLE'", ['VALUE EXAMPLE']),
+    ('blob', "utl_raw.cast_to_raw('BLOB')", ['EMPTY_BLOB()', "HEXTORAW('424c4f42')"]),
+    ('clob', "'VALUE EXAMPLE'", ['EMPTY_CLOB()', 'VALUE EXAMPLE']),
+    ('nclob', "'VALUE EXAMPLE'", ['EMPTY_CLOB()', 'VALUE EXAMPLE']),
+    # ('XMLType', "xmltype('<a></a>')", ['<a></a>'])  # Not fully supported by LogMiner
+])
+def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database, sql_type, insert_fragment,
+                                            expected_values):
+    """Test Oracle types not supported by the CDC origin when they are sent to pipeline.
+
+    The test creates a table containing an unsupported type and check the record is properly generated with
+    the unsuported type value returned as a raw string field, according to the configuration
+    (unsupported_field_type = 'SEND_TO_PIPELINE', add_unsupported_fields_to_records = True).
+
+    NOTE: parameter 'expected_values' is a list because for some data types Oracle generates two CDC records
+    per row insertion (e.g. BLOB type). The first CDC record is a SQL insertion with a void value
+    (e.g. EMPTY_BLOB()), the second one is a SQL update with the actual value (e.g. HEXTORAW('424c4f42')).
+
+    More info about the supported Oracle data types:
+    - https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    expected_output = [{'ID': 1, 'DATA_COLUMN': v} for v in expected_values]
+
+    try:
+        # Create table and populate with a record.
+        connection.execute(f'CREATE TABLE {table_name} (ID NUMBER PRIMARY KEY, DATA_COLUMN {sql_type} NULL)')
+        start_scn = _get_last_scn(connection)
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+
+        # Build the pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   buffer_locally=True,
+                                                   initial_change='SCN',
+                                                   start_scn=start_scn,
+                                                   src_table_name=table_name,
+                                                   unsupported_field_type='SEND_TO_PIPELINE',
+                                                   add_unsupported_fields_to_records=True)
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Capture snapshot and check the record is correctly generated.
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        actual_output = [record.field
+                         for batch in snapshot.snapshot_batches
+                         for record in batch[oracle_cdc.instance_name].output]
+        assert actual_output == expected_output
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('3.6.0')
+@database('oracle')
+@pytest.mark.parametrize('action', ['TO_ERROR', 'DISCARD'])
+def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, action):
+    """Test Oracle types not supported by the CDC origin when the action to take is other than SEND_TO_PIPELINE
+    (which has a specific test).
+
+    The test creates a table1 containing an unsupported type, and a table2 with only supported types; then
+    inserts a record in both tables and check output and error streams. In particular, table1 record is
+    expected to appear in the output stream and the table2 record only must appear in the error stream when
+    'TO_ERROR' is the configured action.
+
+    NOTE: table2 insertion is required by our test framework to capture the snapshot. With only the table1
+    insertion, the snapshot would end up with a timeout error, as it seems the capture_snapshot() method does
+    not consider error records in its internal counter.
+
+    More info about the supported Oracle data types:
+    - https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm
+
+    Pipeline: oracle_cdc >> trash
+
+    """
+    connection = database.engine.connect()
+    base_name = get_random_string(string.ascii_lowercase, 20)
+    table_name1 = f'{base_name}_table1'
+    table_name2 = f'{base_name}_table2'
+    input_value1 = "utl_raw.cast_to_raw('BLOB')"
+    input_value2 = 'just plain text'
+    expected_output = [{'ID': 1, 'DATA_COLUMN': input_value2}]
+    if action == 'TO_ERROR':
+        # For BLOB insertions, Oracle logs two CDC records: a SQL insertion with an empty blob, then a SQL
+        # update over the inserted row with the actual value.
+        expected_error_output = [{'ID': 1, 'DATA_COLUMN': 'EMPTY_BLOB()'},
+                                 {'ID': 1, 'DATA_COLUMN': "HEXTORAW('424c4f42')"}]
+    else:
+        # When action is 'DISCARD' the stage ignores CDC records for tables with unsupported types.
+        expected_error_output = []
+
+    try:
+        # Create tables and insert one record into each table.
+        connection.execute(f'CREATE TABLE {table_name1} (ID NUMBER PRIMARY KEY, DATA_COLUMN BLOB NULL)')
+        connection.execute(f'CREATE TABLE {table_name2} (ID NUMBER PRIMARY KEY, DATA_COLUMN VARCHAR(50) NULL)')
+        start_scn = _get_last_scn(connection)
+        connection.execute(f"INSERT INTO {table_name1} VALUES (1, {input_value1})")
+        connection.execute(f"INSERT INTO {table_name2} VALUES (1, '{input_value2}')")
+
+        # Build pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   buffer_locally=True,
+                                                   initial_change='SCN',
+                                                   start_scn=start_scn,
+                                                   src_table_name=f'{base_name}%',
+                                                   unsupported_field_type=action,
+                                                   add_unsupported_fields_to_records=True)
+        trash = builder.add_stage('Trash')
+        oracle_cdc >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Capture snapshot and check Oracle CDC output.
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        actual_output = [record.field
+                         for batch in snapshot.snapshot_batches
+                         for record in batch[oracle_cdc.instance_name].output]
+        actual_error_output = [record.field
+                               for batch in snapshot.snapshot_batches
+                               for record in batch[oracle_cdc.instance_name].error_records]
+        assert actual_output == expected_output
+        assert actual_error_output == expected_error_output
+
+    finally:
+        logger.info('Dropping tables %s and %s in %s database ...', table_name1, table_name2, database.type)
+        connection.execute(f"DROP TABLE {table_name1}")
+        connection.execute(f"DROP TABLE {table_name2}")
 
 
 @sdc_min_version('3.0.0.0')
