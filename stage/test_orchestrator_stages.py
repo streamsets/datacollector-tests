@@ -152,7 +152,7 @@ def test_control_hub_api_processor_invalid_credentials(sdc_builder, sdc_executor
     assert len(control_hub_api_processor_snapshot.error_records) == 1
 
 
-@sdc_min_version('3.11.0')
+@sdc_min_version('3.16.0')
 def test_start_pipeline_processor(sdc_builder, sdc_executor):
     """Test Start Pipeline Origin/Processor. The pipeline would look like:
 
