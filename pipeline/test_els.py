@@ -15,6 +15,7 @@
 import logging
 
 import pytest
+from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
 
@@ -119,3 +120,20 @@ def test_record_el(random_expression_pipeline_builder, sdc_executor):
 
     record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
     assert record.header['values']['valueOrDefault'] == '3'
+
+
+@sdc_min_version('3.17.0')
+def test_runtime_resources_dir_path_el(random_expression_pipeline_builder, sdc_executor):
+    random_expression_pipeline_builder.expression_evaluator.header_attribute_expressions = [
+        {'attributeToSet': 'resourcesDirPath', 'headerAttributeExpression': '${runtime:resourcesDirPath()}'},
+    ]
+    pipeline = random_expression_pipeline_builder.pipeline_builder.build(title='Resources Directory Path EL')
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
+    assert record.header['values']['resourcesDirPath'] is not None
+    assert len(record.header['values']['resourcesDirPath']) > 0
+
