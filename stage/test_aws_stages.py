@@ -928,7 +928,11 @@ def _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
     builder = sdc_builder.get_pipeline_builder()
 
     emr_origin = builder.add_stage('Hadoop FS', type='origin')
-    emr_origin.set_attributes(input_paths=[f's3a://{s3_bucket}/{s3_input_key}'], data_format='TEXT')
+    emr_origin.set_attributes(
+        hadoop_fs_uri=f's3a://{s3_bucket}',
+        input_paths=[f'/{s3_input_key}'],
+        data_format='TEXT'
+    )
 
     s3_destination = builder.add_stage('Amazon S3', type='destination')
     s3_destination.set_attributes(bucket=s3_bucket, data_format='TEXT', partition_prefix=s3_output_key)
