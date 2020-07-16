@@ -130,14 +130,18 @@ def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
     """
 
     ftp_file_name = get_random_string(string.ascii_letters, 10)
+    ftp_dir_name = f'{get_random_string(string.ascii_letters, 10)}'
     raw_text_data = '<developers><developer>Alex</developer><developer>Xavi</developer></developers>'
     expected = [{'value': 'Alex'}, {'value': 'Xavi'}]
 
-    ftp.put_string(ftp_file_name, raw_text_data)
+    client = ftp.client
+    client.cwd('/')
+    client.mkd(ftp_dir_name)
+    ftp.put_string(f'{ftp_dir_name}/{ftp_file_name}', raw_text_data)
 
     builder = sdc_builder.get_pipeline_builder()
     sftp_ftp_client = builder.add_stage(name=FTP_ORIGIN_CLIENT_NAME)
-    sftp_ftp_client.set_attributes(file_name_pattern=ftp_file_name, data_format='XML')
+    sftp_ftp_client.set_attributes(file_name_pattern=ftp_file_name, process_subdirectories=True, data_format='XML')
 
     trash = builder.add_stage('Trash')
 
@@ -150,13 +154,17 @@ def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
     try:
         assert len(snapshot[sftp_ftp_client].output) == 1
         output_data = snapshot[sftp_ftp_client].output[0].field
+        assert f'/{ftp_dir_name}/{ftp_file_name}' == snapshot[sftp_ftp_client].output[0].header.values['file']
+        assert ftp_file_name == snapshot[sftp_ftp_client].output[0].header.values['filename']
+
         developers_element = get_xml_output_field(sftp_ftp_client, output_data, 'developers')
         assert developers_element['developer'] == expected
 
     finally:
         # Delete the test FTP origin file we created
         client = ftp.client
-        client.delete(ftp_file_name)
+        client.delete(f'/{ftp_dir_name}/{ftp_file_name}')
+        client.rmd(f'/{ftp_dir_name}')
         client.quit()
 
 
