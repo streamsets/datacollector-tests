@@ -18,15 +18,16 @@ import os
 import string
 import tempfile
 
-from streamsets.sdk.utils import Version
 import avro
 import avro.schema
+import pytest
 from avro.datafile import DataFileWriter
 from avro.io import DatumWriter
 from streamsets.testframework.markers import ftp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
-from stage.utils.utils_xml import get_xml_output_field
 from xlwt import Workbook
+
+from stage.utils.utils_xml import get_xml_output_field
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
     """
 
     ftp_file_name = get_random_string(string.ascii_letters, 10)
-    ftp_dir_name = f'{get_random_string(string.ascii_letters, 10)}'
+    ftp_dir_name = get_random_string(string.ascii_letters, 10)
     raw_text_data = '<developers><developer>Alex</developer><developer>Xavi</developer></developers>'
     expected = [{'value': 'Alex'}, {'value': 'Xavi'}]
 
@@ -165,6 +166,60 @@ def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
         client = ftp.client
         client.delete(f'/{ftp_dir_name}/{ftp_file_name}')
         client.rmd(f'/{ftp_dir_name}')
+        client.quit()
+
+
+@ftp
+@sdc_min_version('3.9.0')
+@pytest.mark.parametrize('directory', [get_random_string(), f'{get_random_string()}/{get_random_string()}'])
+def test_ftp_origin_text(sdc_builder, sdc_executor, ftp, directory):
+    """Test FTP origin, message is in format Text. We first create a file on FTP server
+    and have the FTP origin stage read it.
+
+    We include the directory in the path URL instead of in the pattern
+
+    We then assert its snapshot. The pipeline looks like:
+        sftp_ftp_client >> trash
+    """
+
+    ftp_file_name = get_random_string(string.ascii_letters, 10)
+    raw_text_data = '[{\'value\': \'Alex\'}, {\'value\': \'Xavi\'}]'
+    expected = [{'value': 'Alex'}, {'value': 'Xavi'}]
+
+    client = ftp.client
+    client.cwd('/')
+    for path in directory.split('/'):
+        client.mkd(path)
+        client.cwd(path)
+    client.cwd('/')
+    ftp.put_string(f'{directory}/{ftp_file_name}', raw_text_data)
+
+    builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_client = builder.add_stage(name=FTP_ORIGIN_CLIENT_NAME)
+    sftp_ftp_client.set_attributes(file_name_pattern=ftp_file_name, process_subdirectories=True, data_format='TEXT')
+
+    trash = builder.add_stage('Trash')
+
+    sftp_ftp_client >> trash
+    sftp_ftp_client_pipeline = builder.build('FTP Origin Pipeline XML').configure_for_environment(ftp)
+    sftp_ftp_client.resource_url = f'{sftp_ftp_client.resource_url}/{directory}'
+
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+    try:
+        assert len(snapshot[sftp_ftp_client].output) == 1
+        assert f'/{directory}/{ftp_file_name}' == snapshot[sftp_ftp_client].output[0].header.values['file']
+        assert ftp_file_name == snapshot[sftp_ftp_client].output[0].header.values['filename']
+
+        assert snapshot[sftp_ftp_client].output[0].field['text'] == str(expected)
+
+    finally:
+        # Delete the test FTP origin file we created
+        client = ftp.client
+        client.delete(f'/{directory}/{ftp_file_name}')
+        client.rmd(f'/{directory}')
         client.quit()
 
 
@@ -500,7 +555,6 @@ def test_ftp_origin_SDC_Record(sdc_builder, sdc_executor, ftp):
 
     raw_data = ''.join(json.dumps(record) for record in json_data)
 
-
     ftp_file_name = get_random_string(string.ascii_letters, 10)
     produce_lfs_messages_SDC_Record(ftp_file_name, sdc_builder, sdc_executor, raw_data, ftp)
     move_directory_messages_SDC_record_ftp(ftp_file_name, sdc_builder, sdc_executor, raw_data, ftp)
@@ -550,10 +604,10 @@ def test_ftp_origin_whole_file_to_s3_no_read_permission(sdc_builder, sdc_executo
     builder = sdc_builder.get_pipeline_builder()
 
     sftp_ftp_client = builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
-    sftp_ftp_client.set_attributes(file_name_pattern = f'{prefix}*',
-                                   data_format = 'WHOLE_FILE',
-                                   batch_wait_time_in_ms = 10000,
-                                   max_batch_size_in_records = 1)
+    sftp_ftp_client.set_attributes(file_name_pattern=f'{prefix}*',
+                                   data_format='WHOLE_FILE',
+                                   batch_wait_time_in_ms=10000,
+                                   max_batch_size_in_records=1)
 
     trash = builder.add_stage('Trash')
 
