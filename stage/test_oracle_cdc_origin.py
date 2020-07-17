@@ -627,7 +627,7 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         sdc_executor.add_pipeline(pipeline)
 
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=300).snapshot
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         def compare_output(output_records, rows):
             assert len(output_records) == len(rows)
