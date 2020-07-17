@@ -139,6 +139,36 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
         sdc_executor.stop_pipeline(start_event_pipeline)
 
 
+@sdc_min_version('3.17.0')
+def test_start_event_with_job_info(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
+    """ Validate that we properly generate jobId and jobName to pipeline start event"""
+    start_stage = generator_trash_builder.add_start_event_stage('Write to Another Pipeline')
+    start_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
+    start_stage.sdc_rpc_id = SDC_RPC_ID
+
+    start_event_pipeline = generator_trash_builder.build('Start Event')
+    start_event_pipeline.add_parameters(JOB_ID='stfJobId', JOB_NAME='stfJobName')
+    sdc_executor.add_pipeline(start_event_pipeline, successful_receiver_pipeline)
+
+    try:
+        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline,
+                                                         start_pipeline=True,
+                                                         wait=False)
+        sdc_executor.start_pipeline(start_event_pipeline)
+
+        # And validate that the event arrived to the receiver pipeline
+        snapshot = snapshot_command.wait_for_finished().snapshot
+        record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
+
+        assert record is not None
+        assert record.header['values']['sdc.event.type'] == 'pipeline-start'
+        assert record.field['user'].value == 'admin'
+        assert record.field['jobId'].value == 'stfJobId'
+        assert record.field['jobName'].value == 'stfJobName'
+    finally:
+        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(start_event_pipeline)
+
 @sdc_min_version('2.7.0.0')
 def test_stop_event_user_action(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
     """ Validate that we properly generate and process event when pipeline is stopped by user."""
@@ -169,6 +199,38 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
         assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
         assert record.field['reason'].value == 'USER_ACTION'
 
+    finally:
+        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+
+
+@sdc_min_version('3.17.0')
+def test_stop_event_with_job_info(generator_trash_builder, successful_receiver_pipeline, sdc_executor):
+    """ Validate that we properly generate jobId and jobName to pipeline stop event"""
+    stop_stage = generator_trash_builder.add_stop_event_stage('Write to Another Pipeline')
+    stop_stage.sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
+    stop_stage.sdc_rpc_id = SDC_RPC_ID
+
+    stop_event_pipeline = generator_trash_builder.build('Stop Event - Job Info')
+    stop_event_pipeline.add_parameters(JOB_ID='stfJobId', JOB_NAME='stfJobName')
+    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline)
+
+    try:
+        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline,
+                                                         start_pipeline=True,
+                                                         wait=False)
+        sdc_executor.start_pipeline(stop_event_pipeline)
+        sdc_executor.stop_pipeline(stop_event_pipeline)
+
+        # And validate that the event arrived to the receiver pipeline
+        snapshot = snapshot_command.wait_for_finished().snapshot
+
+        record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
+
+        assert record is not None
+        assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
+        assert record.field['reason'].value == 'USER_ACTION'
+        assert record.field['jobId'].value == 'stfJobId'
+        assert record.field['jobName'].value == 'stfJobName'
     finally:
         sdc_executor.stop_pipeline(successful_receiver_pipeline)
 
