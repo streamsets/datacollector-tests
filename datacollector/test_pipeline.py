@@ -19,7 +19,7 @@ import logging
 import string
 
 from streamsets.testframework.environments.databases import OracleDatabase
-from streamsets.testframework.markers import database
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ def test_pipeline_downgrade(sdc_executor):
     assert 'VALIDATION_0096' in e.value.issues
 
 
+@sdc_min_version('3.4.0')
 @database
 def test_pipeline_preview_with_test_stage(sdc_builder, sdc_executor, database):
     """Test preview with test origin."""
