@@ -22,9 +22,11 @@ import time
 from collections import namedtuple
 from pretenders.common.constants import FOREVER
 from requests_gssapi import HTTPSPNEGOAuth
+from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import http, sdc_min_version, spnego
 from streamsets.testframework.utils import get_random_string
+
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +285,163 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
 
     finally:
         http_mock.delete_mock()
+
+
+@http
+def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, http_client):
+    """
+    Test when the http processor stage has the response action set up with the "Cause Stage to fail" option.
+    To test this we force the URL to be a not available so we get a 404 response from the mock http server. An
+    exception should be risen that shows the stage error.
+
+    We use the pipeline:
+    dev_raw_data_source >> http_client_processor >> trash
+
+    """
+    mock_path = get_random_string(string.ascii_letters, 10)
+    fake_mock_path = get_random_string(string.ascii_letters, 10)
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    record_output_field = 'result'
+    http_mock = http_client.mock()
+    try:
+        http_mock.when(
+            rule=f'GET /{mock_path}'
+        ).reply(
+            body="Example",
+            status=200,
+            times=FOREVER
+        )
+        mock_uri = f'{http_mock.pretend_url}/{fake_mock_path}'
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='GET', request_data="${record:value('/text')}",
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+        http_client_processor.per_status_actions=[
+            {
+              'statusCode':404,
+              'action':'STAGE_ERROR'
+            },
+        ]
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions')
+        sdc_executor.add_pipeline(pipeline)
+
+        with pytest.raises(sdc_api.RunError) as exception_info:
+            sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        assert 'HTTP_14 - ' in f'{exception_info.value}'
+    finally:
+        logger.info("Deleting http mock")
+        http_mock.delete_mock()
+
+
+@http
+def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, http_client):
+    """
+    Test when the http processor stage has the response action set up with the "Generate Error Record" option.
+    To test this we force the URL to be a not available so we get a 404 response from the mock http server. The output
+    should be one error record containing the right error code.
+
+    We use the pipeline:
+         dev_raw_data_source >> http_client_processor >> trash
+"""
+    mock_path = get_random_string(string.ascii_letters, 10)
+    fake_mock_path = get_random_string(string.ascii_letters, 10)
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    record_output_field = 'result'
+    http_mock = http_client.mock()
+    try:
+        http_mock.when(
+            rule=f'GET /{mock_path}'
+        ).reply(
+            body="Example",
+            status=200,
+            times=FOREVER
+        )
+        mock_uri = f'{http_mock.pretend_url}/{fake_mock_path}'
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='GET', request_data="${record:value('/text')}",
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+        http_client_processor.per_status_actions=[
+            {
+                'statusCode':404,
+                'action':'ERROR_RECORD'
+            },
+        ]
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions')
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        assert len(snapshot[http_client_processor.instance_name].error_records) == 1
+        assert snapshot[http_client_processor.instance_name].error_records[0].field['text'].value == raw_data
+
+    finally:
+        logger.info("Deleting http mock")
+        http_mock.delete_mock()
+
+
+@http
+def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_client):
+    """
+        Test when the http processor stage has the config option "Records for remaining statuses" set. To test this we
+        force the URL to be a not available so we get a 404 response from the mock http server. The output should be
+        one record containing the "Error Response Body Field" with the error message from the mock server.
+
+        We use the pipeline:
+             dev_raw_data_source >> http_client_processor >> trash
+    """
+    mock_path = get_random_string(string.ascii_letters, 10)
+    fake_mock_path = get_random_string(string.ascii_letters, 10)
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    record_output_field = 'result'
+    http_mock = http_client.mock()
+    try:
+        http_mock.when(
+            rule=f'GET /{mock_path}'
+        ).reply(
+            body="Example",
+            status=200,
+            times=FOREVER
+        )
+        mock_uri = f'{http_mock.pretend_url}/{fake_mock_path}'
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='GET', request_data="${record:value('/text')}",
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+        http_client_processor.records_for_remaining_statuses = True
+        http_client_processor.error_response_body_field = 'errorField'
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions')
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        assert len(snapshot[http_client_processor.instance_name].output) == 1
+        assert snapshot[http_client_processor.instance_name].output[0].field['result']['errorField'].value == 'No matching preset response'
+    finally:
+        logger.info("Deleting http mock")
+        http_mock.delete_mock()
+
 
 @http
 @pytest.mark.parametrize(('method'), [
