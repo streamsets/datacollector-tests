@@ -18,7 +18,7 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.markers import credentialstore, sap_hana, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from streamsets.sdk.exceptions import ValidationError
 
@@ -32,7 +32,7 @@ ROWS_IN_DATABASE = [
 
 # https://help.sap.com/viewer/4fe29514fd584807ac9f2a04f6754767/2.0.03/en-US/20a1569875191014b507cf392724b7eb.html
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', [
     ('VARBINARY(5)', "CAST('Hello' AS VARBINARY(5))", 'BYTE_ARRAY', 'SGVsbG8='),
     ('BOOLEAN', "TRUE", 'BOOLEAN', True),
@@ -118,7 +118,7 @@ def test_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment,
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_consumer_offset_resume(sdc_builder, sdc_executor, database):
     """
     Ensure that the Query consumer can resume where it ended and stop the pipeline when it reads all the data.
@@ -178,7 +178,7 @@ def test_consumer_offset_resume(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 @pytest.mark.parametrize('batch_size', [1, 3, 10])
 def test_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batch_size):
     """Ensure that the Query consumer works properly in non-incremental mode.
@@ -240,7 +240,7 @@ def test_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batc
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_duplicate_column_labels(sdc_builder, sdc_executor, database):
     """
         Tests the validation raises an error when the query contains two columns
@@ -284,7 +284,7 @@ def test_duplicate_column_labels(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_empty_result_set(sdc_builder, sdc_executor, database):
     """
         Tests the output records is 0 if the table is empty
@@ -326,7 +326,7 @@ def test_empty_result_set(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 @pytest.mark.parametrize('batch_size', [1, 3, 10])
 def test_consumer_incremental_mode(sdc_builder, sdc_executor, database, batch_size):
     """Ensure that the Query consumer works properly in incremental mode.
@@ -417,7 +417,7 @@ def test_consumer_incremental_mode(sdc_builder, sdc_executor, database, batch_si
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_invalid_query(sdc_builder, sdc_executor, database):
     """
         Tests the validation raises an error when the query is not valid.
@@ -449,7 +449,7 @@ def test_invalid_query(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_jdbc_decimal_headers(sdc_builder, sdc_executor, database):
     """
         Tests the output records contains header values indicating metadata info
@@ -499,7 +499,7 @@ def test_jdbc_decimal_headers(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_lineage_events(sdc_builder, sdc_executor, database):
     """
         Tests the lineage events.
@@ -556,7 +556,7 @@ def test_lineage_events(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 @pytest.mark.parametrize('query_end', [
     ("WHERE T.P_ID > ${OFFSET} LIMIT 10"),
     (""),
@@ -603,7 +603,7 @@ def test_missing_clause(sdc_builder, sdc_executor, database, query_end):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_multiline_query(sdc_builder, sdc_executor, database):
     """
         Test the stage works OK if the query has carry returns.
@@ -644,7 +644,7 @@ def test_multiline_query(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 @pytest.mark.parametrize('offset_column,expected_error', [
     ('T.P_ID','JDBC_32 -'),
     ('NONEXISTINGCOLUMN','JDBC_29 -')
@@ -692,7 +692,7 @@ def test_invalid_offset_column(sdc_builder, sdc_executor, database, offset_colum
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_qualified_offset_column_in_query(sdc_builder, sdc_executor, database):
     """
         Qualified offset column on the query string but not on the offset column
@@ -735,7 +735,7 @@ def test_qualified_offset_column_in_query(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_stored_procedure(sdc_builder, sdc_executor, database):
     """
         Test if we can call a stored procedure.
@@ -784,7 +784,7 @@ def test_stored_procedure(sdc_builder, sdc_executor, database):
 
 
 @sdc_min_version('3.17.0')
-@database('sap-hana')
+@sap_hana
 def test_timestamp_as_string(sdc_builder, sdc_executor, database):
     """
         Test the timestamp as string config. We create a table with a timestamp field
