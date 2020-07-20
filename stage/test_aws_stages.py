@@ -36,6 +36,8 @@ S3_SANDBOX_PREFIX = 'sandbox'
 
 MIN_SDC_VERSION_WITH_EXECUTOR_EVENTS = Version('3.4.0')
 
+SERVICE_ENDPOINT_FORMAT = '{}.{}.amazonaws.com'
+
 
 @aws('kinesis')
 def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
@@ -227,6 +229,66 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
 
 
 @aws('kinesis')
+def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
+    """Test for Kinesis consumer origin stage using other as region and service endpoint. We do so by publishing data to
+     a test stream using Kinesis client and having a pipeline which reads that data using Kinesis consumer origin stage.
+     The region is set to other, and the service endpoint for kinesis is used.
+     Data is then asserted for what is published at Kinesis client and what we read in the pipeline snapshot.
+     The pipeline looks like:
+
+    Kinesis Consumer pipeline:
+        kinesis_consumer >> trash
+    """
+    endpoint = SERVICE_ENDPOINT_FORMAT.format('kinesis', aws.region)
+
+    # build consumer pipeline
+    application_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    kinesis_consumer = builder.add_stage('Kinesis Consumer')
+    kinesis_consumer.set_attributes(application_name=application_name, data_format='TEXT',
+                                    initial_position='TRIM_HORIZON',
+                                    stream_name=stream_name)
+
+    trash = builder.add_stage('Trash')
+
+    kinesis_consumer >> trash
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    kinesis_consumer.set_attributes(region='OTHER', endpoint=endpoint)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    # run pipeline and capture snapshot
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        # not using PartitionKey logic and hence assign some temp key
+        put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # messages are published, read through the pipeline and assert
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        output_records = [record.field['text'].value
+                          for record in snapshot[kinesis_consumer.instance_name].output]
+
+        assert set(output_records) == expected_messages
+    finally:
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+        aws.dynamodb.delete_table(TableName=application_name)
+
+
+@aws('kinesis')
 def test_kinesis_producer(sdc_builder, sdc_executor, aws):
     """Test for Kinesis producer target stage. We do so by publishing data to a test stream using Kinesis producer
     stage. Then we stop the pipeline and then read the data from that stream using Kinesis client. We assert the
@@ -290,6 +352,69 @@ def get_kinesis_producer_pipeline(sdc_builder, aws, stream_name, message, pipeli
         title=f'Kinesis Producer Pipeline {pipeline_suffix}').configure_for_environment(aws)
 
     return producer_dest_pipeline
+
+
+@aws('kinesis')
+def test_kinesis_producer_other_region(sdc_builder, sdc_executor, aws):
+    """Test for Kinesis producer target stage using other as region and service endpoint.
+    We do so by publishing data to a test stream using Kinesis producer stage. Then we stop the pipeline and then
+    read the data from that stream using Kinesis client.
+    The region is set to other and the service endpoint for kinesis is used.
+    We assert the data from the client to what has been ingested by the producer pipeline. Then we add more data, stop
+    the pipeline and we assert the second batch data was readed. The pipeline looks like:
+
+    Kinesis Producer pipeline:
+        dev_raw_data_source >> kinesis_producer
+    """
+    endpoint = SERVICE_ENDPOINT_FORMAT.format('kinesis', aws.region)
+
+    # build producer pipeline
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+    raw_str = 'Hello World!'
+
+    # Create Kinesis stream and capture the ShardId
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+        desc_response = client.describe_stream(StreamName=stream_name)
+        shard_id = desc_response['StreamDescription']['Shards'][0]['ShardId']
+
+        builder = sdc_builder.get_pipeline_builder()
+        builder.add_error_stage('Discard')
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                      raw_data=raw_str)
+        kinesis_producer = builder.add_stage('Kinesis Producer')
+        kinesis_producer.set_attributes(data_format='TEXT', stream_name=stream_name)
+
+        dev_raw_data_source >> kinesis_producer
+        producer_dest_pipeline = builder.build().configure_for_environment(aws)
+        kinesis_producer.set_attributes(region='OTHER', endpoint=endpoint)
+
+        # add pipeline and capture pipeline messages to assert
+        sdc_executor.add_pipeline(producer_dest_pipeline)
+        sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(10)
+        sdc_executor.stop_pipeline(producer_dest_pipeline)
+
+        history = sdc_executor.get_pipeline_history(producer_dest_pipeline)
+        msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+        logger.debug('Number of messages ingested into the pipeline = %s', msgs_sent_count)
+
+        # read data from Kinesis to assert it is what got ingested into the pipeline
+        shard_iterator = client.get_shard_iterator(StreamName=stream_name,
+                                                   ShardId=shard_id, ShardIteratorType='TRIM_HORIZON')
+        response = client.get_records(ShardIterator=shard_iterator['ShardIterator'])
+        msgs_received = [response['Records'][i]['Data'].decode().strip()
+                         for i in range(msgs_sent_count)]
+
+        logger.debug('Number of messages received from Kinesis = %d', (len(msgs_received)))
+
+        assert msgs_received == [raw_str] * msgs_sent_count
+    finally:
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)
 
 
 @aws('kinesis')
@@ -847,6 +972,79 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
     record_deduplicator >> to_error
 
     firehose_dest_pipeline = builder.build(title='Amazon Firehose destination pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(firehose_dest_pipeline)
+
+    try:
+        # start pipeline and assert
+        sdc_executor.start_pipeline(firehose_dest_pipeline).wait_for_pipeline_output_records_count(record_count)
+        sdc_executor.stop_pipeline(firehose_dest_pipeline)
+
+        # wait till data is available in S3. We do so by querying for buffer wait time and sleep till then
+        resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
+        dests = resp['DeliveryStreamDescription']['Destinations'][0]
+        wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
+        time.sleep(wait_secs + 15)  # few seconds more to wait to make sure S3 gets the data
+
+        # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
+        # read data to assert
+        list_s3_objs = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=datetime.utcnow().strftime("%Y/%m/%d"))
+        for s3_content in list_s3_objs['Contents']:
+            akey = s3_content['Key']
+            aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
+            if aobj['Body'].read().decode().strip() == random_raw_str:
+                s3_put_keys.append(akey)
+
+        assert len(s3_put_keys) == record_count
+    finally:
+        # delete S3 objects related to this test
+        if len(s3_put_keys) > 0:
+            delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
+            s3_client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+
+
+@aws('firehose', 's3')
+def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws):
+    """Test for Firehose target stage with other as region and service endpoint.
+    This test assumes Firehose is destined to S3 bucket. We run a dev raw data source generator to Firehose destination
+    which is pre-setup to put to S3 bucket.
+    The region is set to other and the service endpoint for firehose is used.
+    We then read S3 bucket using STF client to assert data between the client to what has been ingested into the pipeline.
+    The pipeline looks like:
+
+    Firehose Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> firehose_destination
+                                                   >> to_error
+    """
+    endpoint = SERVICE_ENDPOINT_FORMAT.format('firehose', aws.region)
+
+    s3_client = aws.s3
+    firehose_client = aws.firehose
+
+    # setup test static
+    s3_bucket = aws.s3_bucket_name
+    stream_name = aws.firehose_stream_name
+    # json formatted string
+    random_raw_str = '{{"text":"{0}"}}'.format(get_random_string(string.ascii_letters, 10))
+    record_count = 1  # random_raw_str record size
+    s3_put_keys = []
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=random_raw_str)
+
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    to_error = builder.add_stage('To Error')
+
+    firehose_destination = builder.add_stage('Kinesis Firehose')
+    firehose_destination.set_attributes(stream_name=stream_name, data_format='JSON')
+
+    dev_raw_data_source >> record_deduplicator >> firehose_destination
+    record_deduplicator >> to_error
+
+    firehose_dest_pipeline = builder.build().configure_for_environment(aws)
+    firehose_destination.set_attributes(region='OTHER', endpoint=endpoint)
     sdc_executor.add_pipeline(firehose_dest_pipeline)
 
     try:
