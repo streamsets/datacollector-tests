@@ -12,10 +12,12 @@ def test_status_code(sdc_builder, sdc_executor):
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         rest_service = pipeline_builder.add_stage('REST Service')
+
         if Version(sdc_builder.version) < Version('3.16.0'):
             rest_service.application_id = APPLICATION_ID
         else:
-            rest_service.list_of_application_ids = [{"appId": APPLICATION_ID}]
+            rest_service.list_of_application_ids = [{"credential": APPLICATION_ID}]
+
         rest_service.http_listening_port = HTTP_LISTENING_PORT
 
         send_response_to_origin = pipeline_builder.add_stage('Send Response to Origin')
