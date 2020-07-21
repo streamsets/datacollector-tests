@@ -17,14 +17,18 @@ import json
 import logging
 import pytest
 import requests
+import ssl
 import string
 import time
+import urllib
+
 from collections import namedtuple
 from pretenders.common.constants import FOREVER
 from requests_gssapi import HTTPSPNEGOAuth
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import http, sdc_min_version, spnego
+from streamsets.testframework.constants import STF_TESTCONFIG_DIR
+from streamsets.testframework.markers import credentialstore, http, sdc_min_version, spnego
 from streamsets.testframework.utils import get_random_string
 
 
@@ -795,6 +799,11 @@ def test_http_server_with_spnego(sdc_builder, sdc_executor, http_client):
     # pipeline started. A connection is attempted where the client has not yet authenticated with kerberos. This should
     # fail with a 401 response. The next step is to login on the client (in this case the STF container) and then do a
     # get and a post (with some random data) and verify that the response code is a 200.
+
+    # skip this test if incoming http_client fixture does not have kerberos enabled.
+    if not http_client.kerberos_enabled:
+        pytest.skip('Skipping test because Kerberos is not enabled for the HTTP fixture.')
+
     try:
         builder = sdc_builder.get_pipeline_builder()
         http_server = builder.add_stage('HTTP Server', type='origin')
@@ -826,6 +835,110 @@ def test_http_server_with_spnego(sdc_builder, sdc_executor, http_client):
 
         response = requests.post(server_url, auth=gssapi_auth, data='{"foo": "bar"}')
         assert response.status_code == 200
+
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
+@http
+@credentialstore
+@sdc_min_version("3.17.0")
+def test_http_client_remote_vault(sdc_builder, sdc_executor, http_client):
+
+    # skip the test if the http client isn't ssl enabled.
+    if not hasattr(http_client, 'credential_store') or not http_client.ssl_enabled:
+        pytest.skip('Skipping since credential_store is not defined or ssl-reverse-proxy-url is not specified.')
+
+    expected_message = {'msg': 'hello'}
+    try:
+        mock = http_client.mock()
+        mock.when('GET /hello').reply(json.dumps(expected_message), times=FOREVER)
+
+        builder = sdc_builder.get_pipeline_builder()
+        http_client_origin = builder.add_stage('HTTP Client', type='origin')
+        pretend_url = f'{mock.pretend_url}/hello'
+
+        cert_expression = ("${{credential:getWithOptions('{store_id}', 'all', 'webserver-certificate', "
+                           "'credentialType=certificate')}}".format(store_id=http_client.credential_store.store_id))
+        http_client_origin.set_attributes(resource_url=http_client.ssl_url(pretend_url),
+                                          use_tls=True,
+                                          use_remote_truststore=True,
+                                          mode='BATCH',
+                                          trusted_certificates=[{'credential': cert_expression}])
+
+        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
+
+        http_client_origin >> [wiretap.destination, trash]
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        assert(wiretap.output_records[0].field == expected_message)
+
+    finally:
+        mock.delete_mock()
+
+
+@http
+@credentialstore
+@sdc_min_version("3.17.0")
+def test_http_server_remote_vault(sdc_builder, sdc_executor, http_client):
+
+    # skip the test if the http client isn't ssl enabled.
+    if not hasattr(http_client, 'credential_store') or not http_client.ssl_enabled:
+        pytest.skip('Skipping since credential_store is not defined or ssl-reverse-proxy-url is not specified.')
+
+    try:
+        builder = sdc_builder.get_pipeline_builder()
+        http_server_origin = builder.add_stage('HTTP Server', type='origin')
+
+        key_expression = ("${{credential:get('{store_id}', 'all', 'webserver-privatekey')}}".format(
+            store_id=http_client.credential_store.store_id))
+        cert_expression = ("${{credential:getWithOptions('{store_id}', 'all', 'webserver-certificate', "
+                           "'credentialType=certificate')}}".format(store_id=http_client.credential_store.store_id))
+        http_port = 9999
+        http_server_origin.set_attributes(use_tls=True,
+                                          data_format='JSON',
+                                          http_listening_port=http_port,
+                                          use_remote_keystore=True,
+                                          private_key=key_expression,
+                                          certificate_chain=[{'credential': cert_expression}])
+
+        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
+
+        http_server_origin >> [wiretap.destination, trash]
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        # Post to the server using a valid certificate.
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False  # Ignore the hostname
+        # Add the certificate present in the test config directory. This is setup when the test environment is started.
+        ssl_context.load_verify_locations(cafile=f'{STF_TESTCONFIG_DIR}/selfsigned.crt')
+
+        response = urllib.request.urlopen(url=f'https://{sdc_executor.fqdn}:{http_port}/',
+                                          data=bytes(json.dumps({'msg': 'hello'}).encode('utf-8')),
+                                          context=ssl_context)
+
+        assert(response.status == 200)
+
+        # Post to the server again but this time using the default certificates.
+        default_context = ssl.create_default_context()
+        default_context.check_hostname = False
+        default_context.load_default_certs()
+
+        # An exception will be thrown because certificate verification will fail.
+        try:
+            response = urllib.request.urlopen(url=f'https://{sdc_executor.fqdn}:{http_port}/',
+                                              data=bytes(json.dumps({'msg': 'hello'}).encode('utf-8')),
+                                              context=default_context)
+        except urllib.error.URLError as err:
+            assert("certificate verify failed" in str(err))
 
     finally:
         sdc_executor.stop_pipeline(pipeline)
