@@ -1791,6 +1791,74 @@ def test_s3_whole_file_empty_directory(sdc_builder, sdc_executor, aws):
                                        'Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
+@aws('s3')
+def test_s3_stop_resume_file_not_found(sdc_builder, sdc_executor, aws):
+    """Tests to process a file, stop the pipeline, delete the file and
+    when resuming the pipeline it does not throw an exception:
+
+    S3 Origin pipeline:
+        s3_origin >> trash
+
+    Test for Bug SDC-15174
+    """
+
+    s3_bucket = aws.s3_bucket_name
+    s3_directory = get_random_string()
+    s3_key = f'{S3_SANDBOX_PREFIX}/{s3_directory}'
+    s3_file_name = f'{s3_key}/ABC.txt'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern=f'**/*',
+                             read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/')
+
+    wiretap = builder.add_wiretap()
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+    s3_origin >> wiretap.destination
+    s3_origin >= finisher
+
+    s3_origin_pipeline = builder.build(title='AWS S3 dir stop resume file not found').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    test_data = [f'Message {i}' for i in range(10)]
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=aws.s3_bucket_name, Key=s3_file_name,
+                          Body='\n'.join(test_data).encode('ascii'))
+
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+
+        assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == [s3_file_name]
+
+        # Delete the file
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
+                                       'Contents']]}
+        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
+        # Start the pipeline, assert it is running and stop the pipeline.
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+        assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
+
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
+                                       'Contents']]}
+        if delete_keys:
+            client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        # If no files have been processed we need to stop the pipeline, otherwise it will be finished
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
+
 
 # SDC-14922: S3 Origin does not properly continue processing files after error in parsing
 @aws('s3')
