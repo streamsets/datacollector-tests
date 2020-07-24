@@ -451,6 +451,68 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
 
 
 @http
+@sdc_min_version("3.17.0")
+def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, http_client):
+    """
+        When the Batch Wait Time is not big enough and there is a retry action configured it can be the batch time
+        expires before the number of retries is finished yet. In this case an stage error must be raised explaining
+        the reason. We force the error to appear by configuring the pipeline to stop when it finds an stage error.
+
+        We use the pipeline:
+             dev_raw_data_source >> http_client_processor >> trash
+    """
+    mock_path = get_random_string(string.ascii_letters, 10)
+    fake_mock_path = get_random_string(string.ascii_letters, 10)
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    record_output_field = 'result'
+    http_mock = http_client.mock()
+    try:
+        http_mock.when(
+            rule=f'GET /{mock_path}'
+        ).reply(
+            body="Example",
+            status=200,
+            times=FOREVER
+        )
+        mock_uri = f'{http_mock.pretend_url}/{fake_mock_path}'
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='GET', request_data="${record:value('/text')}",
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+        http_client_processor.records_for_remaining_statuses = False
+        http_client_processor.batch_wait_time_in_ms = 150
+        http_client_processor.per_status_actions=[
+            {
+                'statusCode':404,
+                'action':'RETRY_LINEAR_BACKOFF',
+                'backoffInterval':100,
+                'maxNumRetries':10
+            },
+        ]
+        http_client_processor.on_record_error='STOP_PIPELINE'
+
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions '
+                                       'Max wait Time is not enough stage error')
+        sdc_executor.add_pipeline(pipeline)
+
+        with pytest.raises(sdc_api.RunError) as exception_info:
+            sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        assert 'HTTP_67 - ' in f'{exception_info.value}'
+
+    finally:
+        logger.info("Deleting http mock")
+        http_mock.delete_mock()
+
+
+@http
 @pytest.mark.parametrize(('method'), [
     'POST',
     # Testing of SDC-10809
