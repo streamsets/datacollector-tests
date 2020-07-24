@@ -292,6 +292,7 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
 
 
 @http
+@sdc_min_version("3.17.0")
 def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, http_client):
     """
     Test when the http processor stage has the response action set up with the "Cause Stage to fail" option.
@@ -347,6 +348,7 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
 
 
 @http
+@sdc_min_version("3.17.0")
 def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, http_client):
     """
     Test when the http processor stage has the response action set up with the "Generate Error Record" option.
@@ -400,6 +402,7 @@ def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, 
 
 
 @http
+@sdc_min_version("3.17.0")
 def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_client):
     """
         Test when the http processor stage has the config option "Records for remaining statuses" set. To test this we
