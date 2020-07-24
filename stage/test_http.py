@@ -513,6 +513,100 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
 
 
 @http
+@pytest.mark.parametrize('retry_action,pagination_option', [
+    ('RETRY_LINEAR_BACKOFF', 'BY_PAGE'),
+    ('RETRY_LINEAR_BACKOFF', 'BY_OFFSET'),
+    ('RETRY_LINEAR_BACKOFF', 'LINK_HEADER'),
+    ('RETRY_LINEAR_BACKOFF', 'LINK_FIELD'),
+    ('RETRY_EXPONENTIAL_BACKOFF', 'BY_PAGE'),
+    ('RETRY_EXPONENTIAL_BACKOFF', 'BY_OFFSET'),
+    ('RETRY_EXPONENTIAL_BACKOFF', 'LINK_HEADER'),
+    ('RETRY_EXPONENTIAL_BACKOFF', 'LINK_FIELD'),
+    ('RETRY_IMMEDIATELY', 'BY_PAGE'),
+    ('RETRY_IMMEDIATELY', 'BY_OFFSET'),
+    ('RETRY_IMMEDIATELY', 'LINK_HEADER'),
+    ('RETRY_IMMEDIATELY', 'LINK_FIELD'),
+])
+@sdc_min_version("3.17.0")
+def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, http_client, retry_action, pagination_option):
+    """
+        Test when a pagination option is set up and a retry action is set up and the maximum number
+        of retries is exhausted then the error saying the number of retries is exceeded is risen.
+
+        We use the pipeline:
+             dev_raw_data_source >> http_client_processor >> trash
+    """
+    rand_pipeline_name = get_random_string(string.ascii_letters, 10)
+    mock_path = get_random_string(string.ascii_letters, 10)
+    fake_mock_path = get_random_string(string.ascii_letters, 10)
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    record_output_field = 'result'
+    http_mock = http_client.mock()
+    try:
+        http_mock.when(
+            rule=f'GET /{mock_path}'
+        ).reply(
+            body="Example",
+            status=200,
+            times=FOREVER
+        )
+        mock_uri = f'{http_mock.pretend_url}/{fake_mock_path}'
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='GET', request_data="${record:value('/text')}",
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+
+        http_client_processor.records_for_remaining_statuses = False
+        http_client_processor.batch_wait_time_in_ms = 500000
+        http_client_processor.pagination_mode = pagination_option;
+        http_client_processor.per_status_actions=[
+            {
+                'statusCode':404,
+                'action':retry_action,
+                'backoffInterval':100,
+                'maxNumRetries':3
+            },
+        ]
+
+        #pprint(dir(http_client_processor))
+        http_client_processor.result_field_path='/'
+        http_client_processor.next_page_link_field='/foo'
+        http_client_processor.stop_condition='1==1'
+        http_client_processor.multiple_values_behavior='ALL_AS_LIST'
+        #Must do it like this because the attribute name has the '/' char
+        setattr(http_client_processor, 'initial_page/offset', 1)
+
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline_title = f'HTTP Lookup Processor pipeline Response Actions with Pagination {rand_pipeline_name}'
+        pipeline = builder.build(title=pipeline_title)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline, wait=False).wait_for_status(status='RUN_ERROR', ignore_errors=False)
+        snapshots = sdc_executor.get_snapshots(pipeline)
+
+        assert len(snapshots)==1
+        log_line = next(
+            (
+                line for line in reversed(sdc_executor.get_logs()._data)
+                if 'HTTP_19 - ' in line.get('message') and pipeline_title in line.get('s-entity')
+            ),
+            None
+        )
+        assert log_line is not None
+
+    finally:
+        logger.info("Deleting http mock")
+        http_mock.delete_mock()
+
+
+@http
 @pytest.mark.parametrize(('method'), [
     'POST',
     # Testing of SDC-10809
