@@ -856,6 +856,7 @@ def test_http_client_http_status_on_header(sdc_builder, sdc_executor, http_clien
         http_mock.delete_mock()
 
 
+@http
 @spnego
 @sdc_min_version("3.16.0")
 def test_http_server_with_spnego(sdc_builder, sdc_executor, http_client):
