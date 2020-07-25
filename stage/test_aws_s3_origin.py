@@ -91,8 +91,8 @@ def test_s3_origin_empty_origin_stop_when_nomoredata_received(sdc_builder, sdc_e
     try:
         # Run the pipeline
         # Do not continue until the pipeline finishes
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline = True).snapshot
-        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status = 'FINISHED', timeout_sec = 60)
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True, timeout_sec=70).snapshot
+        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=60)
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
         # If we are here this means that a no-more-data was sent
 
@@ -168,7 +168,7 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
                 client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{iteration}-{i}', Body=json.dumps(data))
 
             # In case of multithreaded pipeline we want to verify the amount of records.
-            snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+            snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True,  timeout_sec=70).snapshot
 
             sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status('FINISHED')
 
@@ -554,7 +554,7 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
         # Insert objects into S3.
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Body=json.dumps(data))
 
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True, timeout_sec=70).snapshot
 
         output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
 
@@ -647,7 +647,7 @@ if (state['record-count'] >= 2):
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}-2', Body=json.dumps(data2))
 
         # Take snapshot and check output records
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline).snapshot
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline,  timeout_sec=70).snapshot
         output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
         assert len(output_records_values) == s3_obj_count * records_per_file
         assert output_records_values == data2
@@ -723,7 +723,7 @@ def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
             client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{i}', Body=json.dumps(data))
 
         # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True,  timeout_sec=70).snapshot
 
         output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
 
@@ -878,7 +878,7 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Fileobj=file_excel)
 
         # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True,  timeout_sec=70).snapshot
 
         output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
 
@@ -971,7 +971,7 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
                            Filename=f'{zip_file_name}.zip')
 
         # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True,  timeout_sec=70).snapshot
 
         output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
 
@@ -1054,7 +1054,7 @@ def test_s3_origin_timestamp_last_file_offset(sdc_builder, sdc_executor, aws, re
         assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == records_per_file * 2
 
         # Start pipeline again, wait some time and assert that no duplicated data has been read
-        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=30)
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=70)
 
         # Assert no more data has been read on the second run
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
@@ -1183,7 +1183,7 @@ def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheet
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
         # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True,  timeout_sec=70).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         if read_all_sheets:
@@ -1245,7 +1245,7 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
         # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True,  timeout_sec=70).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         assert len(snapshot[s3_origin].output) == 1
@@ -1309,7 +1309,7 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
         # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True,  timeout_sec=70).snapshot
         sdc_executor.stop_pipeline(pipeline)
 
         assert len(snapshot[s3_origin].output) == 1
@@ -1438,7 +1438,7 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
                           Body='\n'.join(test_data).encode('ascii'))
 
         # Run until finished-file
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=batch_size).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=batch_size,  timeout_sec=70).snapshot
         output_records = snapshot[origin.instance_name].output
         event_records = snapshot[origin.instance_name].event_records
 
@@ -1457,7 +1457,7 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
         assert 0 == event_records[1].field['error-count']
 
         # Restart pipeline to generate no more data event
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=batch_size).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=batch_size,  timeout_sec=70).snapshot
         event_records = snapshot[origin.instance_name].event_records
         assert 'no-more-data' == event_records[0].header['values']['sdc.event.type']
 
