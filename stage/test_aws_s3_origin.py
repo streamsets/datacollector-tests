@@ -339,7 +339,9 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
         if number_of_threads == SINGLETHREADED:
             # Snapshot the pipeline and compare the records.
-            snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).snapshot
+            snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline,
+                                                     timeout_sec=70,
+                                                     start_pipeline=True).snapshot
             sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
 
             output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
