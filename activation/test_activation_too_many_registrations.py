@@ -19,7 +19,7 @@ import pytest
 
 
 from streamsets.sdk.exceptions import BadRequestError
-from streamsets.testframework.markers import sdc_activation, sdc_min_version
+from streamsets.testframework.markers import registration, sdc_min_version
 
 from .utils.utils_activation import ACTIVATION_SUPPORT_SDC_MIN_VERSION, register_sdc
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 REGISTRATION_MAX_ATTEMPTS = 3
 
-@sdc_activation
+@registration
 def test_with_basic_stage_too_many_registrations(sdc_executor):
     """
     Attempt to register more than the maximum allowed and verify the error message.
