@@ -693,9 +693,10 @@ def test_mongodb_destination_update_on_nested_key(sdc_builder, sdc_executor, mon
                                                           'headerAttributeExpression': '3'}]
 
     mongodb_dest = pipeline_builder.add_stage('MongoDB', type='destination')
+    unique_key_field = '/f1/f2' if Version(sdc_builder.version) <= Version('3.5.0') else ['/f1/f2']
     mongodb_dest.set_attributes(database=get_random_string(ascii_letters, 5),
                                 collection=get_random_string(ascii_letters, 10),
-                                unique_key_field=['/f1/f2'])
+                                unique_key_field=unique_key_field)
 
     dev_raw_data_source >> expression_evaluator >> mongodb_dest
 
