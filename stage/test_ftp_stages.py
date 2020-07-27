@@ -213,6 +213,10 @@ def test_ftp_origin_text(sdc_builder, sdc_executor, ftp, directory):
         assert f'/{directory}/{ftp_file_name}' == snapshot[sftp_ftp_client].output[0].header.values['file']
         assert ftp_file_name == snapshot[sftp_ftp_client].output[0].header.values['filename']
 
+        assert len(snapshot[sftp_ftp_client].event_records) >= 1
+        assert f'/{directory}/{ftp_file_name}' in [record.field["filepath"] for record in
+                                                   snapshot[sftp_ftp_client].event_records]
+
         assert snapshot[sftp_ftp_client].output[0].field['text'] == str(expected)
 
     finally:
