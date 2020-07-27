@@ -487,6 +487,7 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
                                              output_field=f'/{record_output_field}')
         http_client_processor.records_for_remaining_statuses = False
         http_client_processor.batch_wait_time_in_ms = 150
+        http_client_processor.multiple_values_behavior='ALL_AS_LIST'
         http_client_processor.per_status_actions=[
             {
                 'statusCode':404,
