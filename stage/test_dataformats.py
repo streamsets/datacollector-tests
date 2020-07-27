@@ -376,6 +376,7 @@ def test_delimited_quote_mode(sdc_builder, sdc_executor, quote_mode, expected):
     assert snapshot[generator].output[0].get_field_data('/target') == expected
 
 
+@sdc_min_version('3.8.0')
 def test_delimited_quoted_newline(sdc_builder, sdc_executor):
     """Ensure that delimited data with newlines between quotes are correctly parsed"""
     builder = sdc_builder.get_pipeline_builder()
