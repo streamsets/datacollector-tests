@@ -254,7 +254,7 @@ def test_configuration_delimited_max_record_length_in_chars(sdc_builder, sdc_exe
     try:
         client.put_object(Bucket=aws.s3_bucket_name, Key=amazon_s3_origin.prefix_pattern, Body=file_content)
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=70).snapshot
         output_records = [record.field for record in snapshot[amazon_s3_origin].output]
 
         if len(file_content) > max_record_length_in_chars:
@@ -293,8 +293,9 @@ def delete_aws_objects(client, aws, s3_key):
 
 
 def execute_pipeline_and_get_output(sdc_executor, s3_origin, pipeline):
+    pipeline.configuration['runnerIdleTIme'] = 80
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=70).snapshot
     output_records = snapshot[s3_origin].output
     return output_records
 

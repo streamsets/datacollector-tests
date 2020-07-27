@@ -1329,7 +1329,7 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt', Body=data.encode('ascii'))
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=70).snapshot
 
         # Validate event generation
         assert len(snapshot[identity].output) == 1
