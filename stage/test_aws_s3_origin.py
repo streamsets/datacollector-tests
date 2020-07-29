@@ -1840,7 +1840,7 @@ def test_s3_stop_resume_file_not_found(sdc_builder, sdc_executor, aws):
         # Delete the file
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
+                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_file_name)[
                                        'Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
@@ -1849,12 +1849,13 @@ def test_s3_stop_resume_file_not_found(sdc_builder, sdc_executor, aws):
         assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
 
     finally:
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
-                                       'Contents']]}
-        if delete_keys:
+        if client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] > 0:
+            delete_keys = {'Objects': [{'Key': k['Key']}
+                                       for k in
+                                       client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
+                                           'Contents']]}
             client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
         # If no files have been processed we need to stop the pipeline, otherwise it will be finished
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
