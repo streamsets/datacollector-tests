@@ -272,3 +272,23 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     # remove special ASCII characters in the output. Note: 1st record of Error file has special ASCII character.
     record_json = json.loads(record.encode('ascii', 'ignore').decode())
     assert raw_data == record_json['value']['value']['text']['value']
+
+
+def test_error_records_with_job_info(random_expression_pipeline_builder, sdc_executor):
+    random_expression_pipeline_builder.expression_evaluator.on_record_error = 'TO_ERROR'
+    random_expression_pipeline_builder.expression_evaluator.required_fields = ['/b']
+    pipeline = random_expression_pipeline_builder.pipeline_builder.build()
+    pipeline.add_parameters(JOB_ID='stfJobId', JOB_NAME='stfJobName')
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    # All records should go to error stream.
+    input_records = snapshot[random_expression_pipeline_builder.dev_data_generator.instance_name].output
+    stage = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name]
+    assert len(stage.output) == 0
+    assert len(stage.error_records) == len(input_records)
+    for error_record in stage.error_records:
+        assert 'stfJobId' == error_record.header['errorJobId']
+        assert 'stfJobName' == error_record.header['errorJobName']
