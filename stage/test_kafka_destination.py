@@ -22,6 +22,8 @@ from streamsets.testframework.environments.cloudera import ClouderaManagerCluste
 from streamsets.testframework.environments.kafka import KafkaCluster
 from streamsets.testframework.markers import cluster, confluent, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from confluent_kafka.avro.serializer.message_serializer import MessageSerializer
+from functools import partial
 
 logger = logging.getLogger(__name__)
 
@@ -498,3 +500,86 @@ def test_pipeline_retry_for_exceptions_with_on_error_record_action_stop_pipeline
         assert 'RETRY' in [entry['status'] for entry in history.entries]
     finally:
         sdc_executor.stop_pipeline(pipeline)
+
+
+@cluster('cdh', 'kafka')
+@confluent
+@sdc_min_version('3.0.0.0')
+def test_kafka_destination_expression_partitioner_avro(sdc_builder, sdc_executor, cluster, confluent):
+    """This test ensures that the correct serializer is set when producing AVRO records and using
+    EXPRESSION partition strategy. We do so by setting the confluent serializer in the stage config, and also
+    setting it to the kafka consumer used in the test. The consumer won't be able to deserialize the records
+    if they're not serialized in AVRO.
+    """
+    topic = get_random_string(string.ascii_letters, 10)
+    logger.debug('Kafka topic name: %s', topic)
+
+    data = {'myLongField1': 'My Long Message'}
+
+    # Build the Kafka destination pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(
+        stop_after_first_batch=True,
+        data_format='JSON',
+        raw_data=json.dumps(data)
+    )
+
+    destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_kafka_KafkaDTarget',
+                                    library=cluster.kafka.standalone_stage_lib)
+    # Set configuration to use AVRO with a registered schema in confluent, and expression partition strategy
+    destination.set_attributes(
+        topic=topic,
+        data_format='AVRO',
+        message_key_format='AVRO',
+        avro_schema_location='REGISTRY',
+        lookup_schema_by='SUBJECT',
+        schema_subject=f'{topic}-value',
+        include_schema=False,
+        partition_strategy='EXPRESSION',
+        partition_expression='${0}',
+        kafka_message_key='',
+        key_serializer='CONFLUENT',
+        value_serializer='CONFLUENT'
+    )
+
+    source >> destination
+    pipeline = builder\
+        .build(title='Kafka Destination pipeline with Expression Partitioner')\
+        .configure_for_environment(cluster, confluent)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    # Create the avro schema and register it to confluent
+    field = avro.schema.Field(
+        type=avro.schema.PrimitiveSchema(avro.schema.STRING),
+        name='myLongField1',
+        index=0,
+        has_default=False
+    )
+    schema = avro.schema.RecordSchema(
+        name=f'value_{topic}',
+        namespace=None,
+        fields=[field],
+        names=avro.schema.Names()
+    )
+    confluent.schema_registry.register(f'{topic}-value', schema)
+
+    # Set the confluent serializer to the kafka consumer
+    serializer = MessageSerializer(confluent.schema_registry)
+    consumer = cluster.kafka.consumer(
+        consumer_timeout_ms=1000,
+        auto_offset_reset='earliest',
+        key_deserializer=partial(serializer.decode_message, is_key=True),
+        value_deserializer=partial(serializer.decode_message, is_key=False)
+    )
+    consumer.subscribe([topic])
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    msgs_received = [message for message in consumer]
+    
+    assert 1 == len(msgs_received)
+    assert [message.value for message in msgs_received] == [data]
