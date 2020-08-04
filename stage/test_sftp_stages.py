@@ -241,3 +241,33 @@ def test_sftp_destination(sdc_builder, sdc_executor, sftp):
     finally:
         client.close()
         transport.close()
+
+
+@sftp
+def test_sftp_validation_authentication(sdc_builder, sdc_executor, sftp):
+    """Test for SDC-15108
+    Wrong value is configured in Private Key File. Validation should not trigger NPE
+    The pipeline looks like:
+    SFTP -> Trash
+    Validation is executed and error is asserted.
+    """
+
+    # Build source file pipeline logic
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+    sftp_ftp_client = builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
+    trash = builder.add_stage('Trash')
+    sftp_ftp_client >> trash
+    sftp_client_pipeline = builder.build('SFTP Validation').configure_for_environment(sftp)
+    sftp_ftp_client.set_attributes(authentication='PRIVATE_KEY',
+                                   private_key_file='(notAPrivateKey)')
+    sdc_executor.add_pipeline(sftp_client_pipeline)
+    try:
+        sdc_executor.validate_pipeline(sftp_client_pipeline)
+        assert False, 'Should not reach here.'
+    except Exception as error:
+        assert error.issues['issueCount'] == 1
+        assert 'java.lang.NullPointerException' not in error.issues['stageIssues']['SFTPFTPFTPSClient_01'][0]['message']
+        assert '(notAPrivateKey) does not exist or is not accessible' in \
+               error.issues['stageIssues']['SFTPFTPFTPSClient_01'][0][
+                   'message']
