@@ -171,8 +171,8 @@ def test_ftp_origin_xml(sdc_builder, sdc_executor, ftp):
 
 @ftp
 @sdc_min_version('3.9.0')
-@pytest.mark.parametrize('directory', [get_random_string(), f'{get_random_string()}/{get_random_string()}'])
-def test_ftp_origin_text(sdc_builder, sdc_executor, ftp, directory):
+@pytest.mark.parametrize('use_subdirectory', [False, True])
+def test_ftp_origin_text(sdc_builder, sdc_executor, ftp, use_subdirectory):
     """Test FTP origin, message is in format Text. We first create a file on FTP server
     and have the FTP origin stage read it.
 
@@ -181,8 +181,9 @@ def test_ftp_origin_text(sdc_builder, sdc_executor, ftp, directory):
     We then assert its snapshot. The pipeline looks like:
         sftp_ftp_client >> trash
     """
-
+    directory = os.path.join(get_random_string(), get_random_string()) if use_subdirectory else get_random_string()
     ftp_file_name = get_random_string(string.ascii_letters, 10)
+    ftp_file_path = os.path.join(directory, ftp_file_name)
     raw_text_data = '[{\'value\': \'Alex\'}, {\'value\': \'Xavi\'}]'
     expected = [{'value': 'Alex'}, {'value': 'Xavi'}]
 
@@ -192,7 +193,7 @@ def test_ftp_origin_text(sdc_builder, sdc_executor, ftp, directory):
         client.mkd(path)
         client.cwd(path)
     client.cwd('/')
-    ftp.put_string(f'{directory}/{ftp_file_name}', raw_text_data)
+    ftp.put_string(ftp_file_path, raw_text_data)
 
     builder = sdc_builder.get_pipeline_builder()
     sftp_ftp_client = builder.add_stage(name=FTP_ORIGIN_CLIENT_NAME)
@@ -210,15 +211,12 @@ def test_ftp_origin_text(sdc_builder, sdc_executor, ftp, directory):
     sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
     try:
         assert len(snapshot[sftp_ftp_client].output) == 1
-        assert f'/{directory}/{ftp_file_name}' == snapshot[sftp_ftp_client].output[0].header.values['file']
         assert ftp_file_name == snapshot[sftp_ftp_client].output[0].header.values['filename']
 
         assert len(snapshot[sftp_ftp_client].event_records) >= 1
-        assert f'/{directory}/{ftp_file_name}' in [record.field["filepath"] for record in
-                                                   snapshot[sftp_ftp_client].event_records]
+        assert f'/{ftp_file_path}' in [record.field["filepath"] for record in snapshot[sftp_ftp_client].event_records]
 
         assert snapshot[sftp_ftp_client].output[0].field['text'] == str(expected)
-
     finally:
         # Delete the test FTP origin file we created
         client = ftp.client
