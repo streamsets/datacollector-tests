@@ -1291,6 +1291,66 @@ def test_jdbc_producer_insert_type_err(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
+# SDC-15039: Data loss when JDBC Producer doesn't match any columns
+@database
+@pytest.mark.parametrize('multi_row', [True, False])
+@pytest.mark.parametrize('field_mapping', [True, False])
+def test_jdbc_producer_no_implicit_mapping(sdc_builder, sdc_executor, database, multi_row, field_mapping):
+    """This test covers situation when neither of the record fields matches the destination table - in such cases
+    the record should ended up in error stream.
+    """
+    # Every second record have columns not available in the target table and should end up inside error stream
+    INSERT_DATA = [
+        {'id': 1, 'name': 'Dima'},
+        {'date_of_birth': 'yesterday'},
+        {'id': 2, 'name': 'Arvind'},
+        {'date_of_birth': 'tomorrow'},
+    ]
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_table(table_name, database)
+
+    DATA = '\n'.join(json.dumps(rec) for rec in INSERT_DATA)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=DATA, stop_after_first_batch=True)
+
+    # Let's try with implicit?
+    FIELD_MAPPINGS = [dict(field='/id', columnName='id', dataType='INTEGER'),
+                      dict(field='/name', columnName='name', dataType='STRING')] if field_mapping else []
+    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+    jdbc_producer.set_attributes(default_operation='INSERT',
+                                 table_name=table_name,
+                                 use_multi_row_operation=multi_row,
+                                 field_to_column_mapping=FIELD_MAPPINGS,
+                                 stage_on_record_error='TO_ERROR')
+
+    dev_raw_data_source >> jdbc_producer
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+
+        result = database.engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        result.close()
+
+        assert data_from_database == [(record['name'], record['id']) for record in INSERT_DATA if 'id' in record]
+
+        stage = snapshot[jdbc_producer.instance_name]
+        assert len(stage.error_records) == 2
+        assert 'JDBC_90' == stage.error_records[0].header['errorCode']
+        assert 'JDBC_90' == stage.error_records[1].header['errorCode']
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        table.drop(database.engine)
+
+
 @database
 def test_jdbc_producer_insert_multiple_types(sdc_builder, sdc_executor, database):
     """Simple JDBC Producer test with INSERT operation.
