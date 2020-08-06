@@ -1907,3 +1907,77 @@ def test_s3_continue_processing_after_file_error(sdc_builder, sdc_executor, aws)
                                        'Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
+@aws('s3')
+def test_s3_archive_idle_resume(sdc_builder, sdc_executor, aws):
+    """Tests to process a file and archive it, stay idle, and
+    when resuming the pipeline it does not throw an exception:
+
+    S3 Origin pipeline:
+        s3_origin >> wiretap
+
+    Test for Bug SDC-15322
+    """
+
+    s3_bucket = aws.s3_bucket_name
+    s3_directory = get_random_string()
+    s3_post_process_directory = get_random_string()
+    s3_key = f'{S3_SANDBOX_PREFIX}/{s3_directory}'
+    s3_key_post_process = f'{s3_key}/{s3_post_process_directory}'
+    s3_file_name_1 = f'{s3_key}/ABC.txt'
+    s3_file_name_2 = f'{s3_key}/CDE.txt'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern=f'*',
+                             read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/',
+                             post_processing_option='ARCHIVE', archiving_option = 'MOVE_TO_PREFIX',
+                             post_process_prefix =f'/{s3_key_post_process}/',
+                             error_handling_option='ARCHIVE')
+    s3_origin.configuration.update({'s3ConfigBean.errorConfig.archivingOption':'MOVE_TO_PREFIX',
+                                    's3ConfigBean.errorConfig.errorPrefix': f'/{s3_key_post_process}/'})
+
+    wiretap = builder.add_wiretap()
+
+    s3_origin >> wiretap.destination
+
+    s3_origin_pipeline = builder.build(title='AWS S3 post process idle').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    test_data = [f'Message {i}' for i in range(10)]
+    try:
+        # Insert file 1 in S3.
+        client.put_object(Bucket=aws.s3_bucket_name, Key=s3_file_name_1,
+                          Body='\n'.join(test_data).encode('ascii'))
+
+        start_command = sdc_executor.start_pipeline(s3_origin_pipeline)
+        start_command.wait_for_pipeline_batch_count(1)
+        assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == [s3_file_name_1]
+        assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
+
+       # Insert file 2 into S3.
+        client.put_object(Bucket=aws.s3_bucket_name, Key=s3_file_name_2,
+                          Body='\n'.join(test_data).encode('ascii'))
+
+        # wait a few batches
+        start_command.wait_for_pipeline_batch_count(5)
+        assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == [s3_file_name_1,
+                                                                                               s3_file_name_2]
+        assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
+
+    finally:
+        # delete all the objects created in s3_key
+        if client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] > 0:
+            delete_keys = {'Objects': [{'Key': k['Key']}
+                                       for k in
+                                       client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
+                                           'Contents']]}
+            client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
+        # If no files have been processed we need to stop the pipeline, otherwise it will be finished
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
