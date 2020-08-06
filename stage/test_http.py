@@ -1103,3 +1103,59 @@ def test_http_server_remote_vault(sdc_builder, sdc_executor, http_client):
 
     finally:
         sdc_executor.stop_pipeline(pipeline)
+
+
+@http
+def test_http_processor_response_JSON_empty(sdc_builder, sdc_executor, http_client):
+    """
+    Test when the http processor stage has as a response an empty JSON.
+
+    We use the pipeline:
+    dev_raw_data_source >> http_client_processor >> trash
+
+    """
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+
+    record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(
+            rule=f'POST /{mock_path}',
+            body=raw_data
+        ).reply(
+            body='[]',
+            status=200,
+            times=FOREVER
+        )
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+
+        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='POST', request_data="${record:value('/text')}",
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+        trash = builder.add_stage('Trash')
+
+        dev_raw_data_source >> http_client_processor >> trash
+        pipeline = builder.build(title=f'HTTP Lookup POST Processor pipeline')
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        # ensure HTTP POST result produce 0 records and status STOPPED
+        assert len(snapshot[http_client_processor.instance_name].output) == 0
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        assert 'STOPPED' == status
+
+
+    finally:
+        http_mock.delete_mock()
