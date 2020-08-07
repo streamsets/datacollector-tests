@@ -1106,13 +1106,19 @@ def test_http_server_remote_vault(sdc_builder, sdc_executor, http_client):
 
 
 @http
-def test_http_processor_response_JSON_empty(sdc_builder, sdc_executor, http_client):
+@sdc_min_version("3.18.0")
+@pytest.mark.parametrize(('miss_val_bh'), [
+    'PASS_RECORD_ON',
+    'SEND_TO_ERROR'
+])
+def test_http_processor_response_JSON_empty(sdc_builder, sdc_executor, http_client, miss_val_bh):
     """
     Test when the http processor stage has as a response an empty JSON.
 
     We use the pipeline:
     dev_raw_data_source >> http_client_processor >> trash
 
+    Test for SDC-15335.
     """
     raw_dict = dict(city='San Francisco')
     raw_data = json.dumps(raw_dict)
@@ -1134,28 +1140,41 @@ def test_http_processor_response_JSON_empty(sdc_builder, sdc_executor, http_clie
 
         builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
 
         http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                              http_method='POST', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}')
+                                             output_field=f'/{record_output_field}',
+                                             missing_values_behavior=miss_val_bh)
         trash = builder.add_stage('Trash')
 
         dev_raw_data_source >> http_client_processor >> trash
-        pipeline = builder.build(title=f'HTTP Lookup POST Processor pipeline')
+        pipeline = builder.build(title=f'HTTP Lookup Processor pipeline {miss_val_bh}')
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        snapshot_cmd = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1,
+                                                     batch_size=1)
+        snapshot = snapshot_cmd.wait_for_finished().snapshot
 
         # ensure HTTP POST result produce 0 records and status STOPPED
-        assert len(snapshot[http_client_processor.instance_name].output) == 0
-        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
-        assert 'STOPPED' == status
+        if miss_val_bh == 'SEND_TO_ERROR':
+            stage = snapshot[http_client_processor.instance_name]
+            logger.info('Error record %s ...', stage.error_records)
+            assert 1 == len(stage.error_records)
+            assert len(stage.output) == 0
+            assert 'HTTP_68' == stage.error_records[0].header['errorCode']
 
+        else:
+            assert len(snapshot[http_client_processor.instance_name].output) == 1
+            stage = snapshot[http_client_processor.instance_name]
+            assert len(stage.output) == 1
+            assert stage.output[0].field['text'].value == '{"city": "San Francisco"}'
+
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        assert 'FINISHED' == status
 
     finally:
         http_mock.delete_mock()
