@@ -14,6 +14,7 @@
 
 """A module to test Navigator support by StreamSets Data Collector."""
 
+import time
 import json
 import logging
 import os
@@ -146,6 +147,11 @@ def test_navigator_empty_params(sdc_builder, sdc_executor, cluster):
         # Fetch specific entities with the above extractorRunId and HDFS directory specified in pipeline.
         query_str = f'(extractorRunId:"{extractor_run_id}")AND("parentPath": "{hdfs_directory}")'
         entities = cluster.navigator.get_entities(query=query_str)
+
+        if len(entities) == 0:
+            time.sleep(10)
+            entities = cluster.navigator.get_entities(query=query_str)
+
         entity = entities[0]
 
         # Check validity of data in lineage events entity fetched above.
