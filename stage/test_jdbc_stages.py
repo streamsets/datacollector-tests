@@ -1299,6 +1299,9 @@ def test_jdbc_producer_no_implicit_mapping(sdc_builder, sdc_executor, database, 
     """This test covers situation when neither of the record fields matches the destination table - in such cases
     the record should ended up in error stream.
     """
+    if isinstance(database, OracleDatabase) and not field_mapping:
+        pytest.skip('In case we depend on native mapping, Oracle will fail due to the upper-casing logic.')
+
     # Every second record have columns not available in the target table and should end up inside error stream
     INSERT_DATA = [
         {'id': 1, 'name': 'Dima'},
@@ -1336,16 +1339,16 @@ def test_jdbc_producer_no_implicit_mapping(sdc_builder, sdc_executor, database, 
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
 
+        stage = snapshot[jdbc_producer.instance_name]
+        assert len(stage.error_records) == 2
+        assert 'JDBC_90' == stage.error_records[0].header['errorCode']
+        assert 'JDBC_90' == stage.error_records[1].header['errorCode']
+
         result = database.engine.execute(table.select())
         data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
         result.close()
 
         assert data_from_database == [(record['name'], record['id']) for record in INSERT_DATA if 'id' in record]
-
-        stage = snapshot[jdbc_producer.instance_name]
-        assert len(stage.error_records) == 2
-        assert 'JDBC_90' == stage.error_records[0].header['errorCode']
-        assert 'JDBC_90' == stage.error_records[1].header['errorCode']
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
