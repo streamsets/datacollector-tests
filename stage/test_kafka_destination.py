@@ -504,7 +504,7 @@ def test_pipeline_retry_for_exceptions_with_on_error_record_action_stop_pipeline
 
 @cluster('cdh', 'kafka')
 @confluent
-@sdc_min_version('3.0.0.0')
+@sdc_min_version('3.11.0')
 def test_kafka_destination_expression_partitioner_avro(sdc_builder, sdc_executor, cluster, confluent):
     """This test ensures that the correct serializer is set when producing AVRO records and using
     EXPRESSION partition strategy. We do so by setting the confluent serializer in the stage config, and also
