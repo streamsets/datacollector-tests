@@ -473,3 +473,59 @@ def test_deduplicator_field_to_compare(sdc_builder, sdc_executor):
     stage = snapshot[record_deduplicator.instance_name]
     assert 1 == len(stage.error_records)
     assert 'DEDUP_04' == stage.error_records[0].header['errorCode']
+
+
+def test_log_parser_cef_format(sdc_builder, sdc_executor):
+    """This is a test for SDC-15376. It creates a pipeline with three stages.
+    A dev_raw that produces a string with CEF format. The log record correctness is asserted.
+    Pipeline looks like:
+    DevRawDataSource >> log_parser_processor >> Trash
+    """
+
+    record_text = "CEF:0|Tone Computacion|M Axes|3.19|port_scan|Port Scan|6|externalId=49062 cat=RECONNAISSANCE " \
+        "dvc=162.1.2.3 dvchost=162.1.2.3 shost=IP-162.2.2.3 src=162.2.2.3 flexNumber1Label=threat flexNumber1=60 " \
+        "flexNumber2Label=certainty flexNumber2=80 cs4Label=Tone Event URL cs4=https://162.1.2.3/detections/" \
+        "49062 cs5Label=triaged cs5=False dst=162.3.2.3 dhost= proto=tcp dpt=80 out=None in=None " \
+        "start=2573599048000 end=2584316799000"
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=record_text,
+                                       stop_after_first_batch=True)
+    log_parser_processor = builder.add_stage('Log Parser')
+    log_parser_processor.set_attributes(field_to_parse='/text', new_parsed_field='/cef', log_format="CEF")
+    trash = builder.add_stage('Trash')
+
+    dev_raw_data_source >> log_parser_processor >> trash
+    cef_parser_pipeline = builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(cef_parser_pipeline)
+
+    try:
+        # start pipeline and process one record
+        snapshot_cmd = sdc_executor.capture_snapshot(cef_parser_pipeline, start_pipeline=True, batches=1,
+                                                     batch_size=1)
+        snapshot = snapshot_cmd.wait_for_finished().snapshot
+
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['product'].value == 'M Axes'
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+                   'triaged'].value == 'False'
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+                   'dst'].value == '162.3.2.3'
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+                   'src'].value == '162.2.2.3'
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions']['dhost'].value == ''
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions']['proto'].value == 'tcp'
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions']['dpt'].value == '80'
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions']['out'].value == 'None'
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+                   'start'].value == '2573599048000'
+        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+                   'end'].value == '2584316799000'
+
+    finally:
+        if cef_parser_pipeline and sdc_executor.get_pipeline_status(cef_parser_pipeline).response.json().get(
+                'status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(cef_parser_pipeline)
