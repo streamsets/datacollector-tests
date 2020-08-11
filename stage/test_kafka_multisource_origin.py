@@ -503,7 +503,7 @@ def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh', 'kafka')
-@sdc_min_version('3.17.0')
+@sdc_min_version('3.16.2')
 def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
     INPUT_DATA = 'Hello World from SDC & DPM!'
     EXPECTED_OUTPUT = [{'text': 'Hello World from SDC & DPM!'}]
