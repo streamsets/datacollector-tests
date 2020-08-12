@@ -409,6 +409,36 @@ def test_expression_evaluator(sdc_builder, sdc_executor):
     assert snapshot[expression].output[0].get_field_data('/a').attributes['new field header'] == 'Secret 3'
 
 
+def test_expression_evaluator_self_referencing_expression(sdc_builder, sdc_executor):
+    """Expression Evaluator supports records to self-reference. We need to make sure that the self-refercing works
+    properly and doesn't run into any issues like StackOverflowException (which could happen with some optimizations
+    like the one done in SDC-14645)."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.data_format = 'JSON'
+    source.raw_data = '{"a" : "b"}'
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [{
+        "fieldToSet": "/new_field",
+        # We're using record self-referencing expression
+        "expression": "${record:value('/')}"
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    source >> expression >> trash
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    assert len(snapshot[expression].output) == 1
+    assert snapshot[expression].output[0].get_field_data('/new_field/a') == 'b'
+
+
 @sdc_min_version('3.16.0')
 def test_deduplicator_field_to_compare(sdc_builder, sdc_executor):
     """When field to compare in Record Deduplicator stage doesn't exists, it use On Record Error to manage
