@@ -330,6 +330,202 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
             logger.info('Table: %s dropped.', src_table_name)
 
 
+@pytest.mark.parametrize('buffer_locally', [True, False])
+@database('oracle')
+def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, buffer_locally):
+    """Basic test that reads inserts first via preview and then run and preview again returning records
+        Perform update/deletes and see run correctly picks up from where it left off and do a preview
+        again to see preview still returns the inserts, updates and deletes all
+        Runs oracle_cdc_client >> trash
+    """
+    db_engine = database.engine
+    pipeline = None
+    table = None
+    src_table_name = get_random_string(string.ascii_uppercase, 9)
+
+    try:
+        connection = database.engine.connect()
+        table = _setup_table(database=database,
+                             table_name=src_table_name)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = _get_oracle_cdc_client_origin(connection=connection,
+                                                          database=database,
+                                                          sdc_builder=sdc_builder,
+                                                          pipeline_builder=pipeline_builder,
+                                                          buffer_locally=buffer_locally,
+                                                          src_table_name=src_table_name)
+        trash = pipeline_builder.add_stage('Trash')
+        oracle_cdc_client >> trash
+        pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        # Insert 3 records
+        inserts = _insert(connection=connection, table=table)
+
+        rows = inserts.rows
+        cdc_op_types = inserts.cdc_op_types
+        sdc_op_types = inserts.sdc_op_types
+        change_count = inserts.change_count
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        # Preview should return 3 records
+        preview_command = sdc_executor.run_pipeline_preview(pipeline, timeout=30000)
+        preview = preview_command.preview
+
+        assert preview is not None
+        assert preview.issues.issues_count == 0
+
+        assert len(preview[oracle_cdc_client].output) == len(rows)
+        logger.debug('Count {}'.format(len(rows)))
+        row_index = 0
+        op_index = 0
+
+        for record in preview[oracle_cdc_client].output:
+            assert row_index == int(record.field['ID'].value)
+            assert rows[op_index]['NAME'] == record.field['NAME'].value
+            assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
+            row_index = (row_index + 1) % 3
+            op_index += 1
+        assert op_index == change_count
+
+        # Run pipeline and capture snapshot, we should see 3 inserts
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+
+        row_index = 0
+        op_index = 0
+        # assert all the data captured have the same raw_data
+        for record in snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output:
+            assert row_index == int(record.field['ID'].value)
+            assert rows[op_index]['NAME'] == record.field['NAME'].value
+            assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
+            row_index = (row_index + 1) % 3
+            op_index += 1
+        assert  op_index == change_count
+
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Do preview again and make sure preview still returns the 3 inserts
+        preview_command = sdc_executor.run_pipeline_preview(pipeline, timeout=30000)
+        preview = preview_command.preview
+
+        assert preview is not None
+        assert preview.issues.issues_count == 0
+
+        assert len(preview[oracle_cdc_client].output) == len(rows)
+        row_index = 0
+        op_index = 0
+
+        for record in preview[oracle_cdc_client].output:
+            assert row_index == int(record.field['ID'].value)
+            assert rows[op_index]['NAME'] == record.field['NAME'].value
+            assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
+            row_index = (row_index + 1) % 3
+            op_index += 1
+        assert  op_index == change_count
+
+
+        # Do more transactions (3 updates and 3 deletes)
+        updates = _update(connection=connection, table=table)
+
+        new_rows = updates.rows
+        new_cdc_op_types = updates.cdc_op_types
+        new_sdc_op_types = updates.sdc_op_types
+        new_change_count = updates.change_count
+
+        deletes = _delete(connection=connection, table=table)
+
+        # deletes should have the last state of the row, so it would be the what comes from the updates.
+        new_rows += updates.rows
+        new_cdc_op_types += deletes.cdc_op_types
+        new_sdc_op_types += deletes.sdc_op_types
+        new_change_count += deletes.change_count
+
+
+        merged_rows = rows + new_rows
+        merged_sdc_op_types  = sdc_op_types + new_sdc_op_types
+        merged_cdc_op_types  = cdc_op_types + new_cdc_op_types
+        merged_change_count = change_count + new_change_count
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        # Make sure preview return all 9 records
+        preview_command = sdc_executor.run_pipeline_preview(pipeline, timeout=30000)
+        preview = preview_command.preview
+
+        assert preview is not None
+        assert preview.issues.issues_count == 0
+        assert len(preview[oracle_cdc_client].output) == len(merged_rows)
+
+
+        row_index = 0
+        op_index = 0
+
+        for record in preview[oracle_cdc_client].output:
+            assert row_index == int(record.field['ID'].value)
+            assert merged_rows[op_index]['NAME'] == record.field['NAME'].value
+            assert int(record.header['values']['sdc.operation.type']) == merged_sdc_op_types[op_index]
+            assert record.header['values']['oracle.cdc.operation'] == merged_cdc_op_types[op_index]
+            row_index = (row_index + 1) % 3
+            op_index += 1
+
+        assert op_index == merged_change_count
+
+        # If we run the pipeline and capture snapshot, we should see only the updates and deletes
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+
+        row_index = 0
+        op_index = 0
+        # assert all the data captured have the same raw_data
+        for record in snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output:
+            assert row_index == int(record.field['ID'].value)
+            assert new_rows[op_index]['NAME'] == record.field['NAME'].value
+            assert int(record.header['values']['sdc.operation.type']) == new_sdc_op_types[op_index]
+            assert record.header['values']['oracle.cdc.operation'] == new_cdc_op_types[op_index]
+            row_index = (row_index + 1) % 3
+            op_index += 1
+
+        assert op_index == new_change_count
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Make sure preview still return all 9 records
+        preview_command = sdc_executor.run_pipeline_preview(pipeline, timeout=30000)
+        preview = preview_command.preview
+
+        assert preview is not None
+        assert preview.issues.issues_count == 0
+        assert len(preview[oracle_cdc_client].output) == len(merged_rows)
+
+
+        row_index = 0
+        op_index = 0
+
+        for record in preview[oracle_cdc_client].output:
+            assert row_index == int(record.field['ID'].value)
+            assert merged_rows[op_index]['NAME'] == record.field['NAME'].value
+            assert int(record.header['values']['sdc.operation.type']) == merged_sdc_op_types[op_index]
+            assert record.header['values']['oracle.cdc.operation'] == merged_cdc_op_types[op_index]
+            row_index = (row_index + 1) % 3
+            op_index += 1
+
+        assert op_index == merged_change_count
+
+    finally:
+        # if pipeline is not None:
+        #     sdc_executor.stop_pipeline(pipeline=pipeline,
+        #                                force=True)
+        if table is not None:
+            table.drop(db_engine)
+            logger.info('Table: %s dropped.', src_table_name)
+        pass
+
+
 @database('oracle')
 @sdc_min_version('3.5.1')
 @pytest.mark.parametrize('buffer_locally', [True])
