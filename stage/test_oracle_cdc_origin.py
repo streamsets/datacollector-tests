@@ -339,7 +339,6 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         Runs oracle_cdc_client >> trash
     """
     db_engine = database.engine
-    pipeline = None
     table = None
     src_table_name = get_random_string(string.ascii_uppercase, 9)
 
@@ -355,6 +354,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
+                                                          logminer_session_window = '${4 * MINUTES}',
                                                           src_table_name=src_table_name)
         trash = pipeline_builder.add_stage('Trash')
         oracle_cdc_client >> trash
@@ -408,7 +408,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
             op_index += 1
         assert  op_index == change_count
 
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline, force=True)
 
         # Do preview again and make sure preview still returns the 3 inserts
         preview_command = sdc_executor.run_pipeline_preview(pipeline, timeout=30000)
@@ -463,7 +463,6 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         assert preview.issues.issues_count == 0
         assert len(preview[oracle_cdc_client].output) == len(merged_rows)
 
-
         row_index = 0
         op_index = 0
 
@@ -492,7 +491,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
             op_index += 1
 
         assert op_index == new_change_count
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline, force=True)
 
         # Make sure preview still return all 9 records
         preview_command = sdc_executor.run_pipeline_preview(pipeline, timeout=30000)
@@ -517,9 +516,6 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         assert op_index == merged_change_count
 
     finally:
-        # if pipeline is not None:
-        #     sdc_executor.stop_pipeline(pipeline=pipeline,
-        #                                force=True)
         if table is not None:
             table.drop(db_engine)
             logger.info('Table: %s dropped.', src_table_name)
