@@ -534,6 +534,32 @@ def test_field_replacer(sdc_builder, sdc_executor):
     assert actual_data == winners
 
 
+@sdc_min_version('3.1.0.0')
+def test_field_replacer_self_referencing_expression(sdc_builder, sdc_executor):
+    """Field Replacer supports self-refercing expressions and we need to make sure that they work properly and don't
+    run into StackOverflowError (which can happen with some optimizations like SDC-14645).
+    """
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.data_format='JSON'
+    source.raw_data='{"key": "value"}'
+    source.stop_after_first_batch = True
+
+    replacer = builder.add_stage('Field Replacer')
+    replacer.replacement_rules = [{'setToNull': False, 'fields': '/new', 'replacement': '${record:value("/")}'}]
+
+    trash = builder.add_stage('Trash')
+
+    source >> replacer >> trash
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    assert len(snapshot[replacer].output) == 1
+    assert snapshot[replacer].output[0].get_field_data('/new/key') == 'value'
+
+
 def test_field_splitter(sdc_builder, sdc_executor):
     """Test field splitter processor. The pipeline would look like:
 
