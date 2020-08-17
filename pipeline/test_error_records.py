@@ -19,6 +19,7 @@ import tempfile
 
 import pytest
 from streamsets.sdk import sdc_api
+from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -274,6 +275,7 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     assert raw_data == record_json['value']['value']['text']['value']
 
 
+@sdc_min_version('3.18.0')
 def test_error_records_with_job_info(random_expression_pipeline_builder, sdc_executor):
     random_expression_pipeline_builder.expression_evaluator.on_record_error = 'TO_ERROR'
     random_expression_pipeline_builder.expression_evaluator.required_fields = ['/b']
