@@ -1179,6 +1179,40 @@ def test_value_replacer(sdc_builder, sdc_executor):
     assert expected_state_value == new_value['state'].value
     assert expected_state_value == new_value['address']['home']['state'].value
 
+
+@sdc_min_version('3.8.0')
+def test_field_mapper_self_referencing_expression(sdc_builder, sdc_executor):
+    """
+    Field Mapper supports self-refercing expressions and we need to make sure that they work properly and don't
+    run into StackOverflowError (which can happen with some optimizations like SDC-14645).
+    """
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.data_format = 'JSON'
+    source.raw_data = '{"key": "value", "old": "exists"}'
+    source.stop_after_first_batch = True
+
+    mapper = builder.add_stage('Field Mapper', type='processor')
+    mapper.set_attributes(
+      operate_on = 'FIELD_VALUES',
+      conditional_expression = '${f:name() == "key"}',
+      mapping_expression = '${record:value("/")}'
+    )
+
+    trash = builder.add_stage('Trash')
+
+    source >> mapper >> trash
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+    assert len(snapshot[mapper].output) == 1
+    assert snapshot[mapper].output[0].get_field_data('/key/key') == 'value'
+    assert snapshot[mapper].output[0].get_field_data('/old') == 'exists'
+    assert snapshot[mapper].output[0].get_field_data('/key/old') == 'exists'
+
+
 @sdc_min_version('3.8.0')
 def test_field_mapper_min_max(sdc_builder, sdc_executor):
     """
@@ -1247,6 +1281,7 @@ def test_field_mapper_min_max(sdc_builder, sdc_executor):
     assert min_processor_output[0].get_field_data('/outputs/min').value == -107
     # ensure original field was left in place
     assert min_processor_output[0].get_field_data('/sensor_readings[2]/values[1]').value == -107
+
 
 @sdc_min_version('3.8.0')
 def test_field_mapper_gather_paths_with_predicate(sdc_builder, sdc_executor):
