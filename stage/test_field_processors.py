@@ -373,11 +373,18 @@ def test_field_pivoter(sdc_builder, sdc_executor):
     snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
     sdc_executor.stop_pipeline(pipeline)
 
-    new_value = snapshot[field_pivoter.instance_name].output[0].field
-    # assert our record got pivoted into expected length
-    assert len(raw_dict['ballpoint']['color_list']) == len(snapshot[field_pivoter.instance_name].output)
-    # assert pivoted field name is stored in the expected path
-    assert new_value['ballpoint']['color_list_path'].value == field_to_pivot
+    # We should generate 3 records
+    assert len(snapshot[field_pivoter].output) == 3
+
+    # Some fields are different in each record
+    assert snapshot[field_pivoter].output[0].get_field_data('/ballpoint/color') == 'black'
+    assert snapshot[field_pivoter].output[1].get_field_data('/ballpoint/color') == 'blue'
+    assert snapshot[field_pivoter].output[2].get_field_data('/ballpoint/color') == 'red'
+
+    # While others should be exactly the same
+    for i in range(3):
+        assert snapshot[field_pivoter].output[i].get_field_data('/ballpoint/unit_cost') == '.10'
+        assert snapshot[field_pivoter].output[i].get_field_data('/ballpoint/color_list_path') == '/ballpoint/color_list'
 
 
 def test_field_remover(sdc_builder, sdc_executor):
