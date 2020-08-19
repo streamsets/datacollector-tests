@@ -1291,6 +1291,97 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
 
 @aws('sqs')
 @sdc_min_version('3.19.0')
+def test_sqs_no_read_access(sdc_builder, sdc_executor, aws):
+    """Test for SQS consumer origin stage with a queue where we don't have read access to. The pipeline looks like:
+
+    Amazon SQS Consumer pipeline:
+        amazon_sqs_consumer >> trash
+    """
+    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string()}'
+
+    number_of_messages = 10
+    max_batch_size = 10
+
+    # number of batches will be 1 if max batch size >= number of messages
+    # if number of messages > max_batch_size, we will have more than 1 batch
+    # to decide the number of batches, we will basically divide to get the number of batches
+    # and if it is not properly divisible (i.e modulo is non zero), we will add one more batch
+    number_of_batches = number_of_messages // max_batch_size + int(number_of_messages % max_batch_size > 0)
+
+    logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, '
+                f'Number of batches be produced : {number_of_batches}')
+
+    builder = sdc_builder.get_pipeline_builder()
+    amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
+    amazon_sqs_consumer.set_attributes(data_format='TEXT',
+                                       max_batch_size_in_messages=max_batch_size,
+                                       number_of_messages_per_request=10,
+                                       queue_name_prefixes=[queue_name])
+    trash = builder.add_stage('Trash')
+    amazon_sqs_consumer >> trash
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    policy = {
+        "Version": "2008-10-17",
+        "Id": "__default_policy_ID",
+        "Statement": [
+            {
+                "Sid": "__owner_statement",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": "*"
+                },
+                "Action": "SQS:*",
+                "Resource": "arn:aws:sqs:eu-west-1:316386816690:" + queue_name
+            },
+            {
+                "Sid": "Stmt1597739351356",
+                "Effect": "Deny",
+                "Principal": {
+                    "AWS": "*"
+                },
+                "Action": "sqs:ReceiveMessage",
+                "Resource": "arn:aws:sqs:eu-west-1:316386816690:" + queue_name
+            }
+        ]
+    }
+
+    client = aws.sqs
+    logger.info('Creating %s SQS queue on AWS ...', queue_name)
+    queue_url = client.create_queue(QueueName=queue_name, Attributes={'Policy': json.dumps(policy)})['QueueUrl']
+
+    try:
+        all_responses = []
+        for batch in range(number_of_messages // 10 + int(number_of_messages % 10 > 0)):
+            message_entries = [{'Id': str(i), 'MessageBody': f'Message {i}'}
+                               for i in range(batch * 10, min(number_of_messages, (batch + 1) * 10))]
+
+            sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
+            for message in sent_response.get('Successful', []):
+                all_responses.append(message)
+        if len(all_responses) != number_of_messages:
+            raise Exception('Test messages not successfully sent to the queue %s', queue_name)
+
+        try:
+            sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_batch_count(number_of_batches)
+            sdc_executor.stop_pipeline(consumer_origin_pipeline)
+            assert False
+
+        except Exception as error:
+            assert 'SQS_13' in str(error)
+            assert 'AccessDenied' in str(error)
+            assert queue_name in str(error)
+
+    finally:
+        if queue_url:
+            logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
+            client.delete_queue(QueueUrl=queue_url)
+
+
+@aws('sqs')
+@sdc_min_version('3.19.0')
 def test_sqs_specify_url_directly(sdc_builder, sdc_executor, aws):
     """Test for SQS consumer origin stage where instead of specifying the queue prefix, it uses the queue URL,
     that way the pipeline does not try to list them since could be a lack of permissions.
