@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime
 import json
 import logging
-import math
-import pytest
 import string
 import time
+from datetime import datetime
 
+import pytest
 from streamsets.sdk.models import Configuration
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, sdc_min_version
@@ -1284,6 +1283,69 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
         assert metrics.counter("pipeline.batchCount.counter").count == number_of_batches
         assert metrics.counter("pipeline.batchInputRecords.counter").count == number_of_messages
         assert metrics.counter("pipeline.batchOutputRecords.counter").count == number_of_messages
+    finally:
+        if queue_url:
+            logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
+            client.delete_queue(QueueUrl=queue_url)
+
+
+@aws('sqs')
+@sdc_min_version('3.19.0')
+def test_sqs_specify_url_directly(sdc_builder, sdc_executor, aws):
+    """Test for SQS consumer origin stage where instead of specifying the queue prefix, it uses the queue URL,
+    that way the pipeline does not try to list them since could be a lack of permissions.
+     The pipeline looks like:
+
+    Amazon SQS Consumer pipeline:
+        amazon_sqs_consumer >> trash
+    """
+    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string(string.ascii_letters, 10)}'
+
+    number_of_messages = 10
+    max_batch_size = 10
+
+    # number of batches will be 1 if max batch size >= number of messages
+    # if number of messages > max_batch_size, we will have more than 1 batch
+    # to decide the number of batches, we will basically divide to get the number of batches
+    # and if it is not properly divisible (i.e modulo is non zero), we will add one more batch
+    number_of_batches = number_of_messages // max_batch_size + int(number_of_messages % max_batch_size > 0)
+
+    logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, '
+                f'Number of batches be produced : {number_of_batches}')
+
+    client = aws.sqs
+    queue_url = client.create_queue(QueueName=queue_name)['QueueUrl']
+
+    builder = sdc_builder.get_pipeline_builder()
+    amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
+    amazon_sqs_consumer.set_attributes(data_format='TEXT',
+                                       max_batch_size_in_messages=max_batch_size,
+                                       number_of_messages_per_request=10,
+                                       specify_queue_url_directly=True,
+                                       queue_urls=[queue_url])
+    wiretap = builder.add_wiretap()
+    amazon_sqs_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    try:
+        all_responses = []
+        message_entries = None
+        for batch in range(number_of_messages // 10 + int(number_of_messages % 10 > 0)):
+            message_entries = [{'Id': str(i), 'MessageBody': f'Message {i}'}
+                               for i in range(batch * 10, min(number_of_messages, (batch + 1) * 10))]
+            sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
+            for message in sent_response.get('Successful', []):
+                all_responses.append(message)
+        if len(all_responses) != number_of_messages:
+            raise Exception('Test messages not successfully sent to the queue %s', queue_name)
+
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_batch_count(number_of_batches)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        assert len(message_entries) == len(wiretap.output_records)
+        assert [value in [record.field['text'] for record in wiretap.output_records] for value in message_entries]
     finally:
         if queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
