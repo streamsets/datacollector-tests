@@ -16,9 +16,10 @@ import json
 import logging
 import pytest
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.sdc import DataCollector
-from streamsets.testframework.utils import parse_multi_versions, wait_for_condition
+from streamsets.testframework.utils import parse_multi_versions, parse_version_git_hash, wait_for_condition
 
 # Skip all tests in this module if --sdc-version < 3.1.0.0
 pytestmark = sdc_min_version('3.1.0.0-SNAPSHOT')
@@ -48,17 +49,29 @@ EXCLUDE_LIBS = {
 
 
 def pytest_generate_tests(metafunc):
+    if not metafunc.config.getoption('sdc_version'):
+        pytest.skip('Classpath validation tests only run when --sdc-version arg is passed')
+
     versions = parse_multi_versions(metafunc.config.getoption('sdc_version'))
-    if versions.pre_upgrade_version != versions.post_upgrade_version:
-        pytest.skip('Classpath validation tests are not run as upgrade tests')
+
+    # Since --sdc-version can have git:<hash>, we create DataCollector instance to extract its version and
+    # check if it's an upgrade run
+    if versions.pre_upgrade_version: # True when --sdc-version is X > Y
+        pre_version, pre_git_hash = parse_version_git_hash(versions.pre_upgrade_version)
+        post_version, post_git_hash = parse_version_git_hash(versions.post_upgrade_version)
+        pre_sdc = DataCollector(version=pre_version, git_hash=pre_git_hash)
+        post_sdc = DataCollector(version=post_version, git_hash=post_git_hash)
+        if Version(pre_sdc.version) != Version(post_sdc.version):
+            pytest.skip('Classpath validation tests are not run as upgrade tests')
+
     # We do this logic to handle automation-friendly cases like `stf test --sdc-version '3.13.0 > 3.13.0'`,
     # which result versions.pre_upgrade_version being set.
-    version = versions.pre_upgrade_version or versions.version
+    version, git_hash = parse_version_git_hash(versions.pre_upgrade_version or versions.version)
 
     # To generate the list of test cases, we temporarily start a Data Collector instance and query its
     # stageLibraries/list endpoint for all stage libraries (excluding legacy or enterprise libs).
     if 'stagelib' in metafunc.fixturenames:
-        with DataCollector(version=version, tear_down_on_exit=True) as data_collector:
+        with DataCollector(version=version, git_hash=git_hash, tear_down_on_exit=True) as data_collector:
             data_collector.start()
             # We need to use wait_for_condition as it was observed that calling the stageLibraries/list method
             # immediately after Data Collector starts sometimes results in an empty list being returned.
