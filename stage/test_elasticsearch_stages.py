@@ -14,11 +14,9 @@
 
 import logging
 import string
-import time
 import json
 
 import pytest
-from elasticsearch_dsl import DocType, Index, Search as ESSearch
 from streamsets.testframework.markers import elasticsearch, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -38,6 +36,7 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
     es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
     es_doc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
+    raw = {'body': raw_str}
 
     builder = sdc_builder.get_pipeline_builder()
     es_origin = builder.add_stage('Elasticsearch', type='origin')
@@ -45,17 +44,12 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
     trash = builder.add_stage('Trash')
 
     es_origin >> trash
-    es_origin_pipeline = builder.build(title='ES origin pipeline').configure_for_environment(elasticsearch)
+    es_origin_pipeline = builder.build().configure_for_environment(elasticsearch)
     sdc_executor.add_pipeline(es_origin_pipeline)
 
     try:
         # Put data to Elasticsearch
-        elasticsearch.connect()
-        doc_type = DocType(meta={'id': es_doc_id, 'index': es_index})
-        doc_type.body = raw_str
-        doc_type.save()  # save document to Elasticsearch
-        index = Index(es_index)
-        assert index.refresh()  # assert to refresh index, making all operations available for search
+        elasticsearch.client.create_document(es_index, es_doc_id, raw)
 
         # Run pipeline and assert
         snapshot = sdc_executor.capture_snapshot(es_origin_pipeline, start_pipeline=True).snapshot
@@ -67,8 +61,7 @@ def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
         assert snapshot_data['_source']['body'].value == raw_str
     finally:
         # Clean up test data in ES
-        idx = Index(es_index)
-        idx.delete()
+        elasticsearch.client.delete_index(es_index)
 
 
 @elasticsearch
@@ -97,32 +90,26 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
     error_target = builder.add_stage('To Error')
 
     dev_raw_data_source >> error_target
-    es_error_pipeline = builder.build(title='ES error pipeline').configure_for_environment(elasticsearch)
+    es_error_pipeline = builder.build().configure_for_environment(elasticsearch)
     sdc_executor.add_pipeline(es_error_pipeline)
 
     try:
-        elasticsearch.connect()
-
-        # Make sure that the index exists properly before running the test
-        index = Index(es_index)
-        index.create()
-        assert index.refresh()
+        elasticsearch.client.create_index(es_index)
 
         # Run pipeline and read from Elasticsearch to assert
         sdc_executor.start_pipeline(es_error_pipeline).wait_for_finished()
 
-        # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
-        es_search = ESSearch(index=es_index)
-        es_response = _es_search_with_retry(es_search)
-        es_meta = es_response[0].meta
-        # assert meta ingest
-        assert es_meta['index'] == es_index and es_meta['doc_type'] == es_mapping and es_meta['id'] == es_doc_id
-        # assert data ingest
-        assert raw_str == es_response[0].text
+        responses = elasticsearch.client.search(es_index)
+        assert len(responses) == 1
+
+        response = responses[0]
+        assert response['_index'] == es_index
+        assert response['_id'] == es_doc_id
+        assert response['_type'] == es_mapping
+        assert response['_source'] == {'text': raw_str}
     finally:
         # Clean up test data in ES
-        idx = Index(es_index)
-        idx.delete()
+        elasticsearch.client.delete_index(es_index)
 
 
 @sdc_min_version('3.7.0') # SDC-10408 Additional Properties
@@ -152,35 +139,29 @@ def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, addition
                              additional_properties=additional_properties)
 
     dev_raw_data_source >> es_target
-    es_target_pipeline = builder.build(title='ES target pipeline').configure_for_environment(elasticsearch)
+    es_target_pipeline = builder.build().configure_for_environment(elasticsearch)
     es_target_pipeline.configuration["shouldRetry"] = False
 
     sdc_executor.add_pipeline(es_target_pipeline)
 
     try:
-        elasticsearch.connect()
-
-        # Make sure that the index exists properly before running the test
-        index = Index(es_index)
-        index.create()
-        assert index.refresh()
+        elasticsearch.client.create_index(es_index)
 
         # Run pipeline and read from Elasticsearch to assert
         sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
 
         # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
-        es_search = ESSearch(index=es_index)
-        es_response = _es_search_with_retry(es_search)
-        es_meta = es_response[0].meta
+        responses = elasticsearch.client.search(es_index)
+        assert len(responses) == 1
 
-        # assert meta ingest
-        assert es_meta['index'] == es_index and es_meta['doc_type'] == es_mapping and es_meta['id'] == es_doc_id
-        # assert data ingest
-        assert raw_str == es_response[0].text
+        response = responses[0]
+        assert response['_index'] == es_index
+        assert response['_id'] == es_doc_id
+        assert response['_type'] == es_mapping
+        assert response['_source'] == {'text': raw_str}
     finally:
         # Clean up test data in ES
-        idx = Index(es_index)
-        idx.delete()
+        elasticsearch.client.delete_index(es_index)
 
 
 @sdc_min_version('3.17.0')
@@ -194,9 +175,10 @@ def test_elasticsearch_target_additional_properties(sdc_builder, sdc_executor, e
     """
     # Test static
     index_values = []
-    for j in range(4):
+    for _ in range(4):
         index_values.append(get_random_string(string.ascii_letters, 10).lower())
 
+    # First  three records have 'shard' filled with data, last record does not
     raw_data = [{"text": "Record1", "index": index_values[0], "mapping": get_random_string(string.ascii_letters, 10).lower(),
                  "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": "record1"},
                 {"text": "Record2", "index": index_values[1], "mapping": get_random_string(string.ascii_letters, 10).lower(),
@@ -218,56 +200,39 @@ def test_elasticsearch_target_additional_properties(sdc_builder, sdc_executor, e
                              additional_properties='{\"_routing\":${record:value(\'/shard\')}}')
 
     dev_raw_data_source >> es_target
-    es_target_pipeline = builder.build(title='ES target pipeline').configure_for_environment(elasticsearch)
+    es_target_pipeline = builder.build().configure_for_environment(elasticsearch)
 
     sdc_executor.add_pipeline(es_target_pipeline)
-    try:
-        elasticsearch.connect()
 
-        # Make sure that the index exists properly before running the test
-        index = Index(index_values[0])
-        index.create()
-        assert index.refresh()
+    try:
+        for es_index in index_values:
+            elasticsearch.client.create_index(es_index)
 
         # Run pipeline with additional properties
         sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
 
-        es_response = []
-        for i in index_values:
-            es_search = ESSearch(index=i)
-            response = es_search.execute()
-            es_response.append(response[0])
-            time.sleep(5)
+        responses = elasticsearch.client.search(','.join(index_values))
+        assert len(responses) == 4
 
-        assert len(es_response) == 4
-        for r in es_response:
-            assert r
-            if r.text == "Record4":
-                for attribute in r.meta:
-                    assert attribute != "routing"
+        def _sort_response(entry):
+            return entry['_source']['text']
+
+        responses.sort(key=_sort_response)
+
+        for i in range(4):
+            assert responses[i]['_index'] == raw_data[i]['index']
+            assert responses[i]['_source']['text'] == raw_data[i]['text']
+
+            # First three records have the value "shard" filled whereas the last record (id=3) does not and thus that
+            # piece of metadata should never made it ElasticSearch.
+            if i == 3:
+                assert '_routing' not in responses[i]
             else:
-                assert r.shard == r.meta.routing
-
+                assert responses[0]['_routing'] == raw_data[0]['shard']
     finally:
         # Clean up test data in ES
-        idx = Index(index_values[0])
-        idx.delete()
-
-
-def _es_search_with_retry(es_search):
-    """Run the search until we get a positive response. Helpful when 'eventual consistency' is a trouble."""
-    es_response = es_search.execute()
-    for i in range(10):
-        logger.info(f'Trying to get response from ES, try {i}')
-        if not es_response:
-            time.sleep(5)
-            es_response = es_search.execute()
-        else:
-            break
-    # We should have a valid response
-    assert es_response is not None
-    # That we can return to the caller
-    return es_response
+        for es_index in index_values:
+            elasticsearch.client.delete_index(es_index)
 
 
 # SDC-11233: Elasticsearch origin does not properly upgrade single-threaded offsets
@@ -280,6 +245,7 @@ def test_offset_upgrade(sdc_builder, sdc_executor, elasticsearch):
     es_index = get_random_string(string.ascii_letters, 10).lower()
     es_doc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
+    raw = {'body': raw_str}
 
     builder = sdc_builder.get_pipeline_builder()
     es_origin = builder.add_stage('Elasticsearch', type='origin')
@@ -301,12 +267,7 @@ def test_offset_upgrade(sdc_builder, sdc_executor, elasticsearch):
 
     try:
         # Put data to Elasticsearch
-        elasticsearch.connect()
-        doc_type = DocType(meta={'id': es_doc_id, 'index': es_index})
-        doc_type.body = raw_str
-        doc_type.save()  # save document to Elasticsearch
-        index = Index(es_index)
-        assert index.refresh()  # assert to refresh index, making all operations available for search
+        elasticsearch.client.create_document(es_index, es_doc_id, raw)
 
         # Run pipeline and assert
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -323,13 +284,13 @@ def test_offset_upgrade(sdc_builder, sdc_executor, elasticsearch):
         assert '$com.streamsets.datacollector.pollsource.offset$' not in offset['offsets']
     finally:
         # Clean up test data in ES
-        idx = Index(es_index)
-        idx.delete()
+        elasticsearch.client.delete_index(es_index)
 
 
 @sdc_min_version('3.17.0')
 @elasticsearch
-def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsearch):
+@pytest.mark.parametrize('join_credentials', [True, False])
+def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsearch, join_credentials):
     """
     Elasticsearch target pipeline where specifies two different formats for the credential values.
     First, it checks if the previous format "username:password" is also valid and then update the pipeline with the new
@@ -341,7 +302,13 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
     es_mapping = get_random_string(string.ascii_letters, 10)
     es_doc_id = get_random_string(string.ascii_letters, 10)
     raw_str = 'Hello World!'
-    credentials = elasticsearch.username + ':' + elasticsearch.password
+
+    if join_credentials:
+        username = elasticsearch.username + ':' + elasticsearch.password
+        password = ''
+    else:
+        username = elasticsearch.username
+        password = elasticsearch.password
 
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -350,48 +317,27 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
                                                                                   raw_data=raw_str)
     es_target = builder.add_stage('Elasticsearch', type='destination')
     es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index, mapping=es_mapping,
-                             use_security=True, user_name=credentials, password="")
+                             use_security=True, user_name=username, password=password)
 
     dev_raw_data_source >> es_target
-    es_target_pipeline = builder.build(title='ES target pipeline').configure_for_environment(elasticsearch)
+    es_target_pipeline = builder.build().configure_for_environment(elasticsearch)
     es_target_pipeline.configuration["shouldRetry"] = False
 
     sdc_executor.add_pipeline(es_target_pipeline)
 
     try:
-        elasticsearch.connect()
-
-        # Make sure that the index exists properly before running the test
-        index = Index(es_index)
-        index.create()
-        assert index.refresh()
+        elasticsearch.client.create_index(es_index)
 
         # Run pipeline and read credential values from Elasticsearch to assert
         sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
 
-        es_search = ESSearch(index=es_index)
-        es_response = _es_search_with_retry(es_search)
-
-        # assert data ingest
-        assert raw_str == es_response[0].text
-        # Assert the previous format is also valid
-        assert es_target.user_name == "elastic:changeme" and es_target.password == ""
-
-        es_target = es_target_pipeline.stages.get(label=es_target.label)
-        # Change credentials format from the previous "username:password" to the new one.
-        es_target.set_attributes(user_name=elasticsearch.username, password=elasticsearch.password)
-        sdc_executor.update_pipeline(es_target_pipeline)
-        # Run the pipeline again and read credential values from Elasticsearch to assert
-        sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
-
-        es_search = ESSearch(index=es_index)
-        es_response = _es_search_with_retry(es_search)
-        # assert data ingest
-        assert raw_str == es_response[0].text
-        # Assert the new format is valid
-        assert es_target.user_name == "elastic" and es_target.password == "changeme"
-
+        # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
+        response = elasticsearch.client.search(es_index)
+        assert len(response) == 1
+        assert response[0]['_index'] == es_index
+        assert response[0]['_id'] == es_doc_id
+        assert response[0]['_type'] == es_mapping
+        assert response[0]['_source'] == {'text': raw_str}
     finally:
         # Clean up test data in ES
-        idx = Index(es_index)
-        idx.delete()
+        elasticsearch.client.delete_index(es_index)
