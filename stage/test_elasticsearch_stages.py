@@ -197,7 +197,7 @@ def test_elasticsearch_target_additional_properties(sdc_builder, sdc_executor, e
     es_target = builder.add_stage('Elasticsearch', type='destination')
     es_target.set_attributes(default_operation='INDEX', document_id='${record:value(\'/doc_id\')}',
                              index='${record:value(\'/index\')}', mapping='${record:value(\'/mapping\')}',
-                             additional_properties='{\"_routing\":${record:value(\'/shard\')}}')
+                             additional_properties='{\"routing\":${record:value(\'/shard\')}}')
 
     dev_raw_data_source >> es_target
     es_target_pipeline = builder.build().configure_for_environment(elasticsearch)
