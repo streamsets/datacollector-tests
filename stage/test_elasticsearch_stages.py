@@ -14,7 +14,6 @@
 
 import logging
 import string
-import json
 
 import pytest
 from streamsets.testframework.markers import elasticsearch, sdc_min_version
@@ -22,46 +21,6 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-
-@elasticsearch
-def test_elasticsearch_origin(sdc_builder, sdc_executor, elasticsearch):
-    """Test for Elasticsearch origin stage. We do so by putting data via Elastisearch client and reading via
-    Elastisearch origin pipeline. To assert, we will snapshot the pipeline.
-    The pipeline looks like:
-
-    Elasticsearch origin pipeline:
-        es_origin >> trash
-    """
-    es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
-    es_doc_id = get_random_string(string.ascii_letters, 10)
-    raw_str = 'Hello World!'
-    raw = {'body': raw_str}
-
-    builder = sdc_builder.get_pipeline_builder()
-    es_origin = builder.add_stage('Elasticsearch', type='origin')
-    es_origin.set_attributes(index=es_index, query="{'query': {'match_all': {}}}")
-    trash = builder.add_stage('Trash')
-
-    es_origin >> trash
-    es_origin_pipeline = builder.build().configure_for_environment(elasticsearch)
-    sdc_executor.add_pipeline(es_origin_pipeline)
-
-    try:
-        # Put data to Elasticsearch
-        elasticsearch.client.create_document(es_index, es_doc_id, raw)
-
-        # Run pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(es_origin_pipeline, start_pipeline=True).snapshot
-        # no need to stop pipeline - as ES origin shuts off once data is read from Elasticsearch
-        snapshot_data = snapshot[es_origin.instance_name].output[0].field
-        # assert ES meta
-        assert snapshot_data['_index'].value == es_index and snapshot_data['_id'].value == es_doc_id
-        # assert ES data
-        assert snapshot_data['_source']['body'].value == raw_str
-    finally:
-        # Clean up test data in ES
-        elasticsearch.client.delete_index(es_index)
 
 
 @elasticsearch
@@ -110,129 +69,6 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
     finally:
         # Clean up test data in ES
         elasticsearch.client.delete_index(es_index)
-
-
-@sdc_min_version('3.7.0') # SDC-10408 Additional Properties
-@elasticsearch
-@pytest.mark.parametrize('additional_properties', ['{}', '{"_retry_on_conflict":3}'])
-def test_elasticsearch_target(sdc_builder, sdc_executor, elasticsearch, additional_properties):
-    """Test for Elasticsearch target stage. We do so by ingesting data via Dev Raw Data source to
-    Elasticsearch stage and then asserting what we ingest to what will be read from Elasticsearch.
-    The pipeline looks like:
-
-    Elasticsearch target pipeline:
-        dev_raw_data_source >> es_target
-    """
-    # Test static
-    es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
-    es_mapping = get_random_string(string.ascii_letters, 10)
-    es_doc_id = get_random_string(string.ascii_letters, 10)
-    raw_str = 'Hello World!'
-
-    # Build pipeline
-    builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
-                                                                                  stop_after_first_batch=True,
-                                                                                  raw_data=raw_str)
-    es_target = builder.add_stage('Elasticsearch', type='destination')
-    es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index, mapping=es_mapping,
-                             additional_properties=additional_properties)
-
-    dev_raw_data_source >> es_target
-    es_target_pipeline = builder.build().configure_for_environment(elasticsearch)
-    es_target_pipeline.configuration["shouldRetry"] = False
-
-    sdc_executor.add_pipeline(es_target_pipeline)
-
-    try:
-        elasticsearch.client.create_index(es_index)
-
-        # Run pipeline and read from Elasticsearch to assert
-        sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
-
-        # Since we are upsert on the same index, map, doc - there should only be one document (index 0)
-        responses = elasticsearch.client.search(es_index)
-        assert len(responses) == 1
-
-        response = responses[0]
-        assert response['_index'] == es_index
-        assert response['_id'] == es_doc_id
-        assert response['_type'] == es_mapping
-        assert response['_source'] == {'text': raw_str}
-    finally:
-        # Clean up test data in ES
-        elasticsearch.client.delete_index(es_index)
-
-
-@sdc_min_version('3.17.0')
-@elasticsearch
-def test_elasticsearch_target_additional_properties(sdc_builder, sdc_executor, elasticsearch):
-    """
-    Elasticsearch target pipeline, adding additional properties, where specifies every routing with the value of the
-    shard's record. It checks if the value of the record-label is added correctly to the property routing at
-    ElasticSearch query.
-        dev_raw_data_source >> es_target
-    """
-    # Test static
-    index_values = []
-    for _ in range(4):
-        index_values.append(get_random_string(string.ascii_letters, 10).lower())
-
-    # First  three records have 'shard' filled with data, last record does not
-    raw_data = [{"text": "Record1", "index": index_values[0], "mapping": get_random_string(string.ascii_letters, 10).lower(),
-                 "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": "record1"},
-                {"text": "Record2", "index": index_values[1], "mapping": get_random_string(string.ascii_letters, 10).lower(),
-                 "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": "record2"},
-                {"text": "Record3", "index": index_values[2], "mapping": get_random_string(string.ascii_letters, 10).lower(),
-                 "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": "record3"},
-                {"text": "Record4", "index": index_values[3], "mapping": get_random_string(string.ascii_letters, 10).lower(),
-                 "doc_id": get_random_string(string.ascii_letters, 10).lower(), "shard": None}]
-
-    # Build pipeline
-    builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  stop_after_first_batch=True,
-                                                                                  raw_data='\n'.join(json.dumps(rec)
-                                                                                                     for rec in raw_data))
-    es_target = builder.add_stage('Elasticsearch', type='destination')
-    es_target.set_attributes(default_operation='INDEX', document_id='${record:value(\'/doc_id\')}',
-                             index='${record:value(\'/index\')}', mapping='${record:value(\'/mapping\')}',
-                             additional_properties='{\"routing\":${record:value(\'/shard\')}}')
-
-    dev_raw_data_source >> es_target
-    es_target_pipeline = builder.build().configure_for_environment(elasticsearch)
-
-    sdc_executor.add_pipeline(es_target_pipeline)
-
-    try:
-        for es_index in index_values:
-            elasticsearch.client.create_index(es_index)
-
-        # Run pipeline with additional properties
-        sdc_executor.start_pipeline(es_target_pipeline).wait_for_finished()
-
-        responses = elasticsearch.client.search(','.join(index_values))
-        assert len(responses) == 4
-
-        def _sort_response(entry):
-            return entry['_source']['text']
-
-        responses.sort(key=_sort_response)
-
-        for i in range(4):
-            assert responses[i]['_index'] == raw_data[i]['index']
-            assert responses[i]['_source']['text'] == raw_data[i]['text']
-
-            # First three records have the value "shard" filled whereas the last record (id=3) does not and thus that
-            # piece of metadata should never made it ElasticSearch.
-            if i == 3:
-                assert '_routing' not in responses[i]
-            else:
-                assert responses[0]['_routing'] == raw_data[0]['shard']
-    finally:
-        # Clean up test data in ES
-        for es_index in index_values:
-            elasticsearch.client.delete_index(es_index)
 
 
 # SDC-11233: Elasticsearch origin does not properly upgrade single-threaded offsets
