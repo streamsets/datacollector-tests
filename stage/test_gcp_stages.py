@@ -17,8 +17,6 @@ import json
 import logging
 import math
 import time
-import uuid
-from datetime import datetime
 from string import ascii_letters, ascii_lowercase
 from time import sleep
 
@@ -570,9 +568,9 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
     try:
         # Using Google pub/sub client, create topic and subscription
         logger.info('Creating topic %s using Google pub/sub client ...', topic_name)
-        topic = pubsub_publisher_client.create_topic(topic_path)
+        pubsub_publisher_client.create_topic(topic_path)
 
-        subscription = pubsub_subscriber_client.create_subscription(subscription_path, topic_path)
+        pubsub_subscriber_client.create_subscription(subscription_path, topic_path)
 
         # Start pipeline and verify messages are received using snapshot.
         logger.info('Starting pipeline and snapshot')
@@ -591,8 +589,91 @@ def test_google_pubsub_subscriber(sdc_builder, sdc_executor, gcp):
         rows_from_snapshot = [record.field['text'].value
                               for record in snapshot[google_pubsub_subscriber].output]
 
-        logger.debug(rows_from_snapshot)
         assert rows_from_snapshot == [MSG_DATA] * num
+    finally:
+        pubsub_subscriber_client.delete_subscription(subscription_path)
+        pubsub_publisher_client.delete_topic(topic_path)
+
+
+@gcp
+@sdc_min_version('2.7.0.0')
+def test_google_pubsub_subscriber_stop_start(sdc_builder, sdc_executor, gcp):
+    """Publish messages using Google pub/sub client and then check if Google pub/sub
+    subscriber receives them using snapshot.
+
+    We add a start and stop to check that everything has been read.
+
+    The pipeline looks like:
+        google_pubsub_subscriber >> trash
+    """
+    def get_data():
+        data = []
+        for _ in range(10):
+            data.append(get_random_string())
+        return data
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    first_data = get_data()
+    second_data = get_data()
+
+    subscription_id = get_random_string(ascii_letters, 5)
+    topic_name = get_random_string(ascii_letters, 5)
+    google_pubsub_subscriber = pipeline_builder.add_stage('Google Pub Sub Subscriber', type='origin')
+    google_pubsub_subscriber.set_attributes(batch_wait_time_in_ms=20000,
+                                            data_format='TEXT',
+                                            max_batch_size_in_records=10,
+                                            num_pipeline_runners=1,
+                                            subscriber_thread_pool_size=1,
+                                            subscription_id=subscription_id)
+
+    trash = pipeline_builder.add_stage('Trash')
+    google_pubsub_subscriber >> trash
+    pipeline = pipeline_builder.build(title='Google Pub Sub Subscriber Pipeline').configure_for_environment(gcp)
+
+    pubsub_publisher_client = gcp.pubsub_publisher_client
+    pubsub_subscriber_client = gcp.pubsub_subscriber_client
+
+    project_id = gcp.project_id
+    topic_path = pubsub_publisher_client.topic_path(project_id, topic_name)
+    subscription_path = pubsub_subscriber_client.subscription_path(project_id, subscription_id)
+    try:
+        # Using Google pub/sub client, create topic and subscription
+        logger.info('Creating topic %s using Google pub/sub client ...', topic_name)
+        pubsub_publisher_client.create_topic(topic_path)
+
+        pubsub_subscriber_client.create_subscription(subscription_path, topic_path)
+
+        # Start pipeline and verify messages are received using snapshot.
+        logger.info('Starting pipeline and snapshot')
+        sdc_executor.add_pipeline(pipeline)
+
+        logger.info('Publishing messages to topic %s using Google pub/sub client ...', topic_name)
+        for element in first_data:
+            pubsub_publisher_client.publish(topic_path, element.encode())
+
+        logger.debug('Finish the snapshot and verify')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(
+            timeout_sec=SNAPSHOT_TIMEOUT_SEC).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        rows_from_snapshot = [record.field['text'].value
+                              for record in snapshot[google_pubsub_subscriber].output]
+
+        assert rows_from_snapshot == first_data
+
+        logger.info('Publishing messages to topic %s using Google pub/sub client ...', topic_name)
+        for element in second_data:
+            pubsub_publisher_client.publish(topic_path, element.encode())
+
+        logger.debug('Finish the snapshot and verify')
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(
+            timeout_sec=SNAPSHOT_TIMEOUT_SEC).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+        rows_from_snapshot = [record.field['text'].value
+                              for record in snapshot[google_pubsub_subscriber].output]
+
+        assert rows_from_snapshot == second_data
+
     finally:
         pubsub_subscriber_client.delete_subscription(subscription_path)
         pubsub_publisher_client.delete_topic(topic_path)
@@ -969,7 +1050,7 @@ def test_google_storage_error(sdc_builder, sdc_executor, gcp):
         logger.info(f"Loaded raw data: {contents}")
         sdc_json = json.loads(contents)
 
-        assert  sdc_json['value']['value']['text']['value'] == 'Hello!'
+        assert sdc_json['value']['value']['text']['value'] == 'Hello!'
     finally:
         created_bucket.delete(force=True)
 
