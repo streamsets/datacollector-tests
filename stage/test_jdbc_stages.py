@@ -3690,3 +3690,135 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
+
+@database
+@pytest.mark.parametrize('dyn_table', [False, True])
+@pytest.mark.parametrize('multi_row', [False, True])
+def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, database, dyn_table, multi_row):
+    """
+    SDC-12960. Updating JDBC table with no PK results in NPE
+
+    Tests if a user friendly error will be added to record errors, one error for each failing record,
+    instead of breaking the whole pipeline when UPDATE or DELETE operation is used and a destination table has no
+    primary key.
+    Covers cases with/without dynamic tables, with/without multi row parameter enabled.
+
+    The pipeline:
+    Dev Raw Data Source->Expression Evaluator->Field Remover->JDBC Producer
+
+    The data source will send 2 insert records, 1 update and 1 delete record.
+    The records also contain fields that define what table (if the dyamic table testing is enabled) to use;
+    and what operation to perform on the data.
+
+    The evaluator will use the control fields to set
+    the sdc.operation.type attribute which defines what operation to perform;
+    the tbl attribute which will be used in an EL to specify the destination table.
+
+    The remover will remove the control fields from the records.
+
+    And the producer does the actual data writing of records using their control attributes set by the evaluator.
+
+    If the dynamic testing is enabled then the destination table name is defined by the record itself,
+    this allows in one test to write data to different tables;
+    if disabled, then all records will be send to the same destination table.
+
+    If multi row testing is enabled, then one SQL query may contain data of several rows.
+
+    We expect that if a destination table has no PRIMARY KEY, the delete and the update operations fail.
+    That should not break the whole pipeline.
+    Only the failed record should be marked as failed.
+    And the error message should contain a description of the actual error and not the NPE as before.
+    """
+
+    table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(0, 4 if dyn_table else 1)]
+    metadata = sqlalchemy.MetaData()
+    tables = [sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False, quote=True, autoincrement=False),
+        sqlalchemy.Column('operation', sqlalchemy.String, quote=True),
+    ) for table_name in table_names]
+    expected_error_record_count = 3 * len(tables)
+    builder = sdc_builder.get_pipeline_builder()
+
+    data_source = builder.add_stage('Dev Raw Data Source')
+    data_source.data_format = 'JSON'
+    data_source.stop_after_first_batch = True
+    data_source.raw_data = '\n'.join(['\n'.join(json.dumps(obj) for obj in [{
+        "id": 1,
+        "operation_header": "1",
+        "operation": "insert",
+        "table": table_name
+    }, {
+        "id": 2,
+        "operation_header": "1",
+        "operation": "insert",
+        "table": table_name
+    }, {
+        "id": 3,
+        "operation_header": "1",
+        "operation": "insert",
+        "table": table_name
+    }, {
+        "id": 1,
+        "operation_header": "2",
+        "operation": "delete",
+        "table": table_name
+    }, {
+        "id": 2,
+        "operation_header": "3",
+        "operation": "update",
+        "table": table_name
+    }, {
+        "id": 3,
+        "operation_header": "3",
+        "operation": "update",
+        "table": table_name
+    }]) for table_name in table_names])
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = []
+    expression.header_attribute_expressions = [{
+        "attributeToSet": "sdc.operation.type",
+        "headerAttributeExpression": "${record:value('/operation_header')}"
+    }, {
+        "attributeToSet": "tbl",
+        "headerAttributeExpression": "${record:value('/table')}"
+    }]
+
+    remover = builder.add_stage('Field Remover')
+    remover.set_attributes(fields=['/operation_header', '/table'], action='REMOVE')
+
+    producer = builder.add_stage('JDBC Producer')
+    producer.field_to_column_mapping = []
+    producer.default_operation = 'UPDATE'
+    producer.table_name = "${record:attribute('tbl')}" if dyn_table else table_names[0]
+    producer.use_multi_row_operation = multi_row
+    if database.type == 'Oracle':
+        producer.enclose_object_names = True
+
+    data_source >> expression >> remover >> producer
+
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    created_table_count = 0  # We will remember how many tables we have actually succeeded to create
+    try:
+        for table in tables:
+            # If for some crazy reason this fails
+            # created_table_count will contain the number of tables we actually have succeeded to create
+            table.create(database.engine)
+            created_table_count += 1
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True).snapshot
+        logger.info('pipeline: %s', pipeline)
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        stage = snapshot[producer.instance_name]
+
+        assert expected_error_record_count == len(stage.error_records)
+        for i in range(0, expected_error_record_count):
+            assert 'JDBC_62' == stage.error_records[i].header['errorCode']
+    finally:
+        for i in range(0, created_table_count):  # We will drop only the tables we have created
+            tables[i].drop(database.engine)
