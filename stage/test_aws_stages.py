@@ -1231,10 +1231,6 @@ def _test_emr_origin_to_s3(sdc_builder, sdc_executor, aws):
 
     emr_origin >> s3_destination
 
-    aws.sdc_pipeline_configurations.update({
-        'amazonEMRConfig.s3LogUri': f's3://{s3_staging_bucket}/{s3_logging_key}',
-        'amazonEMRConfig.s3StagingUri': f's3://{s3_staging_bucket}/{s3_staging_key}',
-    })
     pipeline = builder.build(title='Amazon EMR to S3 pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
 
