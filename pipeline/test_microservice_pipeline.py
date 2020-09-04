@@ -52,8 +52,8 @@ def test_microservice_pipeline_response(sdc_builder, sdc_executor):
     elif Version(sdc_builder.version) >= Version('3.17.0'):
         pipeline.origin_stage.list_of_application_ids = [{"credential": 'TEST_ID_FIRST'}]
 
-    pipeline.stages[1].status_code = 201
-    pipeline.stages[1].response_headers = [{'key': 'SAMPLE_RESPONSE_HEADER', 'value': 'test'}]
+    pipeline.stages[2].status_code = 201
+    pipeline.stages[2].response_headers = [{'key': 'SAMPLE_RESPONSE_HEADER', 'value': 'test'}]
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.validate_pipeline(pipeline)
     try:
@@ -173,12 +173,40 @@ def test_fetching_pipeline_with_square_brackets_id(sdc_executor):
     assert pipeline is not None
 
 
+@sdc_min_version('3.19.0')
+def test_rest_service_with_gateway_and_query_string(sdc_builder, sdc_executor):
+    """Test Microservice Pipeline with gateway enabled and with query string.
+       Test for ESC-955 - querystring is empty when gateway is enabled for REST Service origin (microservice)
+    """
+    pipeline = _create_microservice_pipeline(sdc_builder)
+    pipeline.origin_stage.use_api_gateway = True
+    pipeline.origin_stage.gateway_service_name = 'service1'
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.validate_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        rest_service_url = f'{sdc_executor.api_client.server_url}/public-rest/v1/gateway/service1?param1=val1'
+        resp = requests.get(rest_service_url)
+        assert resp.status_code == 200
+        resp_json = resp.json()
+        assert resp_json['httpStatusCode'] == 200
+        assert resp_json['data'] is not None
+        assert len(resp_json['data']) == 1
+        assert resp_json['data'][0]['querystring'] == 'param1=val1'
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+
+
 def _create_microservice_pipeline(sdc_builder):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     rest_service_source = pipeline_builder.add_stage('REST Service')
     rest_service_source.http_listening_port = HTTP_LISTENING_PORT
+    expression = pipeline_builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [
+        {"fieldToSet": "/querystring", "expression": "${record:attribute('queryString')}"}
+    ]
     send_response_target = pipeline_builder.add_stage('Send Response to Origin')
-    rest_service_source >> send_response_target
+    rest_service_source >> expression >> send_response_target
     pipeline = pipeline_builder.build()
     return pipeline
 
