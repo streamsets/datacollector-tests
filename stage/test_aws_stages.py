@@ -94,6 +94,101 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 
 
 @aws('kinesis')
+@sdc_min_version('3.20.0')
+@pytest.mark.parametrize('additional_configurations', [
+    [],
+    [{'key': 'failoverTimeMillis', 'value': '10000'}],
+    [{'key': 'taskBackoffTimeMillis', 'value': '500'}],
+    [{'key': 'metricsBufferTimeMillis', 'value': '10000'}],
+    [{'key': 'metricsMaxQueueSize', 'value': '10000'}],
+    [{'key': 'validateSequenceNumberBeforeCheckpointing', 'value': 'true'}],
+    [{'key': 'shutdownGraceMillis', 'value': '1'}],
+    [{'key': 'billingMode', 'value': 'PROVISIONED'}],
+    [{'key': 'timeoutInSeconds', 'value': '50'}],
+    [{'key': 'retryGetRecordsInSeconds', 'value': '50'}],
+    [{'key': 'maxGetRecordsThreadPool', 'value': '50'}],
+    [{'key': 'maxLeaseRenewalThreads', 'value': '20'}],
+    [{'key': 'logWarningForTaskAfterMillis', 'value': '50'}],
+    [{'key': 'listShardsBackoffTimeInMillis', 'value': '1500'}],
+    [{'key': 'maxListShardsRetryAttempts', 'value': '50'}],
+    [{'key': 'userAgentPrefix', 'value': ''}],
+    [{'key': 'userAgentSuffix', 'value': ''}],
+    [{'key': 'maxConnections', 'value': '50'}],
+    [{'key': 'requestTimeout', 'value': '0'}],
+    [{'key': 'clientExecutionTimeout', 'value': '0'}],
+    [{'key': 'throttleRetries', 'value': 'true'}],
+    [{'key': 'connectionMaxIdleMillis', 'value': '60000'}],
+    [{'key': 'validateAfterInactivityMillis', 'value': '5000'}],
+    [{'key': 'useExpectContinue', 'value': 'true'}],
+    [{'key': 'maxConsecutiveRetriesBeforeThrottling', 'value': '100'}],
+    [{'key': 'retryMode', 'value': 'null'}],
+    [{'key': 'cleanupLeasesUponShardCompletion', 'value': 'true'}],
+    [{'key': 'a', 'value': '1'}]])
+def test_kinesis_consumer_additional_properties(sdc_builder, sdc_executor, aws, additional_configurations):
+    """Test for Kinesis consumer origin stage. We do so by publishing data to a test stream using Kinesis client and
+    having a pipeline which reads that data using Kinesis consumer origin stage. Data is then asserted for what is
+    published at Kinesis client and what we read in the pipeline snapshot. The pipeline looks like:
+
+    Kinesis Consumer pipeline:
+        kinesis_consumer >> trash
+    """
+    invalid_config = False
+    # build consumer pipeline
+    application_name = get_random_string(string.ascii_letters, 10)
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    kinesis_consumer = builder.add_stage('Kinesis Consumer')
+    kinesis_consumer.set_attributes(application_name=application_name, data_format='TEXT',
+                                    initial_position='TRIM_HORIZON',
+                                    stream_name=stream_name,
+                                    kinesis_configuration=additional_configurations)
+
+    trash = builder.add_stage('Trash')
+
+    kinesis_consumer >> trash
+
+    consumer_origin_pipeline = builder.build(title='Kinesis Consumer pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    # run pipeline and capture snapshot
+    client = aws.kinesis
+    try:
+        logger.info('Creating %s Kinesis stream on AWS ...', stream_name)
+        client.create_stream(StreamName=stream_name, ShardCount=1)
+        aws.wait_for_stream_status(stream_name=stream_name, status='ACTIVE')
+
+        expected_messages = set('Message {0}'.format(i) for i in range(10))
+        # not using PartitionKey logic and hence assign some temp key
+        put_records = [{'Data': exp_msg, 'PartitionKey': '111'} for exp_msg in expected_messages]
+        client.put_records(Records=put_records, StreamName=stream_name)
+
+        # messages are published, read through the pipeline and assert
+        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        output_records = [record.field['text'].value
+                          for record in snapshot[kinesis_consumer.instance_name].output]
+
+        assert set(output_records) == expected_messages
+    except Exception as error:
+        if additional_configurations[0]['key'] == 'a':
+            assert 'KINESIS_24 - Invalid setting for \'' + additional_configurations[0]['key'] + \
+                   '\' property' in error.message
+            invalid_config = True
+        else:
+            raise error
+    finally:
+        logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+        client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
+        if not invalid_config:
+            logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
+            aws.dynamodb.delete_table(TableName=application_name)
+
+
+@aws('kinesis')
 def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
     """Test for Kinesis consumer origin stage, with AT_TIMESTAMP option. We do so by:
         - 1. Publishing data to a test stream
