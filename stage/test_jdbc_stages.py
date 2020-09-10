@@ -3731,12 +3731,17 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
     """
 
     table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(0, 4 if dyn_table else 1)]
+    table_name_expression = ("${str:toUpper(record:attribute('tbl'))}" 
+        if database.type == 'Oracle'
+        else "${record:attribute('tbl')}") if dyn_table else (
+        table_names[0].upper() if database.type == 'Oracle'
+        else table_names[0])
     metadata = sqlalchemy.MetaData()
     tables = [sqlalchemy.Table(
         table_name,
         metadata,
         sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False, quote=True, autoincrement=False),
-        sqlalchemy.Column('operation', sqlalchemy.String, quote=True),
+        sqlalchemy.Column('operation', sqlalchemy.String(32), quote=True),
     ) for table_name in table_names]
     expected_error_record_count = 3 * len(tables)
     builder = sdc_builder.get_pipeline_builder()
@@ -3745,21 +3750,6 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
     data_source.data_format = 'JSON'
     data_source.stop_after_first_batch = True
     data_source.raw_data = '\n'.join(['\n'.join(json.dumps(obj) for obj in [{
-        "id": 1,
-        "operation_header": "1",
-        "operation": "insert",
-        "table": table_name
-    }, {
-        "id": 2,
-        "operation_header": "1",
-        "operation": "insert",
-        "table": table_name
-    }, {
-        "id": 3,
-        "operation_header": "1",
-        "operation": "insert",
-        "table": table_name
-    }, {
         "id": 1,
         "operation_header": "2",
         "operation": "delete",
@@ -3792,7 +3782,7 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
     producer = builder.add_stage('JDBC Producer')
     producer.field_to_column_mapping = []
     producer.default_operation = 'UPDATE'
-    producer.table_name = "${record:attribute('tbl')}" if dyn_table else table_names[0]
+    producer.table_name = table_name_expression
     producer.use_multi_row_operation = multi_row
     if database.type == 'Oracle':
         producer.enclose_object_names = True
@@ -3800,15 +3790,24 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
     data_source >> expression >> remover >> producer
 
     pipeline = builder.build().configure_for_environment(database)
+
+    pipeline.stages.get(label=producer.label).table_name = table_name_expression
+
     sdc_executor.add_pipeline(pipeline)
 
     created_table_count = 0  # We will remember how many tables we have actually succeeded to create
+    connection = database.engine.connect()
     try:
         for table in tables:
             # If for some crazy reason this fails
             # created_table_count will contain the number of tables we actually have succeeded to create
             table.create(database.engine)
             created_table_count += 1
+            connection.execute(table.insert(), [
+                {'id': 1, 'operation': 'insert'},
+                {'id': 2, 'operation': 'insert'},
+                {'id': 3, 'operation': 'insert'}
+            ])
 
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
                                                  start_pipeline=True).snapshot
@@ -3822,3 +3821,4 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
     finally:
         for i in range(0, created_table_count):  # We will drop only the tables we have created
             tables[i].drop(database.engine)
+        connection.close()
