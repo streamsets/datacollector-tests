@@ -866,7 +866,7 @@ def test_cdh_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_
     hdfs_directory = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
 
     cluster.hdfs.client.makedirs(hdfs_directory, '777')
-    cluster.hdfs.client.write(os.path.join(hdfs_directory, '_tmp_sdc_0'), data='message1', permission='777')
+    cluster.hdfs.client.write(os.path.join(hdfs_directory, '_tmp_sdc_0'), data='message1', permission='666')
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -913,7 +913,7 @@ def test_cdh_file_event_filepath_when_whole_file_mode_enabled(
 
     try:
         cluster.hdfs.client.makedirs(hdfs_directory, "777")
-        cluster.hdfs.client.write(os.path.join(hdfs_directory, '_tmp_sdc-output'), data='message1', permission='777')
+        cluster.hdfs.client.write(os.path.join(hdfs_directory, '_tmp_sdc-output'), data='message1', permission='666')
 
         src = builder.add_stage('Directory')
         src.files_directory = f'{base_folder}/input'
