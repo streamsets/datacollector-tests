@@ -17,8 +17,10 @@ import os
 import sched
 import string
 import time
+import textwrap
 
 import pytest
+from uuid import uuid4
 from hadoop.io import SequenceFile
 from streamsets.testframework.markers import cluster, large, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -50,6 +52,59 @@ PRODUCT_DATA_FIX = [
     {'name': 'pixel', 'price': 649.89, 'release': 1.5545},
     {'name': 'galaxy', 'price': 549.89, 'release': 1.5565}
 ]
+
+FILE_WRITER_SCRIPT = """
+    file_contents = '''{file_contents}'''
+    for record in records:
+        with open('{filepath}', 'w') as f:
+            f.write(file_contents.decode('utf8').encode('{encoding}'))
+"""
+
+FILE_WRITER_SCRIPT_BINARY = """
+    with open('{filepath}', 'wb') as f:
+        f.write({file_contents})
+"""
+
+
+@pytest.fixture
+def shell_executor(sdc_executor):
+    def shell_executor_(script):
+        builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+        shell = builder.add_stage('Shell')
+        shell.set_attributes(script=script,
+                             environment_variables=([]))
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> [trash, shell]
+        pipeline = builder.build('Shell executor pipeline')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.remove_pipeline(pipeline)
+    return shell_executor_
+
+
+@pytest.fixture
+def file_writer(sdc_executor):
+    def file_writer_(filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
+        builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+        jython_evaluator = builder.add_stage('Jython Evaluator')
+
+        file_writer_script = FILE_WRITER_SCRIPT_BINARY if file_data_type == 'BINARY' else FILE_WRITER_SCRIPT
+        jython_evaluator.script = textwrap.dedent(file_writer_script).format(filepath=str(filepath),
+                                                                             file_contents=file_contents,
+                                                                             encoding=encoding)
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> jython_evaluator >> trash
+        pipeline = builder.build('File writer pipeline')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.remove_pipeline(pipeline)
+    return file_writer_
 
 
 def create_hadoop_fs_dest_pipeline(pipeline_builder, pipeline_title, hdfs_directory, hadoop_fs):
@@ -803,3 +858,100 @@ def test_hadoop_fs_origin_standalone_simple_ordering(sdc_builder, sdc_executor, 
 
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
+
+
+@cluster('cdh')
+@sdc_min_version("3.20.0")
+def test_cdh_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_executor, cluster):
+    hdfs_directory = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
+
+    cluster.hdfs.client.makedirs(hdfs_directory, '777')
+    cluster.hdfs.client.write(os.path.join(hdfs_directory, '_tmp_sdc_0'), data='message1', permission='777')
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    try:
+        data_source = builder.add_stage('Dev Raw Data Source')
+        data_source.stop_after_first_batch = True
+        data_source.data_format = 'TEXT'
+        data_source.raw_data = 'message2\n'
+
+        hadoop_fs = builder.add_stage('Hadoop FS', type='destination')
+        hadoop_fs.set_attributes(data_format='TEXT',
+                                 directory_template=hdfs_directory,
+                                 files_prefix='sdc',
+                                 files_suffix='',
+                                 max_records_in_file=1)
+
+        trash = builder.add_stage('Trash')
+
+        data_source >> hadoop_fs
+        hadoop_fs >= trash
+
+        pipeline = builder.build().configure_for_environment(cluster)
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True).snapshot
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        stage = snapshot[hadoop_fs.instance_name]
+
+        assert len(stage.event_records) > 0
+        for event_record in stage.event_records:
+            assert event_record.get_field_data('/filepath').value.startswith(f'{hdfs_directory}/sdc_')
+    finally:
+        cluster.hdfs.client.delete(hdfs_directory, recursive=True)
+
+
+@cluster('cdh')
+def test_cdh_file_event_filepath_when_whole_file_mode_enabled(
+        sdc_builder, sdc_executor, cluster, shell_executor, file_writer):
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    base_folder = f'/tmp/{str(uuid4())}'
+    hdfs_directory = f'/tmp/{get_random_string(string.ascii_letters, 10)}'
+
+    try:
+        cluster.hdfs.client.makedirs(hdfs_directory, "777")
+        cluster.hdfs.client.write(os.path.join(hdfs_directory, '_tmp_sdc-output'), data='message1', permission='777')
+
+        src = builder.add_stage('Directory')
+        src.files_directory = f'{base_folder}/input'
+        src.file_name_pattern = '*'
+        src.data_format = 'WHOLE_FILE'
+        src.batch_size_in_recs = 1
+        src.batch_wait_time_in_secs = 1
+
+        shell_executor(f'mkdir -p {src.files_directory}')
+        file_writer(f'{src.files_directory}/input.txt', 'message2\n')
+
+        hadoop_fs = builder.add_stage('Hadoop FS', type='destination')
+        hadoop_fs.set_attributes(data_format='WHOLE_FILE',
+                                 file_type='WHOLE_FILE',
+                                 directory_template=hdfs_directory,
+                                 files_prefix='sdc',
+                                 file_name_expression='-output',
+                                 max_records_in_file=1)
+
+        trash = builder.add_stage('Trash')
+
+        src >> hadoop_fs
+        hadoop_fs >= trash
+
+        pipeline = builder.build().configure_for_environment(cluster)
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True,
+                                                 batches=1).snapshot
+        sdc_executor.stop_pipeline(pipeline, force=True)
+        stage = snapshot[hadoop_fs.instance_name]
+
+        assert len(stage.event_records) > 0
+        for record in stage.event_records:
+            assert record.get_field_data('/targetFileInfo/path').value == f'{hdfs_directory}/sdc-output'
+            assert record.get_field_data('/sourceFileInfo/file').value == f'{src.files_directory}/input.txt'
+    finally:
+        try:
+            cluster.hdfs.client.delete(hdfs_directory, recursive=True)
+        finally:
+            shell_executor(f'rm -fr {base_folder}')

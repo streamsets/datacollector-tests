@@ -21,15 +21,16 @@ import io
 import string
 import datetime, time
 from operator import itemgetter
+import textwrap
 
 import avro
 import avro.schema
+from uuid import uuid4
 from avro.datafile import DataFileWriter
 from avro.io import DatumWriter
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
-
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -47,10 +48,64 @@ SCHEMA = {
     ]
 }
 
+FILE_WRITER_SCRIPT = """
+    file_contents = '''{file_contents}'''
+    for record in records:
+        with open('{filepath}', 'w') as f:
+            f.write(file_contents.decode('utf8').encode('{encoding}'))
+"""
+
+FILE_WRITER_SCRIPT_BINARY = """
+    with open('{filepath}', 'wb') as f:
+        f.write({file_contents})
+"""
+
+
 @pytest.fixture(autouse=True)
 def storage_type_check(azure):
     if azure.storage_type == 'Storage':
         pytest.skip('ADLS Gen2 tests require storage type to be of Gen2.')
+
+
+@pytest.fixture
+def shell_executor(sdc_executor):
+    def shell_executor_(script):
+        builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+        shell = builder.add_stage('Shell')
+        shell.set_attributes(script=script,
+                             environment_variables=([]))
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> [trash, shell]
+        pipeline = builder.build('Shell executor pipeline')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.remove_pipeline(pipeline)
+    return shell_executor_
+
+
+@pytest.fixture
+def file_writer(sdc_executor):
+    def file_writer_(filepath, file_contents, encoding='utf8', file_data_type='NOT_BINARY'):
+        builder = sdc_executor.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+        jython_evaluator = builder.add_stage('Jython Evaluator')
+
+        file_writer_script = FILE_WRITER_SCRIPT_BINARY if file_data_type == 'BINARY' else FILE_WRITER_SCRIPT
+        jython_evaluator.script = textwrap.dedent(file_writer_script).format(filepath=str(filepath),
+                                                                             file_contents=file_contents,
+                                                                             encoding=encoding)
+        trash = builder.add_stage('Trash')
+        dev_raw_data_source >> jython_evaluator >> trash
+        pipeline = builder.build('File writer pipeline')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.remove_pipeline(pipeline)
+    return file_writer_
 
 
 @azure('datalake')
@@ -700,3 +755,102 @@ def _adls_create_file(adls_client, file_content, file_path):
     res2 = adls_client.write(file_path, file_content)
     if not (res1.response.ok and res2.response.ok):
         raise RuntimeError(f'Could not create file: {file_path}')
+
+
+@azure('datalake')
+@sdc_min_version("3.20.0")
+def test_adls_gen2_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_executor, azure):
+    builder = sdc_builder.get_pipeline_builder()
+    dl_fs = azure.datalake.file_system
+
+    directory_name = get_random_string(string.ascii_letters, 10)
+
+    try:
+        dl_fs.mkdir(directory_name)
+        dl_fs.touch(f'{directory_name}/_tmp_sdc_0')
+        dl_fs.write(f'{directory_name}/_tmp_sdc_0', 'message1\n')
+
+        data_source = builder.add_stage('Dev Raw Data Source')
+        data_source.stop_after_first_batch = True
+        data_source.data_format = 'TEXT'
+        data_source.raw_data = 'message2\n'
+
+        azure_data_lake_store_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_datalake_gen2_DataLakeGen2DTarget')
+        azure_data_lake_store_destination.set_attributes(data_format='TEXT',
+                                                         directory_template=f'/{directory_name}',
+                                                         files_prefix='sdc',
+                                                         files_suffix='')
+
+        trash = builder.add_stage('Trash')
+
+        data_source >> azure_data_lake_store_destination
+        azure_data_lake_store_destination >= trash
+
+        pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True).snapshot
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        stage = snapshot[azure_data_lake_store_destination.instance_name]
+
+        assert len(stage.event_records) > 0
+        for record in stage.event_records:
+            assert record.get_field_data('/filepath').value.startswith(f'/{directory_name}/sdc_')
+    finally:
+        dl_fs.rmdir(directory_name, recursive=True)
+
+
+@azure('datalake')
+def test_adls_gen2_file_event_filepath_when_whole_file_mode_enabled(
+        sdc_builder, sdc_executor, azure, shell_executor, file_writer):
+
+    builder = sdc_builder.get_pipeline_builder()
+    dl_fs = azure.datalake.file_system
+
+    base_folder = f'/tmp/{str(uuid4())}'
+    directory_name = get_random_string(string.ascii_letters, 10)
+
+    try:
+        dl_fs.mkdir(directory_name)
+        dl_fs.touch(f'{directory_name}/_tmp_sdc-output')
+        dl_fs.write(f'{directory_name}/_tmp_sdc-output', 'message1\n')
+
+        src = builder.add_stage('Directory')
+        src.files_directory = f'{base_folder}/input'
+        src.file_name_pattern = '*'
+        src.data_format = 'WHOLE_FILE'
+        src.batch_size_in_recs = 1
+        src.batch_wait_time_in_secs = 1
+
+        shell_executor(f'mkdir -p {src.files_directory}')
+        file_writer(f'{src.files_directory}/input.txt', 'message2\n')
+
+        azure_data_lake_store_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_datalake_gen2_DataLakeGen2DTarget')
+        azure_data_lake_store_destination.set_attributes(data_format='WHOLE_FILE',
+                                                         file_type='WHOLE_FILE',
+                                                         directory_template=f'/{directory_name}',
+                                                         files_prefix='sdc',
+                                                         file_name_expression='-output')
+
+        trash = builder.add_stage('Trash')
+
+        src >> azure_data_lake_store_destination
+        azure_data_lake_store_destination >= trash
+
+        pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True,
+                                                 batches=1).snapshot
+        sdc_executor.stop_pipeline(pipeline, force=True)
+        stage = snapshot[azure_data_lake_store_destination.instance_name]
+
+        assert len(stage.event_records) > 0
+        for record in stage.event_records:
+            assert record.get_field_data('/targetFileInfo/path').value == f'/{directory_name}/sdc-output'
+            assert record.get_field_data('/sourceFileInfo/file').value == f'{src.files_directory}/input.txt'
+    finally:
+        try:
+            dl_fs.rmdir(directory_name, recursive=True)
+        finally:
+            shell_executor(f'rm -fr {base_folder}')
