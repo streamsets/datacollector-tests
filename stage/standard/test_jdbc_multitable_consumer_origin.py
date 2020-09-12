@@ -25,7 +25,7 @@ from streamsets.testframework.utils import get_random_string
 @pytest.fixture(scope='module')
 def sdc_builder_hook():
     def hook(data_collector):
-        data_collector.SDC_JAVA_OPTS = '-Xmx8192m -Xms8192m'
+        data_collector.SDC_JAVA_OPTS = '-Xmx2048m -Xms2048m'
     return hook
 
 logger = logging.getLogger(__name__)
