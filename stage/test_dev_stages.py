@@ -18,12 +18,12 @@ from time import sleep
 import pytest
 from streamsets.sdk import sdc_api
 from streamsets.sdk.exceptions import ValidationError
-from streamsets.testframework.markers import rpmpackaging, sdc_min_version
+from streamsets.testframework.markers import aster_authentication, rpmpackaging, sdc_min_version
 from streamsets.testframework.utils import Version
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [rpmpackaging]
+pytestmark = [aster_authentication, rpmpackaging]
 
 
 @pytest.fixture(scope='module')
