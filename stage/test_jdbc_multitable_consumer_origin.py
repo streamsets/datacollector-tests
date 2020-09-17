@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import logging
 import os
+import random
 import string
 import tempfile
 import time
@@ -21,9 +23,8 @@ from collections import OrderedDict
 
 import pytest
 import sqlalchemy
-import datetime
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
