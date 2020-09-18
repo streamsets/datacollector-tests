@@ -449,6 +449,7 @@ def test_object_names(sdc_builder, sdc_executor, database):
                 "properly escape or enclose names and thefore there is not much for us to test here.")
 
 
+@database
 @pytest.mark.parametrize('incremental', [True, False])
 def test_multiple_batches(sdc_builder, sdc_executor, database, incremental, keep_data):
     max_batch_size = 1000
