@@ -1006,6 +1006,8 @@ def test_jdbc_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, data
     jdbc_multitable_consumer >> wiretap.destination
     jdbc_multitable_consumer >= pipeline_finished_executor
     """
+    if database.type == 'Oracle':
+        pytest.skip("This test depends on proper case for column names that Oracle auto-uppers.")
     no_of_records_per_table = random.randint(5001, 10000)
 
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
