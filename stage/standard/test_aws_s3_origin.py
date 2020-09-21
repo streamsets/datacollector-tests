@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 # Sandbox prefix for S3 bucket
 S3_SANDBOX_PREFIX = 'sandbox'
 
-
 # Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html
 S3_BUCKET_NAMES = [
     # For 3 characters we use 2 letters + 1 digit to avoid colliding with system buckets
@@ -76,7 +75,7 @@ def test_object_names(sdc_builder, sdc_executor, aws, test_name, s3_bucket):
     try:
         client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
         # Insert objects into S3.
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Body=json.dumps(data))
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
         snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).wait_for_finished().snapshot
 
