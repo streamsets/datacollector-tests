@@ -19,6 +19,7 @@ import time
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
+from streamsets.testframework.environments.databases import MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -157,6 +158,8 @@ DATA_TYPES_MYSQL = [
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_MYSQL, ids=[i[0] for i in DATA_TYPES_MYSQL])
 def test_data_types_mysql(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
     """Test all feasible Mysql types."""
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
     try:
@@ -499,6 +502,8 @@ OBJECT_NAMES_MYSQL = [
 @database('mysql')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_MYSQL, ids=[i[0] for i in OBJECT_NAMES_MYSQL])
 def test_object_names_mysql(sdc_builder, sdc_executor, database, test_name, table_name, offset_name):
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_name)
 
 # Rules: https://stackoverflow.com/questions/5808332/sql-server-maximum-character-length-of-object-names
@@ -577,6 +582,8 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_n
 @pytest.mark.parametrize('number_of_threads', [1, 10])
 @pytest.mark.parametrize('processing_mode', ['DISABLED', 'BEST_EFFORT', 'REQUIRED'])
 def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads, processing_mode, keep_data):
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     max_batch_size = 1000
     batches = 50
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -644,6 +651,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads
 
 @database
 def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     table_prefix = get_random_string(string.ascii_lowercase, 20)
     table_a = '{}_a'.format(table_prefix)
     table_b = '{}_b'.format(table_prefix)
@@ -772,6 +781,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
 
 @database
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     iterations = 3
     records_per_iteration = 10
     table_name = get_random_string(string.ascii_lowercase, 20)

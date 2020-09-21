@@ -18,7 +18,7 @@ import string
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
-from streamsets.testframework.environments.databases import OracleDatabase
+from streamsets.testframework.environments.databases import OracleDatabase, MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -148,6 +148,8 @@ DATA_TYPES_MYSQL = [
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_MYSQL, ids=[i[0] for i in DATA_TYPES_MYSQL])
 def test_data_types_mysql(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
     """Test all feasible Mysql types."""
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
     try:
@@ -452,6 +454,8 @@ def test_object_names(sdc_builder, sdc_executor, database):
 @database
 @pytest.mark.parametrize('incremental', [True, False])
 def test_multiple_batches(sdc_builder, sdc_executor, database, incremental, keep_data):
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     max_batch_size = 1000
     batches = 10
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -517,6 +521,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, incremental, keep
 @database
 @pytest.mark.parametrize('incremental', [True, False]) # We have special handling for the events in incremental mode
 def test_dataflow_events(sdc_builder, sdc_executor, database, incremental, keep_data):
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     metadata = sqlalchemy.MetaData()
@@ -580,6 +586,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, incremental, keep_
 
 @database
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     iterations = 3
     records_per_iteration = 10
     table_name = get_random_string(string.ascii_lowercase, 20)
