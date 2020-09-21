@@ -2102,9 +2102,20 @@ def find_dataset(client, name):
 
     return None, None
 
+def find_dataset_include_timestamp(client, name):
+    """Utility method to find a dataset by name when including a timestamp in the name
+    """
+    result = client.restful('wave/datasets')
+    for dataset in result['datasets']:
+        if dataset['name'].startswith(name) and 'currentVersionId' in dataset:
+            return dataset['id'], dataset['currentVersionId']
+
+    return None, None
+
 
 @salesforce
-def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
+@pytest.mark.parametrize('multiple_data', [False, True])
+def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce, multiple_data):
     """Basic test for Einstein Analytics destination. Write some data and check that it's there
 
     The pipeline looks like:
@@ -2121,6 +2132,8 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
+        if multiple_data:
+            dev_raw_data_source.set_attributes(stop_after_first_batch=False)
 
         # Delay so that we can stop the pipeline after a single batch is processed
         delay = pipeline_builder.add_stage('Delay')
@@ -2133,6 +2146,8 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
                                              username=salesforce.username,
                                              password=salesforce.password,
                                              auth_endpoint='test.salesforce.com')
+        if multiple_data:
+            analytics_destination.set_attributes(append_timestamp_to_alias = True)
 
         dev_raw_data_source >> delay >> analytics_destination
 
@@ -2141,16 +2156,23 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce):
 
         # Now the pipeline will write data to Einstein Analytics
         logger.info('Starting Einstein Analytics destination pipeline and waiting for it to produce records ...')
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        if multiple_data:
+            sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(6)
+            sdc_executor.stop_pipeline(pipeline)
+        else:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
 
         # Einstein Analytics data load is asynchronous, so poll until it's done
         logger.info('Looking for dataset in Einstein Analytics')
-        end_time = datetime.now() + timedelta(seconds=60)
+        end_time = datetime.now() + timedelta(seconds=120)
         id = None
         while id is None and datetime.now() < end_time:
             sleep(5)
-            id, currentVersionId = find_dataset(client, edgemart_alias)
+            if multiple_data:
+                id, currentVersionId = find_dataset_include_timestamp(client, edgemart_alias)
+            else:
+                id, currentVersionId = find_dataset(client, edgemart_alias)
 
         # Make sure we found a dataset and didn't time out!
         assert not(id is None)
