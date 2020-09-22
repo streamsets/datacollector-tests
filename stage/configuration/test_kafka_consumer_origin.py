@@ -69,7 +69,7 @@ def test_allow_extra_columns(sdc_builder, sdc_executor, cluster, stage_attribute
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT_ALLOW_EXTRA_COLUMNS
     else:
-        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING')
         sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
         assert [record.header['errorCode'] for record in wiretap.error_records] == [CANNOT_PARSE_RECORD_ERROR_CODE]
