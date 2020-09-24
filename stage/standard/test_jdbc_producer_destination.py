@@ -135,7 +135,7 @@ DATA_TYPES_ORACLE = [
     ('string', 'BYTE_ARRAY', 'nvarchar2(15)', 'string'),
     ('string', 'BYTE_ARRAY', 'long', 'string'),
 ]
-@database
+@database('oracle')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_ORACLE, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_ORACLE])
 def test_data_types_oracle(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
@@ -305,7 +305,7 @@ DATA_TYPES_MYSQL = [
     # Byte array
     # No good support in MySQL
 ]
-@database
+@database('mysql')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_MYSQL, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_MYSQL])
 def test_data_types_mysql(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     if isinstance(database, MemSqlDatabase):
@@ -421,7 +421,7 @@ DATA_TYPES_POSTGRESQL = [
     # Byte array
     # No good support with PostgreSQL
 ]
-@database
+@database('postgresql')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_POSTGRESQL, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_POSTGRESQL])
 def test_data_types_postgresql(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
@@ -584,7 +584,7 @@ DATA_TYPES_SQLSERVER = [
     ('string', 'BYTE_ARRAY', 'varchar(6)', 'string'),
     ('string', 'BYTE_ARRAY', 'text', 'string'),
 ]
-@database
+@database('sqlserver')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_SQLSERVER, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_SQLSERVER])
 def test_data_types_sqlserver(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
