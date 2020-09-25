@@ -43,7 +43,6 @@ DATA_TYPES = [
 ]
 @elasticsearch
 @pytest.mark.parametrize('input,converter_type,expected', DATA_TYPES, ids=[i[1] for i in DATA_TYPES])
-@elasticsearch
 def test_data_types(sdc_builder, sdc_executor, elasticsearch, input, converter_type, expected):
     index = get_random_string(string.ascii_letters, 10).lower()
     mapping = get_random_string(string.ascii_letters, 10)
