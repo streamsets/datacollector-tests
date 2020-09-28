@@ -418,6 +418,8 @@ DATA_TYPES_POSTGRESQL = [
     ('2020-01-01', 'STRING', 'date', datetime.date(2020, 1, 1)),
     ('10:00:00', 'STRING', 'time', datetime.time(10, 0)),
     ('true', 'STRING', 'boolean', True),
+    ('{"a": "b"}', 'STRING', 'json', {'a': 'b'}),
+    ('{"a": "b"}', 'STRING', 'jsonb', {'a': 'b'}),
     # Byte array
     # No good support with PostgreSQL
 ]
