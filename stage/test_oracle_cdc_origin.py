@@ -1705,6 +1705,62 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
         connection.execute(f'DROP TABLE {table_name}')
 
 
+@sdc_min_version('3.20.0')
+@database('oracle')
+@pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('dictionary_source', ['DICT_FROM_REDO_LOGS', 'DICT_FROM_ONLINE_CATALOG'])
+def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data, buffer_locally, dictionary_source):
+    """Simple test to check "Disable Continuous Mine" stage option.
+
+    The test just inserts a few records in the test table and check they are successfully consumed by Oracle
+    CDC. This is tested with different configurations which affect how LogMiner sessions are set.
+
+    Pipeline: oracle_cdc >> wiretap
+
+    """
+    table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
+    num_records = 10
+    connection = database.engine.connect()
+
+    try:
+        logger.info('Creating table %s', table_name)
+        connection.execute(f'CREATE TABLE {table_name} (ID NUMBER PRIMARY KEY)')
+        initial_scn = _get_last_scn(connection)
+
+        logger.info('Building pipeline')
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   buffer_locally=buffer_locally,
+                                                   src_table_name=table_name,
+                                                   initial_change='SCN',
+                                                   start_scn=initial_scn,
+                                                   dictionary_source=dictionary_source,
+                                                   disable_continuous_mine=True)
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        logger.info('Inserting data into %s', table_name)
+        input_values = list(range(num_records))
+        for val in input_values:
+            connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_values = [rec.field['ID'].value for rec in wiretap.output_records]
+        assert input_values == output_values
+
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
+            connection.execute(f'DROP TABLE {table_name}')
+
+
 def _setup_table(database, table_name, create_primary_key=True):
     db_engine = database.engine
     logger.info('Creating source table %s in %s database ...', table_name, database.type)
