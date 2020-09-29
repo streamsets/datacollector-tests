@@ -101,3 +101,171 @@ def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database,
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
+
+@database('mysql')
+def test_stored_procedure_mysql(sdc_builder, sdc_executor, database, keep_data):
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    procedure_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name} (
+                id int
+            )
+        """)
+
+        # Create table
+        connection.execute(f"""
+            INSERT INTO {table_name} VALUES (1)
+        """)
+
+        # Create stored procedure
+        connection.execute(f"""
+            CREATE PROCEDURE {procedure_name}()
+            BEGIN
+                SELECT * FROM {table_name};
+            END;
+        """)
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('JDBC Query Consumer')
+        origin.incremental_mode = False
+        origin.sql_query = f"CALL {procedure_name}()"
+
+        wiretap = builder.add_wiretap()
+
+        finisher = builder.add_stage("Pipeline Finisher Executor")
+        finisher.preconditions = ['${record:eventType() == \'no-more-data\'}']
+
+        origin >> wiretap.destination
+        origin >= finisher
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field['id'] == 1
+
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+            connection.execute(f"DROP PROCEDURE IF EXISTS {procedure_name}")
+
+
+@database('postgresql')
+def test_stored_procedure_postgresql(sdc_builder, sdc_executor, database, keep_data):
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    procedure_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name} (
+                id int
+            )
+        """)
+
+        # Create table
+        connection.execute(f"""
+            INSERT INTO {table_name} VALUES (1)
+        """)
+
+        # Create stored procedure
+        connection.execute(f"""
+            create or replace function {procedure_name}()
+                returns table (id int)
+                language plpgsql
+            as $$
+            begin
+                return query 
+                    select * from {table_name};
+            end;$$
+        """)
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('JDBC Query Consumer')
+        origin.incremental_mode = False
+        origin.sql_query = f"SELECT * FROM {procedure_name}()"
+
+        wiretap = builder.add_wiretap()
+
+        finisher = builder.add_stage("Pipeline Finisher Executor")
+        finisher.preconditions = ['${record:eventType() == \'no-more-data\'}']
+
+        origin >> wiretap.destination
+        origin >= finisher
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field['id'] == 1
+
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+            connection.execute(f"DROP FUNCTION IF EXISTS {procedure_name}")
+
+
+@database('sqlserver')
+def test_stored_procedure_sqlserver(sdc_builder, sdc_executor, database, keep_data):
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    procedure_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name} (
+                id int
+            )
+        """)
+
+        # Create table
+        connection.execute(f"""
+            INSERT INTO {table_name} VALUES (1)
+        """)
+
+        # Create stored procedure
+        connection.execute(f"""
+            CREATE PROCEDURE {procedure_name}
+            AS
+               SELECT * FROM {table_name}
+            RETURN
+        """)
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('JDBC Query Consumer')
+        origin.incremental_mode = False
+        origin.sql_query = f"EXEC {procedure_name}"
+
+        wiretap = builder.add_wiretap()
+
+        finisher = builder.add_stage("Pipeline Finisher Executor")
+        finisher.preconditions = ['${record:eventType() == \'no-more-data\'}']
+
+        origin >> wiretap.destination
+        origin >= finisher
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field['id'] == 1
+
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+            connection.execute(f"DROP PROCEDURE IF EXISTS {procedure_name}")
