@@ -1179,6 +1179,111 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, ac
         connection.execute(f"DROP TABLE {table_name2}")
 
 
+@sdc_min_version('3.19.0')
+@database('oracle')
+@pytest.mark.parametrize('peg_parser', [True, False])
+def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
+    """ This tests OracleCDC origin when the table has an ADT column.
+    This is behaving different according to Oracle version. In Oracle 11 the redo
+    logs for tables that contain ADT columns are unsupported, that means the OracleCDC stage
+    will ignore all redo logs from that table because the Log Miner will return a 255 operation code
+    (Unsupported). On Oracle 19 this will work but throws an exception if we use the default parser. The exception
+    is because the default parser does not support the alias for tables.
+    The exception has been done on SDC-15822 and is checked on this test.
+    In case the peg parser is used on Oracle 19 the redo logs are well processed by the OracleCDC origin
+    and must produce an output record.
+
+    The pipeline looks like that:
+        OracleCDC >> Wiretap
+        OracleCDC >= Pipeline Finisher (finishes on TRUNCATE event)
+
+    For Oracle 19
+        Using Peg Parser:
+            Should works fine, produces n output records.
+        Not using the Peg Parser:
+            Should throw an exception that contains the JDBC-94 error.
+    For Oracle 11
+        Not supported by LogMiner so no output neither exception is expected, no matter if
+        peg parser is enabled or not.
+    """
+
+    connection = database.engine.connect()
+    db_version = _get_oracle_db_version(connection)
+    table_name = get_random_string(string.ascii_uppercase, 10)
+    # We create a table that contains an ADT type column that has a collection type, in this case an VARRAY
+    type_array_create = f'CREATE TYPE ARRAY_{table_name} AS VARRAY (1048576) of NUMBER'
+    type_create = f'CREATE TYPE TPE_{table_name} AS OBJECT (EX_ARRAY ARRAY_{table_name}, EX_VARCHAR VARCHAR2(60 BYTE))'
+    table_create = f'CREATE TABLE {table_name} (ID_EX NUMBER NOT NULL ENABLE, ADT_EX TPE_{table_name}, ' \
+        f'NAME_EX VARCHAR2(60 BYTE), CONSTRAINT PK_{table_name}_EX PRIMARY KEY (ID_EX))'
+    names_insert = ["INDURAIN","PANTANI","ULRICH"]
+    num_records = len(names_insert);
+
+    try:
+        connection.execute(type_array_create)
+        connection.execute(type_create)
+        connection.execute(table_create)
+        for i in range(num_records):
+            connection.execute(f'INSERT INTO {table_name} (ID_EX, ADT_EX, NAME_EX) '
+                               f"VALUES ({i},NULL,'{names_insert[i]}')")
+
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   buffer_locally=True,
+                                                   initial_change='LATEST',
+                                                   src_table_name=f'{table_name}%',
+                                                   unsupported_field_type='TO_ERROR',
+                                                   add_unsupported_fields_to_records=True,
+                                                   parse_sql_query=True,
+                                                   use_peg_parser_in_beta=peg_parser,
+                                                   on_record_error='STOP_PIPELINE',
+                                                   dictionary_source='DICT_FROM_REDO_LOGS')
+
+        wiretap = builder.add_wiretap()
+
+        finisher = builder.add_stage("Pipeline Finisher Executor")
+        finisher.on_record_error = 'DISCARD'
+        finisher.stage_record_preconditions = ["${record:eventType() == 'TRUNCATE'}"]
+
+        oracle_cdc >> wiretap.destination
+        oracle_cdc >= finisher
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        status = sdc_executor.start_pipeline(pipeline);
+        connection.execute(f"UPDATE {table_name} SET name_ex = 'TONI'");
+
+        if db_version[0] >= 19:
+            # Version 19 LogMiner has support for Redo Logs that contain ADT columns
+            if peg_parser:
+                # With peg parser we expect n output records with the update we did on the table
+                status.wait_for_pipeline_output_records_count(num_records)
+                sdc_executor.stop_pipeline(pipeline)
+                for i in range(num_records):
+                    assert wiretap.output_records[i].field['ID_EX'] == i
+                    assert wiretap.output_records[i].field['NAME_EX'] == 'TONI'
+            else:
+                # With default parser throws the exception SDC-15822"""
+                with pytest.raises(sdc_api.RunningError) as exception_info:
+                    status.wait_for_status('RUN_ERROR', timeout_sec=180)
+                assert 'JDBC_94 - ' in exception_info.value.text
+                assert 'UPDATE' in exception_info.value.text
+        else:
+            # Version 11 LogMiner does not support Redo Logs for ADT columns, we check we have no output records
+            connection.execute(f"TRUNCATE TABLE {table_name}");
+            status.wait_for_status('FINISHED')
+            assert len(wiretap.output_records) == 0
+
+    finally:
+        logger.info('Dropping types %s and %s and table %s ...',
+                    f'ARRAY_{table_name}', f'TPE_{table_name}', f'TABLE {table_name}')
+        connection.execute(f'DROP TABLE {table_name}')
+        connection.execute(f'DROP TYPE TPE_{table_name}')
+        connection.execute(f'DROP TYPE ARRAY_{table_name}')
+
+
 @sdc_min_version('3.0.0.0')
 @database('oracle')
 def test_event_startup(sdc_builder, sdc_executor, database):
@@ -1810,6 +1915,14 @@ def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bu
     return oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
                                             max_batch_size_in_records=batch_size,
                                             **kwargs)
+
+
+def _get_oracle_db_version(connection):
+    """Returns an array of numbers where the first position is the major version"""
+    db_version = connection.execute("SELECT version FROM product_component_version").fetchall()[0][0]
+    str_version_list = db_version.split(".")
+    version_list = [int(i) for i in str_version_list]
+    return version_list
 
 
 def _get_current_oracle_time(connection):
