@@ -89,6 +89,7 @@ def test_jms_consumer_origin(sdc_builder, sdc_executor, jms):
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
         connection.disconnect()
 
+
 @sdc_min_version("3.9.0")
 @jms('activemq')
 def test_jms_consumer_origin_durable_topic_sub(sdc_builder, sdc_executor, jms):
@@ -148,6 +149,7 @@ def test_jms_consumer_origin_durable_topic_sub(sdc_builder, sdc_executor, jms):
 
     finally:
         connection.disconnect()
+
 
 def get_dev_raw_data_source_stage_text_input(pipeline_builder):
     """Create Dev Raw Data Source stage with TEXT as input."""
@@ -242,3 +244,56 @@ def test_jms_producer_destination(sdc_builder, sdc_executor, jms, input_type, pr
     finally:
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
         connection.disconnect()
+
+
+# SDC-15870: Serialize JMS Headers into Record Headers
+@sdc_min_version("3.19.0")
+@jms('activemq')
+def test_jms_consumer_origin_headers(sdc_builder, sdc_executor, jms):
+    """Validating that JMS standard headers are serialized into Record headers."""
+    destination_name = get_random_string(ascii_letters, 5)
+    builder = sdc_builder.get_pipeline_builder()
+
+    # Configure the jms_consumer stage
+    origin = builder.add_stage('JMS Consumer')
+    origin.set_attributes(data_format='TEXT',
+                          jms_destination_name=destination_name,
+                          jms_destination_type=JMS_DESTINATION_TYPE,
+                          jms_initial_context_factory=JMS_INITIAL_CONTEXT_FACTORY,
+                          jndi_connection_factory=JNDI_CONNECTION_FACTORY,
+                          password=DEFAULT_PASSWORD,
+                          username=DEFAULT_USERNAME)
+
+    wiretap = builder.add_wiretap()
+    origin >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(jms)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = jms.client_connection
+
+    try:
+        logger.info('Sending messages to JMS using ActiveMQ client ...')
+        connection.start()
+        connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
+        connection.send(destination_name, 'something', persistent='false')
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = wiretap.output_records
+        assert len(records) == 1
+
+        # JMS Headers
+        assert 'jms.header.messageId' in records[0].header.values
+        assert 'jms.header.timestamp' in records[0].header.values
+        assert 'jms.header.correlationId' in records[0].header.values
+        assert 'jms.header.deliveryMode' in records[0].header.values
+        assert 'jms.header.redelivered' in records[0].header.values
+        assert 'jms.header.type' in records[0].header.values
+        assert 'jms.header.expiration' in records[0].header.values
+        assert 'jms.header.priority' in records[0].header.values
+    finally:
+        connection.send(destination_name, 'SHUTDOWN', persistent='false')
+        connection.disconnect()
+
