@@ -177,3 +177,54 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
     finally:
         # Clean up test data in ES
         elasticsearch.client.delete_index(es_index)
+
+
+@elasticsearch
+def test_index_and_template_with_plus_get_encoded(sdc_builder, sdc_executor, elasticsearch):
+    """
+    We want to test that we can search in documents of document types containing the '+' character
+    belonging to indices containing the '+' character.
+    So we will create an index with the '+' character and a document type with the '+' character.
+    Then we will search for fields in all in the index. If the '+' character is accepted
+    then we will get exactly the same document we created before since the newly created index
+    contains only it. The pipeline is as follows:
+
+    Elasticsearch >> Trash
+
+    This same test should pass for all Elasticsearch versions.
+    This test will fail for SDC version less than 3.19.0 which is expected.
+    """
+
+    doc_id = get_random_string(string.ascii_lowercase)
+    doc_index = f'{doc_id}id+x'
+    doc_type = f'{doc_id}tp+y'
+    doc = {"data": "DATA"}
+
+    client = elasticsearch.client.client
+    client.create(index=doc_index, doc_type=doc_type, id=doc_id, body=doc)
+
+    try:
+        builder = sdc_builder.get_pipeline_builder()
+
+        trash = builder.add_stage('Trash')
+
+        es = builder.add_stage('Elasticsearch', type='origin')
+        es.index = doc_index
+        es.mapping = doc_type
+        es.query = "{'query': {'match_all': {}}}"
+
+        es >> trash
+
+        pipeline = builder.build().configure_for_environment(elasticsearch)
+        pipeline.configuration["shouldRetry"] = False
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        snapshot_data = snapshot[es.instance_name].output[0].field
+
+        assert snapshot_data['_index'] == doc_index
+        assert snapshot_data['_id'] == doc_id
+        assert snapshot_data['_type'] == doc_type
+        assert snapshot_data['_source'] == doc
+    finally:
+        elasticsearch.client.delete_index(doc_index)
