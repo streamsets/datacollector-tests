@@ -1773,3 +1773,48 @@ def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
     assert len(data_from_csv_files[10:50]) == len(output_records_text_fields)
     assert sorted(data_from_csv_files[10:50]) == sorted(output_records_text_fields)
     assert output_records_text_fields[0] ==  'Porter Bode,Real-Estate Director,25007'
+
+
+@sdc_min_version('3.19.0')
+@pytest.mark.parametrize('idle_timeout, records_count, expected_num_files', [
+    ('${1 * SECONDS}', 100, '20\n'),
+    ('${1 * MINUTES}', 500, '2\n'),
+    ('${1 * HOURS}', 500, '1\n')
+])
+def test_local_fs_create_files(sdc_builder, sdc_executor, idle_timeout, records_count, expected_num_files):
+    """A simple basic test to see how many files create Local File System with different "Late Records Time Life" and
+    "Idle Timeout". Pipeline looks like:
+        dev_data_generator >> local_fs
+    """
+    tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=5, delay_between_batches=1000,
+                                      fields_to_generate=[{'field': 'a', 'type': 'STRING'},
+                                                          {'field': 'b', 'type': 'STRING'},
+                                                          {'field': 'c', 'type': 'STRING'}])
+
+    expression = pipeline_builder.add_stage('Expression Evaluator')
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='DELIMITED',
+                            directory_template=tmp_directory,
+                            idle_timeout=idle_timeout,
+                            late_record_time_limit_in_secs='${1 * SECONDS}')
+
+    dev_data_generator >> expression >> local_fs
+
+    pipeline = pipeline_builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(records_count)
+        sdc_executor.stop_pipeline(pipeline)
+
+        num_created_files = sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l')
+
+        assert num_created_files.stdout == expected_num_files
+    finally:
+        logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
+        sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
