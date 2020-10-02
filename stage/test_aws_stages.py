@@ -1265,7 +1265,7 @@ def test_sqs_no_read_access(sdc_builder, sdc_executor, aws):
                     "AWS": "*"
                 },
                 "Action": "SQS:*",
-                "Resource": "arn:aws:sqs:eu-west-1:316386816690:" + queue_name
+                "Resource": "arn:aws:sqs:*:316386816690:" + queue_name
             },
             {
                 "Sid": "Stmt1597739351356",
@@ -1274,7 +1274,7 @@ def test_sqs_no_read_access(sdc_builder, sdc_executor, aws):
                     "AWS": "*"
                 },
                 "Action": "sqs:ReceiveMessage",
-                "Resource": "arn:aws:sqs:eu-west-1:316386816690:" + queue_name
+                "Resource": "arn:aws:sqs:*:316386816690:" + queue_name
             }
         ]
     }
