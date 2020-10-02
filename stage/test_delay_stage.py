@@ -72,7 +72,7 @@ def test_delay_stage(sdc_builder, sdc_executor, ignore_records):
     assert expected_delay <= history.latest.metrics.timer('pipeline.batchProcessing.timer')._data.get('mean') <= expected_delay + delta
 
 
-@sdc_min_version('3.20.0')
+@sdc_min_version('3.19.0')
 def test_skip_delay_on_empty_batch_is_ignored_when_batches_are_not_empty(sdc_builder, sdc_executor):
     """
     Tests if there is a delay when a record batch and an event batch contain records and skip_delay_on_empty_batch

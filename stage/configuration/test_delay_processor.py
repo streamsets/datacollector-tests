@@ -31,7 +31,7 @@ def test_required_fields(sdc_builder, sdc_executor):
 
 
 @category('basic')
-@sdc_min_version('3.20.0')
+@sdc_min_version('3.19.0')
 @pytest.mark.parametrize('stage_attributes', [{'skip_delay_on_empty_batch': False}, {'skip_delay_on_empty_batch': True}])
 def test_skip_delay_on_empty_batch(sdc_builder, sdc_executor, stage_attributes):
     """
