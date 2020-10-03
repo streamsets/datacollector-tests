@@ -12,19 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 import logging
 import string
 
 import pytest
 import sqlalchemy
+from streamsets.testframework.environments.databases import MySqlDatabase
 from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(autouse=True)
+def cdc_check(database):
+    if isinstance(database, MySqlDatabase) and not database.is_cdc_enabled:
+            pytest.skip('Test only runs against MySQL with CDC enabled.')
+
+
 @database('mysql')
-def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database):
+def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_data):
     """Test that MySQL Binary Log Origin is able to correctly read a json column in a row coming from MySQL Binary Log
     (AKA CDC).
 
@@ -34,9 +42,6 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database):
     """
     table = None
     connection = None
-
-    if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against MySQL with CDC enabled.')
 
     try:
         # Create table.
@@ -74,26 +79,24 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database):
             assert record.field['Data']['json_column'].value == '{"a":123,"b":456}'
 
     finally:
-        # Drop table and Connection.
-        if table is not None:
-            logger.info('Dropping table %s in %s database...', table, database.type)
-            table.drop(database.engine)
+        if not keep_data:
+            # Drop table and Connection.
+            if table is not None:
+                logger.info('Dropping table %s in %s database...', table, database.type)
+                table.drop(database.engine)
 
-        if connection is not None:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
 
 @database('mysql')
-def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database):
+def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, keep_data):
     """Test that MySQL Binary Log Origin is able to resume offset after one run reading information in both runs
 
     Pipeline looks like:
         mysql_binary_log >> trash
     """
     connection = None
-
-    if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against MySQL with CDC enabled.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     sample_data = [f'Martin_{i}' for i in range(20)]
@@ -147,10 +150,97 @@ def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database):
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
-        # Drop table and Connection.
-        if table is not None:
-            logger.info('Dropping table %s in %s database...', table, database.type)
-            table.drop(database.engine)
 
-        if connection is not None:
-            connection.close()
+        if not keep_data:
+            # Drop table and Connection.
+            if table is not None:
+                logger.info('Dropping table %s in %s database...', table, database.type)
+                table.drop(database.engine)
+
+            if connection is not None:
+                connection.close()
+
+
+# SDC-15872: Disconnect MySQL Bin Log client if if it's not connected
+@database('mysql')
+def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
+    """Verify that we properly disconnect from the database on error (such as second slave with the same id)."""
+    table = None
+    connection = None
+
+    try:
+        # Create table.
+        connection = database.engine.connect()
+        table_name = get_random_string(string.ascii_lowercase, 20)
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False, autoincrement=False, quote=True),
+                                 quote=True)
+        table.create(database.engine)
+        connection.execute(table.insert(), {'id': 1})
+
+        # We need two pipelines that are using the same server id
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('MySQL Binary Log')
+        origin.set_attributes(start_from_beginning=True,
+                              server_id='1',
+                              include_tables=database.database + '.' + table_name)
+        wiretap1 = builder.add_wiretap()
+        origin >> wiretap1.destination
+        pipeline1 = builder.build().configure_for_environment(database)
+        pipeline1.configuration['shouldRetry'] = False
+        sdc_executor.add_pipeline(pipeline1)
+
+        # Create second pipeline (same logical pipeline though)
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('MySQL Binary Log')
+        origin.set_attributes(start_from_beginning=True,
+                              server_id='1',
+                              include_tables=database.database + '.' + table_name)
+        wiretap2 = builder.add_wiretap()
+        origin >> wiretap2.destination
+        pipeline2 = builder.build().configure_for_environment(database)
+        pipeline2.configuration['shouldRetry'] = False
+        sdc_executor.add_pipeline(pipeline2)
+
+        # 1) Start pipeline 1, wait until it consumes at least that one record
+        sdc_executor.start_pipeline(pipeline1).wait_for_pipeline_output_records_count(1)
+
+        # 2) Start pipeline 2 (while pipeline 1 is still running)
+        sdc_executor.start_pipeline(pipeline2)
+
+        # 3) Pipeline 1 should at this point fail (two different slaves with the same id)
+        time.sleep(5)
+        assert sdc_executor.get_pipeline_status(pipeline1).response.json().get('status') in ("RUN_ERROR", "RUNNING_ERROR")
+
+        # 4) Pipeline 2 can be stopped at this point
+        sdc_executor.stop_pipeline(pipeline2)
+
+        # 5) We start the first pipeline and insert data in 5-second interval, the pipeline should read all of them
+        # In order to see the problem with the left-over thread, we need to wait at least a minute.
+        sdc_executor.start_pipeline(pipeline1)
+        for i in range(2, 10):
+            time.sleep(10)
+            logger.info(f"Inserting {i}")
+            connection.execute(table.insert(), {'id': i})
+
+        # 6) Finally the pipeline should still be running and should process all 10 rows. Here is where
+        # a version without SDC-15872 should fail.
+        assert sdc_executor.get_pipeline_status(pipeline1).response.json().get('status') == "RUNNING"
+
+        # 7) Stop pipeline 1 and validate that we got all the records into the wiretap
+        sdc_executor.stop_pipeline(pipeline1)
+
+        records = wiretap1.output_records
+        assert len(records) == 9
+
+        for i in range(1, 10):
+            assert records[i-1].field['Data']['id'] == i
+    finally:
+        if not keep_data:
+            # Drop table and Connection.
+            if table is not None:
+                logger.info('Dropping table %s in %s database...', table, database.type)
+                table.drop(database.engine)
+
+            if connection is not None:
+                connection.close()
