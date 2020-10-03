@@ -107,23 +107,19 @@ def teardown_tables(database, table_names):
         table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(), autoload=True, autoload_with=db_engine)
         table.drop(db_engine)
 
+def get_name(val):
+    return val
 
 @database
 # lowercase for db compatibility (e.g. PostgreSQL)
-@pytest.mark.parametrize('table_name_characters', [string.ascii_lowercase, string.digits])
-@pytest.mark.parametrize('table_name_length', [14])
-@pytest.mark.parametrize('no_of_tables', [9])
-@pytest.mark.parametrize('number_of_threads', [1, 5])
-@pytest.mark.parametrize('per_batch_strategy', ["SWITCH_TABLES", "PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE"])
-@pytest.mark.parametrize('partitioning_mode', ["DISABLED", "BEST_EFFORT"])
+@pytest.mark.parametrize('threads', [1, 5])
+@pytest.mark.parametrize('per_batch_strategy', ["SWITCH_TABLES", "PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE"], ids=get_name)
+@pytest.mark.parametrize('partitioning_mode', ["DISABLED", "BEST_EFFORT"], ids=get_name)
 @pytest.mark.parametrize('non_incremental', [True, False])
 @pytest.mark.timeout(300)
 @sdc_min_version('2.5.0.0')
 def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
-                                          table_name_characters,
-                                          table_name_length,
-                                          no_of_tables,
-                                          number_of_threads,
+                                          threads,
                                           per_batch_strategy,
                                           partitioning_mode,
                                           non_incremental):
@@ -136,6 +132,7 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
             jdbc_multitable_consumer >> jdbc_query_dest
                                      >= stream_selector >> finisher
     """
+    no_of_tables = 9
 
     if non_incremental and Version(sdc_builder.version) < Version('3.0.0.0'):
         # non-incremental support was only added as of SDC 3.0.0.0
@@ -153,10 +150,10 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                       'partitionSize': PARTITION_SIZE}]
     if Version(sdc_builder.version) >= Version('3.0.0.0'):
         table_configs[0]['enableNonIncremental'] = non_incremental
-    jdbc_multitable_consumer.set_attributes(number_of_threads=number_of_threads,
+    jdbc_multitable_consumer.set_attributes(number_of_threads=threads,
                                             per_batch_strategy=per_batch_strategy,
-                                            maximum_pool_size=number_of_threads,
-                                            minimum_idle_connections=number_of_threads,
+                                            maximum_pool_size=threads,
+                                            minimum_idle_connections=threads,
                                             table_configs=table_configs)
 
     if partitioning_mode == 'BEST_EFFORT' and Version(sdc_builder.version) < Version('3.0.0.0'):
@@ -185,15 +182,11 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
     jdbc_multitable_consumer >> jdbc_query_dest
     jdbc_multitable_consumer >= finisher
 
-    non_inc = ', non-incremental' if non_incremental else ''
-    pipeline_name = (f'JDBC multitable consumer pipeline - {per_batch_strategy} batch strategy, '
-                     f'{number_of_threads} threads, {partitioning_mode} partitioning{non_inc}')
-    pipeline = pipeline_builder.build(pipeline_name).configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     # Generate random table names.
-    table_names = ['{}_{}'.format(get_random_string(table_name_characters, table_name_length).lower(), tableNo)
-                   for tableNo in range(0, no_of_tables)]
+    table_names = [f'{get_random_string(string.ascii_lowercase)}_{tableNo}' for tableNo in range(0, no_of_tables)]
 
     random.shuffle(table_names)
 
