@@ -94,7 +94,7 @@ def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, keep_dat
     """Test that MySQL Binary Log Origin is able to resume offset after one run reading information in both runs
 
     Pipeline looks like:
-        mysql_binary_log >> trash
+        mysql_binary_log >> wiretap
     """
     connection = None
 
@@ -112,9 +112,10 @@ def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, keep_dat
     mysql_binary_log.set_attributes(start_from_beginning=True,
                                     server_id='1',
                                     include_tables=f'{database.database}.{table_name}')
-    trash = pipeline_builder.add_stage('Trash')
 
-    mysql_binary_log >> trash
+    wiretap = pipeline_builder.add_wiretap()
+
+    mysql_binary_log >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -130,22 +131,20 @@ def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, keep_dat
                 connection.execute(f'INSERT INTO {table_name} (name) VALUES (\'{row}\')')
 
         # Run pipeline and verify output.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(10)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert [record.field['Data']['name']
-                for record in snapshot.snapshot_batches[0][mysql_binary_log.instance_name].output] == sample_data[:10]
+        assert [record.field['Data']['name'] for record in wiretap.output_records] == sample_data[:10]
 
         with database.engine.connect().execution_options(autocommit=True) as connection:
             for row in sample_data[10:20]:
                 connection.execute(f'INSERT INTO {table_name} (name) VALUES (\'{row}\')')
 
         # Run pipeline and verify output.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(10)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert [record.field['Data']['name']
-                for record in snapshot.snapshot_batches[0][mysql_binary_log.instance_name].output] == sample_data[10:20]
+        assert [record.field['Data']['name'] for record in wiretap.output_records] == sample_data
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
