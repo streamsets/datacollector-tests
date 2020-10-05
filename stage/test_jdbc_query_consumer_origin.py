@@ -213,7 +213,7 @@ def test_stored_procedure_postgresql(sdc_builder, sdc_executor, database, keep_d
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
             connection.execute(f"DROP TABLE IF EXISTS {table_name}")
-            connection.execute(f"DROP FUNCTION IF EXISTS {procedure_name}")
+            connection.execute(f"DROP FUNCTION IF EXISTS {procedure_name}()")
 
 
 @database('sqlserver')
