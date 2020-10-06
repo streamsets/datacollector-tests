@@ -95,7 +95,7 @@ def test_object_names(sdc_builder, sdc_executor, aws, test_name, s3_bucket):
 
 
 @aws('s3')
-def test_new_file_event(sdc_builder, sdc_executor, aws):
+def test_dataflow_events_new_file(sdc_builder, sdc_executor, aws):
     """
     Test that we receive an new-file event whenever we start reading a file.
     """
@@ -157,7 +157,7 @@ def test_new_file_event(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
-def test_no_more_data_event(sdc_builder, sdc_executor, aws):
+def test_dataflow_events_no_more_data(sdc_builder, sdc_executor, aws):
     """
     Test that an empty origin linked to a Pipeline Finisher Executor which ends the pipeline when
     a no-more-data is received actually emits this event.
