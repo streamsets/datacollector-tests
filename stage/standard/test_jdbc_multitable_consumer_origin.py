@@ -567,7 +567,6 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_n
 
         # And verify that we properly read that one record
         assert len(snapshot[origin].output) == 1
-        logger.error(f"KEYS: {snapshot[origin].output[0]}")
         # SDC Will escape field names with certain characters, but not always...
         if "$" in offset_name:
             assert snapshot[origin].output[0].field[f'"{offset_name}"'] == 1
