@@ -31,19 +31,117 @@ S3_BUCKET_NAMES = [
     ('maxsize', get_random_string(string.ascii_lowercase, 63)),
     ('lowercase', get_random_string(string.ascii_lowercase)),
     ('hypen', get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
-    ('dot', get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
+    ('period', get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
     ('digits', get_random_string(string.digits)),
     ('hexadecimal', get_random_string(string.hexdigits).lower())
 ]
 
 
+# Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
+S3_PATHS = [
+    ('lowercase', get_random_string(string.ascii_lowercase)),
+    ('uppercase', get_random_string(string.ascii_uppercase)),
+    ('letters', get_random_string(string.ascii_letters)),
+    ('digits', get_random_string(string.digits)),
+    ('hexadecimal', get_random_string(string.hexdigits).lower()),
+    ('forward_slash', get_random_string() + '/' + get_random_string()),
+    ('start_forward_slash', '/' + get_random_string()),
+    # ('end_forward_slash', get_random_string() + '/'), Not testing this case since it introduces a double forward slash
+    ('exclamation_point', get_random_string() + '!' + get_random_string()),
+    ('start_exclamation_point', '!' + get_random_string()),
+    ('end_exclamation_point', get_random_string() + '!'),
+    ('hypen', get_random_string() + '-' + get_random_string()),
+    ('start_hypen', '-' + get_random_string()),
+    ('end_hypen', get_random_string() + '-'),
+    ('underscore', get_random_string() + '_' + get_random_string()),
+    ('start_underscore', get_random_string() + '_'),
+    ('end_underscore', '_' + get_random_string()),
+    ('period', get_random_string() + '.' + get_random_string()),
+    ('start_period', '.' + get_random_string()),
+    ('end_period', get_random_string() + '.'),
+    ('asterisk', get_random_string() + '*' + get_random_string()),
+    ('start_asterisk', '*' + get_random_string()),
+    ('end_asterisk', get_random_string() + '*'),
+    ('dot', get_random_string() + '.' + get_random_string()),
+    ('start_dot', '.' + get_random_string()),
+    ('end_dot', get_random_string() + '.'),
+    ('single_quote', get_random_string() + '\'' + get_random_string()),
+    ('start_single_quote', '\'' + get_random_string()),
+    ('end_single_quote', get_random_string() + '\''),
+    ('open_parenthesis', get_random_string() + '(' + get_random_string()),
+    ('start_open_parenthesis', '(' + get_random_string()),
+    ('end_open_parenthesis', get_random_string() + '('),
+    ('close_parenthesis', get_random_string() + ')' + get_random_string()),
+    ('start_close_parenthesis', ')' + get_random_string()),
+    ('end_close_parenthesis', get_random_string() + ')'),
+]
+
+
 @aws('s3')
 @pytest.mark.parametrize('test_name, s3_bucket', S3_BUCKET_NAMES, ids=[i[0] for i in S3_BUCKET_NAMES])
-def test_object_names(sdc_builder, sdc_executor, aws, test_name, s3_bucket):
+def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucket):
     """
     Verify that we can respect all the documented buckets names possible
     """
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket,
+                             data_format='JSON',
+                             json_content='ARRAY_OBJECTS',
+                             prefix_pattern=f'{s3_key}*')
+
+    trash = builder.add_stage('Trash')
+
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    s3_origin >> trash
+    s3_origin >= pipeline_finished_executor
+
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+        # Insert objects into S3.
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
+
+        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).wait_for_finished().snapshot
+
+        output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
+
+        assert len(output_records_values) == 10
+        assert output_records_values == data
+    finally:
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
+        # Clean up S3.
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        client.delete_bucket(Bucket=s3_bucket)
+
+
+@aws('s3')
+@pytest.mark.parametrize('test_name, path_name', S3_PATHS, ids=[i[0] for i in S3_PATHS])
+def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name):
+    """
+    Verify that we can respect all the documented buckets names possible
+    """
+    s3_key = path_name
+    s3_bucket = get_random_string(string.ascii_lowercase)
 
     data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
 

@@ -31,15 +31,54 @@ S3_BUCKET_NAMES = [
     ('maxsize', get_random_string(string.ascii_lowercase, 63)),
     ('lowercase', get_random_string(string.ascii_lowercase)),
     ('hypen', get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
-    ('dot', get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
+    ('period', get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
     ('digits', get_random_string(string.digits)),
     ('hexadecimal', get_random_string(string.hexdigits).lower())
+]
+
+# Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
+S3_PATHS = [
+    ('lowercase', get_random_string(string.ascii_lowercase)),
+    ('uppercase', get_random_string(string.ascii_uppercase)),
+    ('letters', get_random_string(string.ascii_letters)),
+    ('digits', get_random_string(string.digits)),
+    ('hexadecimal', get_random_string(string.hexdigits).lower()),
+    ('forward_slash', get_random_string() + '/' + get_random_string()),
+    ('start_forward_slash', '/' + get_random_string()),
+    ('end_forward_slash', get_random_string() + '/'),
+    ('exclamation_point', get_random_string() + '!' + get_random_string()),
+    ('start_exclamation_point', '!' + get_random_string()),
+    ('end_exclamation_point', get_random_string() + '!'),
+    ('hypen', get_random_string() + '-' + get_random_string()),
+    ('start_hypen', '-' + get_random_string()),
+    ('end_hypen', get_random_string() + '-'),
+    ('underscore', get_random_string() + '_' + get_random_string()),
+    ('start_underscore', get_random_string() + '_'),
+    ('end_underscore', '_' + get_random_string()),
+    ('period', get_random_string() + '.' + get_random_string()),
+    ('start_period', '.' + get_random_string()),
+    ('end_period', get_random_string() + '.'),
+    ('asterisk', get_random_string() + '*' + get_random_string()),
+    ('start_asterisk', '*' + get_random_string()),
+    ('end_asterisk', get_random_string() + '*'),
+    ('dot', get_random_string() + '.' + get_random_string()),
+    ('start_dot', '.' + get_random_string()),
+    ('end_dot', get_random_string() + '.'),
+    ('single_quote', get_random_string() + '\'' + get_random_string()),
+    ('start_single_quote', '\'' + get_random_string()),
+    ('end_single_quote', get_random_string() + '\''),
+    ('open_parenthesis', get_random_string() + '(' + get_random_string()),
+    ('start_open_parenthesis', '(' + get_random_string()),
+    ('end_open_parenthesis', get_random_string() + '('),
+    ('close_parenthesis', get_random_string() + ')' + get_random_string()),
+    ('start_close_parenthesis', ')' + get_random_string()),
+    ('end_close_parenthesis', get_random_string() + ')'),
 ]
 
 
 @aws('s3')
 @pytest.mark.parametrize('test_name, s3_bucket_name', S3_BUCKET_NAMES, ids=[i[0] for i in S3_BUCKET_NAMES])
-def test_object_names(sdc_builder, sdc_executor, aws, test_name, s3_bucket_name):
+def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucket_name):
     """Test for S3 target stage. We do so by running a dev raw data source generator to S3 destination
     sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
     been ingested by the pipeline.
@@ -47,6 +86,58 @@ def test_object_names(sdc_builder, sdc_executor, aws, test_name, s3_bucket_name)
 
     s3_bucket = s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+    # Bucket name is inside the record itself
+    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(bucket=s3_bucket, data_format='JSON', partition_prefix=s3_key)
+
+    dev_raw_data_source >> s3_destination
+
+    s3_dest_pipeline = builder.build().configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_dest_pipeline)
+
+    client = aws.s3
+    try:
+        client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+
+        # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert json.loads(s3_contents) == json.loads(raw_str)
+
+    finally:
+        delete_keys = {'Objects': [{'Key': k['Key']}
+                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        client.delete_bucket(Bucket=s3_bucket)
+
+
+@aws('s3')
+@pytest.mark.parametrize('test_name, path_name', S3_PATHS, ids=[i[0] for i in S3_PATHS])
+def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name):
+    """Test for S3 target stage. We do so by running a dev raw data source generator to S3 destination
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been ingested by the pipeline.
+    """
+
+    s3_bucket = get_random_string(string.ascii_lowercase)
+    s3_key = path_name
 
     # Bucket name is inside the record itself
     raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
