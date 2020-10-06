@@ -257,13 +257,21 @@ def test_resume_offset(sdc_builder, sdc_executor, aws):
         sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_output_records_count(20)
         sdc_executor.stop_pipeline(s3_origin_pipeline)
 
+        first_iteration_records = [dict(f1=record.field['f1']) for record in wiretap.output_records]
+
+        assert len(first_iteration_records) != 0
+        assert all(element in total_data for element in first_iteration_records)
+
+        wiretap.reset()
+
         sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
 
-        records = [dict(f1=record.field['f1']) for record in wiretap.output_records]
+        second_iteration_records = [dict(f1=record.field['f1']) for record in wiretap.output_records]
 
-        assert len(records) == len(total_data)
-        assert all(element in records for element in total_data)
-        assert all(element in total_data for element in records)
+        assert len(second_iteration_records) != 0
+        assert len(second_iteration_records) + len(first_iteration_records) == len(total_data)
+        assert all(element in (second_iteration_records + first_iteration_records) for element in total_data)
+        assert all(element in total_data for element in (second_iteration_records + first_iteration_records))
 
     finally:
         # Clean up S3.
