@@ -15,10 +15,13 @@
 import http.client as httpclient
 import json
 import logging
+import os
 import pytest
 import requests
+import shutil
 import ssl
 import string
+import tempfile
 import time
 import urllib
 
@@ -777,6 +780,7 @@ def test_http_server_no_application_id(sdc_executor, http_server_pipeline):
     finally:
         sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
 
+
 @http
 @sdc_min_version("3.14.0")
 def test_http_server_multiple_application_ids(sdc_builder, sdc_executor):
@@ -823,6 +827,91 @@ def test_http_server_multiple_application_ids(sdc_builder, sdc_executor):
         assert resp.status == 403
     finally:
         sdc_executor.stop_pipeline(pipeline)
+
+
+@http
+@sdc_min_version("3.19.0")
+def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, sdc_executor, http_client):
+    """HTTP Client Origin using pagination with Keep All Fields config enabled writing on a LocalFS must
+    not repeat records on the file obtained. This tests the issue on ESC-999 (SDC-15893)"""
+    dataArr = {'metadata': 'Example', 'next_page':None, 'data':[
+        {'id': 0, 'name':"INDURAIN"},{'id': 1, 'name':"PANTANI"},{'id': 2, 'name':"ULRICH"} ]}
+    expected_data = json.dumps(dataArr)
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    logger.info('Temp directory is %s ...', tmp_directory)
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        http_source = builder.add_stage('HTTP Client', type='origin')
+        http_source.set_attributes(data_format='JSON', http_method='GET',
+                                   resource_url=mock_uri,
+                                   mode='BATCH',
+                                   pagination_mode='LINK_FIELD',
+                                   next_page_link_field="/next_page",
+                                   stop_condition="${record:value('/next_page') == null }",
+                                   result_field_path="/data",
+                                   keep_all_fields=True)
+        localfs = builder.add_stage('Local FS', type='destination')
+        localfs.set_attributes(data_format='JSON',
+                                json_content='MULTIPLE_OBJECTS',
+                                directory_template=tmp_directory,
+                                file_type='TEXT',
+                                files_prefix='example',
+                                files_suffix='txt')
+
+        http_source >> localfs
+
+        pipeline = builder.build(title='HTTP Client Origin Keep All Fields not repeating records when writing LocalFS')
+        sdc_executor.add_pipeline(pipeline)
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+        # Check the output on the snapshot
+        for value in snapshot.snapshot_batches[0][http_source.instance_name].output_lanes.values():
+            assert len(value) == 3
+            for i in range(3):
+                assert value[i].field['metadata']=='Example'
+                assert value[i].field['data']['id']==i
+                assert value[i].field['data']['name']==dataArr['data'][i]['name']
+
+        logger.info("Creating the second pipeline")
+
+        # 2nd pipeline to read the file
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory', type='origin')
+        directory.set_attributes(batch_wait_time_in_secs=1,
+                             data_format='JSON',
+                             files_directory=tmp_directory,
+                             file_name_pattern='example_*',
+                             file_name_pattern_mode='GLOB',
+                             json_content='MULTIPLE_OBJECTS',
+                             batch_size_in_recs=10)
+
+        trash = pipeline_builder.add_stage('Trash')
+
+        directory >> trash
+
+        pipeline_directory = pipeline_builder.build(title='HTTP Client Origin Keep All Fields not repeating records when writing LocalFS'
+                                       ' (Read the file)')
+        sdc_executor.add_pipeline(pipeline_directory)
+        snapshot = sdc_executor.capture_snapshot(pipeline_directory, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline_directory)
+        records = snapshot.snapshot_batches[0][directory.instance_name].output
+        assert len(value) == 3
+        for i in range(3):
+            assert records[i].field['metadata']=='Example'
+            assert records[i].field['data']['id']==i
+            assert records[i].field['data']['name']==dataArr['data'][i]['name']
+    finally:
+        http_mock.delete_mock()
+        logger.info("Removing tmp folder: %s", tmp_directory)
+        if os.path.exists(tmp_directory) and os.path.isdir(tmp_directory):
+            shutil.rmtree(tmp_directory)
+
 
 @http
 @sdc_min_version("3.16.0")
