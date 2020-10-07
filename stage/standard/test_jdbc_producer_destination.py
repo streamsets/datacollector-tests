@@ -113,7 +113,10 @@ DATA_TYPES_ORACLE = [
     ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'long', '2020-01-01 10:00:00.000+0000'),
     ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
     ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'timestamp', datetime.datetime(2020, 1, 1, 10, 0)),
-    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'timestamp with local time zone', datetime.datetime(2020, 1, 1, 3, 0)),
+#  This test is disabled because it's timezone dependent (you run on local host it will return different value then
+#  on Jenkins, ...). Which is actually correct - the type is after all "local timezone" and is always converted by
+#  the Oracle database. We can however insert the data to this type.
+#    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'timestamp with local time zone', datetime.datetime(2020, 1, 1, 3, 0)),
     # String
     ('string', 'STRING', 'char(15)', 'string         '),
     ('string', 'STRING', 'varchar(15)', 'string'),
