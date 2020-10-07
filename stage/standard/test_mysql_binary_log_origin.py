@@ -17,11 +17,20 @@ import string
 
 import pytest
 import sqlalchemy
+import random
 from streamsets.testframework.environments.databases import MySqlDatabase, MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+
+# User random server id for each tests, this way one failing test won't cause problems in other tests
+@pytest.fixture(scope='function')
+def server_id():
+    server_id = random.randint(1, 2147483647)
+    logger.info(f"Generated server id {server_id}")
+    return server_id
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +87,7 @@ DATA_TYPES = [
 @sdc_min_version('3.0.0.0')
 @database('mysql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES, ids=[i[0] for i in DATA_TYPES])
-def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
+def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, server_id, keep_data):
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
 
@@ -100,7 +109,7 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('MySQL Binary Log')
         origin.start_from_beginning = True
-        origin.server_id = '1'
+        origin.server_id = f"{server_id}"
         origin.include_tables = database.database + '.' + table_name
 
         trash = builder.add_stage('Trash')
@@ -150,12 +159,12 @@ OBJECT_NAMES = [
 ]
 @database('mysql')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
-def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, offset_name, keep_data):
+def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, offset_name, server_id, keep_data):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('MySQL Binary Log')
     origin.start_from_beginning = True
-    origin.server_id = '1'
+    origin.server_id = f"{server_id}"
     origin.include_tables = database.database + '.' + table_name
 
     trash = builder.add_stage('Trash')
@@ -193,7 +202,7 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
 
 
 @database('mysql')
-def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
+def test_multiple_batches(sdc_builder, sdc_executor, database, server_id, keep_data):
     max_batch_size = 1000
     batches = 50
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -210,7 +219,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
 
     origin = builder.add_stage('MySQL Binary Log')
     origin.start_from_beginning = True
-    origin.server_id = '1'
+    origin.server_id = f"{server_id}"
     origin.include_tables = database.database + '.' + table_name
 
     wiretap = builder.add_wiretap()
@@ -254,7 +263,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
 
 
 @database('mysql')
-def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
+def test_resume_offset(sdc_builder, sdc_executor, database, server_id, keep_data):
     iterations = 3
     records_per_iteration = 10
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -271,7 +280,7 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
 
     origin = builder.add_stage('MySQL Binary Log')
     origin.start_from_beginning = True
-    origin.server_id = '1'
+    origin.server_id = f"{server_id}"
     origin.include_tables = database.database + '.' + table_name
 
     wiretap = builder.add_wiretap()

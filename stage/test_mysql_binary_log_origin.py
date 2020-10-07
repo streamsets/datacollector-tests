@@ -14,6 +14,7 @@
 
 import time
 import logging
+import random
 import string
 
 import pytest
@@ -24,6 +25,13 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+# User random server id for each tests, this way one failing test won't cause problems in other tests
+@pytest.fixture(scope='function')
+def server_id():
+    server_id = random.randint(1, 2147483647)
+    logger.info(f"Generated server id {server_id}")
+    return server_id
+
 
 @pytest.fixture(autouse=True)
 def cdc_check(database):
@@ -32,7 +40,7 @@ def cdc_check(database):
 
 
 @database('mysql')
-def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_data):
+def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, server_id, keep_data):
     """Test that MySQL Binary Log Origin is able to correctly read a json column in a row coming from MySQL Binary Log
     (AKA CDC).
 
@@ -60,7 +68,7 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_
         pipeline_builder = sdc_builder.get_pipeline_builder()
         mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
         mysql_binary_log.set_attributes(start_from_beginning=True,
-                                        server_id='1',
+                                        server_id=f"{server_id}",
                                         include_tables=database.database + '.' + table_name)
         trash = pipeline_builder.add_stage('Trash')
 
@@ -90,7 +98,7 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_
 
 
 @database('mysql')
-def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, keep_data):
+def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, server_id, keep_data):
     """Test that MySQL Binary Log Origin is able to resume offset after one run reading information in both runs
 
     Pipeline looks like:
@@ -110,7 +118,7 @@ def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, keep_dat
     pipeline_builder = sdc_builder.get_pipeline_builder()
     mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
     mysql_binary_log.set_attributes(start_from_beginning=True,
-                                    server_id='1',
+                                    server_id=f"{server_id}",
                                     include_tables=f'{database.database}.{table_name}')
 
     wiretap = pipeline_builder.add_wiretap()
@@ -162,7 +170,7 @@ def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, keep_dat
 
 # SDC-15872: Disconnect MySQL Bin Log client if if it's not connected
 @database('mysql')
-def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
+def test_disconnect_on_error(sdc_builder, sdc_executor, database, server_id, keep_data):
     """Verify that we properly disconnect from the database on error (such as second slave with the same id)."""
     table = None
     connection = None
@@ -181,7 +189,7 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('MySQL Binary Log')
         origin.set_attributes(start_from_beginning=True,
-                              server_id='1',
+                              server_id=f"{server_id}",
                               include_tables=database.database + '.' + table_name)
         wiretap1 = builder.add_wiretap()
         origin >> wiretap1.destination
@@ -193,7 +201,7 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('MySQL Binary Log')
         origin.set_attributes(start_from_beginning=True,
-                              server_id='1',
+                              server_id=f"{server_id}",
                               include_tables=database.database + '.' + table_name)
         wiretap2 = builder.add_wiretap()
         origin >> wiretap2.destination
