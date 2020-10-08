@@ -966,8 +966,7 @@ def test_multiple_values_behavior(sdc_builder, sdc_executor, stage_attributes, h
             assert [list(record.field.values())[0] for record in snapshot_records] == records
 
     finally:
-        pass
-        # http_mock.delete_mock()
+        http_mock.delete_mock()
 
 
 @stub
