@@ -5,6 +5,7 @@ from pretenders.common.constants import FOREVER
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import http
 from streamsets.testframework.utils import get_random_string
+import string
 
 
 @stub
@@ -889,12 +890,84 @@ def test_multi_character_line_delimiter(sdc_builder, sdc_executor, stage_attribu
     pass
 
 
-@stub
 @pytest.mark.parametrize('stage_attributes', [{'multiple_values_behavior': 'ALL_AS_LIST'},
                                               {'multiple_values_behavior': 'FIRST_ONLY'},
                                               {'multiple_values_behavior': 'SPLIT_INTO_MULTIPLE_RECORDS'}])
-def test_multiple_values_behavior(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_multiple_values_behavior(sdc_builder, sdc_executor, stage_attributes, http_client):
+    """Test HTTP Lookup Processor for various HTTP methods. We do so by
+    sending a request to a pre-defined HTTP server endpoint
+    (testPostJsonEndpoint) and getting expected data. The pipeline looks like:
+
+        dev_raw_data_source >> http_client_processor >> trash
+    """
+    multiple_values_behavior = stage_attributes['multiple_values_behavior']
+    records = [
+        {
+            'city': 'San Francisco',
+            'latitude': '37.7576948',
+            'longitude': '-122.4726194'
+        },
+        {
+            'city': 'Barcelona',
+            'latitude': '41.3851',
+            'longitude': '2.1734'
+        },
+        {
+            'city': 'Chicago',
+            'latitude': '41.8781',
+            'longitude': '87.6298'
+        }
+    ]
+    data = '\n'.join([json.dumps(record) for record in records])
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    http_mock.when(
+        rule=f'GET /{mock_path}'
+    ).reply(
+        body=data,
+        status=200,
+        times=FOREVER
+    )
+    mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data='{}')
+    http_client_processor = builder.add_stage('HTTP Client', type='processor')
+    # for POST/PATCH, we post 'raw_data' and expect 'expected_dict' as response data
+    http_client_processor.set_attributes(
+        resource_url=mock_uri,
+        output_field='/',
+        multiple_values_behavior=multiple_values_behavior,
+        http_method='GET',
+        data_format='JSON'
+    )
+    trash = builder.add_stage('Trash')
+
+    dev_raw_data_source >> http_client_processor >> trash
+    pipeline = builder.build(
+        title=f'HTTP Lookup Processor Multiple Values Behavior {multiple_values_behavior} pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.stop_pipeline(pipeline)
+
+        snapshot_records = snapshot[http_client_processor.instance_name].output
+        if multiple_values_behavior == 'ALL_AS_LIST':
+            assert len(snapshot_records) == 1
+            assert list(snapshot_records[0].field.values())[0] == records
+        elif multiple_values_behavior == 'FIRST_ONLY':
+            assert len(snapshot_records) == 1
+            assert list(snapshot_records[0].field.values())[0] == records[0]
+        else:
+            assert len(snapshot_records) == 3
+            assert [list(record.field.values())[0] for record in snapshot_records] == records
+
+    finally:
+        pass
+        # http_mock.delete_mock()
 
 
 @stub
