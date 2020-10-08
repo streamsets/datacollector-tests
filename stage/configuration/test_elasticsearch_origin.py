@@ -1,6 +1,10 @@
 import pytest
+import string
 
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import elasticsearch
+from streamsets.testframework.utils import get_random_string
+from streamsets.sdk.exceptions import ValidationError
 
 
 @stub
@@ -92,9 +96,72 @@ def test_on_record_error(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-def test_query(sdc_builder, sdc_executor):
-    pass
+@elasticsearch
+@pytest.mark.parametrize('test_data', [
+    {'error': True, 'query': '{"query": {"matchAll": {}}}', 'error_code': 'ELASTICSEARCH_41'},
+    {'error': True, 'query': 'INVALID_JSON', 'error_code': 'ELASTICSEARCH_34'},
+    {'error': False, 'query': '{"query": {"match_all": {}}, "sort": ["number"]}', 'error_code': None}])
+def test_query(sdc_builder, sdc_executor, elasticsearch, test_data):
+    """
+    We will test a valid query containing an additional field apart from the query field.
+    In the validate API, only the query field is allowed, though in the search API other fields may be used,
+    e.g. the sort field. Here we want to test that if a valid query contains additional fields the origin doesn't break.
+
+    We also want to test that the validation fails if a query is invalid or a query JSON is not a valid object itself.
+
+    The pipeline is as follows:
+
+    Elasticsearch >> Trash
+
+    """
+
+    index = get_random_string(string.ascii_lowercase)
+    doc_count = 10
+
+    def generator():
+        for i in range(0, doc_count):
+            yield {
+                "_index": index,
+                "_type": "data",
+                "_source": {"number": i + 1}
+            }
+
+    elasticsearch.client.bulk(generator())
+
+    try:
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('Elasticsearch', type='origin')
+        origin.index = index
+        origin.query = test_data['query']
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(elasticsearch)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        if test_data['error']:
+            with pytest.raises(ValidationError) as e:
+                sdc_executor.validate_pipeline(pipeline)
+
+            assert e.value.issues['issueCount'] == 1
+            assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find(test_data['error_code']) != -1
+
+        else:
+            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+
+            assert len(snapshot[origin].output) == doc_count
+
+            for i in range(0, doc_count):
+                record = snapshot[origin].output[i]
+                assert record.field['_index'] == index
+                assert record.field['_source'] == {"number": i + 1}
+
+    finally:
+        elasticsearch.client.delete_index(index)
 
 
 @stub
