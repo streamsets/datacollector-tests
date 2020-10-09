@@ -43,3 +43,35 @@ def test_pipeline_start_with_parameters(sdc_builder, sdc_executor):
     assert pipeline_status['attributes']['RUNTIME_PARAMETERS']['toField'] == '/changedField'
 
     sdc_executor.stop_pipeline(pipeline)
+
+
+# SDC-15923: NullPointerException if using str:regExCapture in Pipeline parameters
+def test_el_using_variables(sdc_builder, sdc_executor):
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.data_format = 'JSON'
+    source.raw_data = '{"id":1}'
+    source.stop_after_first_batch = True
+
+    evaluator = builder.add_stage('Expression Evaluator')
+    evaluator.field_expressions = [{
+        'fieldToSet': '/out',
+        'expression': "${PARAM}"
+    }]
+
+    wiretap = builder.add_wiretap()
+
+    source >> evaluator >> wiretap.destination
+
+    pipeline = builder.build()
+    pipeline.add_parameters(PARAM='${str:regExCapture("argument1 false","f.+",0)}')
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline)
+
+    records = wiretap.output_records
+    assert len(records) == 1
+
+    assert records[0].field['out'] == "false"
+
