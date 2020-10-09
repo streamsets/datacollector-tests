@@ -99,6 +99,9 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
     connection = None
 
     try:
+        server_id = _get_server_id()
+        initial_offset = _get_initial_offset(database)
+
         # Create table.
         connection = database.engine.connect()
         table_name = get_random_string(string.ascii_lowercase, 20)
@@ -111,9 +114,8 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
         # We need two pipelines that are using the same server id
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('MySQL Binary Log')
-        origin.set_attributes(
-                              initial_offset=_get_initial_offset(database),
-                              server_id=_get_server_id(),
+        origin.set_attributes(initial_offset=initial_offset,
+                              server_id=server_id,
                               include_tables=database.database + '.' + table_name)
         wiretap1 = builder.add_wiretap()
         origin >> wiretap1.destination
@@ -124,9 +126,8 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
         # Create second pipeline (same logical pipeline though)
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('MySQL Binary Log')
-        origin.set_attributes(
-                              initial_offset=_get_initial_offset(database),
-                              server_id=_get_server_id(),
+        origin.set_attributes(initial_offset=initial_offset,
+                              server_id=server_id,
                               include_tables=database.database + '.' + table_name)
         wiretap2 = builder.add_wiretap()
         origin >> wiretap2.destination
