@@ -1,11 +1,11 @@
 import json
+import string
 
 import pytest
 from pretenders.common.constants import FOREVER
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import http
 from streamsets.testframework.utils import get_random_string
-import string
 
 
 @stub
@@ -890,6 +890,7 @@ def test_multi_character_line_delimiter(sdc_builder, sdc_executor, stage_attribu
     pass
 
 
+@http
 @pytest.mark.parametrize('stage_attributes', [{'multiple_values_behavior': 'ALL_AS_LIST'},
                                               {'multiple_values_behavior': 'FIRST_ONLY'},
                                               {'multiple_values_behavior': 'SPLIT_INTO_MULTIPLE_RECORDS'}])
