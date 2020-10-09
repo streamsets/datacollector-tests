@@ -25,13 +25,6 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-# User random server id for each tests, this way one failing test won't cause problems in other tests
-@pytest.fixture(scope='function')
-def server_id():
-    server_id = random.randint(1, 2147483647)
-    logger.info(f"Generated server id {server_id}")
-    return server_id
-
 
 @pytest.fixture(autouse=True)
 def cdc_check(database):
@@ -40,7 +33,7 @@ def cdc_check(database):
 
 
 @database('mysql')
-def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, server_id, keep_data):
+def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_data):
     """Test that MySQL Binary Log Origin is able to correctly read a json column in a row coming from MySQL Binary Log
     (AKA CDC).
 
@@ -67,8 +60,9 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, serve
         # Create Pipeline.
         pipeline_builder = sdc_builder.get_pipeline_builder()
         mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
-        mysql_binary_log.set_attributes(start_from_beginning=True,
-                                        server_id=f"{server_id}",
+        mysql_binary_log.set_attributes(
+                                        initial_offset=_get_initial_offset(database),
+                                        server_id=_get_server_id(),
                                         include_tables=database.database + '.' + table_name)
         trash = pipeline_builder.add_stage('Trash')
 
@@ -97,80 +91,9 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, serve
                 connection.close()
 
 
-@database('mysql')
-def test_mysql_bin_log_stop_resume(sdc_builder, sdc_executor, database, server_id, keep_data):
-    """Test that MySQL Binary Log Origin is able to resume offset after one run reading information in both runs
-
-    Pipeline looks like:
-        mysql_binary_log >> wiretap
-    """
-    connection = None
-
-    table_name = get_random_string(string.ascii_lowercase, 20)
-    sample_data = [f'Martin_{i}' for i in range(20)]
-
-    table = sqlalchemy.Table(table_name,
-                             sqlalchemy.MetaData(),
-                             sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-                             sqlalchemy.Column('name', sqlalchemy.String(20)))
-
-    # Create Pipeline.
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
-    mysql_binary_log.set_attributes(start_from_beginning=True,
-                                    server_id=f"{server_id}",
-                                    include_tables=f'{database.database}.{table_name}')
-
-    wiretap = pipeline_builder.add_wiretap()
-
-    mysql_binary_log >> wiretap.destination
-
-    pipeline = pipeline_builder.build().configure_for_environment(database)
-    sdc_executor.add_pipeline(pipeline)
-
-    try:
-        # Create table.
-        connection = database.engine.connect()
-
-        table.create(database.engine)
-
-        with database.engine.connect().execution_options(autocommit=True) as connection:
-            for row in sample_data[:10]:
-                connection.execute(f'INSERT INTO {table_name} (name) VALUES (\'{row}\')')
-
-        # Run pipeline and verify output.
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(10)
-        sdc_executor.stop_pipeline(pipeline)
-
-        assert [record.field['Data']['name'] for record in wiretap.output_records] == sample_data[:10]
-
-        with database.engine.connect().execution_options(autocommit=True) as connection:
-            for row in sample_data[10:20]:
-                connection.execute(f'INSERT INTO {table_name} (name) VALUES (\'{row}\')')
-
-        # Run pipeline and verify output.
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(10)
-        sdc_executor.stop_pipeline(pipeline)
-
-        assert [record.field['Data']['name'] for record in wiretap.output_records] == sample_data
-
-    finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
-
-        if not keep_data:
-            # Drop table and Connection.
-            if table is not None:
-                logger.info('Dropping table %s in %s database...', table, database.type)
-                table.drop(database.engine)
-
-            if connection is not None:
-                connection.close()
-
-
 # SDC-15872: Disconnect MySQL Bin Log client if if it's not connected
 @database('mysql')
-def test_disconnect_on_error(sdc_builder, sdc_executor, database, server_id, keep_data):
+def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
     """Verify that we properly disconnect from the database on error (such as second slave with the same id)."""
     table = None
     connection = None
@@ -188,8 +111,9 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, server_id, kee
         # We need two pipelines that are using the same server id
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('MySQL Binary Log')
-        origin.set_attributes(start_from_beginning=True,
-                              server_id=f"{server_id}",
+        origin.set_attributes(
+                              initial_offset=_get_initial_offset(database),
+                              server_id=_get_server_id(),
                               include_tables=database.database + '.' + table_name)
         wiretap1 = builder.add_wiretap()
         origin >> wiretap1.destination
@@ -200,8 +124,9 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, server_id, kee
         # Create second pipeline (same logical pipeline though)
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('MySQL Binary Log')
-        origin.set_attributes(start_from_beginning=True,
-                              server_id=f"{server_id}",
+        origin.set_attributes(
+                              initial_offset=_get_initial_offset(database),
+                              server_id=_get_server_id(),
                               include_tables=database.database + '.' + table_name)
         wiretap2 = builder.add_wiretap()
         origin >> wiretap2.destination
@@ -251,3 +176,30 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, server_id, kee
 
             if connection is not None:
                 connection.close()
+
+
+def _get_server_id():
+    server_id = str(random.randint(1, 2147483647))
+    logger.info(f"Generated server id {server_id}")
+    return server_id
+
+
+def _get_initial_offset(database):
+    """Return current position of the bin log that can be used for Initial Offset configuration."""
+    connection = database.engine.connect()
+    rs = None
+
+    try:
+        rs = connection.execute("SHOW MASTER STATUS")
+        rows = [row for row in rs]
+
+        assert len(rows) == 1
+        offset = f"{rows[0][0]}:{rows[0][1]}"
+        logger.info(f"Generated starting offset: {offset}")
+        return offset
+    finally:
+        if rs is not None:
+            rs.close()
+
+        if connection is not None:
+            connection.close()

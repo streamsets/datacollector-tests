@@ -25,14 +25,6 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 
 
-# User random server id for each tests, this way one failing test won't cause problems in other tests
-@pytest.fixture(scope='function')
-def server_id():
-    server_id = random.randint(1, 2147483647)
-    logger.info(f"Generated server id {server_id}")
-    return server_id
-
-
 @pytest.fixture(autouse=True)
 def preflight_check(database):
     if isinstance(database, MySqlDatabase) and not database.is_cdc_enabled:
@@ -87,11 +79,25 @@ DATA_TYPES = [
 @sdc_min_version('3.0.0.0')
 @database('mysql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES, ids=[i[0] for i in DATA_TYPES])
-def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, server_id, keep_data):
+def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
 
     try:
+        # Create Pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('MySQL Binary Log')
+        origin.initial_offset = _get_initial_offset(database)
+        origin.server_id = _get_server_id()
+        origin.include_tables = database.database + '.' + table_name
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
         # Create table
         connection.execute(f"""
             CREATE TABLE {table_name}(
@@ -105,19 +111,6 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         # And a null
         connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
 
-        # Create Pipeline.
-        builder = sdc_builder.get_pipeline_builder()
-        origin = builder.add_stage('MySQL Binary Log')
-        origin.start_from_beginning = True
-        origin.server_id = f"{server_id}"
-        origin.include_tables = database.database + '.' + table_name
-
-        trash = builder.add_stage('Trash')
-
-        origin >> trash
-
-        pipeline = builder.build().configure_for_environment(database)
-        sdc_executor.add_pipeline(pipeline)
 
         snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
@@ -159,12 +152,12 @@ OBJECT_NAMES = [
 ]
 @database('mysql')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
-def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, offset_name, server_id, keep_data):
+def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, offset_name, keep_data):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('MySQL Binary Log')
-    origin.start_from_beginning = True
-    origin.server_id = f"{server_id}"
+    origin.initial_offset = _get_initial_offset(database)
+    origin.server_id = _get_server_id()
     origin.include_tables = database.database + '.' + table_name
 
     trash = builder.add_stage('Trash')
@@ -202,7 +195,7 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
 
 
 @database('mysql')
-def test_multiple_batches(sdc_builder, sdc_executor, database, server_id, keep_data):
+def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
     max_batch_size = 1000
     batches = 50
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -218,8 +211,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, server_id, keep_d
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('MySQL Binary Log')
-    origin.start_from_beginning = True
-    origin.server_id = f"{server_id}"
+    origin.initial_offset = _get_initial_offset(database)
+    origin.server_id = _get_server_id()
     origin.include_tables = database.database + '.' + table_name
 
     wiretap = builder.add_wiretap()
@@ -263,7 +256,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
 
 
 @database('mysql')
-def test_resume_offset(sdc_builder, sdc_executor, database, server_id, keep_data):
+def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     iterations = 3
     records_per_iteration = 10
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -279,8 +272,8 @@ def test_resume_offset(sdc_builder, sdc_executor, database, server_id, keep_data
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('MySQL Binary Log')
-    origin.start_from_beginning = True
-    origin.server_id = f"{server_id}"
+    origin.initial_offset = _get_initial_offset(database)
+    origin.server_id = _get_server_id()
     origin.include_tables = database.database + '.' + table_name
 
     wiretap = builder.add_wiretap()
@@ -320,3 +313,30 @@ def test_resume_offset(sdc_builder, sdc_executor, database, server_id, keep_data
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
             table.drop(database.engine)
+
+
+def _get_server_id():
+    server_id = str(random.randint(1, 2147483647))
+    logger.info(f"Generated server id {server_id}")
+    return server_id
+
+
+def _get_initial_offset(database):
+    """Return current position of the bin log that can be used for Initial Offset configuration."""
+    connection = database.engine.connect()
+    rs = None
+
+    try:
+        rs = connection.execute("SHOW MASTER STATUS")
+        rows = [row for row in rs]
+
+        assert len(rows) == 1
+        offset = f"{rows[0][0]}:{rows[0][1]}"
+        logger.info(f"Generated starting offset: {offset}")
+        return offset
+    finally:
+        if rs is not None:
+            rs.close()
+
+        if connection is not None:
+            connection.close()
