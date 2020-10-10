@@ -3,6 +3,7 @@ import logging
 
 import pytest
 import sqlalchemy
+from streamsets.testframework.environments.databases import MySqlDatabase
 from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
@@ -112,8 +113,8 @@ def test_required_fields(sdc_builder, sdc_executor, database, keep_data):
     DATA = [{'id': 1, 'name': 'Dima'}, {'name': 'Jarcec'}, {'id': 3, 'name': 'Arvind'}]
     EXPECTED_OUTPUT = [(1, 'Dima'), (3, 'Arvind')]
 
-    COLUMNS = [sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, autoincrement=False),
-               sqlalchemy.Column('name', sqlalchemy.String(100))]
+    COLUMNS = [sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, autoincrement=False, quote=True),
+               sqlalchemy.Column('name', sqlalchemy.String(100), quote=True)]
     # For postgres/oracle database If table's  name are mixed-case then it is required to put quotes in table's name to
     # do any operation.Data collector does not add quotes and hence we are creating table name with lower case letters.
     table_name = get_random_string().lower()
@@ -126,10 +127,18 @@ def test_required_fields(sdc_builder, sdc_executor, database, keep_data):
     jdbc_producer = pipeline_builder.add_stage('JDBC Producer').set_attributes(default_operation='INSERT',
                                                                                field_to_column_mapping=[],
                                                                                required_fields=['/id'],
-                                                                               table_name=table_name)
+                                                                               table_name=table_name,
+                                                                               enclose_object_names=True)
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     dev_raw_data_source >> [jdbc_producer, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    # Work-arounding STF behavior of upper-casing table name configuration
+    jdbc_producer.table_name = table_name
+    # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
+    if isinstance(database, MySqlDatabase):
+        jdbc_producer.init_query = "SET sql_mode=ANSI_QUOTES"
+
     sdc_executor.add_pipeline(pipeline)
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -137,7 +146,6 @@ def test_required_fields(sdc_builder, sdc_executor, database, keep_data):
             result = connection.execute(table.select())
             data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
 
-        error_records = snapshot[jdbc_producer].error_records
         assert (data_from_database == EXPECTED_OUTPUT and
                 ['COMMON_0001'] == [error_record.header['errorCode']
                                     for error_record in snapshot[jdbc_producer].error_records])
@@ -205,6 +213,7 @@ def create_table(database, columns, table_name):
     table = sqlalchemy.Table(
         table_name,
         metadata,
+        quote=True,
         *columns
     )
     logger.info('Creating table %s in %s database ...', table_name, database.type)
