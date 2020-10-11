@@ -14,8 +14,8 @@
 
 import logging
 import string
-
 import pytest
+
 from streamsets.testframework.markers import elasticsearch, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -206,25 +206,26 @@ def test_index_and_template_with_plus_get_encoded(sdc_builder, sdc_executor, ela
     try:
         builder = sdc_builder.get_pipeline_builder()
 
-        trash = builder.add_stage('Trash')
-
         es = builder.add_stage('Elasticsearch', type='origin')
         es.index = doc_index
         es.mapping = doc_type
         es.query = "{'query': {'match_all': {}}}"
 
-        es >> trash
+        wiretap = builder.add_wiretap()
+        pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+        es >> [wiretap.destination, pipeline_finisher]
 
         pipeline = builder.build().configure_for_environment(elasticsearch)
         pipeline.configuration["shouldRetry"] = False
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        snapshot_data = snapshot[es.instance_name].output[0].field
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_data = [record.field for record in wiretap.output_records]
 
-        assert snapshot_data['_index'] == doc_index
-        assert snapshot_data['_id'] == doc_id
-        assert snapshot_data['_type'] == doc_type
-        assert snapshot_data['_source'] == doc
+        assert len(output_data) == 1
+        assert output_data[0]['_index'] == doc_index
+        assert output_data[0]['_id'] == doc_id
+        assert output_data[0]['_type'] == doc_type
+        assert output_data[0]['_source'] == doc
     finally:
         elasticsearch.client.delete_index(doc_index)
