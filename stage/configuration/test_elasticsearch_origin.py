@@ -1,10 +1,16 @@
-import pytest
 import string
+import logging
+import pytest
+import os
 
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import elasticsearch
 from streamsets.testframework.utils import get_random_string
-from streamsets.sdk.exceptions import ValidationError
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 @stub
@@ -49,9 +55,59 @@ def test_incremental_mode(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-def test_index(sdc_builder, sdc_executor):
-    pass
+@elasticsearch
+@pytest.mark.parametrize('valid_index', [True, False])
+def test_index(sdc_builder, sdc_executor, elasticsearch, valid_index):
+    """
+    To test the index configuration we create a pipeline as follows:
+
+    Elasticsearch >> Trash
+
+    Then we add a document to an index. When a valid index name is used we expect to find the document in the index.
+    When an invalid index name is used we expect an error to happen.
+    """
+
+    index = get_random_string(string.ascii_lowercase)
+    origin_index = index if valid_index else get_random_string(string.ascii_lowercase)
+    doc_id = get_random_string(string.ascii_lowercase)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Elasticsearch', type='origin')
+    origin.query = '{"query": {"match_all": {}}}'
+    origin.index = origin_index
+
+    trash = builder.add_stage('Trash')
+
+    origin >> trash
+
+    pipeline = builder.build().configure_for_environment(elasticsearch)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    elasticsearch.client.create_document(index=index, id=doc_id, body={
+        "number": 1
+    })
+
+    try:
+        if valid_index:
+            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+
+            assert len(snapshot[origin].output) == 1
+
+            record = snapshot[origin].output[0]
+            assert record.field['_id'] == doc_id
+            assert record.field['_index'] == index
+            assert record.field['_source'] == {"number": 1}
+        else:
+            with pytest.raises(ValidationError) as e:
+                sdc_executor.validate_pipeline(pipeline)
+
+            assert e.value.issues['issueCount'] == 1
+            assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find('ELASTICSEARCH_45') != -1
+
+    finally:
+        elasticsearch.client.delete_index(index)
 
 
 @stub
@@ -206,26 +262,315 @@ def test_secret_access_key(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'mode': 'BASIC', 'use_security': True}])
-def test_security_username_and_password(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@elasticsearch
+@pytest.mark.parametrize('stage_attributes', [
+    # True for with_valid_username or with_valid_password means set a valid value.
+    # False for with_valid_username or with_valid_password means set an invalid value.
+    # None for with_valid_username or with_valid_password means set blank value
+    # If None is used for one of the config param, the opposite config param can be either valid or invalid,
+    # it doesn't matter, the pipeline will fail before sending any requests
+    {'with_valid_password': False, 'with_valid_username': False, 'error_code': 'ELASTICSEARCH_09'},
+    {'with_valid_password': False, 'with_valid_username': True, 'error_code': 'ELASTICSEARCH_09'},
+    {'with_valid_password': True, 'with_valid_username': False, 'error_code': 'ELASTICSEARCH_09'},
+    {'with_valid_password': None, 'with_valid_username': True, 'error_code': 'ELASTICSEARCH_39'},
+    {'with_valid_password': True, 'with_valid_username': None, 'error_code': 'ELASTICSEARCH_20'},
+    {'with_valid_password': None, 'with_valid_username': None, 'error_code': 'ELASTICSEARCH_20'},
+    {'with_valid_password': True, 'with_valid_username': True, 'error_code': None},
+])
+def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch, stage_attributes):
+    """
+    To test the username and password configurations we create a pipeline as follows:
+
+    Elasticsearch >> Trash
+
+    Then we check different combinations of valid/invalid/empty username/password configuration values.
+    We expect no errors when the username and password are not empty and are valid.
+    We verify that an appropriate error happens when an invalid/empty username and/or password are set.
+    """
+
+    if stage_attributes['with_valid_password'] is None:
+        password = ''
+    elif stage_attributes['with_valid_password']:
+        password = elasticsearch.password
+    else:
+        password = get_random_string()
+
+    if stage_attributes['with_valid_username'] is None:
+        username = ''
+    elif stage_attributes['with_valid_username']:
+        username = elasticsearch.username
+    else:
+        username = get_random_string()
+
+    index = get_random_string(string.ascii_lowercase)
+    doc_id = get_random_string(string.ascii_lowercase)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Elasticsearch', type='origin')
+    origin.query = '{"query": {"match_all": {}}}'
+    origin.index = index
+
+    trash = builder.add_stage('Trash')
+
+    origin >> trash
+
+    pipeline = builder.build().configure_for_environment(elasticsearch)
+
+    configured_origin = pipeline.stages.get(label=origin.label)
+    configured_origin.user_name = username
+    configured_origin.password = password
+
+    sdc_executor.add_pipeline(pipeline)
+
+    if stage_attributes['error_code'] is None:
+
+        elasticsearch.client.create_document(index=index, id=doc_id, body={"number": 1})
+
+        try:
+            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+
+            assert len(snapshot[origin].output) == 1
+
+            record = snapshot[origin].output[0]
+            assert record.field['_index'] == index
+            assert record.field['_id'] == doc_id
+            assert record.field['_source'] == {"number": 1}
+
+        finally:
+            elasticsearch.client.delete_index(index)
+
+    else:
+        with pytest.raises(ValidationError) as e:
+            sdc_executor.validate_pipeline(pipeline)
+
+        assert e.value.issues['issueCount'] == 1
+        assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find(
+            stage_attributes['error_code']) != -1
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'use_security': True}])
-def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@elasticsearch
+@pytest.mark.parametrize('stage_attributes', [
+    {'password': 'changeme', 'filename': 'keystore.jks', 'error_code': None},
+    {'password': None, 'filename': 'keystore.jks', 'error_code': 'ELASTICSEARCH_12'},
+    {'password': 'changeme', 'filename': 'empty.jks', 'error_code': 'ELASTICSEARCH_12'}
+])
+def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, elasticsearch):
+    """
+    To test the ssl truststore password configuration we create a pipeline as follows:
+
+    Elasticsearch >> Trash
+
+    Then we copy a keystore file from the STF to SDC container and configure the Elasticsearch origin to use this file.
+    If the file is a valid JKS file and the password is correct we search for a document in the index we have put before.
+    If the file is an invalid or the password doesn't match we expect an appropriate error to happen.
+    """
+
+    keystore_filename = get_random_string()
+    files_directory = os.path.join('/tmp', get_random_string())
+    keystore_file_path = f'{files_directory}/{keystore_filename}'
+    sdc_executor.execute_shell(f'mkdir -pv {files_directory}')
+
+    try:
+        # FIXME: This is just to copy a keystore file form the STF container to the SDC container.
+        # We read a binary file, then we convert each byte to a hex string representation, e.g 127 becomes 7f, 64 -> 40
+        # and then we insert \x before every two characters, e.g. \x7f\x40...
+        # This representation of the binary file will then be used by the printf command internally used by
+        # sdc_executor.write_file to write to a file in the SDC container.
+        with open(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'elasticsearch', stage_attributes['filename']), 'rb') as f:
+            contents = f.read().hex()
+            contents = '\\x' + '\\x'.join(contents[i:i + 2] for i in range(0, len(contents), 2))
+            sdc_executor.write_file(keystore_file_path, contents)
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('Elasticsearch', type='origin')
+        origin.index = get_random_string(string.ascii_lowercase)
+        origin.query = '{"query": {"match_all": {}}}'
+        origin.ssl_truststore_path = keystore_file_path
+        origin.ssl_truststore_password = get_random_string() if stage_attributes['password'] is None else stage_attributes['password']
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(elasticsearch)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        if stage_attributes['error_code'] is None:
+            doc_id = get_random_string(string.ascii_lowercase)
+
+            elasticsearch.client.create_document(index=origin.index, id=doc_id, body={"number": 1})
+
+            try:
+                snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+
+                assert len(snapshot[origin].output) == 1
+
+                record = snapshot[origin].output[0]
+                assert record.field['_id'] == doc_id
+                assert record.field['_index'] == origin.index
+                assert record.field['_source'] == {"number": 1}
+
+            finally:
+                elasticsearch.client.delete_index(origin.index)
+
+        else:
+            with pytest.raises(ValidationError) as e:
+                sdc_executor.validate_pipeline(pipeline)
+
+            assert e.value.issues['issueCount'] == 1
+            assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find(stage_attributes['error_code']) != -1
+
+    finally:
+        sdc_executor.execute_shell(f'rm -frv {files_directory}')
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'use_security': True}])
-def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@elasticsearch
+@pytest.mark.parametrize('stage_attributes', [
+    # valid_file_path is True - use a path to a real file
+    # valid_file_path is False - use a path to an not existing file
+    # valid_file_path is None - use an empty string for the path
+
+    {'valid_file_path': True, 'password': 'changeme', 'error_codes': None},
+    {'valid_file_path': False, 'password': 'changeme', 'error_codes': ['ELASTICSEARCH_11']},
+    {'valid_file_path': None, 'password': 'changeme', 'error_codes': None},
+    {'valid_file_path': True, 'password': '', 'error_codes': ['ELASTICSEARCH_10']},
+    {'valid_file_path': False, 'password': '', 'error_codes': ['ELASTICSEARCH_10', 'ELASTICSEARCH_11']},
+    {'valid_file_path': None, 'password': '', 'error_codes': None},
+])
+def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasticsearch):
+    """
+    To test the ssl truststore path configuration we create a pipeline as follows:
+
+    Elasticsearch >> Trash
+
+    Then we copy a keystore file from the STF to SDC container.
+    If the ssl_truststore_path configuration points to an existing file the pipeline should succeed
+    and we should find a document we have put before in an index.
+    Otherwise an appropriate error should happen.
+    """
+
+    keystore_filename = get_random_string()
+    files_directory = os.path.join('/tmp', get_random_string())
+    keystore_file_path = f'{files_directory}/{keystore_filename}'
+
+    sdc_executor.execute_shell(f'mkdir -pv {files_directory}')
+
+    try:
+        # FIXME: This is just to copy a keystore file form the STF container to the SDC container.
+        # We read a binary file, then we convert each byte to a hex string representation, e.g 127 becomes 7f, 64 -> 40
+        # and then we insert \x before every two characters, e.g. \x7f\x40...
+        # This representation of the binary file will then be used by the printf command internally used by
+        # sdc_executor.write_file to write to a file in the SDC container.
+        with open(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'elasticsearch', 'keystore.jks'), 'rb') as f:
+            contents = f.read().hex()
+            contents = '\\x' + '\\x'.join(contents[i:i + 2] for i in range(0, len(contents), 2))
+            sdc_executor.write_file(keystore_file_path, contents)
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('Elasticsearch', type='origin')
+        origin.index = get_random_string(string.ascii_lowercase)
+        origin.query = '{"query": {"match_all": {}}}'
+        origin.ssl_truststore_path = '' if stage_attributes['valid_file_path'] is None \
+            else (keystore_file_path if stage_attributes['valid_file_path'] else get_random_string())
+        origin.ssl_truststore_password = stage_attributes['password']
+
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(elasticsearch)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        if not stage_attributes['error_codes'] is None:
+            with pytest.raises(ValidationError) as e:
+                sdc_executor.validate_pipeline(pipeline)
+
+            assert e.value.issues['issueCount'] == len(stage_attributes['error_codes'])
+            for i in range(0, len(stage_attributes['error_codes'])):
+                assert e.value.issues['stageIssues'][origin.instance_name][i]['message'].find(stage_attributes['error_codes'][i]) != -1
+
+        else:
+            doc_id = get_random_string(string.ascii_lowercase)
+
+            elasticsearch.client.create_document(index=origin.index, id=doc_id, body={"number": 1})
+
+            try:
+                snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+
+                assert len(snapshot[origin].output) == 1
+
+                record = snapshot[origin].output[0]
+                assert record.field['_id'] == doc_id
+                assert record.field['_index'] == origin.index
+                assert record.field['_source'] == {"number": 1}
+
+            finally:
+                elasticsearch.client.delete_index(origin.index)
+
+    finally:
+        sdc_executor.execute_shell(f'rm -frv {files_directory}')
 
 
-@stub
+@elasticsearch
 @pytest.mark.parametrize('stage_attributes', [{'use_security': False}, {'use_security': True}])
-def test_use_security(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_use_security(sdc_builder, sdc_executor, elasticsearch, stage_attributes):
+    """
+    To test the use security configuration we create a pipeline as follows:
 
+    Elasticsearch >> Trash
+
+    Since the Elasticsearch server requires using a username with a password
+    an error should happen if the use security property is false.
+    Otherwise we should succeed to find a document we have put before to an index.
+    """
+
+    index = get_random_string(string.ascii_lowercase)
+    doc_id = get_random_string(string.ascii_lowercase)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Elasticsearch', type='origin')
+    origin.query = '{"query": {"match_all": {}}}'
+    origin.index = index
+
+    trash = builder.add_stage('Trash')
+
+    origin >> trash
+
+    pipeline = builder.build().configure_for_environment(elasticsearch)
+
+    configured_origin = pipeline.stages.get(label=origin.label)
+    configured_origin.use_security = stage_attributes['use_security']
+    if not stage_attributes['use_security']:
+        configured_origin.user_name = ''
+        configured_origin.password = ''
+
+    sdc_executor.add_pipeline(pipeline)
+
+    elasticsearch.client.create_document(index=index, id=doc_id, body={"number": 1})
+
+    try:
+        if stage_attributes['use_security']:
+            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+
+            assert len(snapshot[origin].output) == 1
+
+            record = snapshot[origin].output[0]
+            assert record.field['_id'] == doc_id
+            assert record.field['_index'] == index
+            assert record.field['_source'] == {"number": 1}
+
+        else:
+            with pytest.raises(ValidationError) as e:
+                sdc_executor.validate_pipeline(pipeline)
+
+            assert e.value.issues['issueCount'] == 1
+            assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find('ELASTICSEARCH_47') != -1
+
+    finally:
+        elasticsearch.client.delete_index(index)
