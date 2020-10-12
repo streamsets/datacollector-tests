@@ -841,6 +841,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, da
         # Now the pipeline will write some amount of records that will be larger, so we get precise count from metrics
         history = sdc_executor.get_pipeline_history(pipeline)
         records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        logger.info(f"Detected {records} output records")
         # Sanity check
         assert records >= batch_size * batches
 
@@ -848,7 +849,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, da
         data = sorted([row[0] for row in result.fetchall()])
         result.close()
 
-        assert data == [i for i in range(0, batch_size * batches)]
+        assert data == [i for i in range(0, records)]
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
