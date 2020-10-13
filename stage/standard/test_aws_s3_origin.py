@@ -141,7 +141,7 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
     Verify that we can respect all the documented buckets names possible
     """
     s3_key = path_name
-    s3_bucket = get_random_string(string.ascii_lowercase)
+    s3_bucket = aws.s3_bucket_name
 
     data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
 
@@ -171,7 +171,6 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
 
     client = aws.s3
     try:
-        client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
         # Insert objects into S3.
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
@@ -189,7 +188,6 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
-        client.delete_bucket(Bucket=s3_bucket)
 
 
 @aws('s3')

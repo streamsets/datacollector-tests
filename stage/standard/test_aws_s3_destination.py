@@ -136,7 +136,7 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
     been ingested by the pipeline.
     """
 
-    s3_bucket = get_random_string(string.ascii_lowercase)
+    s3_bucket = aws.s3_bucket_name
     s3_key = path_name
 
     # Bucket name is inside the record itself
@@ -159,7 +159,6 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
 
     client = aws.s3
     try:
-        client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
         sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
 
         # assert record count to S3 the size of the objects put
@@ -177,7 +176,6 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
-        client.delete_bucket(Bucket=s3_bucket)
 
 
 @aws('s3')
