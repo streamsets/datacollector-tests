@@ -1811,7 +1811,7 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
         connection.execute(f'DROP TABLE {table_name}')
 
 
-@sdc_min_version('3.20.0')
+@sdc_min_version('3.19.0')
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('dictionary_source', ['DICT_FROM_REDO_LOGS', 'DICT_FROM_ONLINE_CATALOG'])
