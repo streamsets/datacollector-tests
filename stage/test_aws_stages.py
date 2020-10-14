@@ -94,7 +94,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 
 
 @aws('kinesis')
-@sdc_min_version('3.20.0')
+@sdc_min_version('3.19.0')
 @pytest.mark.parametrize('additional_configurations', [
     [],
     [{'key': 'failoverTimeMillis', 'value': '10000'}],
