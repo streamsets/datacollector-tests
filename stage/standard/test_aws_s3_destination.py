@@ -122,10 +122,12 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucke
         assert json.loads(s3_contents) == json.loads(raw_str)
 
     finally:
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
-        client.delete_bucket(Bucket=s3_bucket)
+        try:
+            delete_keys = {'Objects': [{'Key': k['Key']}
+                                       for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+            client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        finally:
+            client.delete_bucket(Bucket=s3_bucket)
 
 
 @aws('s3')
