@@ -5,7 +5,7 @@ import pytest
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import category, cluster, credentialstore, sdc_min_version
-from streamsets.testframework.utils import get_random_string, Version
+from streamsets.testframework.utils import Version, get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -683,11 +683,17 @@ def test_principal(sdc_builder, sdc_executor, cluster, stage_attributes,
     topic_name = get_random_string()
     kafka_multitopic_consumer = builder.add_stage('Kafka Multitopic Consumer',
                                                   library=cluster.kafka.standalone_stage_lib)
+    if Version(sdc_builder.version) < Version('3.19'):
+        stage_attributes.update({'keytab': keytab_value,
+                                 'principal': keytab_for_stage.principal})
+    else:
+        if 'provide_keytab' in stage_attributes:
+            stage_attributes['provide_keytab_at_runtime'] = stage_attributes.pop('provide_keytab')
+        stage_attributes.update({'runtime_keytab': keytab_value,
+                                 'runtime_principal': keytab_for_stage.principal})
     kafka_multitopic_consumer.set_attributes(auto_offset_reset='EARLIEST',
                                              batch_wait_time_in_ms=2000,
                                              data_format='TEXT',
-                                             keytab=keytab_value,
-                                             principal=keytab_for_stage.principal,
                                              topic_list=[topic_name],
                                              **stage_attributes)
 
@@ -943,4 +949,3 @@ def test_value_deserializer(sdc_builder, sdc_executor, cluster, stage_attributes
                                               {'data_format': 'WHOLE_FILE', 'verify_checksum': True}])
 def test_verify_checksum(sdc_builder, sdc_executor, cluster, stage_attributes):
     pass
-

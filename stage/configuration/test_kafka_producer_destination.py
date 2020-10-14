@@ -7,7 +7,7 @@ from streamsets.testframework.markers import category
 
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import category, cluster, credentialstore, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import Version, get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -367,9 +367,15 @@ def test_principal(sdc_builder, sdc_executor, cluster, stage_attributes, keytab_
                                                                                   raw_data=raw_data)
     kafka_destination = builder.add_stage('Kafka Producer', library=cluster.kafka.standalone_stage_lib)
 
+    if Version(sdc_builder.version) < Version('3.19'):
+        stage_attributes.update({'keytab': keytab_value,
+                                 'principal': keytab_for_stage.principal})
+    else:
+        if 'provide_keytab' in stage_attributes:
+            stage_attributes['provide_keytab_at_runtime'] = stage_attributes.pop('provide_keytab')
+        stage_attributes.update({'runtime_keytab': keytab_value,
+                                 'runtime_principal': keytab_for_stage.principal})
     kafka_destination.set_attributes(data_format='TEXT',
-                                     keytab=keytab_value,
-                                     principal=keytab_for_stage.principal,
                                      topic=topic,
                                      **stage_attributes)
     pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
@@ -540,6 +546,9 @@ def test_topic(sdc_builder, sdc_executor, cluster, stage_attributes):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
                                                                                   raw_data=raw_data)
     kafka_destination = builder.add_stage('Kafka Producer', library=cluster.kafka.standalone_stage_lib)
+    if Version(sdc_builder.version) >= Version('3.19'):
+        if 'provide_keytab' in stage_attributes:
+            stage_attributes['provide_keytab_at_runtime'] = stage_attributes.pop('provide_keytab')
     kafka_destination.set_attributes(topic=topic, data_format='TEXT', **stage_attributes)
     pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
     dev_raw_data_source >> [kafka_destination, pipeline_finisher]
