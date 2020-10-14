@@ -36,7 +36,6 @@ S3_BUCKET_NAMES = [
     ('hexadecimal', get_random_string(string.hexdigits).lower())
 ]
 
-
 # Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
 S3_PATHS = [
     ('lowercase', get_random_string(string.ascii_lowercase)),
@@ -114,6 +113,17 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucke
     client = aws.s3
     try:
         client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+        client.put_bucket_tagging(
+            Bucket=s3_bucket,
+            Tagging={
+                'TagSet': [
+                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                    {'Key': 'managed-by', 'Value': 'ep'},
+                    {'Key': 'dept', 'Value': 'eng'},
+                ]
+            }
+        )
+
         # Insert objects into S3.
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 

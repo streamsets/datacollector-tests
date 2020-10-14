@@ -108,6 +108,17 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucke
     client = aws.s3
     try:
         client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+        client.put_bucket_tagging(
+            Bucket=s3_bucket,
+            Tagging={
+                'TagSet': [
+                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                    {'Key': 'managed-by', 'Value': 'ep'},
+                    {'Key': 'dept', 'Value': 'eng'},
+                ]
+            }
+        )
+
         sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
 
         # assert record count to S3 the size of the objects put

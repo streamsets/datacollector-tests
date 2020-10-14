@@ -1281,9 +1281,17 @@ def test_sqs_no_read_access(sdc_builder, sdc_executor, aws):
 
     client = aws.sqs
     logger.info('Creating %s SQS queue on AWS ...', queue_name)
-    queue_url = client.create_queue(QueueName=queue_name, Attributes={'Policy': json.dumps(policy)})['QueueUrl']
 
     try:
+        queue_url = client.create_queue(QueueName=queue_name, Attributes={'Policy': json.dumps(policy)})['QueueUrl']
+        client.tag_queue(
+            QueueUrl=queue_url,
+            Tags={
+                'stf-env': 'nightly-tests',
+                'managed-by': 'ep',
+                'dept': 'eng'
+        })
+
         all_responses = []
         for batch in range(number_of_messages // 10 + int(number_of_messages % 10 > 0)):
             message_entries = [{'Id': str(i), 'MessageBody': f'Message {i}'}
