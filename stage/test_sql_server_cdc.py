@@ -885,3 +885,126 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
         if connection is not None:
             connection.close()
 
+
+@database('sqlserver')
+@sdc_min_version('3.0.0.0')
+@pytest.mark.timeout(180)
+def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
+    """Test for SQL Server CDC origin stage when schema change is enabled.
+    We do so by capturing Insert Operation on CDC enabled table(s)
+    using SQL Server CDC Origin and having a pipeline which reads that data using SQL Server CDC origin stage.
+    The records in the pipeline will be stored in SQL Server table using JDBC Producer.
+    While the pipeline is running the source table schema is changed by dropping or adding the columns,
+    the dest table will be dropping or adding the columns respectively.
+    Data is then asserted for what is captured at SQL Server Job and what we read in the pipeline.
+    The pipeline looks like:
+        sql_server_cdc_origin >> jdbc_producer
+    """
+    num_of_tables = 2
+    schema_name = DEFAULT_SCHEMA_NAME
+    table_prefix = get_random_string(string.ascii_lowercase, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('SQL Server CDC Client')
+    origin.allow_late_tables = True
+    origin.enable_schema_changes_event = True
+    # when allow_late_tables = true, the pipeline runs one background thread
+    # to spool the list of cdc tables
+    origin.maximum_pool_size = num_of_tables + 1
+    origin.minimum_idle_connections = num_of_tables + 1
+    origin.new_table_discovery_interval = '${1 * SECONDS}'
+    origin.table_configs = [{'capture_instance': f'dbo_{table_prefix}_%'}]
+    origin.number_of_threads = num_of_tables
+
+    wiretap = builder.add_wiretap()
+
+    origin >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = database.engine.connect()
+    try:
+        global_index = 0
+        tables = []
+
+        for index in range(0, num_of_tables):
+            table_name = f"{table_prefix}_{get_random_string(string.ascii_lowercase, 20)}"
+            connection.execute(f"CREATE TABLE {schema_name}.{table_name}(id INT)")
+            _enable_cdc(connection, schema_name, table_name)
+            connection.execute(f"INSERT INTO {schema_name}.{table_name} VALUES({global_index})")
+            global_index += 1
+
+            tables.append(table_name)
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_of_tables)
+
+        records = wiretap.output_records
+        assert len(records) == num_of_tables
+        records.sort(key=_sort_records)
+        for i in range(0, num_of_tables):
+            assert records[i].field['id'] == i
+
+        # Add a new column to the tables
+        for table_name in tables:
+            logger.info('Adding the column new_column varchar(10) on %s.%s...', schema_name, table_name)
+            connection.execute(f'ALTER TABLE {table_name} ADD new_column INT')
+
+            _disable_cdc(connection, schema_name, table_name)
+            sleep(1)
+            _enable_cdc(connection, schema_name, table_name, f"{schema_name}_{table_name}_2")
+            sleep(1)
+
+        # Reset record accumulation
+        wiretap.reset()
+
+        # Insert new data to the tables
+        for table_name in tables:
+            logger.info("Inserting new row into %s", table_name)
+            connection.execute(f"INSERT INTO {schema_name}.{table_name} VALUES({global_index}, {global_index})")
+            global_index += 1
+
+        logger.info("Waiting on pipeline to finish processing all records")
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_of_tables * 2)
+
+        # All data were read
+        records = wiretap.output_records
+        assert len(records) == num_of_tables
+        records.sort(key=_sort_records)
+        for i in range(0, num_of_tables):
+            assert records[i].field['id'] == num_of_tables + i
+            assert records[i].field['new_column'] == num_of_tables + i
+    finally:
+        if not keep_data:
+            for table in tables:
+                logger.info('Dropping table %s in %s database...', table, database.type)
+                connection.execute(f"DROP TABLE {schema_name}.{table_name}")
+
+
+def _sort_records(entry):
+    return entry.field['id'].value
+
+
+def _enable_cdc(connection, schema_name, table_name, capture_instance=None):
+    if capture_instance is None:
+        capture_instance = f"{schema_name}_{table_name}"
+
+    logger.info('Enabling CDC on %s.%s into table %s...', schema_name, table_name, capture_instance)
+    connection.execute(f'EXEC sys.sp_cdc_enable_table '
+                       f'@source_schema=N\'{schema_name}\', '
+                       f'@source_name=N\'{table_name}\','
+                       f'@role_name = NULL, '
+                       f'@capture_instance={capture_instance}')
+
+
+def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
+    if capture_instance is None:
+        capture_instance = f"{schema_name}_{table_name}"
+
+    logger.info('Disabling CDC on %s.%s from table %s...', schema_name, table_name, capture_instance)
+    connection.execute(
+        f'EXEC sys.sp_cdc_disable_table '
+        f'@source_schema=N\'{schema_name}\', '
+        f'@source_name=N\'{table_name}\','
+        f'@capture_instance={capture_instance}')
