@@ -15,7 +15,7 @@
 from streamsets.testframework.markers import sdc_min_version
 
 
-@sdc_min_version('3.20.0')
+@sdc_min_version('3.19.0')
 def test_dateconversions_pipeline(sdc_executor):
     """Test the Date Conversions sample pipeline."""
     try:
@@ -37,4 +37,3 @@ def test_dateconversions_pipeline(sdc_executor):
 
     finally:
         sdc_executor.delete_pipeline(copy_of_sample)
-
