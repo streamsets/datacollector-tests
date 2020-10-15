@@ -26,7 +26,6 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
-from stage.utils.utils_xml import get_xml_output_field
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +103,7 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka String pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -113,17 +112,17 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
 
-    snapshot_pipeline = builder.build(title='Cluster kafka String Snapshot pipeline')
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'TEXT')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'TEXT', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -153,7 +152,7 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster partitions pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -162,16 +161,16 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'WITH_KEY')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'TEXT')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'TEXT', wiretap)
 
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
@@ -244,7 +243,7 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka XML pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -253,16 +252,16 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster kafka XML Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'XML')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'XML')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'XML', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -290,7 +289,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka XML pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -299,9 +298,9 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster kafka XML Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
@@ -309,7 +308,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'XML')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected,
-                                    'XML_MULTI_ELEMENT')
+                                    'XML_MULTI_ELEMENT', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -337,7 +336,7 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka CSV pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -346,16 +345,16 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster kafka CSV Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'CSV')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'CSV')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'CSV', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -383,7 +382,7 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka BINARY pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -392,16 +391,16 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster kafka BINARY snapshot')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'BINARY')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'BINARY')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'BINARY', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -431,7 +430,7 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster, po
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka AVRO pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -440,16 +439,16 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster, po
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg, 'AVRO')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg, 'AVRO', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -481,7 +480,7 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster,
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka AVRO pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -490,9 +489,9 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster,
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
@@ -500,7 +499,7 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster,
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO_WITHOUT_SCHEMA')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg,
-                                    'AVRO_WITHOUT_SCHEMA')
+                                    'AVRO_WITHOUT_SCHEMA', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -542,7 +541,7 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka SYSLOG pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -551,16 +550,16 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'SYSLOG')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'SYSLOG')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'SYSLOG', wiretap)
 
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
@@ -604,7 +603,7 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka NETFLOW pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -613,16 +612,16 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'NETFLOW')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'NETFLOW')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'NETFLOW', wiretap)
 
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
@@ -683,7 +682,7 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka COLLECTD pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -692,16 +691,16 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'COLLECTD')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'COLLECTD')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'COLLECTD', wiretap)
 
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
@@ -735,7 +734,7 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka BINARY pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -744,16 +743,16 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster kafka BINARY snapshot')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'LOG')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, 'LOG')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, 'LOG', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
@@ -837,40 +836,40 @@ def produce_kafka_messages(topic, cluster, message, data_format):
     producer.flush()
 
 
-def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, data_format):
+def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, data_format, wiretap):
     """Start, stop pipeline and verify results using snapshot"""
 
-    # Start Pipeline.
-    snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True, wait=False)
+    logger.info("Starting Snapshot Pipeline first")
+    sdc_executor.start_pipeline(snapshot_pipeline)
+    logger.info("Starting Kafka Consumer pipeline")
     sdc_executor.start_pipeline(kafka_consumer_pipeline)
 
-    logger.debug('Finish the snapshot and verify')
-    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
-    snapshot = snapshot_command.snapshot
+    logger.info("Waiting on first record available on the snapshot pipeline")
+    # High timeout since cluster pipelines are slow and can take even 60+ second to boot up
+    sdc_executor.wait_for_pipeline_metric(snapshot_pipeline, 'input_record_count', 1, timeout_sec=180)
+    output = wiretap.output_records
 
     basic_data_formats = ['JSON', 'CSV', 'SYSLOG', 'PROTOBUF', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
 
     # Verify snapshot data.
     if data_format in basic_data_formats:
-        assert [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output] == [message]
+        assert [record.field for record in output] == [message]
 
     elif data_format in {'TEXT', 'BINARY', 'XML', 'COLLECTD'}:
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        record_field = [record.field for record in output]
         assert message == record_field[0]
 
     elif data_format == 'LOG':
-        stage = snapshot[snapshot_pipeline[0].instance_name]
-        assert 0 == len(stage.error_records)
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        record_field = [record.field for record in output]
         assert message == str(record_field[0]['originalLine'])
 
     elif data_format == 'XML_MULTI_ELEMENT':
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        record_field = [record.field for record in output]
         assert message[0] == record_field[0]
         assert message[1] == record_field[1]
 
     elif data_format == 'NETFLOW':
-        record_field = [record.field for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        record_field = [record.field for record in output]
         assert message[0] in str(record_field)
         assert message[1] in str(record_field)
 
@@ -886,7 +885,7 @@ def json_test(sdc_builder, sdc_executor, cluster, message, expected, port):
     sdc_rpc_destination = get_rpc_destination(builder, sdc_executor, port)
 
     kafka_consumer >> sdc_rpc_destination
-    kafka_consumer_pipeline = builder.build(title='Cluster kafka JSON pipeline').configure_for_environment(cluster)
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
@@ -895,16 +894,16 @@ def json_test(sdc_builder, sdc_executor, cluster, message, expected, port):
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
-    trash = builder.add_stage(label='Trash')
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Cluster kafka JSON Snapshot pipeline')
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
 
     try:
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, json.dumps(message).encode(), 'JSON')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'JSON')
+        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'JSON', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         sdc_executor.stop_pipeline(snapshot_pipeline)
