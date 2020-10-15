@@ -30,13 +30,10 @@ import base64
 import io
 import pytest
 from avro.io import DatumReader, BinaryDecoder
-from streamsets.sdk.models import Configuration
 from streamsets.testframework.markers import cluster, confluent, sdc_min_version
 from streamsets.testframework.utils import get_random_string
-from streamsets.testframework.environments import kafka
 
 import confluent_kafka.avro
-from confluent_kafka.admin import AdminClient, NewTopic
 from confluent_kafka.avro import AvroProducer
 
 logger = logging.getLogger(__name__)
@@ -53,7 +50,6 @@ def topic():
     return topic
 
 
-@pytest.fixture(scope='function')
 def consumer_single(sdc_builder, topic, cluster, confluent):
     """Single threaded Kafka consumer configured to read schema from the registry."""
     builder = sdc_builder.get_pipeline_builder()
@@ -69,13 +65,12 @@ def consumer_single(sdc_builder, topic, cluster, confluent):
                                   max_batch_size_in_records=10,
                                   kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
+    wiretap = builder.add_wiretap()
+    kafka_consumer >> wiretap.destination
 
-    return builder.build(title=f'Single Consumer for {topic}').configure_for_environment(cluster, confluent)
+    return (wiretap, builder.build().configure_for_environment(cluster, confluent))
 
 
-@pytest.fixture(scope='function')
 def consumer_multi(sdc_builder, topic, cluster, confluent):
     """Multithreaded threaded Kafka consumer configured to read schema from the registry."""
     builder = sdc_builder.get_pipeline_builder()
@@ -91,12 +86,12 @@ def consumer_multi(sdc_builder, topic, cluster, confluent):
                                   value_deserializer='CONFLUENT',
                                   configuration_properties=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
+    wiretap = builder.add_wiretap()
+    kafka_consumer >> wiretap.destination
 
-    return builder.build(title=f'Multi Consumer for {topic}').configure_for_environment(cluster, confluent)
+    return (wiretap, builder.build().configure_for_environment(cluster, confluent))
 
-@pytest.fixture(scope='function')
+
 def producer_header(sdc_builder, topic, cluster, confluent):
     """Kafka producer that receives avro schema in record header."""
     builder = sdc_builder.get_pipeline_builder()
@@ -123,10 +118,9 @@ def producer_header(sdc_builder, topic, cluster, confluent):
                                      value_serializer='CONFLUENT')
 
     dev_raw_data_source >> schema_generator >> kafka_destination
-    return builder.build(title=f'Producer in Header for {topic}').configure_for_environment(cluster, confluent)
+    return builder.build().configure_for_environment(cluster, confluent)
 
 
-@pytest.fixture(scope='function')
 def producer_inline(sdc_builder, topic, cluster, confluent):
     """Kafka producer that receives avro schema the pipeline configuration."""
     builder = sdc_builder.get_pipeline_builder()
@@ -150,10 +144,9 @@ def producer_inline(sdc_builder, topic, cluster, confluent):
                                      value_serializer='CONFLUENT')
 
     dev_raw_data_source >> kafka_destination
-    return builder.build(title=f'Producer Inline for {topic}').configure_for_environment(cluster, confluent)
+    return builder.build().configure_for_environment(cluster, confluent)
 
 
-@pytest.fixture(scope='function')
 def producer_registry(sdc_builder, topic, cluster, confluent):
     """Kafka producer that receives avro schema from schema registry (must exists before pipeline run)."""
     builder = sdc_builder.get_pipeline_builder()
@@ -175,73 +168,85 @@ def producer_registry(sdc_builder, topic, cluster, confluent):
                                      value_serializer='CONFLUENT')
 
     dev_raw_data_source >> kafka_destination
-    return builder.build(title=f'Producer Registry for {topic}').configure_for_environment(cluster, confluent)
+    return builder.build().configure_for_environment(cluster, confluent)
 
 
 @cluster('cdh', 'kafka')
 @confluent
 @sdc_min_version('3.1.0.0')
-def test_single_header(sdc_executor, producer_header, consumer_single):
-    perform_test(sdc_executor, producer_header, consumer_single)
+def test_single_header(sdc_builder, sdc_executor, topic, cluster, confluent):
+    producer = producer_header(sdc_builder, topic, cluster, confluent)
+    (wiretap, consumer) = consumer_single(sdc_builder, topic, cluster, confluent)
+    perform_test(sdc_executor, producer, consumer, wiretap)
 
 
 @cluster('cdh', 'kafka')
 @confluent
 @sdc_min_version('3.1.0.0')
-def test_multi_header(sdc_executor, producer_header, consumer_multi):
-    perform_test(sdc_executor, producer_header, consumer_multi)
+def test_multi_header(sdc_builder, sdc_executor, topic, cluster, confluent):
+    producer = producer_header(sdc_builder, topic, cluster, confluent)
+    (wiretap, consumer) = consumer_multi(sdc_builder, topic, cluster, confluent)
+    perform_test(sdc_executor, producer, consumer, wiretap)
 
 
 @cluster('cdh', 'kafka')
 @confluent
 @sdc_min_version('3.1.0.0')
-def test_single_inline(sdc_executor, producer_inline, consumer_single):
-    perform_test(sdc_executor, producer_inline, consumer_single)
+def test_single_inline(sdc_builder, sdc_executor, topic, cluster, confluent):
+    producer = producer_inline(sdc_builder, topic, cluster, confluent)
+    (wiretap, consumer) = consumer_single(sdc_builder, topic, cluster, confluent)
+    perform_test(sdc_executor, producer, consumer, wiretap)
 
 
 @cluster('cdh', 'kafka')
 @confluent
 @sdc_min_version('3.1.0.0')
-def test_multi_inline(sdc_executor, producer_inline, consumer_multi):
-    perform_test(sdc_executor, producer_inline, consumer_multi)
+def test_multi_inline(sdc_builder, sdc_executor, topic, cluster, confluent):
+    producer = producer_inline(sdc_builder, topic, cluster, confluent)
+    (wiretap, consumer) = consumer_multi(sdc_builder, topic, cluster, confluent)
+    perform_test(sdc_executor, producer, consumer, wiretap)
 
 
 @cluster('cdh', 'kafka')
 @confluent
 @sdc_min_version('3.1.0.0')
-def test_single_registry(sdc_executor, topic, producer_registry, consumer_single, confluent):
+def test_single_registry(sdc_builder, sdc_executor, topic, cluster, confluent):
     # We need to register the schema before running the pipelines
     schema = avro.schema.Parse(AVRO_SCHEMA)
     confluent.schema_registry.register(topic, schema)
 
-    perform_test(sdc_executor, producer_registry, consumer_single)
+    producer = producer_registry(sdc_builder, topic, cluster, confluent)
+    (wiretap, consumer) = consumer_single(sdc_builder, topic, cluster, confluent)
+
+    perform_test(sdc_executor, producer, consumer, wiretap)
 
 
 @cluster('cdh', 'kafka')
 @confluent
 @sdc_min_version('3.1.0.0')
-def test_multi_registry(sdc_executor, topic, producer_registry, consumer_multi, confluent):
+def test_multi_registry(sdc_builder, sdc_executor, topic, cluster, confluent):
     # We need to register the schema before running the pipelines
     schema = avro.schema.Parse(AVRO_SCHEMA)
     confluent.schema_registry.register(topic, schema)
 
-    perform_test(sdc_executor, producer_registry, consumer_multi)
+    producer = producer_registry(sdc_builder, topic, cluster, confluent)
+    (wiretap, consumer) = consumer_multi(sdc_builder, topic, cluster, confluent)
+
+    perform_test(sdc_executor, producer, consumer, wiretap)
 
 
-def perform_test(sdc_executor, producer, consumer):
+def perform_test(sdc_executor, producer, consumer, wiretap):
     """Run the producer -> consumer pipeline and validate that we can properly read all the records."""
     # Add all pipelines
     sdc_executor.add_pipeline(producer, consumer)
 
     # Run them!
     sdc_executor.start_pipeline(producer).wait_for_finished()
-    snapshot_command = sdc_executor.capture_snapshot(consumer, start_pipeline=True)
-    sdc_executor.stop_pipeline(consumer)
+    sdc_executor.start_pipeline(consumer)
+    sdc_executor.wait_for_pipeline_metric(consumer, 'input_record_count', 1)
 
     # Validate result
-    snapshot = snapshot_command.snapshot
-    assert snapshot is not None
-    output = snapshot[consumer.origin_stage].output
+    output = wiretap.output_records
 
     assert output is not None
     assert len(output) == 1
@@ -338,22 +343,17 @@ def test_kafka_consumer_key_capture_modes(sdc_builder, sdc_executor, cluster, co
                                   key_capture_header_attribute=key_capture_attribute,
                                   kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
-    trash = builder.add_stage(label='Trash')
-    kafka_consumer >> trash
+    wiretap = builder.add_wiretap()
+    kafka_consumer >> wiretap.destination
 
-    pipeline = builder.build(title=f'Single Message Key Consumer for {topic}').configure_for_environment(cluster, confluent)
+    pipeline = builder.build().configure_for_environment(cluster, confluent)
 
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True)
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
     sdc_executor.stop_pipeline(pipeline)
 
-    # Validate result
-    snapshot = snapshot_command.snapshot
-    # This is temporal hack until something like STF-1110 gets implemented
-    logger.info(f"Snapshot raw data: {snapshot._data}")
-    assert snapshot is not None
-    output = snapshot[pipeline.origin_stage].output
+    output = wiretap.output_records
 
     assert output is not None
     assert len(output) == 1
@@ -470,8 +470,7 @@ def test_kafka_producer_key_capture(sdc_builder, sdc_executor, cluster, confluen
 
     kafka_consumer1 >> kafka_producer
 
-    pipeline1 = builder1.build(title=f'Single Message Key Consumer for {topic}').configure_for_environment(cluster,
-                                                                                                           confluent)
+    pipeline1 = builder1.build().configure_for_environment(cluster, confluent)
     sdc_executor.add_pipeline(pipeline1)
     snapshot_command1 = sdc_executor.capture_snapshot(pipeline1, start_pipeline=True)
     sdc_executor.stop_pipeline(pipeline1)
@@ -492,19 +491,17 @@ def test_kafka_producer_key_capture(sdc_builder, sdc_executor, cluster, confluen
                                    key_capture_header_attribute=key_capture_attribute,
                                    kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
-    trash = builder2.add_stage(label='Trash')
-    kafka_consumer2 >> trash
+    wiretap = builder2.add_wiretap()
+    kafka_consumer2 >> wiretap.destination
 
-    pipeline2 = builder2.build(title=f'Single Message Key Consumer for {topic_producer}').configure_for_environment(cluster,
-                                                                                                                    confluent)
+    pipeline2 = builder2.build().configure_for_environment(cluster, confluent)
 
     sdc_executor.add_pipeline(pipeline2)
-    snapshot_command2 = sdc_executor.capture_snapshot(pipeline2, start_pipeline=True)
+    sdc_executor.start_pipeline(pipeline2)
+    sdc_executor.wait_for_pipeline_metric(pipeline2, 'input_record_count', 1)
     sdc_executor.stop_pipeline(pipeline2)
 
-    # Validate result
-    snapshot2 = snapshot_command2.snapshot
-    output = snapshot2[pipeline2.origin_stage].output
+    output = wiretap.output_records
 
     assert output is not None
     assert len(output) == 1
