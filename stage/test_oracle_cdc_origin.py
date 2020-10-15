@@ -1269,7 +1269,7 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
                 # With default parser throws the exception SDC-15822"""
                 with pytest.raises(sdc_api.RunningError) as exception_info:
                     status.wait_for_status('RUN_ERROR', timeout_sec=300)
-                assert 'JDBC_94 - ' in f'{exception_info.value}'
+                assert 'JDBC_93 - ' in f'{exception_info.value}'
                 assert 'UPDATE' in f'{exception_info.value}'
         else:
             # Version 11 LogMiner does not support Redo Logs for ADT columns, we check we have no output records
