@@ -845,8 +845,9 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
     sdc_executor.start_pipeline(kafka_consumer_pipeline)
 
     logger.info("Waiting on first record available on the snapshot pipeline")
-    # High timeout since cluster pipelines are slow and can take even 60+ second to boot up
-    sdc_executor.wait_for_pipeline_metric(snapshot_pipeline, 'input_record_count', 1, timeout_sec=180)
+    # High timeout since cluster pipelines are slow and can take even 60+ second to boot up. On secured clusters in
+    # cluster dock that can be significantly more and hence the high timeout.
+    sdc_executor.wait_for_pipeline_metric(snapshot_pipeline, 'input_record_count', 1, timeout_sec=300)
     output = wiretap.output_records
 
     basic_data_formats = ['JSON', 'CSV', 'SYSLOG', 'PROTOBUF', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
