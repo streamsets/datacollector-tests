@@ -15,25 +15,18 @@
 from streamsets.testframework.markers import sdc_min_version
 
 
-@sdc_min_version('3.19.0')
-def test_dateconversions_pipeline(sdc_executor):
+@sdc_min_version('3.18.0')
+def test_date_conversions(sdc_executor):
     """Test the Date Conversions sample pipeline."""
-    try:
-        sample = sdc_executor.sample_pipelines.get(title='Date Conversions')
+    sample = sdc_executor.sample_pipelines.get(title='Date Conversions')
 
-        # Before testing a sample pipeline, you have to first make a copy of it.
-        copy_of_sample = sdc_executor.get_pipeline_builder().import_pipeline(
-            pipeline=sample._data).build(title='Copy of {}'.format(sample.title))
+    # Before testing a sample pipeline, you have to first make a copy of it.
+    pipeline = sdc_executor.get_pipeline_builder().import_pipeline(pipeline=sample._data).build()
+    pipeline.origin_stage.stop_after_first_batch = True
 
-        copy_of_sample.origin_stage.stop_after_first_batch = True
+    sdc_executor.add_pipeline(pipeline)
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
 
-        sdc_executor.add_pipeline(copy_of_sample)
+    assert(snapshot['FieldTypeConverter_01'].output[0].field['date1'].type == 'DATETIME')
+    assert(snapshot['FieldTypeConverter_01'].output[0].field['date2'].type == 'DATETIME')
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=copy_of_sample,
-                                                 start_pipeline=True).snapshot
-
-        assert(snapshot['FieldTypeConverter_01'].output[0].field['date1'].type == 'DATETIME')
-        assert(snapshot['FieldTypeConverter_01'].output[0].field['date2'].type == 'DATETIME')
-
-    finally:
-        sdc_executor.delete_pipeline(copy_of_sample)
