@@ -1198,7 +1198,7 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
         OracleCDC >> Wiretap
         OracleCDC >= Pipeline Finisher (finishes on TRUNCATE event)
 
-    For Oracle 19
+    For Oracle >= v12
         Using Peg Parser:
             Should works fine, produces n output records.
         Not using the Peg Parser:
@@ -1256,8 +1256,8 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
         status = sdc_executor.start_pipeline(pipeline);
         connection.execute(f"UPDATE {table_name} SET name_ex = 'TONI'");
 
-        if db_version[0] >= 19:
-            # Version 19 LogMiner has support for Redo Logs that contain ADT columns
+        if db_version[0] >= 12:
+            # Version 12 LogMiner has support for Redo Logs that contain ADT columns
             if peg_parser:
                 # With peg parser we expect n output records with the update we did on the table
                 status.wait_for_pipeline_output_records_count(num_records)
