@@ -209,7 +209,7 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     hadoop_fs >> sdc_rpc_destination
-    hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
+    hadoop_fs_pipeline = builder.build().configure_for_environment(cluster)
     hadoop_fs_pipeline.configuration['executionMode'] = 'CLUSTER_BATCH'
 
     # Build the Snapshot pipeline.
@@ -219,14 +219,11 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     sdc_rpc_origin = builder.add_stage('SDC RPC', type='origin')
     sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
     sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
-    # Since YARN jobs take a while to get going, set RPC origin batch wait time to 5 min. to avoid
-    # getting an empty batch in the snapshot.
-    sdc_rpc_origin.batch_wait_time_in_secs = 300
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Snapshot pipeline')
+    sdc_rpc_origin >> wiretap.destination
+    snapshot_pipeline = builder.build()
 
     # Add both pipelines we just created to SDC and start writing files to Hadoop FS with the HDFS client.
     sdc_executor.add_pipeline(hadoop_fs_pipeline, snapshot_pipeline)
@@ -238,23 +235,15 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         cluster.hdfs.client.makedirs(hadoop_fs_folder)
         cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, 'file.txt'), data='\n'.join(lines_in_file))
 
-        # So here's where we do the clever stuff. We use SDC's capture snapshot endpoint to start and begin
-        # capturing a snapshot from the snapshot pipeline. We do this, however, without using the synchronous
-        # wait_for_finished function. That way, we can switch over and start the Hadoop FS pipeline. Once that one
-        # completes, we can go back and do an assert on the snapshot pipeline's snapshot.
         logger.debug('Starting snapshot pipeline and capturing snapshot ...')
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True,
-                                                                  wait=False)
-
+        sdc_executor.start_pipeline(snapshot_pipeline)
         logger.debug('Starting Hadoop FS pipeline and waiting for it to finish ...')
-        sdc_executor.start_pipeline(hadoop_fs_pipeline)
+        sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished()
+        sdc_executor.wait_for_pipeline_metric(snapshot_pipeline, 'input_record_count', 3, timeout_sec=300)
+        sdc_executor.stop_pipeline(snapshot_pipeline)
 
-        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        sdc_executor.stop_pipeline(snapshot_pipeline, force=True)
-        lines_from_snapshot = [record.field['text'].value
-                               for record in snapshot[snapshot_pipeline[0].instance_name].output]
-
-        assert lines_from_snapshot == lines_in_file
+        actual = [record.field["text"] for record in wiretap.output_records]
+        assert lines_in_file == actual
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
 
