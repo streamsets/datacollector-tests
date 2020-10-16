@@ -302,7 +302,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
                        (cities_table, 'ALTER', {}),
                        (sports_table, 'CREATE', {}),
                        (sports_table, 'ALTER', {}),
-                       (cities_table, 'TRUNCATE', {}),
+                       (sports_table, 'TRUNCATE', {}),
                        (cities_table, 'DROP', {})]
 
     try:
@@ -314,8 +314,6 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
 
         connection.execute(f'CREATE TABLE {sports_table} (ID NUMBER PRIMARY KEY, PLAYER VARCHAR2(50))')
         connection.execute(f'ALTER TABLE {sports_table} ADD (SPORT VARCHAR2(50))')
-
-        connection.execute(f'TRUNCATE TABLE {cities_table}')
 
         # Build the pipeline.
         builder = sdc_builder.get_pipeline_builder()
@@ -338,13 +336,18 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
         # with all the events. We use the PURGE clause in the DROP statement to avoid sending the table to the
         # recycle bin, as it would create spurious ALTER events.
         snapshot_cmd = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False,
-                                                     batches=len(sports_data), batch_size=1)
+                                                     batches=len(2 * sports_data), batch_size=1)
 
-        connection.execute(f'DROP TABLE {cities_table} PURGE')
         for id, name, sport in sports_data:
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
 
-        snapshot = snapshot_cmd.wait_for_finished(timeout_sec=240).snapshot
+        connection.execute(f'TRUNCATE TABLE {sports_table}')
+        connection.execute(f'DROP TABLE {cities_table} PURGE')
+
+        for id, name, sport in sports_data:
+            connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
+
+        snapshot = snapshot_cmd.wait_for_finished(timeout_sec=420).snapshot
         sdc_executor.stop_pipeline(pipeline, force=True)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
