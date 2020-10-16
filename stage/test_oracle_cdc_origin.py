@@ -109,7 +109,7 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database):
         pipeline = pipeline_builder.build('Oracle CDC: Decimal Attributes').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
         # assert all the data captured have the same raw_data
         output_records = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
         assert len(output_records) == 1
@@ -202,7 +202,7 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
         # So we wait until the time here is past the time at which all data was written out to the DB (current time).
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         # Assert all the data captured have the same raw_data.
@@ -307,7 +307,7 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
 
         row_index = 0
         op_index = 0
@@ -664,7 +664,7 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
 
         # assert all the data captured have the same raw_data
         output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
@@ -995,7 +995,7 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(60).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
         # assert all the data captured have the same raw_data
         output_records = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
         assert len(output_records) == 5
@@ -1084,7 +1084,8 @@ def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database,
         sdc_executor.add_pipeline(pipeline)
 
         # Capture snapshot and check the record is correctly generated.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, wait=True,
+                                                 timeout_sec=120).snapshot
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         actual_output = [record.field
@@ -1162,7 +1163,8 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, ac
         sdc_executor.add_pipeline(pipeline)
 
         # Capture snapshot and check Oracle CDC output.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, wait=True,
+                                                 timeout_sec=120).snapshot
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         actual_output = [record.field
@@ -1295,11 +1297,16 @@ def test_event_startup(sdc_builder, sdc_executor, database):
     connection = database.engine.connect()
 
     try:
+        connection.execute(f"CREATE TABLE {table_name}(id number primary key)")
+        start_scn = _get_last_scn(connection)
+
         builder = sdc_builder.get_pipeline_builder()
         origin = _get_oracle_cdc_client_origin(connection=connection,
                                                database=database,
                                                sdc_builder=sdc_builder,
                                                pipeline_builder=builder,
+                                               initial_change='SCN',
+                                               start_scn=start_scn,
                                                buffer_locally=True,
                                                src_table_name=table_name)
         trash = builder.add_stage('Trash')
@@ -1313,14 +1320,14 @@ def test_event_startup(sdc_builder, sdc_executor, database):
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        # Create table & insert one row
-        connection.execute(f"""CREATE TABLE {table_name}(id number primary key)""")
+        # Insert one row
         txn = connection.begin()
         connection.execute(f"INSERT INTO {table_name} VALUES(1)")
         txn.commit()
-        _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
+                                                 start_pipeline=True,
+                                                 timeout_sec=360).snapshot
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         assert len(snapshot[identity].output) == 1
@@ -1657,7 +1664,7 @@ def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
         txn3.commit()
 
         # Check the data consumed by the pipeline is the expected one.
-        snapshot = snapshot_cmd.wait_for_finished().snapshot
+        snapshot = snapshot_cmd.wait_for_finished(timeout_sec=120).snapshot
         sdc_records = [snapshot.snapshot_batches[i][oracle_cdc.instance_name].output[0]
                        for i in range(len(snapshot))]
         consumed_data = [rec.field['ID'].value for rec in sdc_records]
@@ -1856,7 +1863,7 @@ def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data,
             connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline, force=True)
 
         output_values = [rec.field['ID'].value for rec in wiretap.output_records]
         assert input_values == output_values

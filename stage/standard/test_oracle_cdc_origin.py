@@ -151,7 +151,7 @@ def test_object_names_tables(sdc_builder, sdc_executor, database, keep_data, tab
             connection.execute(f'INSERT INTO "{table_name}" VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline, force=True)
 
         output_values = [rec.field['ID'].value for rec in wiretap.output_records]
         assert input_values == output_values
@@ -205,7 +205,7 @@ def test_object_names_columns(sdc_builder, sdc_executor, database, keep_data, co
             connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline, force=True)
 
         output_values = [rec.field[column_name].value for rec in wiretap.output_records]
         assert input_values == output_values
@@ -258,7 +258,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
             connection.execute(f"INSERT INTO {table_name} VALUES ({val})")
         connection.execute(f'TRUNCATE TABLE {table_name}')
 
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=420)
 
         output_values = [rec.field['ID'].value for rec in wiretap.output_records]
         assert input_values == output_values
@@ -405,7 +405,7 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
                 connection.execute(f"INSERT INTO {table_name} VALUES ({val})")
 
             sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(records_per_iteration)
-            sdc_executor.stop_pipeline(pipeline)
+            sdc_executor.stop_pipeline(pipeline, force=True)
 
             output_values = [rec.field['ID'].value for rec in wiretap.output_records]
             assert input_values == output_values
@@ -419,7 +419,7 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
 def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder, buffer_locally,
                                   src_table_name=None, batch_size=10, **kwargs):
     kwargs.setdefault('dictionary_source', 'DICT_FROM_ONLINE_CATALOG')
-    kwargs.setdefault('logminer_session_window', '${10 * MINUTES}')
+    kwargs.setdefault('logminer_session_window', '${2 * MINUTES}')
     kwargs.setdefault('db_time_zone', 'UTC')
     kwargs.setdefault('maximum_transaction_length', '${1 * MINUTES}')
     kwargs.setdefault('initial_change', 'DATE')
