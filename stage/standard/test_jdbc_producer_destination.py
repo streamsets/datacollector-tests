@@ -35,6 +35,11 @@ DATA_TYPES_ORACLE = [
     ('true', 'BOOLEAN', 'nvarchar2(1)', '1'),
     # Byte
     ('65', 'BYTE', 'char(2)', '65'),
+    # Char
+    ('a', 'CHAR', 'char(1)', 'a'),
+    ('a', 'CHAR', 'varchar(1)', 'a'),
+    ('a', 'CHAR', 'nchar(1)', 'a'),
+    ('a', 'CHAR', 'nvarchar2(1)', 'a'),
     # Short
     (120, 'SHORT', 'number', 120),
     (120, 'SHORT', 'char(5)', '120  '),
@@ -151,6 +156,13 @@ DATA_TYPES_MYSQL = [
     ('true', 'BOOLEAN', 'int', 1),
     # Byte
     ('65', 'BYTE', 'char(2)', '65'),
+    # Char
+    ('a', 'CHAR', 'char(1)', 'a'),
+    ('a', 'CHAR', 'varchar(1)', 'a'),
+    ('a', 'CHAR', 'binary(1)', b'a'),
+    ('a', 'CHAR', 'varbinary(1)', b'a'),
+    ('a', 'CHAR', 'text', 'a'),
+    ('a', 'CHAR', 'blob', b'a'),
     # Short
     (120, 'SHORT', 'tinyint', 120),
     (120, 'SHORT', 'tinyint unsigned', 120),
@@ -306,7 +318,7 @@ DATA_TYPES_MYSQL = [
     ('a', 'STRING', "enum('a', 'b')", 'a'),
     ('a', 'STRING', "set('a', 'b')", 'a'),
     # Byte array
-    # No good support in MySQL
+    ('string', 'BYTE_ARRAY', 'blob', b'string'),
 ]
 @database('mysql')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_MYSQL, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_MYSQL])
@@ -323,6 +335,10 @@ DATA_TYPES_POSTGRESQL = [
     ('true', 'BOOLEAN', 'boolean', True),
     # Byte
     ('65', 'BYTE', 'char(2)', '65'),
+    # Char
+    ('a', 'CHAR', 'char(1)', 'a'),
+    ('a', 'CHAR', 'varchar(1)', 'a'),
+    ('a', 'CHAR', 'text', 'a'),
     # Short
     (120, 'SHORT', 'smallint', 120),
     (120, 'SHORT', 'integer', 120),
@@ -406,6 +422,7 @@ DATA_TYPES_POSTGRESQL = [
     ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(25)', '2020-01-01T10:00Z        '),
     ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(25)', '2020-01-01T10:00Z'),
     ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01T10:00Z'),
+    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'timestamp with time zone', datetime.datetime(2020, 1, 1, 10, 0, tzinfo=datetime.timezone.utc)),
     # String
     ('120', 'STRING', 'smallint', 120),
     ('120', 'STRING', 'integer', 120),
@@ -424,7 +441,7 @@ DATA_TYPES_POSTGRESQL = [
     ('{"a": "b"}', 'STRING', 'json', {'a': 'b'}),
     ('{"a": "b"}', 'STRING', 'jsonb', {'a': 'b'}),
     # Byte array
-    # No good support with PostgreSQL
+    ('string', 'BYTE_ARRAY', 'bytea', b'string'),
 ]
 @database('postgresql')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_POSTGRESQL, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_POSTGRESQL])
@@ -438,6 +455,13 @@ DATA_TYPES_SQLSERVER = [
     ('true', 'BOOLEAN', 'int', 1),
     # Byte
     ('65', 'BYTE', 'char(2)', '65'),
+    # Char
+    ('a', 'CHAR', 'char(1)', 'a'),
+    ('a', 'CHAR', 'varchar(1)', 'a'),
+    ('a', 'CHAR', 'nchar(1)', 'a'),
+    ('a', 'CHAR', 'nvarchar(1)', 'a'),
+    ('a', 'CHAR', 'text', 'a'),
+    ('a', 'CHAR', 'ntext', 'a'),
     # Short
     (120, 'SHORT', 'tinyint', 120),
     (120, 'SHORT', 'smallint', 120),
@@ -652,7 +676,13 @@ def _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_
 
         rows = [row for row in rs]
         assert len(rows) == 1
-        assert rows[0][0] == expected
+        actual = rows[0][0]
+
+        # Coercions that can't be directly asserted
+        if type(actual) == memoryview:
+            actual = actual.tobytes()
+
+        assert actual == expected
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
