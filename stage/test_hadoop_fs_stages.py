@@ -20,7 +20,7 @@ import time
 
 import pytest
 from hadoop.io import SequenceFile
-from streamsets.testframework.markers import cluster, large, sdc_min_version
+from streamsets.testframework.markers import aster_authentication, cluster, large, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -182,6 +182,7 @@ def test_hadoop_fs_destination_time_basis(sdc_builder, sdc_executor, cluster):
         cluster.hdfs.client.delete(hdfs_directory, recursive=True)
 
 
+@aster_authentication
 @cluster('cdh', 'hdp')
 def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     """Write a simple file into a Hadoop FS folder with a randomly-generated name and confirm that the Hadoop FS origin
