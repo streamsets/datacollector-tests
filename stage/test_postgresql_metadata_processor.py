@@ -22,18 +22,17 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
-# SDC-15746: JDBC Metadata Processor throws NullPointerException on unsupported type
 @database('postgresql')
-def test_unsupported_type_in_precreated_table(sdc_builder, sdc_executor, database, keep_data):
+def test_non_matching_types(sdc_builder, sdc_executor, database, keep_data):
+    """Ensure proper error when a pre-existing table contains type mapping that is not valid."""
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
     try:
-        # We create table manually to get the right type
-        # Smallint is currently not supported in PostgreSQL Metadata Processor
+        # We don't support "money" in the Metadata processor
         connection.execute(f"""
             CREATE TABLE {table_name}(
                 id int primary key,
-                code smallint
+                code money
             )
         """)
 
@@ -59,7 +58,7 @@ def test_unsupported_type_in_precreated_table(sdc_builder, sdc_executor, databas
         # The record should be sent to error with proper error code
         errors = wiretap.error_records
         assert len(errors) == 1
-        assert errors[0].header['errorCode'] == 'JDBC_91'
+        assert errors[0].header['errorCode'] == 'JDBC_303'
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
