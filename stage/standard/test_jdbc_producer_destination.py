@@ -419,9 +419,9 @@ DATA_TYPES_POSTGRESQL = [
     ('2020-01-01 10:00:00', 'DATETIME', 'varchar(50)', 'Wed Jan 01 10:00:00 GMT 2020'),
     ('2020-01-01 10:00:00', 'DATETIME', 'text', 'Wed Jan 01 10:00:00 GMT 2020'),
     # Zoned DateTime
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(25)', '2020-01-01T10:00Z        '),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(25)', '2020-01-01T10:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(25)', '2020-01-01 10:00:00+00   '),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(25)', '2020-01-01 10:00:00+00'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01 10:00:00+00'),
     ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'timestamp with time zone', datetime.datetime(2020, 1, 1, 10, 0, tzinfo=datetime.timezone.utc)),
     # String
     ('120', 'STRING', 'smallint', 120),
