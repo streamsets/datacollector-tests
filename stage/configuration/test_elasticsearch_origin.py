@@ -564,8 +564,11 @@ def test_use_security(sdc_builder, sdc_executor, elasticsearch, stage_attributes
     configured_origin = pipeline.stages.get(label=origin.label)
     configured_origin.use_security = stage_attributes['use_security']
     if not stage_attributes['use_security']:
-        configured_origin.user_name = ''
-        configured_origin.password = ''
+        if sdc_builder.version < '3.17.0':
+            configured_origin.configuration['conf.securityConfig.securityUser'] = f':'
+        else:
+            configured_origin.user_name = ''
+            configured_origin.password = ''
 
     sdc_executor.add_pipeline(pipeline)
 
