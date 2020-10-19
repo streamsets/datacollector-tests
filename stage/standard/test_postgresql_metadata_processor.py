@@ -118,7 +118,7 @@ def test_data_types(sdc_builder, sdc_executor, database, input, converter_type, 
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
-            connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+            connection.execute(f"DROP TABLE IF EXISTS \"{table_name}\"")
 
 
 # Rules: https://www.postgresql.org/docs/9.1/sql-syntax-lexical.html
@@ -177,7 +177,7 @@ def test_object_names(sdc_builder, sdc_executor, test_name, table_name, column_n
     finally:
         if not keep_data:
                 logger.info('Dropping table %s in %s database ...', table_name, database.type)
-                connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+                connection.execute(f"DROP TABLE IF EXISTS \"{table_name}\"")
 
 
 @database('postgresql')
@@ -223,9 +223,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
     finally:
         if not keep_data:
             for i in range(0, 100):
-                table_name = table_prefix + "_" + i
+                table_name = table_prefix + "_" + str(i)
                 logger.info('Dropping table %s in %s database ...', table_name, database.type)
-                connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+                connection.execute(f"DROP TABLE IF EXISTS \"{table_name}\"")
 
 
 @database('postgresql')
