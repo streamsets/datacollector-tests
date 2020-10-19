@@ -1,13 +1,26 @@
-import string
-import logging
-import pytest
-import os
+# Copyright 2020 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+import logging
+import os
+import string
+
+import pytest
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import elasticsearch
 from streamsets.testframework.utils import get_random_string
-
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -318,8 +331,12 @@ def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch
     pipeline = builder.build().configure_for_environment(elasticsearch)
 
     configured_origin = pipeline.stages.get(label=origin.label)
-    configured_origin.user_name = username
-    configured_origin.password = password
+
+    if sdc_builder.version < '3.17.0':
+        configured_origin.configuration['conf.securityConfig.securityUser'] = f'{username}:{password}'
+    else:
+        configured_origin.user_name = username
+        configured_origin.password = password
 
     sdc_executor.add_pipeline(pipeline)
 
