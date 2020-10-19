@@ -1160,7 +1160,7 @@ def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
 @pytest.mark.parametrize('number_of_messages_sent_and_origin_batch_size',
                          [(10, 10), (10, 5), (5, 3), (3, 5), (5, 10), (100, 20)])
 def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
-                                          number_of_messages_sent_and_origin_batch_size):
+                                          number_of_messages_sent_and_origin_batch_size, keep_data):
     """Test for SQS consumer origin stage with max batch size configuration. We do so by publishing data
      to a test queue using SQS client and having a pipeline which reads that data using SQS consumer origin stage.
      We assert the number of input/output and number of batches. The pipeline looks like:
@@ -1177,9 +1177,7 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
     # to decide the number of batches, we will basically divide to get the number of batches
     # and if it is not properly divisible (i.e modulo is non zero), we will add one more batch
     number_of_batches = number_of_messages // max_batch_size + int(number_of_messages % max_batch_size > 0)
-
-    logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, '
-                f'Number of batches be produced : {number_of_batches}')
+    logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, Number of batches be produced : {number_of_batches}')
 
     builder = sdc_builder.get_pipeline_builder()
     amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
@@ -1187,19 +1185,22 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
                                        max_batch_size_in_messages=max_batch_size,
                                        number_of_messages_per_request=10,
                                        queue_name_prefixes=[queue_name])
-    trash = builder.add_stage('Trash')
-    amazon_sqs_consumer >> trash
 
-    consumer_origin_pipeline = builder.build(title='Amazon SQS Consumer pipeline').configure_for_environment(aws)
+    wiretap = builder.add_wiretap()
+    amazon_sqs_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
     client = aws.sqs
     logger.info('Creating %s SQS queue on AWS ...', queue_name)
     queue_url = client.create_queue(QueueName=queue_name)['QueueUrl']
+    expected = []
     try:
         all_responses = []
         for batch in range(number_of_messages // 10 + int(number_of_messages % 10 > 0)):
-            message_entries = [{'Id': str(i), 'MessageBody': 'Message {}'.format(i)}
+            expected.extend([str(i) for i in range(batch * 10, min(number_of_messages, (batch + 1) * 10))])
+            message_entries = [{'Id': str(i), f'MessageBody': str(i)}
                                for i in range(batch * 10, min(number_of_messages, (batch + 1) * 10))]
             sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
             for message in sent_response.get('Successful', []):
@@ -1210,12 +1211,13 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
         sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_batch_count(number_of_batches)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
-        metrics = sdc_executor.get_pipeline_history(consumer_origin_pipeline).latest.metrics
-        assert metrics.counter("pipeline.batchCount.counter").count == number_of_batches
-        assert metrics.counter("pipeline.batchInputRecords.counter").count == number_of_messages
-        assert metrics.counter("pipeline.batchOutputRecords.counter").count == number_of_messages
+        # Verify that all records were properly read
+        records = wiretap.output_records
+        assert len(records) == number_of_messages
+
+        assert sorted(expected) == sorted([r.field['text'].value for r in records])
     finally:
-        if queue_url:
+        if not keep_data and queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
             client.delete_queue(QueueUrl=queue_url)
 
