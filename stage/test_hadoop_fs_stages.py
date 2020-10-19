@@ -448,6 +448,8 @@ def test_hadoop_fs_origin_standalone_glob_pattern(sdc_builder, sdc_executor, clu
     DATA = [
         {'first_name': 'Alex', 'last_name': 'Sanchez'},
         {'first_name': 'Danilo', 'last_name': 'Viana'},
+        {'first_name': 'Danilo', 'last_name': 'Viana'},
+        {'first_name': 'Alex', 'last_name': 'Sanchez'},
         {'first_name': 'Dima', 'last_name': 'Spivak'}
     ]
 
@@ -489,7 +491,9 @@ def test_hadoop_fs_origin_standalone_glob_pattern(sdc_builder, sdc_executor, clu
         cluster.hdfs.client.makedirs(f'{hadoop_fs_folder_base}/usa/productivity')
 
         cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_base, 'spain', 'development', alex_file), data=alex)
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_base, 'spain', 'development', danilo_file), data=danilo)
         cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_base, 'spain', 'support', danilo_file), data=danilo)
+        cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_base, 'spain', 'support', alex_file), data=alex)
         cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_base, 'usa', 'productivity', dima_file), data=dima)
 
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_pipeline_batch_count(3)

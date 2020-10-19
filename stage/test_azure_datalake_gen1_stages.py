@@ -532,8 +532,10 @@ def test_datalake_origin_glob_expansion(sdc_builder, sdc_executor, azure, proces
             '*/*1': ['a/a1', 'b/b1'],
             '*.txt': []  # Expands to a file, so no directory to walk through.
         }
-    expected_output = ['{}_file.txt'.format(exp.replace('/', '_'))
-                       for exp in expected_walk[glob_pattern]]
+    expected_output = []
+    for exp in expected_walk[glob_pattern]:
+        filepath = os.path.join(rootdir, exp, '{}_file.txt'.format(exp.replace('/', '_')))
+        expected_output += [filepath]
 
     # Create the directory tree and populate with files. The content of each file is just the filename.
     fs.mkdir(rootdir)
@@ -542,7 +544,17 @@ def test_datalake_origin_glob_expansion(sdc_builder, sdc_executor, azure, proces
             fs.mkdir(os.path.join(rootdir, d))
         filename = '{}_file.txt'.format(d.replace('/', '_'))
         filepath = os.path.join(rootdir, d, filename)
-        _adls_create_file(fs, filename, filepath)
+        _adls_create_file(fs, filepath, filepath)
+
+    if len(expected_walk[glob_pattern]) > 0:
+        filename = 'dup.txt'
+
+        for d in {expected_walk[glob_pattern][0], expected_walk[glob_pattern][-1]}:
+            filepath = os.path.join(rootdir, d, filename)
+            _adls_create_file(fs, filepath, filepath)
+            expected_output += [filepath]
+
+    pipeline = None
 
     try:
         # Build the pipeline.
@@ -553,27 +565,23 @@ def test_datalake_origin_glob_expansion(sdc_builder, sdc_executor, azure, proces
                                    file_name_pattern='*',
                                    read_order='TIMESTAMP',
                                    process_subdirectories=process_subdirs)
-        trash = builder.add_stage('Trash')
-        adls_origin >> trash
+        wiretap = builder.add_wiretap()
+        adls_origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(azure)
         sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        # There may be up to 11 files to wait for, that may take some time, setting a long timeout.
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 2 * len(expected_output), timeout_sec=300)
 
-        # Start pipeline and read files in ADLS.
-        num_batches = max(len(expected_walk[glob_pattern]), 1)
-        snapshot = sdc_executor.capture_snapshot(pipeline,
-                                                 start_pipeline=True,
-                                                 batches=num_batches,
-                                                 timeout_sec=120).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        actual_output = [record.field['text'].value for record in wiretap.output_records]
 
         # Verify all the expected records were produced by the origin.
-        actual_output = [record.field['text'].value
-                         for batch in snapshot
-                         for record in batch[adls_origin.instance_name].output]
         assert sorted(actual_output) == sorted(expected_output)
 
     finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline)
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', rootdir)
         fs.rm(rootdir, recursive=True)
 

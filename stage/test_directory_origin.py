@@ -147,53 +147,51 @@ def list_dir(sdc_executor):
 
 
 def test_directory_origin(sdc_builder, sdc_executor):
-    """Test Directory Origin. We test by making sure files are pre-created using Local FS destination stage pipeline
-    and then have the Directory Origin read those files. The pipelines looks like:
+    """Test Directory Origin. We test by making sure files are pre-created
+     and then have the Directory Origin read those files. The pipelines looks like:
 
-        dev_raw_data_source >> local_fs
-        directory >> trash
+        directory >> wiretap
 
     """
     raw_data = 'Hello!'
-    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string())
+    sub_tmp_directory1 = os.path.join(tmp_directory, get_random_string())
+    sub_tmp_directory2 = os.path.join(tmp_directory, get_random_string())
 
-    # 1st pipeline which generates the required files for Directory Origin
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
-    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
-    local_fs.set_attributes(data_format='TEXT',
-                            directory_template=os.path.join(tmp_directory, '${YYYY()}-${MM()}-${DD()}-${hh()}'),
-                            files_prefix='sdc-${sdc:id()}', files_suffix='txt', max_records_in_file=100)
+    sdc_executor.execute_shell(f'mkdir -p {sub_tmp_directory1}')
 
-    dev_raw_data_source >> local_fs
-    files_pipeline = pipeline_builder.build('Generate files pipeline')
-    sdc_executor.add_pipeline(files_pipeline)
+    try:
+        sdc_executor.write_file(os.path.join(sub_tmp_directory1, 'sdc1.txt'), raw_data)
+        sdc_executor.write_file(os.path.join(sub_tmp_directory1, 'sdc2.txt'), raw_data)
 
-    # generate some batches/files
-    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(10)
-    sdc_executor.stop_pipeline(files_pipeline)
+        sdc_executor.execute_shell(f'mkdir -p {sub_tmp_directory2}')
+        sdc_executor.write_file(os.path.join(sub_tmp_directory2, 'sdc1.txt'), raw_data)
+        sdc_executor.write_file(os.path.join(sub_tmp_directory2, 'sdc2.txt'), raw_data)
 
-    # 2nd pipeline which reads the files using Directory Origin stage
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='TEXT', file_name_pattern='sdc*.txt', file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP')
-    trash = pipeline_builder.add_stage('Trash')
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory', type='origin')
+        directory.set_attributes(data_format='TEXT', file_name_pattern='sdc*.txt', file_name_pattern_mode='GLOB',
+                                 file_post_processing='DELETE', files_directory=tmp_directory,
+                                 process_subdirectories=True, read_order='TIMESTAMP')
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        directory_pipeline = pipeline_builder.build('Directory Origin pipeline')
+        sdc_executor.add_pipeline(directory_pipeline)
 
-    directory >> trash
-    directory_pipeline = pipeline_builder.build('Directory Origin pipeline')
-    sdc_executor.add_pipeline(directory_pipeline)
+        cmd = sdc_executor.start_pipeline(directory_pipeline)
+        cmd.wait_for_pipeline_batch_count(5)
+        sdc_executor.stop_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(directory_pipeline)
-
-    # assert all the data captured have the same raw_data
-    for record in snapshot.snapshot_batches[0][directory.instance_name].output:
-        assert raw_data == record.field['text'].value
-        assert record.header['sourceId'] is not None
-        assert record.header['stageCreator'] is not None
+        # assert all the data captured have the same raw_data
+        output = [record.field['text'].value for record in wiretap.output_records]
+        assert len(output) == 4
+        for record in output:
+            assert raw_data == record
+        for record in wiretap.output_records:
+            assert record.header['sourceId'] is not None
+            assert record.header['stageCreator'] is not None
+    finally:
+        sdc_executor.execute_shell(f'rm -fr {tmp_directory}')
 
 
 @pytest.mark.parametrize('no_of_threads', [1, 5])
