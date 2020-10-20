@@ -498,7 +498,7 @@ def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
 @sdc_min_version('3.16.2')
 def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
     INPUT_DATA = 'Hello World from SDC & DPM!'
-    TOPIC_NAME = 'test-topic'
+    TOPIC_NAME = f'{get_random_string(string.ascii_lowercase, 5)}-{get_random_string(string.ascii_lowercase, 5)}'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, [TOPIC_NAME])
