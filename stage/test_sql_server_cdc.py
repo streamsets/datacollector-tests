@@ -34,7 +34,7 @@ def setup_table(connection, schema_name, table_name, sample_data=None, capture_i
     table = create_table(connection, schema_name, table_name)
 
     if capture_instance_name is None:
-      capture_instance_name = f'{schema_name}_{table_name}'
+        capture_instance_name = f'{schema_name}_{table_name}'
 
     logger.info('Enabling CDC on %s.%s...', schema_name, table_name)
     connection.execute(f'exec sys.sp_cdc_enable_table @source_schema=\'{schema_name}\', '
@@ -46,6 +46,7 @@ def setup_table(connection, schema_name, table_name, sample_data=None, capture_i
         add_data_to_table(connection, table, sample_data)
 
     return table
+
 
 def add_data_to_table(connection, table, sample_data):
     logger.info('Adding %s rows into %s...', len(sample_data), table)
@@ -146,7 +147,7 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
             # e.g. for no_of_records=5, the first table inserts rows_in_database[0:5]
             # and the secord table inserts rows_in_database[5:10]
             table = setup_table(connection, schema_name, table_name,
-                                rows_in_database[(index*no_of_records): ((index+1)*no_of_records)])
+                                rows_in_database[(index * no_of_records): ((index + 1) * no_of_records)])
             tables.append(table)
             table_configs.append({'capture_instance': f'{schema_name}_{table_name}'})
 
@@ -218,8 +219,8 @@ def test_sql_server_cdc_with_empty_initial_offset(sdc_builder, sdc_executor, dat
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(table_configs=[{'capture_instance': capture_instance_name}],
-            use_direct_table_query = use_table
-        )
+                                      use_direct_table_query=use_table
+                                      )
 
         # create the destination table
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -296,9 +297,9 @@ def test_sql_server_cdc_with_nonempty_initial_offset(sdc_builder, sdc_executor, 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(table_configs=[{'capture_instance': capture_instance_name,
-            'initialOffset': currentLSN.decode("utf-8")}],
-            use_direct_table_query = use_table
-        )
+                                                      'initialOffset': currentLSN.decode("utf-8")}],
+                                      use_direct_table_query=use_table
+                                      )
 
         # create the destination table
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -321,7 +322,8 @@ def test_sql_server_cdc_with_nonempty_initial_offset(sdc_builder, sdc_executor, 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(second_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert_table_replicated(database, rows_in_database[first_no_of_records:total_no_of_records], DEFAULT_SCHEMA_NAME, dest_table_name)
+        assert_table_replicated(database, rows_in_database[first_no_of_records:total_no_of_records],
+                                DEFAULT_SCHEMA_NAME, dest_table_name)
 
     finally:
         if table is not None:
@@ -367,8 +369,8 @@ def test_sql_server_cdc_with_last_committed_offset(sdc_builder, sdc_executor, da
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(table_configs=[{'capture_instance': capture_instance_name}],
-            use_direct_table_query = use_table
-        )
+                                      use_direct_table_query=use_table
+                                      )
 
         # create the destination table
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -414,6 +416,7 @@ def test_sql_server_cdc_with_last_committed_offset(sdc_builder, sdc_executor, da
         if connection is not None:
             connection.close()
 
+
 @database('sqlserver')
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
@@ -440,8 +443,8 @@ def test_sql_server_cdc_insert_and_update(sdc_builder, sdc_executor, database, u
         # update the row
         updated_name = 'jisun'
         connection.execute(table.update()
-             .where(table.c.id == 0)
-             .values(name=updated_name))
+                           .where(table.c.id == 0)
+                           .values(name=updated_name))
 
         total_no_of_records = 3
 
@@ -451,9 +454,9 @@ def test_sql_server_cdc_insert_and_update(sdc_builder, sdc_executor, database, u
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(table_configs=[{'capture_instance': capture_instance_name}],
-            use_direct_table_query = use_table,
-            fetch_size=2
-        )
+                                      use_direct_table_query=use_table,
+                                      fetch_size=2
+                                      )
 
         # create the destination table
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -476,7 +479,8 @@ def test_sql_server_cdc_insert_and_update(sdc_builder, sdc_executor, database, u
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
-        expected_rows_in_database = [{'id': rows_in_database[0].get('id'), 'name': updated_name, 'dt': rows_in_database[0].get('dt')}]
+        expected_rows_in_database = [
+            {'id': rows_in_database[0].get('id'), 'name': updated_name, 'dt': rows_in_database[0].get('dt')}]
         assert_table_replicated(database, expected_rows_in_database, DEFAULT_SCHEMA_NAME, dest_table_name)
 
     finally:
@@ -490,6 +494,7 @@ def test_sql_server_cdc_insert_and_update(sdc_builder, sdc_executor, database, u
 
         if connection is not None:
             connection.close()
+
 
 @database('sqlserver')
 @sdc_min_version('3.6.0')
@@ -517,8 +522,8 @@ def test_sql_server_cdc_insert_update_delete(sdc_builder, sdc_executor, database
         # update the row
         updated_name = 'jisun'
         connection.execute(table.update()
-             .where(table.c.id == 0)
-             .values(name=updated_name))
+                           .where(table.c.id == 0)
+                           .values(name=updated_name))
 
         # delete the rows
         connection.execute(table.delete())
@@ -531,9 +536,9 @@ def test_sql_server_cdc_insert_update_delete(sdc_builder, sdc_executor, database
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(table_configs=[{'capture_instance': capture_instance_name}],
-            use_direct_table_query = use_table,
-            fetch_size=1
-        )
+                                      use_direct_table_query=use_table,
+                                      fetch_size=1
+                                      )
 
         # create the destination table
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -596,13 +601,13 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
         for index in range(0, no_of_tables):
             # create the table and insert 1 row and update the row
             table_name = get_random_string(string.ascii_lowercase, 20)
-            table = setup_table(connection, DEFAULT_SCHEMA_NAME, table_name, rows_in_database[index:index+1])
+            table = setup_table(connection, DEFAULT_SCHEMA_NAME, table_name, rows_in_database[index:index + 1])
 
             updated_name = 'jisun'
             connection.execute(table.update()
-                 .values(name=updated_name))
+                               .values(name=updated_name))
 
-            table_configs.append({'capture_instance':f'{DEFAULT_SCHEMA_NAME}_{table_name}'})
+            table_configs.append({'capture_instance': f'{DEFAULT_SCHEMA_NAME}_{table_name}'})
             tables.append(table)
 
         # update the row from the first table
@@ -611,9 +616,9 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(fetch_size=1,
-            table_configs=table_configs,
-            use_direct_table_query = use_table
-        )
+                                      table_configs=table_configs,
+                                      use_direct_table_query=use_table
+                                      )
 
         # create the destination table
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -634,13 +639,14 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
-        expected_rows_in_database = [{'id':0, 'name':'sdc', 'dt': '2017-05-03'},
-                                     {'id':1, 'name':'jisun', 'dt': '2017-05-03'},
-                                     {'id':2, 'name':'jisun', 'dt': '2017-05-03'}]
+        expected_rows_in_database = [{'id': 0, 'name': 'sdc', 'dt': '2017-05-03'},
+                                     {'id': 1, 'name': 'jisun', 'dt': '2017-05-03'},
+                                     {'id': 2, 'name': 'jisun', 'dt': '2017-05-03'}]
         assert_table_replicated(database, expected_rows_in_database, DEFAULT_SCHEMA_NAME, dest_table_name)
 
         sqlserver_cdc_pipeline_history = sdc_executor.get_pipeline_history(pipeline)
-        msgs_sent_count = sqlserver_cdc_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+        msgs_sent_count = sqlserver_cdc_pipeline_history.latest.metrics.counter(
+            'pipeline.batchOutputRecords.counter').count
         assert msgs_sent_count == total_no_of_records
     finally:
         for index in range(0, no_of_tables):
@@ -689,9 +695,9 @@ def test_sql_server_cdc_no_more_events(sdc_builder, sdc_executor, database):
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(fetch_size=1,
-            max_batch_size_in_records=1,
-            table_configs=[{'capture_instance': capture_instance_name}]
-        )
+                                      max_batch_size_in_records=1,
+                                      table_configs=[{'capture_instance': capture_instance_name}]
+                                      )
 
         # create the destination table
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -715,7 +721,7 @@ def test_sql_server_cdc_no_more_events(sdc_builder, sdc_executor, database):
 
         # wait for data captured by cdc jobs in sql server before capturing the pipeline
         ct_table_name = f'{capture_instance_name}_CT'
-        wait_for_data_in_ct_table(ct_table_name, total_no_of_records/2, database)
+        wait_for_data_in_ct_table(ct_table_name, total_no_of_records / 2, database)
 
         # run the pipeline. after 10 batches, insert one more data to the table
         start_pipeline = sdc_executor.start_pipeline(pipeline)
@@ -769,14 +775,14 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
         # create schema & table
         connection.execute(f'CREATE SCHEMA {schema_name}')
         table = setup_table(connection, schema_name, table_name,
-            rows_in_database[0:1], capture_instance_name)
+                            rows_in_database[0:1], capture_instance_name)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(fetch_size=1,
-            max_batch_size_in_records=1,
-            table_configs=[{'capture_instance': capture_instance_name}]
-        )
+                                      max_batch_size_in_records=1,
+                                      table_configs=[{'capture_instance': capture_instance_name}]
+                                      )
 
         trash = pipeline_builder.add_stage('Trash')
 
@@ -787,7 +793,7 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
 
         # wait for data captured by cdc jobs in sql server before capturing the pipeline
         ct_table_name = f'{capture_instance_name}_CT'
-        wait_for_data_in_ct_table(ct_table_name, total_no_of_records/2, database)
+        wait_for_data_in_ct_table(ct_table_name, total_no_of_records / 2, database)
 
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(pipeline)
@@ -843,9 +849,9 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(fetch_size=1,
-            max_batch_size_in_records=1,
-            table_configs=[{'capture_instance': capture_instance_name}]
-        )
+                                      max_batch_size_in_records=1,
+                                      table_configs=[{'capture_instance': capture_instance_name}]
+                                      )
 
         trash = pipeline_builder.add_stage('Trash')
 
@@ -856,10 +862,10 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
 
         # We hard code offset to be pre-migration to multi-threaded origin and thus forcing the origin to upgrade it
         offset = {
-            'version' : 2,
-            'offsets' : {
-                '$com.streamsets.pipeline.stage.origin.jdbc.CDC.sqlserver.SQLServerCDCSource.offset.version$' : '1',
-                f'tableName=cdc.{capture_instance_name}_CT;;;partitioned=false;;;partitionSequence=-1;;;partitionStartOffsets=;;;partitionMaxOffsets=;;;usingNonIncrementalLoad=false' : '__$seqval=0::__$start_lsn=0'
+            'version': 2,
+            'offsets': {
+                '$com.streamsets.pipeline.stage.origin.jdbc.CDC.sqlserver.SQLServerCDCSource.offset.version$': '1',
+                f'tableName=cdc.{capture_instance_name}_CT;;;partitioned=false;;;partitionSequence=-1;;;partitionStartOffsets=;;;partitionMaxOffsets=;;;usingNonIncrementalLoad=false': '__$seqval=0::__$start_lsn=0'
             }
         }
 
@@ -939,6 +945,7 @@ def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
 
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_of_tables)
+        sdc_executor.stop_pipeline(pipeline)
 
         records = wiretap.output_records
         assert len(records) == num_of_tables
@@ -966,7 +973,9 @@ def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
             global_index += 1
 
         logger.info("Waiting on pipeline to finish processing all records")
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_of_tables * 2)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_of_tables)
+        sdc_executor.stop_pipeline(pipeline)
 
         # All data were read
         records = wiretap.output_records
@@ -976,10 +985,12 @@ def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
             assert records[i].field['id'] == num_of_tables + i
             assert records[i].field['new_column'] == num_of_tables + i
     finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
         if not keep_data:
             for table in tables:
                 logger.info('Dropping table %s in %s database...', table, database.type)
-                connection.execute(f"DROP TABLE {schema_name}.{table_name}")
+                connection.execute(f"DROP TABLE {schema_name}.{table}")
 
 
 def _sort_records(entry):
