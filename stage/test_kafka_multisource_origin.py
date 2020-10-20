@@ -51,22 +51,22 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     kafka (< 0.10), a validation issue is thrown.
     """
     INPUT_DATA = 'Hello World from SDC & DPM!'
-    EXPECTED_OUTPUT = [{'text': 'Hello World from SDC & DPM!'}]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster)
     kafka_multitopic_consumer.set_attributes(include_timestamps=True)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_multitopic_consumer >> [trash, pipeline_finisher]
+    kafka_multitopic_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     sdc_executor.add_pipeline(pipeline)
     produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, INPUT_DATA.encode(), 'TEXT')
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_multitopic_consumer].output] == EXPECTED_OUTPUT
-    assert all('timestamp' in record.header.values for record in snapshot[kafka_multitopic_consumer].output)
-    assert all('timestampType' in record.header.values for record in snapshot[kafka_multitopic_consumer].output)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert [INPUT_DATA] == [f'{record.field["text"]}' for record in wiretap.output_records]
+    assert all('timestamp' in record.header.values for record in wiretap.output_records)
+    assert all('timestampType' in record.header.values for record in wiretap.output_records)
 
 
 @cluster('cdh', 'kafka')
@@ -139,7 +139,7 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
         origin.auto_offset_reset = 'EARLIEST'
 
     delay = builder.add_stage('Delay')
-    delay.delay_between_batches = 5*1000
+    delay.delay_between_batches = 5 * 1000
 
     script = builder.add_stage('Jython Evaluator', type='processor')
     script.script = '1/${DIVISOR}'
@@ -162,7 +162,8 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
 
     try:
         # Start our pipeline - it should fail
-        sdc_executor.start_pipeline(pipeline, runtime_parameters={'DIVISOR': 0}).wait_for_status('RUN_ERROR', ignore_errors=True)
+        sdc_executor.start_pipeline(pipeline, runtime_parameters={'DIVISOR': 0}).wait_for_status('RUN_ERROR',
+                                                                                                 ignore_errors=True)
 
         # Adding second message so that the topic have at least one new message, so that getting snapshot on older
         # versions wont't time out but returns immediately.
@@ -171,7 +172,8 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
         producer.flush()
 
         # Now run the pipeline second time and it should succeed
-        snapshot = sdc_executor.capture_snapshot(pipeline, runtime_parameters={'DIVISOR': 1}, start_pipeline=True).snapshot
+        snapshot = sdc_executor.capture_snapshot(pipeline, runtime_parameters={'DIVISOR': 1},
+                                                 start_pipeline=True).snapshot
 
         # Now this should still read both records
         records = snapshot[origin].output
@@ -277,7 +279,7 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
 
     trash = builder.add_stage(label='Trash')
     kafka_multitopic_consumer >> trash
-    kafka_consumer_pipeline = builder.build(title='Kafka Multitopic pipeline Maximum batch size threshold')\
+    kafka_consumer_pipeline = builder.build(title='Kafka Multitopic pipeline Maximum batch size threshold') \
         .configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
     kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
@@ -343,7 +345,7 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
 
     kafka_multitopic_consumer >> sdc_rpc_destination
 
-    kafka_consumer_pipeline = builder.build(title='Kafka Multitopic pipeline Maximum batch wait time threshold')\
+    kafka_consumer_pipeline = builder.build(title='Kafka Multitopic pipeline Maximum batch wait time threshold') \
         .configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
     kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
@@ -398,7 +400,8 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
             sdc_executor.stop_pipeline(rpc_origin_pipeline)
 
 
-# SDC-13819: Kafka Multi-Topic Consumer refuses to ingest malformed records, rather than sending them to pipeline error handling
+# SDC-13819: Kafka Multi-Topic Consumer refuses to ingest malformed records, rather than sending them to pipeline
+# error handling
 @cluster('cdh', 'kafka')
 @sdc_min_version('3.15.0')
 def test_kafka_origin_only_errors(sdc_builder, sdc_executor, cluster):
@@ -495,20 +498,19 @@ def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
 @sdc_min_version('3.16.2')
 def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
     INPUT_DATA = 'Hello World from SDC & DPM!'
-    EXPECTED_OUTPUT = [{'text': 'Hello World from SDC & DPM!'}]
     TOPIC_NAME = 'test-topic'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, [TOPIC_NAME])
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_multitopic_consumer >> [trash, pipeline_finisher]
+    kafka_multitopic_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     sdc_executor.add_pipeline(pipeline)
     produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, INPUT_DATA.encode(), 'TEXT')
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_multitopic_consumer].output] == EXPECTED_OUTPUT
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [INPUT_DATA] == [f'{record.field["text"]}' for record in wiretap.output_records]
 
 
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list=None):
@@ -524,15 +526,15 @@ def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list=No
     pipeline_builder.add_error_stage('Discard')
 
     kafka_multitopic_consumer = pipeline_builder.add_stage('Kafka Multitopic Consumer',
-                                                type='origin',
-                                                library=stages_library)
+                                                           type='origin',
+                                                           library=stages_library)
 
     if topic_list is None:
         topic_list = [get_random_string(string.ascii_letters, 10)]
     # Default stage configuration.
     kafka_multitopic_consumer.set_attributes(data_format='TEXT',
-                                  batch_wait_time_in_ms=20000,
-                                  topic_list=topic_list)
+                                             batch_wait_time_in_ms=20000,
+                                             topic_list=topic_list)
 
     return kafka_multitopic_consumer
 
@@ -587,11 +589,10 @@ def verify_kafka_origin_results(kafka_multitopic_consumer_pipeline, sdc_executor
 
     elif data_format == 'TEXT_TIMESTAMP':
         record_field = [record.field for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
-        record_header = [record.header for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
+        record_header = [record.header for record in
+                         snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
         for element in record_header:
             logger.debug('ELEMENT: %s', element['values'])
             assert 'timestamp' in element['values']
             assert 'timestampType' in element['values']
         assert message == str(record_field[0])
-
-
