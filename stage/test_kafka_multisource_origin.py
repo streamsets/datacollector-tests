@@ -142,11 +142,17 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
     delay.delay_between_batches = 5 * 1000
 
     script = builder.add_stage('Jython Evaluator', type='processor')
-    script.script = '1/${DIVISOR}'
+    script.script = """1/${DIVISOR}
+for record in sdc.records:
+  try:
+      sdc.output.write(record)
+  except Exception as e:
+      sdc.error.write(record, str(e))
+"""
 
-    trash = builder.add_stage(label='Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> delay >> script >> trash
+    origin >> delay >> script >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
@@ -172,11 +178,11 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
         producer.flush()
 
         # Now run the pipeline second time and it should succeed
-        snapshot = sdc_executor.capture_snapshot(pipeline, runtime_parameters={'DIVISOR': 1},
-                                                 start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline, runtime_parameters={'DIVISOR': 1})
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
 
         # Now this should still read both records
-        records = snapshot[origin].output
+        records = wiretap.output_records
         assert len(records) == 2
         assert records[0].field['text'] == 'Super Secret Message'
         assert records[1].field['text'] == 'Not So Super Secret Message'
