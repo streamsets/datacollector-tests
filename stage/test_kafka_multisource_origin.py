@@ -214,9 +214,9 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
     else:
         kafka_multitopic_consumer.auto_offset_reset = 'EARLIEST'
 
-    trash = builder.add_stage(label='Trash')
+    wiretap = builder.add_wiretap()
 
-    kafka_multitopic_consumer >> trash
+    kafka_multitopic_consumer >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
@@ -230,24 +230,35 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
 
     try:
         # Start the pipeline, read one batch and stop.
-        snapshot1 = sdc_executor.capture_snapshot(pipeline, batches=1, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 5)
         sdc_executor.stop_pipeline(pipeline)
+
         # Check if the pipeline processed 5 records
-        records = snapshot1[kafka_multitopic_consumer].output
+        records = [f'{record.field["text"]}' for record in wiretap.output_records]
         assert len(records) == 5
+        assert messages == records
 
         # Produce another 3 messages
         messages2 = [f'message{i}' for i in range(5, 8)]
         produce_kafka_messages_list(kafka_multitopic_consumer.topic_list[0], cluster, messages2, 'TEXT')
 
+        # Resetting wiretap to clean up data from previous runs
+        wiretap.reset()
+
         # Run the pipeline second time
-        snapshot2 = sdc_executor.capture_snapshot(pipeline, batches=1, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        time.sleep(10)
+        sdc_executor.stop_pipeline(pipeline)
+
         #  2nd run should processed only 3 records
-        records2 = snapshot2[kafka_multitopic_consumer].output
+        records2 = [f'{record.field["text"]}' for record in wiretap.output_records]
         assert len(records2) == 3
+        assert messages2 == records2
 
     finally:
-        sdc_executor.stop_pipeline(pipeline)
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 # SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
