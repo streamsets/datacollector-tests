@@ -174,17 +174,58 @@ def test_s3_origin_multithreaded_text_data_format(sdc_builder, sdc_executor, aws
 @aws('s3')
 @sdc_min_version('3.16.0')
 def test_s3_origin_anonymous(sdc_builder, sdc_executor, aws):
-    """Tests accessing a public object where we can list bucket contents."""
-    base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
-                   DEFAULT_NUMBER_OF_RECORDS, anonymous=True)
+    """Tests accessing a public object where we can list bucket contents.
+       A bucket is created to avoid concurrent access to the same bucket and locking problems."""
 
+    try:
+        s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'
+        logger.info(f'Creating bucket {s3_bucket}')
+        aws.s3.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+        aws.s3.put_bucket_tagging(
+            Bucket=s3_bucket,
+            Tagging={
+                'TagSet': [
+                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                    {'Key': 'managed-by', 'Value': 'ep'},
+                    {'Key': 'dept', 'Value': 'eng'},
+                ]
+            }
+        )
+        aws.s3_bucket_name=s3_bucket
+
+        base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
+                       DEFAULT_NUMBER_OF_RECORDS, anonymous=True)
+
+    finally:
+        logger.info(f'Deleting bucket {s3_bucket}')
+        aws.s3.delete_bucket(Bucket=s3_bucket)
 
 @aws('s3')
 @sdc_min_version('3.16.0')
 def test_s3_origin_anonymous_no_list(sdc_builder, sdc_executor, aws):
-    """Tests accessing a public object where we cannot list bucket contents."""
-    base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
-                   1, anonymous=True, allow_list=False)
+    """Tests accessing a public object where we cannot list bucket contents.
+       A bucket is created to avoid concurrent access to the same bucket and locking problems."""
+
+    try:
+        s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'
+        logger.info(f'Creating bucket {s3_bucket}')
+        aws.s3.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+        aws.s3.put_bucket_tagging(
+            Bucket=s3_bucket,
+            Tagging={
+                'TagSet': [
+                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                    {'Key': 'managed-by', 'Value': 'ep'},
+                    {'Key': 'dept', 'Value': 'eng'},
+                ]
+            }
+        )
+        aws.s3_bucket_name=s3_bucket
+        base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
+                       1, anonymous=True, allow_list=False)
+    finally:
+        logger.info(f'Deleting bucket {s3_bucket}')
+        aws.s3.delete_bucket(Bucket=s3_bucket)
 
 @aws('s3')
 @sdc_min_version('3.16.0')

@@ -296,8 +296,31 @@ def test_s3_destination_anonymous(sdc_builder, sdc_executor, aws):
     S3 Destination pipeline:
         dev_raw_data_source >> record_deduplicator >> s3_destination
                                                    >> to_error
-    """
-    _run_test_s3_destination(sdc_builder, sdc_executor, aws, False, True)
+
+       A bucket is created to avoid concurrent access to the same bucket and locking problems."""
+
+    try:
+        s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'
+        logger.info(f'Creating bucket {s3_bucket}')
+        aws.s3.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+        aws.s3.put_bucket_tagging(
+            Bucket=s3_bucket,
+            Tagging={
+                'TagSet': [
+                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                    {'Key': 'managed-by', 'Value': 'ep'},
+                    {'Key': 'dept', 'Value': 'eng'},
+                ]
+            }
+        )
+        aws.s3_bucket_name=s3_bucket
+
+        _run_test_s3_destination(sdc_builder, sdc_executor, aws, False, True)
+
+    finally:
+        logger.info(f'Deleting bucket {s3_bucket}')
+        aws.s3.delete_bucket(Bucket=s3_bucket)
+
 
 
 @aws('s3', 'kms')
