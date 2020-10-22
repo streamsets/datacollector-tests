@@ -637,7 +637,7 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
 
     The pipelines looks like:
 
-        directory >> trash
+        directory >> wiretap
         directory >= pipeline finisher executor
     """
 
@@ -648,9 +648,8 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
                              files_directory='/resources/resources/directory_origin', read_order='LEXICOGRAPHICAL',
                              batch_size_in_recs=10, batch_wait_time_in_secs=60,
                              number_of_threads=3, on_record_error='STOP_PIPELINE')
-    trash = pipeline_builder.add_stage('Trash')
-
-    directory >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    directory >> wiretap.destination
 
     pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
     pipeline_finisher_executor.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'],
@@ -661,16 +660,7 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
     directory_pipeline = pipeline_builder.build(
         title='test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read')
     sdc_executor.add_pipeline(directory_pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10,
-                                             batches=14, wait_for_statuses=['FINISHED'], timeout_sec=120).snapshot
-
-    # assert all the data captured have the same raw_data
-    output_records = [record for i in range(len(snapshot.snapshot_batches)) for record in
-                      snapshot.snapshot_batches[i][directory.instance_name].output]
-
-    output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
-                                  output_records]
+    sdc_executor.start_pipeline(directory_pipeline).wait_for_finished()
 
     temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
     data_from_csv_files = [f'{row[0]},{row[1]},{row[2]}' for row in temp_data_from_csv_file]
@@ -680,9 +670,15 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
     temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test6.csv', ',', True))
     for row in temp_data_from_csv_file:
         data_from_csv_files.append(f'{row[0]},{row[1]},{row[2]}')
+        
+    # assert all the data captured have the same raw_data
+    output_records = wiretap.output_records
+    output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
+                                  output_records]
 
     assert len(data_from_csv_files) == len(output_records_text_fields)
     assert sorted(data_from_csv_files) == sorted(output_records_text_fields)
+    assert sdc_executor.get_pipeline_status(directory_pipeline).response.json().get('status') == 'FINISHED'
 
 
 @sdc_min_version('3.0.0.0')
