@@ -135,6 +135,14 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
     """
     Test that we can start our pipeline multiple times without reading any duplicated record neither missing them.
     """
+
+    if auto_offset_reset == 'TIMESTAMP' and any(
+            stage_lib in cluster.sdc_stage_libs for stage_lib in ['streamsets-datacollector-apache-kafka_0_9-lib',
+                                                                  'streamsets-datacollector-apache-kafka_0_8-lib',
+                                                                  'streamsets-datacollector-cdh_kafka_2_1-lib',
+                                                                  'streamsets-datacollector-apache-kafka_0_10-lib']):
+        pytest.skip('Auto Offset Reset = \'Timestamp\' can only be used for Kafka version >= 0.10.1.0')
+
     topic = get_random_string()
 
     batch_wait_time = 20_000 if auto_offset_reset != 'NONE' else 1_000
