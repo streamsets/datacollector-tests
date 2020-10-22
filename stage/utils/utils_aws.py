@@ -17,6 +17,7 @@ import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from streamsets.testframework.utils import get_random_string
 
 
 def allow_public_access(client, s3_bucket, allow_list, allow_write):
@@ -102,3 +103,20 @@ def create_anonymous_client():
     the normal client won't have access to.
     """
     return boto3.client('s3', config=Config(signature_version=UNSIGNED))
+
+def create_bucket(aws):
+    """Creates a bucket with the same root name than  aws.s3_bucket_name"""
+    s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'
+    aws.s3.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+    aws.s3.put_bucket_tagging(
+        Bucket=s3_bucket,
+        Tagging={
+            'TagSet': [
+                {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                {'Key': 'managed-by', 'Value': 'ep'},
+                {'Key': 'dept', 'Value': 'eng'},
+            ]
+        }
+    )
+    allow_public_access(aws.s3, s3_bucket, True, True)
+    return s3_bucket

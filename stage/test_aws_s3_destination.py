@@ -18,8 +18,8 @@ import string
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-from .utils.utils_aws import allow_public_access, restore_public_access, configure_stage_for_anonymous, \
-    create_anonymous_client
+from .utils.utils_aws import configure_stage_for_anonymous, \
+    create_anonymous_client, create_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,12 @@ def test_s3_error_destination_anonymous(sdc_builder, sdc_executor, aws):
 
 
 def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
-    s3_bucket = aws.s3_bucket_name
+    if anonymous:
+        s3_bucket = create_bucket(aws)
+        logger.info(f'Bucket {s3_bucket} created')
+    else:
+        s3_bucket = aws.s3_bucket_name
+
     s3_key = f'{S3_SANDBOX_PREFIX}/errDest-{get_random_string()}/'
     random_string = get_random_string(string.ascii_letters, 10)
     random_raw_json_str = '{{"text":"{0}"}}'.format(random_string)
@@ -128,16 +133,11 @@ def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
     sdc_executor.add_pipeline(pipeline)
 
     client = aws.s3
-    public_access_block = None
-    bucket_policy = None
     try:
-        if anonymous:
-            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, True, True)
-
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
 
         # We should have exactly one file in the bucket
-        list_s3_objs = client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
         assert 'Contents' in list_s3_objs  # If no object was found, there is no 'Contents' key
         assert len(list_s3_objs['Contents']) == 1
 
@@ -145,7 +145,7 @@ def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
         builder = sdc_builder.get_pipeline_builder()
         s3_origin = builder.add_stage('Amazon S3', type='origin')
         s3_origin.set_attributes(
-            bucket=aws.s3_bucket_name,
+            bucket=s3_bucket,
             data_format='SDC_JSON',
             prefix_pattern=f'{s3_key}*',
             max_batch_size_in_records=100
@@ -165,11 +165,14 @@ def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
         assert snapshot[s3_origin].output[0].get_field_data('/text') == random_string
 
     finally:
-        restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+                                   client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        if anonymous:
+            logger.info(f'Deleting bucket {s3_bucket}')
+            aws.s3.delete_bucket(Bucket=s3_bucket)
+
 
 
 @aws('s3')
@@ -295,32 +298,9 @@ def test_s3_destination_anonymous(sdc_builder, sdc_executor, aws):
 
     S3 Destination pipeline:
         dev_raw_data_source >> record_deduplicator >> s3_destination
-                                                   >> to_error
+                                                   >> to_error """
 
-       A bucket is created to avoid concurrent access to the same bucket and locking problems."""
-
-    try:
-        s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'
-        logger.info(f'Creating bucket {s3_bucket}')
-        aws.s3.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
-        aws.s3.put_bucket_tagging(
-            Bucket=s3_bucket,
-            Tagging={
-                'TagSet': [
-                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
-                    {'Key': 'managed-by', 'Value': 'ep'},
-                    {'Key': 'dept', 'Value': 'eng'},
-                ]
-            }
-        )
-        aws.s3_bucket_name=s3_bucket
-
-        _run_test_s3_destination(sdc_builder, sdc_executor, aws, False, True)
-
-    finally:
-        logger.info(f'Deleting bucket {s3_bucket}')
-        aws.s3.delete_bucket(Bucket=s3_bucket)
-
+    _run_test_s3_destination(sdc_builder, sdc_executor, aws, False, True)
 
 
 @aws('s3', 'kms')
@@ -330,17 +310,23 @@ def test_s3_destination_sse_kms(sdc_builder, sdc_executor, aws):
     sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
     been ingested by the pipeline; we also verify that the data was in fact encrypted in the server using the KMS. We
     use a record deduplicator processor in between dev raw data source origin and S3 destination in order to determine
-    exactly what has been ingested. The pipeline looks like:
+    exactly what has been ingested. When anonymous a bucket is created to avoid concurrent access to the same
+    bucket and locking problems. The pipeline looks like:
 
     S3 Destination pipeline:
         dev_raw_data_source >> record_deduplicator >> s3_destination
-                                                   >> to_error
-    """
+                                                   >> to_error   """
+
     _run_test_s3_destination(sdc_builder, sdc_executor, aws, True, False)
 
 
 def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous):
-    s3_bucket = aws.s3_bucket_name
+    if anonymous:
+        s3_bucket = create_bucket(aws)
+        logger.info(f'Bucket {s3_bucket} created')
+    else:
+        s3_bucket = aws.s3_bucket_name
+
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
 
     # Bucket name is inside the record itself
@@ -380,19 +366,15 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
     sdc_executor.add_pipeline(s3_dest_pipeline)
 
     client = aws.s3
-    public_access_block = None
-    bucket_policy = None
-    try:
-        if anonymous:
-            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, True, True)
 
+    try:
         # start pipeline and capture pipeline messages to assert
         snapshot = sdc_executor.capture_snapshot(s3_dest_pipeline, start_pipeline=True).snapshot
         sdc_executor.stop_pipeline(s3_dest_pipeline)
 
         # Validate event generation
         assert len(snapshot[identity].output) == 1
-        assert snapshot[identity].output[0].get_field_data('/bucket') == aws.s3_bucket_name
+        assert snapshot[identity].output[0].get_field_data('/bucket') == s3_bucket
         assert snapshot[identity].output[0].get_field_data('/recordCount') == 1
 
         # assert record count to S3 the size of the objects put
@@ -412,7 +394,9 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
             assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
             assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
     finally:
-        restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        if anonymous:
+            logger.info(f'Deleting bucket {s3_bucket}')
+            aws.s3.delete_bucket(Bucket=s3_bucket)

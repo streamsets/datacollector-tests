@@ -25,7 +25,7 @@ from streamsets.testframework.markers import aws, sdc_min_version, large
 from streamsets.testframework.utils import get_random_string, Version
 from xlwt import Workbook
 
-from .utils.utils_aws import allow_public_access, restore_public_access, configure_stage_for_anonymous
+from .utils.utils_aws import allow_public_access, restore_public_access, configure_stage_for_anonymous, create_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -174,58 +174,19 @@ def test_s3_origin_multithreaded_text_data_format(sdc_builder, sdc_executor, aws
 @aws('s3')
 @sdc_min_version('3.16.0')
 def test_s3_origin_anonymous(sdc_builder, sdc_executor, aws):
-    """Tests accessing a public object where we can list bucket contents.
-       A bucket is created to avoid concurrent access to the same bucket and locking problems."""
+    """Tests accessing a public object where we can list bucket contents. """
 
-    try:
-        s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'
-        logger.info(f'Creating bucket {s3_bucket}')
-        aws.s3.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
-        aws.s3.put_bucket_tagging(
-            Bucket=s3_bucket,
-            Tagging={
-                'TagSet': [
-                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
-                    {'Key': 'managed-by', 'Value': 'ep'},
-                    {'Key': 'dept', 'Value': 'eng'},
-                ]
-            }
-        )
-        aws.s3_bucket_name=s3_bucket
+    base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
+                   DEFAULT_NUMBER_OF_RECORDS, anonymous=True)
 
-        base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
-                       DEFAULT_NUMBER_OF_RECORDS, anonymous=True)
-
-    finally:
-        logger.info(f'Deleting bucket {s3_bucket}')
-        aws.s3.delete_bucket(Bucket=s3_bucket)
 
 @aws('s3')
 @sdc_min_version('3.16.0')
 def test_s3_origin_anonymous_no_list(sdc_builder, sdc_executor, aws):
-    """Tests accessing a public object where we cannot list bucket contents.
-       A bucket is created to avoid concurrent access to the same bucket and locking problems."""
+    """Tests accessing a public object where we cannot list bucket contents. """
+    base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
+                   1, anonymous=True, allow_list=False)
 
-    try:
-        s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'
-        logger.info(f'Creating bucket {s3_bucket}')
-        aws.s3.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
-        aws.s3.put_bucket_tagging(
-            Bucket=s3_bucket,
-            Tagging={
-                'TagSet': [
-                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
-                    {'Key': 'managed-by', 'Value': 'ep'},
-                    {'Key': 'dept', 'Value': 'eng'},
-                ]
-            }
-        )
-        aws.s3_bucket_name=s3_bucket
-        base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
-                       1, anonymous=True, allow_list=False)
-    finally:
-        logger.info(f'Deleting bucket {s3_bucket}')
-        aws.s3.delete_bucket(Bucket=s3_bucket)
 
 @aws('s3')
 @sdc_min_version('3.16.0')
@@ -238,14 +199,19 @@ def test_s3_origin_use_path_style_address_model(sdc_builder, sdc_executor, aws, 
 def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, number_of_threads, number_of_records,
                    anonymous=False, allow_list=True, use_path_style_address_model=None):
     """Basic setup for amazon S3Origin tests. It receives different variables indicating the read order, data format...
-    In order to parametrize all this configuration properties and make tests simpler.
-    The pipeline looks like:
+    In order to parametrize all this configuration properties and make tests simpler. When anonymous a bucket is
+    created to avoid concurrent access to the same bucket and locking problems. The pipeline looks like:
 
     S3 Origin pipeline:
         s3_origin >> trash
         s3_origin >= pipeline_finished_executor
     """
-    s3_bucket = aws.s3_bucket_name
+    if anonymous:
+        s3_bucket = create_bucket(aws)
+        logger.info(f'Bucket {s3_bucket} created')
+    else:
+        s3_bucket = aws.s3_bucket_name
+
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
 
     json_data = dict(f1=get_random_string(), f2=get_random_string())
@@ -286,8 +252,8 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     s3_origin >= pipeline_finished_executor
 
     pipeline_name = (
-        f'Amazon S3 - number of threads: {number_of_threads} - read order: {read_order} - data_format: {data_format} - '
-        f'number of records: {number_of_records}')
+        f'Amazon S3 - threads: {number_of_threads} - read order: {read_order} - format: {data_format} - '
+        f'records: {number_of_records} anonymous: {anonymous}')
 
     s3_origin_pipeline = builder.build(title=pipeline_name).configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
@@ -302,9 +268,6 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     bucket_policy = None
     try:
         acl = 'public-read' if anonymous else 'private'
-
-        if anonymous:
-            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, allow_list, False)
 
         # Insert objects into S3.
         for i in range(s3_obj_count):
@@ -332,7 +295,6 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
             assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == s3_obj_count + 1
 
     finally:
-        restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         if number_of_records > 0:
             # Clean up S3.
             if number_of_records > 1:
@@ -342,6 +304,9 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
             else:
                 delete_keys = {'Objects': [{'Key' : f'{s3_key}/0'}]}
             client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        if anonymous:
+            logger.info(f'Deleting bucket {s3_bucket}')
+            aws.s3.delete_bucket(Bucket=s3_bucket)
 
 
 def verify_data_formats(output_records, raw_str, data_format):
