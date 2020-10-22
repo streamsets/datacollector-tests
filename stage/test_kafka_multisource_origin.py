@@ -237,7 +237,7 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
         # Check if the pipeline processed 5 records
         records = [f'{record.field["text"]}' for record in wiretap.output_records]
         assert len(records) == 5
-        assert messages == records
+        assert sorted(messages) == sorted(records)
 
         # Produce another 3 messages
         messages2 = [f'message{i}' for i in range(5, 8)]
@@ -254,7 +254,7 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
         #  2nd run should processed only 3 records
         records2 = [f'{record.field["text"]}' for record in wiretap.output_records]
         assert len(records2) == 3
-        assert messages2 == records2
+        assert sorted(messages2) == sorted(records2)
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
