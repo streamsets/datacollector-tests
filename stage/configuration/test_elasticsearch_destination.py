@@ -1,15 +1,29 @@
-import pytest
-import string
-import logging
+# Copyright 2020 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import json
+import logging
+import string
 
+import pytest
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import elasticsearch
-
+from streamsets.testframework.markers import elasticsearch, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
 
 @pytest.fixture(scope='function')
 def test_data():
@@ -39,6 +53,7 @@ def test_data():
         "shard": None
     }]
 
+
 @stub
 @pytest.mark.parametrize('stage_attributes', [{'mode': 'AWSSIGV4', 'use_security': True}])
 def test_access_key_id(sdc_builder, sdc_executor, stage_attributes):
@@ -51,6 +66,7 @@ def test_additional_http_params(sdc_builder, sdc_executor):
 
 
 @elasticsearch
+@sdc_min_version('3.7.0')
 def test_additional_properties(sdc_builder, sdc_executor, elasticsearch, test_data):
     index = get_random_string(string.ascii_letters, 10).lower()
     mapping = get_random_string(string.ascii_letters, 10).lower()
@@ -60,7 +76,7 @@ def test_additional_properties(sdc_builder, sdc_executor, elasticsearch, test_da
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'JSON'
     source.stop_after_first_batch = True
-    source.raw_data='\n'.join(json.dumps(rec) for rec in test_data)
+    source.raw_data = '\n'.join(json.dumps(rec) for rec in test_data)
 
     target = builder.add_stage('Elasticsearch', type='destination')
     target.default_operation = 'INDEX'
