@@ -807,24 +807,26 @@ def test_adls_gen2_file_event_filepath_when_whole_file_mode_enabled(sdc_builder,
                                                          files_prefix='sdc',
                                                          file_name_expression='-output')
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        src >> azure_data_lake_store_destination >= trash
+        src >> azure_data_lake_store_destination >= wiretap.destination
 
         pipeline = builder.build().configure_for_environment(azure)
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True,
-                                                 batches=1).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 3)
         sdc_executor.stop_pipeline(pipeline, force=True)
+
+        records = wiretap.output_records
+
         history = sdc_executor.get_pipeline_history(pipeline)
         pipeline_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        stage = snapshot[azure_data_lake_store_destination.instance_name]
-        stage_record_count = len(stage.event_records)
+        events_record_count = len(records)
 
-        assert stage_record_count == 1
-        assert pipeline_record_count == stage_record_count + 1
-        for event_record in stage.event_records:
+        assert events_record_count == 1
+        # 3 equals to 1 record + 1 event two times because of wiretap
+        assert pipeline_record_count == 3
+        for event_record in records:
             assert event_record.get_field_data('/targetFileInfo/path').value == f'/{directory_name}/sdc-output'
             assert event_record.get_field_data('/sourceFileInfo/file').value == f'{src.files_directory}/input.txt'
 
