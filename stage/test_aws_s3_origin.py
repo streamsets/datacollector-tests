@@ -264,8 +264,6 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     sdc_executor.add_pipeline(s3_origin_pipeline)
 
     client = aws.s3
-    public_access_block = None
-    bucket_policy = None
     try:
         acl = 'public-read' if anonymous else 'private'
 
@@ -295,18 +293,20 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
             assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == s3_obj_count + 1
 
     finally:
-        if number_of_records > 0:
-            # Clean up S3.
-            if number_of_records > 1:
-                delete_keys = {'Objects': [{'Key': k['Key']}
-                                           for k in
-                                           client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-            else:
-                delete_keys = {'Objects': [{'Key' : f'{s3_key}/0'}]}
-            client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
-        if anonymous:
-            logger.info(f'Deleting bucket {s3_bucket}')
-            aws.s3.delete_bucket(Bucket=s3_bucket)
+        try:
+            if number_of_records > 0:
+                # Clean up S3.
+                if number_of_records > 1:
+                    delete_keys = {'Objects': [{'Key': k['Key']}
+                                               for k in
+                                               client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
+                else:
+                    delete_keys = {'Objects': [{'Key' : f'{s3_key}/0'}]}
+                client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        finally:
+            if anonymous:
+                logger.info(f'Deleting bucket {s3_bucket}')
+                aws.s3.delete_bucket(Bucket=s3_bucket)
 
 
 def verify_data_formats(output_records, raw_str, data_format):
