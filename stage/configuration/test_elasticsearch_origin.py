@@ -20,7 +20,7 @@ import pytest
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import elasticsearch
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -332,7 +332,7 @@ def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch
 
     configured_origin = pipeline.stages.get(label=origin.label)
 
-    if sdc_builder.version < '3.17.0':
+    if Version(sdc_builder.version) < Version('3.17.0'):
         configured_origin.configuration['conf.securityConfig.securityUser'] = f'{username}:{password}'
     else:
         configured_origin.user_name = username
@@ -564,7 +564,7 @@ def test_use_security(sdc_builder, sdc_executor, elasticsearch, stage_attributes
     configured_origin = pipeline.stages.get(label=origin.label)
     configured_origin.use_security = stage_attributes['use_security']
     if not stage_attributes['use_security']:
-        if sdc_builder.version < '3.17.0':
+        if Version(sdc_builder.version) < Version('3.17.0'):
             configured_origin.configuration['conf.securityConfig.securityUser'] = f':'
         else:
             configured_origin.user_name = ''
