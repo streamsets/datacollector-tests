@@ -26,8 +26,8 @@ S3_SANDBOX_PREFIX = 'sandbox'
 
 # Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html
 S3_BUCKET_NAMES = [
-    # For 3 characters we use 2 letters + 1 digit to avoid colliding with system buckets
-    ('minsize', get_random_string(string.digits, 2) + get_random_string(string.ascii_lowercase, 1)),
+    # For 3 characters we use 1a1 because we have being hitting system buckets and making the test flaky
+    ('minsize', '1a1'),
     ('maxsize', get_random_string(string.ascii_lowercase, 63)),
     ('lowercase', get_random_string(string.ascii_lowercase)),
     ('hypen', get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
