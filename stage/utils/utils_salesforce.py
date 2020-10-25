@@ -14,23 +14,96 @@
 
 # A module providing utils for working with Salesforce
 
-import string
 import logging
-from streamsets.testframework.utils import get_random_string
+import string
+from datetime import datetime, timedelta
+from io import BytesIO
+from json import JSONDecodeError
 from time import sleep
+from zipfile import ZipFile
+
+from streamsets.testframework.utils import get_random_string
+
+
+CONTACT = 'Contact'
+CDC = 'CDC'
+PUSH_TOPIC = 'PUSH_TOPIC'
+API_VERSION = '47.0'
+COLON = ':'
+PERIOD = '.'
 
 logger = logging.getLogger(__name__)
+
+ADD_CUSTOM_FIELD_PACKAGE = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>Contact</members>
+        <name>CustomObject</name>
+    </types>
+    <types>
+        <members>Admin</members>
+        <name>Profile</name>
+    </types>
+    <version>{API_VERSION}</version>
+</Package>'''
+
+ADD_CUSTOM_FIELD = '''<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fields>
+        <fullName>BoolCustField__c</fullName>
+        <defaultValue>false</defaultValue>
+        <description>ThisIsABoolCustField</description>
+        <externalId>false</externalId>
+        <inlineHelpText>ThisIsABoolCustField</inlineHelpText>
+        <label>BoolCustField</label>
+        <trackTrending>false</trackTrending>
+        <type>Checkbox</type>
+    </fields>
+</CustomObject>'''
+
+CUSTOM_FIELD_PERMISSION = '''<?xml version="1.0" encoding="UTF-8"?>
+<Profile xmlns="http://soap.sforce.com/2006/04/metadata">
+  <fieldPermissions>
+        <editable>true</editable>
+        <field>Contact.BoolCustField__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+</Profile>'''
+
+DELETE_CUSTOM_FIELD_PACKAGE = f'''<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <version>{API_VERSION}</version>
+</Package>'''
+
+DELETE_CUSTOM_FIELD = '''<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>Contact.BoolCustField__c</members>
+        <name>CustomField</name>
+    </types>
+</Package>'''
+
+# Folder for Documents
+FOLDER_NAME = 'TestFolder'
+
+CASE_SUBJECT = 'Test Case'
+
+ACCOUNTS_FOR_SUBQUERY = 5
+CONTACTS_FOR_SUBQUERY = 5
+
+CONTACTS_FOR_NO_MORE_DATA = 100
 
 TIMEOUT = 300
 
 TEST_DATA = {}
+
 
 def set_up_random(salesforce):
     """" This function is used to generate unique set of values for each test.
     Every time this function is used, generates a unique RANDOM string to
     set up the values used in every test."""
 
-    TEST_DATA['STR_15_RANDOM'] = get_random_string(string.ascii_letters,15)
+    TEST_DATA['STR_15_RANDOM'] = get_random_string(string.ascii_letters, 15)
     logger.info(f"STR_15_RANDOM : '{TEST_DATA['STR_15_RANDOM']}'")
 
     TEST_DATA['DATA_TO_INSERT'] = [
@@ -95,6 +168,7 @@ def verify_snapshot(snapshot, stage, expected_data, sort=True):
         snapshot (:py:class:`streamsets.sdk.sdc_models.Snapshot`): Snapshot containing data to be verified
         stage (:py:class:`streamsets.sdk.sdc_models.Stage`): Stage after which data is to be verified
         expected_data (obj:`list`): Expected data as a list of dicts
+        sort (Boolean): Whether to sort or not before comparing
 
     Returns:
         (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
@@ -106,12 +180,13 @@ def verify_snapshot(snapshot, stage, expected_data, sort=True):
     rows_from_snapshot = [record.field
                           for record in snapshot[stage].output]
 
-    data_from_snapshot = [{field:record[field] for field in record if field not in ['Id', 'SystemModstamp']}
+    data_from_snapshot = [{field: record[field] for field in record if field not in ['Id', 'SystemModstamp']}
                           for record in rows_from_snapshot]
 
     if data_from_snapshot and sort:
         data_from_snapshot = sorted(data_from_snapshot,
-                                    key=lambda k:k['FirstName' if 'FirstName' in data_from_snapshot[0] else 'surName'].value)
+                                    key=lambda k: k[
+                                        'FirstName' if 'FirstName' in data_from_snapshot[0] else 'surName'].value)
 
     if data_from_snapshot:
         assert data_from_snapshot == expected_data
@@ -128,6 +203,7 @@ def verify_by_snapshot(sdc_executor, pipeline, stage, expected_data, salesforce,
         expected_data (obj:`list`): Expected data as a list of dicts
         salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
         data_to_insert (obj:`list`): Data to be inserted, as a list of dicts
+        sort (Boolean): Whether to sort or not before comparing
 
     Returns:
         (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
@@ -179,5 +255,139 @@ def clean_up(sdc_executor, pipeline, client, contact_ids):
         if contact_ids:
             logger.info('Deleting records ...')
             client.bulk.Contact.delete(contact_ids)
-    except:
+    except Exception:
         logger.error('Unable to delete records...')
+
+
+def find_dataset(client, name):
+    """Utility method to find a dataset by name
+
+    Args:
+        client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
+        name (:obj:`str`): Dataset name
+
+    Returns:
+        (:obj:`str`) Record ID of dataset
+        (:obj:`str`) Current Version ID of dataset
+    """
+    result = client.restful('wave/datasets')
+    for dataset in result['datasets']:
+        if dataset['name'] == name and 'currentVersionId' in dataset:
+            return dataset['id'], dataset['currentVersionId']
+
+    return None, None
+
+
+def find_dataset_include_timestamp(client, name):
+    """Utility method to find a dataset by name when including a timestamp in the name
+    """
+    result = client.restful('wave/datasets')
+    for dataset in result['datasets']:
+        if dataset['name'].startswith(name) and 'currentVersionId' in dataset:
+            return dataset['id'], dataset['currentVersionId']
+
+    return None, None
+
+
+def verify_cdc_snapshot(snapshot, stage, inserted_data):
+    # CDC returns more than just the record fields, so verify_snapshot isn't so useful
+    assert len(snapshot[stage].output) == 1
+    assert snapshot[stage].output[0].header.values['salesforce.cdc.recordIds']
+    assert snapshot[stage].output[0].field['Email'] == inserted_data['Email']
+    # CDC returns nested compound fields
+    assert snapshot[stage].output[0].field['Name']['FirstName'] == inserted_data['FirstName']
+    assert snapshot[stage].output[0].field['Name']['LastName'] == inserted_data['LastName']
+
+
+def add_custom_field_to_contact(metadata):
+    deploy_metadata(metadata,
+                    ADD_CUSTOM_FIELD_PACKAGE,
+                    [{'name': 'objects/Contact.object', 'content': ADD_CUSTOM_FIELD},
+                      {'name': 'profiles/Admin.profile', 'content': CUSTOM_FIELD_PERMISSION}])
+
+
+def delete_custom_field_from_contact(metadata):
+    deploy_metadata(metadata,
+                    DELETE_CUSTOM_FIELD_PACKAGE,
+                    [{'name': 'destructiveChanges.xml', 'content': DELETE_CUSTOM_FIELD}])
+
+
+def deploy_metadata(metadata, package_content, files):
+    file_bytes = BytesIO()
+
+    with ZipFile(file_bytes, 'w') as zip_file:
+        zip_file.writestr('package.xml', package_content)
+        for file in files:
+            zip_file.writestr(file['name'], file['content'])
+        zip_file.close()
+
+    deployment = metadata.deploy(file_bytes, {})
+
+    result = None
+    end_time = datetime.now() + timedelta(seconds=60)
+    while result != 'Succeeded' and result != 'Failed' and datetime.now() < end_time:
+        sleep(1)
+        result = metadata.check_deploy_status(deployment[0])[0]
+
+    logger.info(f'Deployment {result}')
+
+    assert result == 'Succeeded'
+
+
+def enable_cdc(client):
+    """Utility method to enable Change Data Capture for Contact change events in an org.
+
+    Args:
+        client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
+
+    Returns:
+        (:obj:`str`) Event channel Id
+    """
+    payload = {
+        "FullName": "ChangeEvents_ContactChangeEvent",
+        "Metadata": {
+            "eventChannel": "ChangeEvents",
+            "selectedEntity": "ContactChangeEvent"
+        }
+    }
+    result = client.restful('tooling/sobjects/PlatformEventChannelMember', method='POST', json=payload)
+    assert result['success']
+    return result['id']
+
+
+def disable_cdc(client, subscription_id):
+    """Utility method to disable Change Data Capture for Contact change events in an org.
+
+    Args:
+        client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
+        subscription_id (:obj:`str`) Event channel Id
+    """
+    try:
+        client.restful(f'tooling/sobjects/PlatformEventChannelMember/{subscription_id}', method='DELETE')
+    except JSONDecodeError:
+        # Simple Salesforce issue #327
+        # https://github.com/simple-salesforce/simple-salesforce/issues/327
+        pass
+
+
+def create_push_topic(client):
+    """Utility method to create a PushTopic to subscribe to Contact change events.
+
+    Args:
+        client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
+
+    Returns:
+        (:obj:`str`) PushTopic record Id
+        (:obj:`str`) PushTopic name
+    """
+    push_topic_name = TEST_DATA['STR_15_RANDOM']
+    logger.info(f'Creating PushTopic {push_topic_name} in Salesforce')
+    result = client.PushTopic.create({'Name': push_topic_name,
+                                      'Query': 'SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact',
+                                      'ApiVersion': '47.0',
+                                      'NotifyForOperationCreate': True,
+                                      'NotifyForOperationUpdate': True,
+                                      'NotifyForOperationUndelete': True,
+                                      'NotifyForOperationDelete': True,
+                                      'NotifyForFields': 'All'})
+    return result['id'], push_topic_name
