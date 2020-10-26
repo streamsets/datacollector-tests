@@ -191,7 +191,7 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
 
     try:
         total_data = []
-        for i in range(100):
+        for _ in range(100):
             actual_data = get_random_string()
             total_data.append(actual_data)
             producer.send(topic, actual_data.encode())
@@ -203,13 +203,13 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
             assert len(wiretap.output_records) == 0
 
             total_data = []
-            for i in range(100):
+            for _ in range(100):
                 actual_data = get_random_string()
                 total_data.append(actual_data)
                 producer.send(topic, actual_data.encode())
             producer.flush()
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 20)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 20, timeout_sec=60)
         sdc_executor.stop_pipeline(pipeline)
         first_iteration_records = [record.field['text'] for record in wiretap.output_records]
 
@@ -220,9 +220,8 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
         wiretap.reset()
 
         sdc_executor.start_pipeline(pipeline)
-        # Wait 5 seconds so that all the records are consumed by the origin
-        # We don't want to wait for a specific count in order to detect data duplication
-        time.sleep(15)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 100 - len(first_iteration_records),
+                                              timeout_sec=300)
 
         second_iteration_records = [record.field['text'] for record in wiretap.output_records]
 
@@ -231,7 +230,8 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
         assert all(element in (second_iteration_records + first_iteration_records) for element in total_data)
         assert all(element in total_data for element in (second_iteration_records + first_iteration_records))
     finally:
-        sdc_executor.stop_pipeline(pipeline)
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @cluster('cdh', 'kafka')
@@ -263,7 +263,7 @@ def test_multiple_batch(sdc_builder, sdc_executor, cluster):
     producer = cluster.kafka.producer()
     
     total_data = []
-    for i in range(100):
+    for _ in range(100):
         actual_data = get_random_string()
         total_data.append(actual_data)
         producer.send(topic, actual_data.encode())
