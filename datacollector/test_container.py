@@ -18,6 +18,18 @@ from streamsets.testframework.markers import sdc_min_version
 
 pytestmark = sdc_min_version('3.8.0')
 
+
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        # Test only config properties and environmental values
+        data_collector.sdc_properties['test.property'] = 'some value'
+        data_collector.sdc_properties['test.password'] = 'super secrete value'
+        data_collector.docker_env_vars['TEST_PROPERTY'] = 'some value'
+        # Configuring UI (for test purpose)
+        data_collector.sdc_properties['ui.header.title'] = '${env("TEST_PROPERTY")}'
+    return hook
+
 # Main SDC WebServerTask should refuse connection requests
 # using HTTP methods TRACK and TRACE
 @pytest.mark.parametrize(('method'), [
@@ -50,3 +62,20 @@ def test_directory_listing(sdc_executor):
 
     resp = h1.getresponse()
     assert 404 == resp.status
+
+
+def test_configuration(sdc_executor):
+    """Ensure that we can retrieve configuration properties and sensitive ones are properly masked."""
+    configuration = sdc_executor.sdc_configuration
+
+    assert configuration['test.property'] == 'some value'
+    assert configuration['test.password'] == '-- MASKED --'
+
+
+def test_ui_configuration(sdc_executor):
+    """Ensure that we can retrieve the UI configuration properties and they are not masked in any way."""
+    configuration = sdc_executor.api_client.get_sdc_ui_configuration().response.json()
+
+    assert 'ui.debug' in configuration
+    assert 'ui.server.timezone' in configuration
+    assert configuration['ui.header.title'] == 'some value'
