@@ -318,6 +318,70 @@ def test_wait_for_completion_processor(sdc_builder, sdc_executor):
     _validate_start_pipeline_output(wait_for_pipeline_completion_output[0].field['orchestratorTasks'], 'task2', pipeline2, True)
 
 
+@sdc_min_version('3.20.0')
+def test_stopping_pipeline_on_error(sdc_builder, sdc_executor):
+    """Test for https://issues.streamsets.com/browse/SDC-16025:
+    Use Case:
+    If the Error field of the record output of a Start Pipeline or State Job processor is not null, user would like
+    to both stop the orchestration pipeline and put it in a pipeline error state.
+
+    Proposed Solution:
+    Add a checkbox to the To Error destination called Stop Pipeline on Error (unchecked by default) that also puts
+    the pipeline in a RUN_ERROR state.
+
+    When Stop Pipeline on Error is checked, a text box field appears labeled Error Record Message where the user can
+    use record EL to craft their own error record, potentially using the orchestration stage record output.
+    """
+
+    # Pipeline - pipeline1
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source1 = pipeline_builder.add_stage('Dev Raw Data Source')
+    to_error = pipeline_builder.add_stage('To Error')
+    to_error.stop_pipeline_on_error = True
+    to_error.error_message = 'Failed to run pipeline1 due to random error'
+    dev_raw_data_source1 >> to_error
+    pipeline1 = pipeline_builder.build('Pipeline1')
+    sdc_executor.add_pipeline(pipeline1)
+
+    # Orchestrator pipeline - orchestrator_pipeline
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    start_pipeline1 = pipeline_builder.add_stage('Start Pipelines', type='origin')
+    start_pipeline1.task_name = 't1'
+    start_pipeline1.pipelines = [
+        {
+            'pipelineIdType': 'ID',
+            'pipelineId': pipeline1.id
+        }
+    ]
+
+    stream_selector = pipeline_builder.add_stage('Stream Selector')
+
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+
+    pipeline_error = pipeline_builder.add_stage('To Error')
+    pipeline_error.stop_pipeline_on_error = True
+    pipeline_error.error_message = '${record:value("/orchestratorTasks/t1/pipelineResults[0]/pipelineStatusMessage")}'
+
+    start_pipeline1 >> stream_selector >> pipeline_finisher
+    stream_selector >> pipeline_error
+
+    stream_selector.condition = [dict(outputLane=stream_selector.output_lanes[0],
+                                      predicate='${record:value("/orchestratorTasks/t1/success") == true}'),
+                                 dict(outputLane=stream_selector.output_lanes[1],
+                                      predicate='default')]
+
+    orchestrator_pipeline = pipeline_builder.build('Orchestrator Pipeline')
+    sdc_executor.add_pipeline(orchestrator_pipeline)
+
+    sdc_executor.validate_pipeline(orchestrator_pipeline)
+
+    sdc_executor.start_pipeline(orchestrator_pipeline, wait=False).wait_for_status(status='RUN_ERROR')
+
+    status = sdc_executor.get_pipeline_status(orchestrator_pipeline).response.json()
+    assert status.get('status') == 'RUN_ERROR'
+    assert 'Failed to run pipeline1 due to random error' in status.get('message')
+
+
 def _create_batch_pipeline(sdc_builder, title):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source1 = pipeline_builder.add_stage('Dev Raw Data Source')
