@@ -492,23 +492,25 @@ def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
     origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(cluster)
-    pipeline.configuration['shouldRetry'] = False
-    pipeline.configuration['executionMode'] = 'STANDALONE'
-
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline)
 
-    # Produce 200 messages, not enough for one batch
-    produce_kafka_messages_list(origin.topic_list[0], cluster, [f'{i}' for i in range(200)], 'TEXT')
-    # Produce 1000 messages, size of a batch. With the previous 200 there will be a shift in the offset
-    produce_kafka_messages_list(origin.topic_list[0], cluster, [f'{i}' for i in range(200, 1200)], 'TEXT')
+    try:
+        # Produce 200 messages, not enough for one batch
+        produce_kafka_messages_list(origin.topic_list[0], cluster, [f'{i}' for i in range(200)], 'TEXT')
 
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1200)
-    sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
 
-    expected = sorted([f'{i}' for i in range(1200)])
-    actual = sorted([f'{record.field["text"]}' for record in wiretap.output_records])
-    assert expected == actual
+        # Produce 1000 messages, size of a batch. With the previous 200 there will be a shift in the offset
+        produce_kafka_messages_list(origin.topic_list[0], cluster, [f'{i}' for i in range(200, 1200)], 'TEXT')
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1200)
+        sdc_executor.stop_pipeline(pipeline)
+
+        actual = sorted([f'{record.field["text"]}' for record in wiretap.output_records])
+        assert sorted([f'{i}' for i in range(1200)]) == actual
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @cluster('cdh', 'kafka')
