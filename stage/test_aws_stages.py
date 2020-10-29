@@ -1382,3 +1382,66 @@ def test_sqs_specify_url_directly(sdc_builder, sdc_executor, aws):
         if queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
             client.delete_queue(QueueUrl=queue_url)
+
+
+@aws('sqs')
+@pytest.mark.parametrize('delivery_guarantee', ['AT_LEAST_ONCE', 'AT_MOST_ONCE'])
+def test_sqs_origin_delivery_guarantee(sdc_builder, sdc_executor, aws, delivery_guarantee):
+    """
+    In this test we want to make sure that the SQS consumer supports the At Least Once and At Most Once modes.
+    If we receive a message but the record doesn't reach the destination for the At Least Once mode
+    we expect the message stays in the queue.
+    For the At Most Once mode we expect the message gets deleted from the queue even if a record doesn't reach
+    a destination.
+    To make sure a record doesn't reach a destination we put a JavaScript evaluator which always throws an error.
+    This makes the pipeline to stop with the RUN_ERROR status.
+
+    The pipeline is as follows:
+
+    Amazon SQS Consumer >> JavaScript Evaluator >> Trash
+
+    """
+
+    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string()}'
+    message_id = get_random_string()
+    error_message = get_random_string()
+    message = "{'id': message_id}"
+    client = aws.sqs
+
+    builder = sdc_builder.get_pipeline_builder()
+    amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
+    amazon_sqs_consumer.set_attributes(data_format='TEXT',
+                                       queue_name_prefixes=[queue_name])
+
+    javascript_evaluator = builder.add_stage('JavaScript Evaluator')
+    javascript_evaluator.script = f'throw new Error("{error_message}")'
+
+    trash = builder.add_stage('Trash')
+    amazon_sqs_consumer >> javascript_evaluator >> trash
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(aws)
+    consumer_origin_pipeline.delivery_guarantee = delivery_guarantee
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    queue_url = client.create_queue(QueueName=queue_name, Attributes={'VisibilityTimeout': '5'})['QueueUrl']
+    try:
+        message_entries = [{'Id': message_id, 'MessageBody': message}]
+        sent_response = client.send_message_batch(QueueUrl=queue_url, Entries=message_entries)
+        if len(sent_response.get('Successful', [])) != len(message_entries):
+            raise Exception('Test messages not successfully sent to the queue %s', queue_name)
+
+        sdc_executor.start_pipeline(consumer_origin_pipeline, wait=False).wait_for_status(status='RUN_ERROR', ignore_errors=True)
+        status = sdc_executor.get_pipeline_status(consumer_origin_pipeline).response.json()
+
+        response = client.receive_message(QueueUrl=queue_url, WaitTimeSeconds=8)
+        if delivery_guarantee == 'AT_LEAST_ONCE':
+            assert len(message_entries) == len(response['Messages'])
+            assert message == response['Messages'][0]['Body']
+        else:
+            assert 'Messages' not in response
+
+        assert 'SCRIPTING_06' in status['message']
+        assert error_message in status['message']
+
+    finally:
+        client.delete_queue(QueueUrl=queue_url)
