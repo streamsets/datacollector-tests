@@ -723,14 +723,16 @@ def test_sql_server_cdc_no_more_events(sdc_builder, sdc_executor, database):
         ct_table_name = f'{capture_instance_name}_CT'
         wait_for_data_in_ct_table(ct_table_name, total_no_of_records / 2, database)
 
-        # run the pipeline. after 10 batches, insert one more data to the table
-        start_pipeline = sdc_executor.start_pipeline(pipeline)
-        start_pipeline.wait_for_pipeline_batch_count(2)
+        # run the pipeline and wait for 1 record to be processed and
+        # 1 no more data to be produced: 2 output records
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 2)
 
+        #One more record is processed and one no more data is produced: 2 output records
         connection2 = database.engine.connect()
         add_data_to_table(connection2, table, rows_in_database[1:2])
         wait_for_data_in_ct_table(ct_table_name, total_no_of_records, database)
-        start_pipeline.wait_for_pipeline_batch_count(2)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 2)
 
         sdc_executor.stop_pipeline(pipeline)
 
