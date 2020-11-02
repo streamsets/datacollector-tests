@@ -15,7 +15,7 @@
 import hashlib
 import json
 import logging
-import re
+import pytest
 from datetime import datetime
 from decimal import Decimal
 
@@ -1051,6 +1051,58 @@ def test_field_type_converter_trim(sdc_builder, sdc_executor):
 
     assert output[0].field['boolean'].type == 'BOOLEAN'
     assert output[0].field['boolean'].value == True
+
+@pytest.mark.parametrize('input,target_type', [
+    ('r', 'SHORT'),
+    ('r', 'INTEGER'),
+    ('r', 'LONG'),
+    ('r', 'FLOAT'),
+    ('r', 'DOUBLE'),
+    ('r', 'DECIMAL'),
+    ('r', 'DATE'),
+    ('r', 'TIME'),
+    ('99:99:99', 'TIME'),
+    ('r', 'DATETIME'),
+    ('r', 'ZONED_DATETIME'),
+])
+# SDC-16121: Field Type Converter propagates ZONED_DATETIME parsing error as StageError
+def test_field_type_converter_parse_errors(sdc_builder, sdc_executor, input, target_type):
+    """Ensure that various data-related errors will end up in error stream and won't stop the pipeline"""
+    raw_data = json.dumps([{'value': input}])
+    converter_configs = [
+        {
+            'fields': ['/value'],
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD",
+            "zonedDateTimeFormat": "ISO_ZONED_DATE_TIME",
+            "encoding": "UTF-8"
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_FIELD', field_type_converter_configs=converter_configs)
+
+    trash = builder.add_stage('Trash')
+
+    source >> converter >> trash
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.stop_pipeline(pipeline)
+
+    output = snapshot[converter]
+    assert len(output.output) == 0
+    assert len(output.error_records) == 1
+    assert output.error_records[0].header['errorCode'] == 'CONVERTER_00'
 
 
 def test_field_zip(sdc_builder, sdc_executor):
