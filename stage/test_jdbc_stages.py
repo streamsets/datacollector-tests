@@ -20,7 +20,7 @@ import string
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
-from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase, MySqlDatabase
 from streamsets.testframework.markers import credentialstore, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -993,3 +993,61 @@ for (step = 0; step < 1000; step++) {
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
 
+
+# SDC-16138: JDBC Lookup Processor is not properly catching UncheckedExecutionException
+@database
+def test_jdbc_lookup_processor_incorrect_query_for_data(sdc_builder, sdc_executor, database, keep_data):
+    table_name = get_random_string(string.ascii_uppercase, 20)
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('key', sqlalchemy.Integer, primary_key=False, quote=True),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False, quote=True),
+        quote=True
+    )
+
+    try:
+        logger.info('Creating table %s', table_name)
+        table.create(database.engine)
+
+        logger.info('Inserting data into %s', table_name)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), [
+            {"key": 1, "id": 1},
+            {"key": 2, "id": 1},
+            {"key": 2, "id": 2}
+        ])
+
+        builder = sdc_builder.get_pipeline_builder()
+        source = builder.add_stage('Dev Raw Data Source')
+        source.data_format = 'JSON'
+        source.raw_data = '{"key": 1 }\n{"key": 2}\n{"key": 1}\n'
+        source.stop_after_first_batch = True
+
+        lookup = builder.add_stage('JDBC Lookup')
+        # Query is intentionally correlated to create a SQL error (the correlated subsequery will return two rows
+        # for the key=2 which makes the query invalid).
+        lookup.sql_query  = f"SELECT \"id\" FROM \"{table_name}\" WHERE \"id\" = (select \"id\" FROM \"{table_name}\" WHERE \"key\" = ${{record:value('/key')}})"
+        lookup.column_mappings = [dict(dataType='USE_COLUMN_TYPE', columnName='id', field='/id')]
+
+        trash = builder.add_stage('Trash')
+        source >> lookup >> trash
+        pipeline = builder.build().configure_for_environment(database)
+        if isinstance(database, MySqlDatabase):
+            lookup.init_query = "SET sql_mode=ANSI_QUOTES"
+        sdc_executor.add_pipeline(pipeline)
+
+        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        # We are expecting 2 records that will lookup the id 1
+        assert len(snapshot[lookup].output) == 2
+        assert snapshot[lookup].output[0].field['id'] == 1
+        assert snapshot[lookup].output[1].field['id'] == 1
+        # And one error record for the key 2
+        assert len(snapshot[lookup].error_records) == 1
+        assert snapshot[lookup].error_records[0].field['key'] == 2
+        assert snapshot[lookup].error_records[0].header['errorCode'] == 'JDBC_02'
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
+            table.drop(database.engine)
