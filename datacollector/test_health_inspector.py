@@ -26,17 +26,17 @@ logger = logging.getLogger(__name__)
 
 def test_inspector_list(sdc_executor):
     """Validate that all expected inspectors are available."""
-    inspectors = sdc_executor.get_health_inspectors()
+    inspectors = sdc_executor.api_client.get_health_categories().response.json()
     assert len(inspectors) == 4
 
     # Convert the list to names only so that we can assert things are there
-    names = [i.class_name for i in inspectors]
+    names = [i['className'] for i in inspectors]
 
     # Assert that we have all the expected inspectors regardless of the reported order
-    assert 'ConfigurationInspector' in names
-    assert 'JvmInstanceInspector' in names
-    assert 'MachineInspector' in names
-    assert 'NetworkInspector' in names
+    assert 'ConfigurationHealthCategory' in names
+    assert 'JvmInstanceHealthCategory' in names
+    assert 'MachineHealthCategory' in names
+    assert 'NetworkHealthCategory' in names
 
 
 @pytest.mark.parametrize('entry_name', [
@@ -49,20 +49,20 @@ def test_inspector_list(sdc_executor):
     'Max Runner Size',
     'Max Pipeline Runner Size',
 ])
-def test_configuration_inspector(sdc_executor, entry_name):
+def test_configuration_category(sdc_executor, entry_name):
     """All configuration checks should be green by default - no point in shipping configuration that is read/yellow."""
-    report = sdc_executor.run_health_inspectors('ConfigurationInspector')
-    assert len(report.results) == 1
+    report = sdc_executor.api_client.get_health_report('ConfigurationHealthCategory').response.json()
+    assert len(report['categories']) == 1
 
-    result = report.result_for('ConfigurationInspector')
+    result = report['categories'][0]
     assert result is not None
 
-    entry = result.entry_for(entry_name)
-    assert entry is not None
-    assert entry.severity == 'GREEN'
-    assert entry.value is not None
-    assert entry.description is not None
-    assert entry.details is None
+    check = _find_health_check(result, entry_name)
+    assert check is not None
+    assert check['severity'] == 'GREEN'
+    assert check['value'] is not None
+    assert check['description'] is not None
+    assert check['details'] is None
 
 
 @pytest.mark.parametrize('entry_name,severity,details', [
@@ -74,22 +74,22 @@ def test_configuration_inspector(sdc_executor, entry_name):
     ('System Memory Utilization', 'GREEN', False),
     ('Child Processes', 'GREEN', True)
 ])
-def test_jvm_instance_inspector(sdc_executor, entry_name, severity, details):
-    report = sdc_executor.run_health_inspectors('JvmInstanceInspector')
-    assert len(report.results) == 1
+def test_jvm_instance_category(sdc_executor, entry_name, severity, details):
+    report = sdc_executor.api_client.get_health_report('JvmInstanceHealthCategory').response.json()
+    assert len(report['categories']) == 1
 
-    result = report.result_for('JvmInstanceInspector')
+    result = report['categories'][0]
     assert result is not None
 
-    entry = result.entry_for(entry_name)
-    assert entry is not None
-    assert entry.severity == severity
-    assert entry.value is not None
-    assert entry.description is not None
+    check = _find_health_check(result, entry_name)
+    assert check is not None
+    assert check['severity'] == severity
+    assert check['value'] is not None
+    assert check['description'] is not None
     if details:
-        assert entry.details is not None
+        assert check['details'] is not None
     else:
-        assert entry.details is None
+        assert check['details'] is None
 
 
 @pytest.mark.parametrize('entry_name,details', [
@@ -99,22 +99,22 @@ def test_jvm_instance_inspector(sdc_executor, entry_name, severity, details):
     ('File Descriptors', False),
     ('SDC User Processes', True),
 ])
-def test_machine_inspector(sdc_executor, entry_name, details):
-    report = sdc_executor.run_health_inspectors('MachineInspector')
-    assert len(report.results) == 1
+def test_machine_category(sdc_executor, entry_name, details):
+    report = sdc_executor.api_client.get_health_report('MachineHealthCategory').response.json()
+    assert len(report['categories']) == 1
 
-    result = report.result_for('MachineInspector')
+    result = report['categories'][0]
     assert result is not None
 
-    entry = result.entry_for(entry_name)
-    assert entry is not None
-    assert entry.severity == 'GREEN'
-    assert entry.value is not None
-    assert entry.description is not None
+    check = _find_health_check(result, entry_name)
+    assert check is not None
+    assert check['severity'] == 'GREEN'
+    assert check['value'] is not None
+    assert check['description'] is not None
     if details:
-        assert entry.details is not None
+        assert check['details'] is not None
     else:
-        assert entry.details is None
+        assert check['details'] is None
 
 
 @pytest.mark.parametrize('entry_name', [
@@ -122,15 +122,23 @@ def test_machine_inspector(sdc_executor, entry_name, details):
     'Traceroute',
 ])
 def test_network_inspector(sdc_executor, entry_name):
-    report = sdc_executor.run_health_inspectors('NetworkInspector')
-    assert len(report.results) == 1
+    report = sdc_executor.api_client.get_health_report('NetworkHealthCategory').response.json()
+    assert len(report['categories']) == 1
 
-    result = report.result_for('NetworkInspector')
+    result = report['categories'][0]
     assert result is not None
 
-    entry = result.entry_for(entry_name)
-    assert entry is not None
-    assert entry.severity == 'GREEN'
-    assert entry.value is None
-    assert entry.description is not None
-    assert entry.details is not None
+    check = _find_health_check(result, entry_name)
+    assert check is not None
+    assert check['severity'] == 'GREEN'
+    assert check['value'] is None
+    assert check['description'] is not None
+    assert check['details'] is not None
+
+
+def _find_health_check(result, name):
+    for check in result['healthChecks']:
+        if check['name'] == name:
+            return check
+
+    return None
