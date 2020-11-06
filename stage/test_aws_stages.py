@@ -87,6 +87,7 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 
         assert set(output_records) == expected_messages
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
         logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
@@ -181,6 +182,7 @@ def test_kinesis_consumer_additional_properties(sdc_builder, sdc_executor, aws, 
         else:
             raise error
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
         if not invalid_config:
@@ -245,6 +247,7 @@ def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
 
         assert all('Second' in str(output_record) for output_record in output_records)
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
         logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
@@ -316,6 +319,7 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         assert set(output_records) == expected_messages
 
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
         logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
@@ -376,6 +380,7 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
 
         assert set(output_records) == expected_messages
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)  # Stream operations are done. Delete the stream.
         logger.info('Deleting %s DynamoDB table on AWS ...', application_name)
@@ -427,6 +432,7 @@ def test_kinesis_producer(sdc_builder, sdc_executor, aws):
 
         assert msgs_received == [raw_str] * msgs_sent_count
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, producer_dest_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)
 
@@ -507,6 +513,7 @@ def test_kinesis_producer_other_region(sdc_builder, sdc_executor, aws):
 
         assert msgs_received == [raw_str] * msgs_sent_count
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, producer_dest_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)
 
@@ -566,6 +573,7 @@ def test_kinesis_write_to_error(sdc_builder, sdc_executor, aws):
         assert all([raw_str.encode() in rec['Data'] for rec in response['Records']])
 
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, pipeline)
         logger.debug('Deleting Kinesis stream %s...', stream_name)
         aws.kinesis.delete_stream(StreamName=stream_name)
 
@@ -663,6 +671,7 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, anonymou
             assert events[0].header.values['sdc.event.type'] == 'file-created'
 
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, s3_exec_pipeline)
         restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
@@ -729,6 +738,7 @@ def test_s3_executor_copy_object(sdc_builder, sdc_executor, aws):
         assert events[0].header.values['sdc.event.type'] == 'file-moved'
 
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, pipeline)
         client.delete_object(Bucket=s3_bucket, Key=s3_key_src)
         client.delete_object(Bucket=s3_bucket, Key=s3_key_dst)
 
@@ -791,6 +801,7 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
             assert events[0].header.values['sdc.event.type'] == 'file-changed'
 
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, s3_exec_pipeline)
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
@@ -930,6 +941,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
 
         assert len(s3_put_keys) == record_count
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, firehose_dest_pipeline)
         # delete S3 objects related to this test
         if len(s3_put_keys) > 0:
             delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
@@ -1003,6 +1015,7 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
 
         assert len(s3_put_keys) == record_count
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, firehose_dest_pipeline)
         # delete S3 objects related to this test
         if len(s3_put_keys) > 0:
             delete_keys = {'Objects': [{'Key': k} for k in s3_put_keys]}
@@ -1146,6 +1159,7 @@ def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
         result_data = [str(record.field['text']) for record in snapshot[amazon_sqs_consumer.instance_name].output]
         assert sorted(result_data) == sorted([message['MessageBody'] for message in message_entries])
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         if queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
             client.delete_queue(QueueUrl=queue_url)
@@ -1217,6 +1231,7 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
 
         assert sorted(expected) == sorted([r.field['text'].value for r in records])
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         if not keep_data and queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
             client.delete_queue(QueueUrl=queue_url)
@@ -1316,6 +1331,7 @@ def test_sqs_no_read_access(sdc_builder, sdc_executor, aws):
             assert queue_name in str(error)
 
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         if queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
             client.delete_queue(QueueUrl=queue_url)
@@ -1379,6 +1395,7 @@ def test_sqs_specify_url_directly(sdc_builder, sdc_executor, aws):
         assert len(message_entries) == len(wiretap.output_records)
         assert [value in [record.field['text'] for record in wiretap.output_records] for value in message_entries]
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         if queue_url:
             logger.info('Deleting %s SQS queue of %s URL on AWS ...', queue_name, queue_url)
             client.delete_queue(QueueUrl=queue_url)
@@ -1444,4 +1461,10 @@ def test_sqs_origin_delivery_guarantee(sdc_builder, sdc_executor, aws, delivery_
         assert error_message in status['message']
 
     finally:
+        _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         client.delete_queue(QueueUrl=queue_url)
+
+
+def _ensure_pipeline_is_stopped(sdc_executor, pipeline):
+    if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+        sdc_executor.stop_pipeline(pipeline)
