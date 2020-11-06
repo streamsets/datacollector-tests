@@ -228,7 +228,7 @@ DATA_TYPES_POSTGRESQL = [
     ('date', "'2019-01-01'", 'DATE', 1546300800000),
     ('time', "'5:00:00'", 'TIME', 18000000),
     ('time with time zone', "'04:05:06-08:00'", 'TIME', 43506000),
-    ('interval', "INTERVAL '1' YEAR", 'STRING', '1 years 0 mons 0 days 0 hours 0 mins 0.00 secs'),
+    ('interval', "INTERVAL '1' YEAR", 'STRING', '1 years 0 mons 0 days 0 hours 0 mins 0.0 secs'),
     ('boolean', "true", 'BOOLEAN', True),
     ('ai', "'sad'", 'STRING', 'sad'),
     ('point', "'(1, 1)'", 'STRING', '(1.0,1.0)'),
