@@ -92,14 +92,14 @@ def test_jvm_instance_category(sdc_executor, entry_name, severity, details):
         assert check['details'] is None
 
 
-@pytest.mark.parametrize('entry_name,details', [
-    ('Data Dir Available Space', False),
-    ('Runtime Dir Available Space', False),
-    ('Log Dir Available Space', False),
-    ('File Descriptors', False),
-    ('SDC User Processes', True),
+@pytest.mark.parametrize('entry_name,severity,details', [
+    ('Data Dir Available Space', 'GREEN', False),
+    ('Runtime Dir Available Space', 'GREEN', False),
+    ('Log Dir Available Space', 'GREEN', False),
+    ('File Descriptors', None, True),
+    ('SDC User Processes', None, True),
 ])
-def test_machine_category(sdc_executor, entry_name, details):
+def test_machine_category(sdc_executor, entry_name, severity, details):
     report = sdc_executor.api_client.get_health_report('MachineHealthCategory').response.json()
     assert len(report['categories']) == 1
 
@@ -107,10 +107,20 @@ def test_machine_category(sdc_executor, entry_name, details):
     assert result is not None
 
     check = _find_health_check(result, entry_name)
+    # Check alwas must exists
     assert check is not None
-    assert check['severity'] == 'GREEN'
-    assert check['value'] is not None
+    # Severity always must be present, but we will check it only if specified in the parametrized
+    assert check['severity'] is not None
+    if severity:
+        assert check['severity'] == severity
+    # And we're expecting a value only if we know result of the severity
+    if severity:
+        assert check['value'] is not None
+    else:
+        assert check['value'] is None
+    # Description must exists in any case
     assert check['description'] is not None
+    # Details are again conditional on the check itself
     if details:
         assert check['details'] is not None
     else:
@@ -130,7 +140,7 @@ def test_network_inspector(sdc_executor, entry_name):
 
     check = _find_health_check(result, entry_name)
     assert check is not None
-    assert check['severity'] == 'GREEN'
+    assert check['severity'] is not None
     assert check['value'] is None
     assert check['description'] is not None
     assert check['details'] is not None
