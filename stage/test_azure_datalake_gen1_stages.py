@@ -131,7 +131,7 @@ def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azur
        The pipeline looks like:
 
         Data Lake Store Destination pipeline:
-           dev_data_generator >> azure_data_lake_store_destination >= trash
+           dev_data_generator >> azure_data_lake_store_destination >= wiretap
     """
     directory_name = get_random_string(string.ascii_letters, 10)
     files_prefix = get_random_string(string.ascii_letters, 10)
@@ -159,15 +159,15 @@ def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azur
                                          files_suffix=files_suffix,
                                          max_records_in_file=1)
 
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> azure_data_lake_store >= trash
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> azure_data_lake_store >= wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(azure)
     sdc_executor.add_pipeline(pipeline)
     dl_fs = azure.datalake.file_system
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1).wait_for_finished().snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         dl_files = dl_fs.ls(directory_name)
         assert len(dl_files) == len(raw_data)
@@ -178,15 +178,13 @@ def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azur
 
         assert sorted(dl_file_contents, key=itemgetter('id')) == sorted(raw_data, key=itemgetter('id'))
 
-        if adls_version == ADLS_LEGACY:
-            number_of_events = 9
-        else:
-            number_of_events = 10
+        number_of_events=10
 
-        assert len(snapshot[azure_data_lake_store].event_records) == number_of_events
-        for index in range(0, number_of_events-1):
-            assert snapshot[azure_data_lake_store].event_records[index].header['values'][
+        assert len(wiretap.output_records) == number_of_events
+        for index in range(number_of_events):
+            assert wiretap.output_records[index].header['values'][
                        'sdc.event.type'] == 'file-closed'
+
     finally:
         dl_files = dl_fs.ls(directory_name)
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
@@ -201,15 +199,16 @@ def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azur
 def test_datalake_origin(sdc_builder, sdc_executor, azure):
     """ Test for Data Lake Store origin stage. We do so by creating a file in Azure Data Lake Storage using the
     STF client, then reading the file using the ALDS Gen1 Origin Stage, to assert data ingested by the pipeline
-    is the expected data from the file.
+    is the expected data from the file. Wiretap is used to capture ingested data.
     The pipeline looks like:
 
-    azure_data_lake_store_origin >> trash
+    azure_data_lake_store_origin >> wiretap
     """
     adls_version = ADLS_GEN1  # There is no Origin stage for legacy-gen1.
     directory_name = get_random_string(string.ascii_letters, 10)
     file_name = 'test-data.txt'
     messages = [f'message{i}' for i in range(1, 10)]
+    total_records = len(messages)
 
     try:
         # Create a file with the raw data messages
@@ -226,24 +225,25 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
-        trash = builder.add_stage('Trash')
+
         azure_data_lake_store_origin = builder.add_stage(name=ADLS_GEN_STAGELIBS[adls_version].source_stagelib)
         azure_data_lake_store_origin.set_attributes(data_format='TEXT',
                                                     files_directory=f'/{directory_name}',
                                                     file_name_pattern='*')
-        azure_data_lake_store_origin >> trash
+
+        wiretap = builder.add_wiretap()
+        azure_data_lake_store_origin >> wiretap.destination
 
         datalake_origin_pipeline = builder.build().configure_for_environment(azure)
         sdc_executor.add_pipeline(datalake_origin_pipeline)
 
         # start pipeline and read file in ADLS
-        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.start_pipeline(datalake_origin_pipeline).wait_for_pipeline_output_records_count(total_records)
         sdc_executor.stop_pipeline(datalake_origin_pipeline)
-        output_records = [record.field['text']
-                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
 
-        # assert Data Lake files generated
-        assert messages == output_records
+        records = [record.field['text'] for record in wiretap.output_records]
+        assert records == messages
+
     finally:
         dl_files = dl_fs.ls(directory_name)
         # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
@@ -263,7 +263,7 @@ def test_datalake_origin_stop_go(sdc_builder, sdc_executor, azure):
 
     The pipeline looks like:
 
-    azure_data_lake_store_origin >> trash
+    azure_data_lake_store_origin >> wiretap
 
     We stop the pipeline, insert more data and check the offset worked.
     """
@@ -272,6 +272,7 @@ def test_datalake_origin_stop_go(sdc_builder, sdc_executor, azure):
     file_name = 'test-data-1.txt'
     file_name_2 = 'test-data-2.txt'
     messages = [f'message{i}' for i in range(1, 10)]
+    total_records = len(messages)
 
 
     try:
@@ -289,21 +290,22 @@ def test_datalake_origin_stop_go(sdc_builder, sdc_executor, azure):
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
         azure_data_lake_store_origin = builder.add_stage(name=ADLS_GEN_STAGELIBS[adls_version].source_stagelib)
         azure_data_lake_store_origin.set_attributes(data_format='TEXT',
                                                     files_directory=f'/{directory_name}',
                                                     file_name_pattern='*')
-        azure_data_lake_store_origin >> trash
+
+        azure_data_lake_store_origin >> wiretap.destination
 
         datalake_origin_pipeline = builder.build().configure_for_environment(azure)
         sdc_executor.add_pipeline(datalake_origin_pipeline)
 
         # start pipeline and read file in ADLS
-        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.start_pipeline(datalake_origin_pipeline).wait_for_pipeline_output_records_count(total_records)
         sdc_executor.stop_pipeline(datalake_origin_pipeline)
-        output_records = [record.field['text']
-                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+
+        output_records = [record.field['text'] for record in wiretap.output_records]
 
         # assert Data Lake files generated
         assert messages == output_records
@@ -323,10 +325,11 @@ def test_datalake_origin_stop_go(sdc_builder, sdc_executor, azure):
         dl_fs = azure.datalake.file_system
 
         # start pipeline and read file in ADLS
-        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        wiretap.reset()
+        sdc_executor.start_pipeline(datalake_origin_pipeline).wait_for_pipeline_output_records_count(total_records)
         sdc_executor.stop_pipeline(datalake_origin_pipeline)
-        output_records = [record.field['text']
-                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+
+        output_records = [record.field['text'] for record in wiretap.output_records]
 
         # assert Data Lake files generated
         assert messages == output_records
@@ -349,10 +352,10 @@ def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
     STF client, then reading the file using the ALDS Gen1 Origin Stage, to assert data ingested by the pipeline
     is the expected data from the file.
     The origin produce events. A pipeline finisher is connected to the origin. It stops the pipeline.
-    We assert the events are the expected ones.
+    We assert the events are the expected ones. Wiretap is used to assert ingested data.
     The pipeline looks like:
 
-    azure_data_lake_store_origin >> trash
+    azure_data_lake_store_origin >> wiretap
     """
     adls_version = ADLS_GEN1  # There is no Origin stage for legacy-gen1.
     directory_name = get_random_string(string.ascii_letters, 10)
@@ -374,7 +377,8 @@ def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
+        wiretap_events = builder.add_wiretap()
         azure_data_lake_store_origin = builder.add_stage(name=ADLS_GEN_STAGELIBS[adls_version].source_stagelib)
         azure_data_lake_store_origin.set_attributes(data_format='TEXT',
                                                     files_directory=f'/{directory_name}',
@@ -383,28 +387,28 @@ def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
         pipeline_finisher_executor.set_attributes(
             stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-        azure_data_lake_store_origin >> trash
-        azure_data_lake_store_origin >= pipeline_finisher_executor
+        azure_data_lake_store_origin >> wiretap.destination
+        azure_data_lake_store_origin >= [pipeline_finisher_executor, wiretap_events.destination]
 
         datalake_origin_pipeline = builder.build().configure_for_environment(azure)
-        sdc_executor.add_pipeline(datalake_origin_pipeline)
 
         # start pipeline and read file in ADLS
-        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
-        sdc_executor.get_pipeline_status(datalake_origin_pipeline).wait_for_status(status='FINISHED')
+        sdc_executor.add_pipeline(datalake_origin_pipeline)
+        sdc_executor.start_pipeline(datalake_origin_pipeline).wait_for_finished()
 
         output_records = [record.field['text']
-                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+                          for record in wiretap.output_records]
 
         # assert Data Lake files generated
         assert messages == output_records
 
-        assert len(snapshot[azure_data_lake_store_origin].event_records) == 2
-        assert snapshot[azure_data_lake_store_origin].event_records[0].header['values'][
+        assert len(wiretap_events.output_records) == 3
+        assert wiretap_events.output_records[0].header['values'][
                    'sdc.event.type'] == 'new-file'
-        assert snapshot[azure_data_lake_store_origin].event_records[1].header['values'][
+        assert wiretap_events.output_records[1].header['values'][
                    'sdc.event.type'] == 'finished-file'
-
+        assert wiretap_events.output_records[2].header['values'][
+                   'sdc.event.type'] == 'no-more-data'
     finally:
         dl_files = dl_fs.ls(directory_name)
         # Note: Non-empty directory is not allowed to be removed, hence remove all files first.
@@ -420,17 +424,20 @@ def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
 def test_datalake_origin_resume_offset(sdc_builder, sdc_executor, azure):
     """ Test for Data Lake Store origin stage. We do so by creating a file in Azure Data Lake Storage using the
     STF client, then reading the file using the ALDS Gen1 Origin Stage, to assert data ingested by the pipeline
-    is the expected data from the file. We then create more data, restart the pipeline, and take another snapshot to
-    ensure that the stage properly resumes from where the offset left off. The pipeline looks like:
+    is the expected data from the file. We then create more data, restart the pipeline, and assert using a wiretap
+    the ingested data to ensure that the stage properly resumes from where the offset left off. The pipeline looks like:
 
-    azure_data_lake_store_origin >> trash
+    azure_data_lake_store_origin >> wiretap
     """
+
     adls_version = ADLS_GEN1  # There is no Origin stage for legacy-gen1.
     directory_name = get_random_string(string.ascii_letters, 10)
     file_name = 'test-data.txt'
     file2_name = 'test-data2.txt'
     messages = [f'message{i}' for i in range(1, 10)]
     messages2 = [f'message{i}' for i in range(11, 20)]
+    total_records_1 = len(messages)
+    total_records_2 = len(messages2)
 
     try:
         # Create a file with the raw data messages
@@ -451,21 +458,22 @@ def test_datalake_origin_resume_offset(sdc_builder, sdc_executor, azure):
         os.remove(file_name)
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
         azure_data_lake_store_origin = builder.add_stage(name=ADLS_GEN_STAGELIBS[adls_version].source_stagelib)
         azure_data_lake_store_origin.set_attributes(data_format='TEXT',
                                                     files_directory=f'/{directory_name}',
                                                     file_name_pattern='*')
-        azure_data_lake_store_origin >> trash
+        azure_data_lake_store_origin >> wiretap.destination
 
         datalake_origin_pipeline = builder.build().configure_for_environment(azure)
         sdc_executor.add_pipeline(datalake_origin_pipeline)
 
         # start pipeline and read file in ADLS
-        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.start_pipeline(datalake_origin_pipeline).wait_for_pipeline_output_records_count(total_records_1)
+
         sdc_executor.stop_pipeline(datalake_origin_pipeline, wait=True)
         output_records = [record.field['text']
-                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+                          for record in wiretap.output_records]
 
         # assert Data Lake files generated
         assert messages == output_records
@@ -473,11 +481,11 @@ def test_datalake_origin_resume_offset(sdc_builder, sdc_executor, azure):
         # Try adding the second file and resuming from the offset
         dl_fs.put(file2_name, f'/{directory_name}/{file2_name}')
         os.remove(file2_name)
-
-        snapshot = sdc_executor.capture_snapshot(datalake_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        wiretap.reset()
+        sdc_executor.start_pipeline(datalake_origin_pipeline).wait_for_pipeline_output_records_count(total_records_2)
         sdc_executor.stop_pipeline(datalake_origin_pipeline, wait=False)
         output_records = [record.field['text']
-                          for record in snapshot[azure_data_lake_store_origin.instance_name].output]
+                          for record in wiretap.output_records]
 
         # assert Data Lake files generated
         assert messages2 == output_records
@@ -685,7 +693,7 @@ def test_adls_gen1_file_event_filepath_when_whole_file_mode_disabled(sdc_builder
     not URI we decided to remove the schema part from it.
 
     Pipeline:
-              Dev Raw Data Source >> ADLS gen1 FS >= Trash
+              Dev Raw Data Source >> ADLS gen1 FS >= Wiretap
 
     When the pipeline stops we assert the filepath attribute of the event generate by ADLS gen1 FS.
     """
@@ -697,37 +705,42 @@ def test_adls_gen1_file_event_filepath_when_whole_file_mode_disabled(sdc_builder
 
     try:
         dl_fs.mkdir(f'/{directory_name}')
+
         with dl_fs.open(f'/{directory_name}/_tmp_sdc_0', 'wb') as f:
             f.write(b'message1\n')
+
 
         data_source = builder.add_stage('Dev Raw Data Source')
         data_source.stop_after_first_batch = True
         data_source.data_format = 'TEXT'
-        data_source.raw_data = 'message2\n'
+        data_source.raw_data = 'message2'
 
-        azure_data_lake_store_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_datalake_gen1_DataLakeDTarget')
+        azure_data_lake_store_destination = builder.add_stage(
+            name='com_streamsets_pipeline_stage_destination_datalake_gen1_DataLakeDTarget')
         azure_data_lake_store_destination.set_attributes(data_format='TEXT',
                                                          directory_template=f'/{directory_name}',
                                                          files_prefix='sdc',
                                                          files_suffix='')
 
-        trash = builder.add_stage('Trash')
-
-        data_source >> azure_data_lake_store_destination >= trash
+        wiretap = builder.add_wiretap()
+        data_source >> azure_data_lake_store_destination >= wiretap.destination
 
         pipeline = builder.build().configure_for_environment(azure)
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         history = sdc_executor.get_pipeline_history(pipeline)
         pipeline_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        stage = snapshot[azure_data_lake_store_destination.instance_name]
-        stage_record_count = len(stage.event_records)
-
-        assert stage_record_count == 1
+        stage_record_count = len(wiretap.output_records)
+        assert stage_record_count == 2
         assert pipeline_record_count == stage_record_count + 1
-        for event_record in stage.event_records:
-            assert event_record.get_field_data('/filepath').value.startswith(f'/{directory_name}/sdc_')
+        for event_record in wiretap.output_records:
+            assert event_record.field['filepath'].value.startswith(f'/{directory_name}/sdc_')
+
+        # We assert that the two files created have the expected content.
+        dl_files = dl_fs.ls(directory_name)
+        assert len(dl_files) == 2
+        assert ((dl_fs.cat(dl_files[0]) == b'message1\n' and dl_fs.cat(dl_files[1]) == b'message2\n') or
+                (dl_fs.cat(dl_files[1]) == b'message1\n' and dl_fs.cat(dl_files[0]) == b'message2\n'))
 
     finally:
         dl_files = dl_fs.ls(directory_name)
@@ -747,12 +760,12 @@ def test_adls_gen1_file_event_filepath_when_whole_file_mode_enabled(sdc_builder,
     is not broken by the fix.
 
     Pipeline:
-              Directory >> ADLS gen1 FS >= Trash
+              Directory >> ADLS gen1 FS >= Wiretap
 
     Before starting the pipeline we put a file to the source directory, this is the new file.
     We also put a file to the destination folder, this is the "old" file.
     When the pipeline stops we assert the /targetFileInfo/path and /sourceFileInfo/file attributes of the event
-    generated by ADLS gen1 FS.
+    generated by ADLS gen1 FS. Wiretap is used to assert ingested records.
     """
 
     builder = sdc_builder.get_pipeline_builder()
@@ -772,6 +785,8 @@ def test_adls_gen1_file_event_filepath_when_whole_file_mode_enabled(sdc_builder,
         src.data_format = 'WHOLE_FILE'
         src.batch_size_in_recs = 1
         src.batch_wait_time_in_secs = 1
+        # 1 input + 2 events
+        total_records = 3
 
         sdc_executor.execute_shell(f'mkdir -p {src.files_directory}')
         sdc_executor.write_file(f'{src.files_directory}/input.txt', 'message2\n')
@@ -783,24 +798,30 @@ def test_adls_gen1_file_event_filepath_when_whole_file_mode_enabled(sdc_builder,
                                                          files_prefix='sdc',
                                                          file_name_expression='-output')
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        src >> azure_data_lake_store_destination >= trash
+        src >> azure_data_lake_store_destination >= wiretap.destination
 
         pipeline = builder.build().configure_for_environment(azure)
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_records)
         sdc_executor.stop_pipeline(pipeline, force=True)
+
         history = sdc_executor.get_pipeline_history(pipeline)
         pipeline_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        stage = snapshot[azure_data_lake_store_destination.instance_name]
-        stage_record_count = len(stage.event_records)
+        stage_record_count = len(wiretap.output_records)
 
         assert stage_record_count == 1
-        assert pipeline_record_count == stage_record_count + 1
-        for event_record in stage.event_records:
-            assert event_record.get_field_data('/targetFileInfo/path').value == f'/{directory_name}/sdc-output'
-            assert event_record.get_field_data('/sourceFileInfo/file').value == f'{src.files_directory}/input.txt'
+        assert pipeline_record_count == stage_record_count + 2
+        for event_record in wiretap.output_records:
+            assert event_record.field['targetFileInfo']['path'] == f'/{directory_name}/sdc-output'
+            assert event_record.field['sourceFileInfo']['file'] == f'{src.files_directory}/input.txt'
+
+        # We assert that the two files created have the expected content.
+        dl_files = dl_fs.ls(directory_name)
+        assert len(dl_files) == 2
+        assert ((dl_fs.cat(dl_files[0]) == b'message1\n' and dl_fs.cat(dl_files[1]) == b'message2\n') or
+                (dl_fs.cat(dl_files[1]) == b'message1\n' and dl_fs.cat(dl_files[0]) == b'message2\n'))
 
     finally:
         try:
