@@ -24,6 +24,7 @@ from collections import OrderedDict
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
+from streamsets.testframework.environments.databases import OracleDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -1089,6 +1090,154 @@ def test_jdbc_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, data
         table1.drop(database.engine)
         table2.drop(database.engine)
 
+
+@database
+@pytest.mark.parametrize('test_data', [
+    {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 2, 'partition_size': 1000},
+    {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 3, 'partition_size': 1000},
+    {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 4, 'partition_size': 1000},
+    {'per_batch_strategy': 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE', 'thread_count': 2, 'partition_size': 1000},
+    {'per_batch_strategy': 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE', 'thread_count': 3, 'partition_size': 1000},
+    {'per_batch_strategy': 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE', 'thread_count': 4, 'partition_size': 1000},
+    {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 2, 'partition_size': 0},
+    {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 3, 'partition_size': 0},
+    {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 4, 'partition_size': 0},
+    {'per_batch_strategy': 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE', 'thread_count': 2, 'partition_size': 0},
+    {'per_batch_strategy': 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE', 'thread_count': 3, 'partition_size': 0},
+    {'per_batch_strategy': 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE', 'thread_count': 4, 'partition_size': 0}
+])
+def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_executor, database, test_data):
+    """
+    We want to make sure that there are no duplicates or data loses when the number of threads is less than
+    the number of tables; is equal to the number of tables or is greater than the number of tables.
+    And we want to run the same test for all batch strategies with partitioning enabled and disabled too.
+
+    To run the test we first create 3 tables and populate them with 12000, 36000 and 6000 random records respectively.
+    To prove the connector works as expected we will
+    1) test that the number of records written is as expected for every table, not more (to exclude data duplicates)
+    and not less (to exclude data loses).
+    2) test that at the end we get all expected events: 3 table-finished events (1 for each table), 1 schema-finished
+    event with 3 table names and 1 no-more-data event.
+
+    The pipeline is as follows:
+
+    JDBC Multitable Consumer >> Splitter >> Wiretap1 (12000 records)
+                                Splitter >> Wiretap2 (36000 records)
+                                Splitter >> Wiretap3 (6000 records)
+                                Splitter >> Default Wiretap (0 records)
+                             >= Event Wiretap
+
+    """
+
+    rows_in_tables = [12000, 36000, 6000]
+    table_prefix = f'{get_random_string(string.ascii_lowercase, 6)}_'
+    table_names = [f'{table_prefix}{get_random_string(string.ascii_lowercase, 20)}'
+                   for _ in range(0, len(rows_in_tables))]
+    tables = []
+    all_rows = []
+    pipeline = None
+
+    try:
+        all_row_count = 0
+        for i, rows_in_table in enumerate(rows_in_tables):
+            columns = [
+                sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+                sqlalchemy.Column('NAME', sqlalchemy.String(32), quote=True)
+            ]
+            rows = [{'id': j, 'NAME': get_random_string(string.ascii_lowercase, 32)} for j in range(rows_in_table)]
+            all_rows += [rows]
+            all_row_count += len(rows)
+            table = sqlalchemy.Table(table_names[i], sqlalchemy.MetaData(), *columns, quote=True)
+            table.create(database.engine)
+            tables += [table]
+            connection = database.engine.connect()
+            connection.execute(table.insert(), rows)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        attributes = {
+            'table_configs': [{
+                "tablePattern": f'{table_prefix}%',
+                'partitioningMode': 'REQUIRED' if test_data['partition_size'] > 0 else 'DISABLED',
+                'partitionSize': str(test_data['partition_size'])
+            }],
+            'max_batch_size_in_records': 100,
+            'fetch_size': 10,
+            'number_of_threads': test_data['thread_count'],
+            'maximum_pool_size': test_data['thread_count'],
+            'per_batch_strategy': test_data['per_batch_strategy']
+        }
+
+        jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+        jdbc_multitable_consumer.set_attributes(**attributes)
+
+        stream_selector = pipeline_builder.add_stage('Stream Selector')
+
+        jdbc_multitable_consumer >> stream_selector
+
+        event_wiretap = pipeline_builder.add_wiretap()
+        jdbc_multitable_consumer >= event_wiretap.destination
+
+        wiretaps = []
+        for _ in range(0, len(table_names) + 1):
+            wiretap = pipeline_builder.add_wiretap()
+            stream_selector >> wiretap.destination
+            wiretaps += [wiretap]
+
+        conditions = [{
+            'outputLane': stream_selector.output_lanes[i],
+            'predicate': f"${{record:attribute('jdbc.tables')=='{table_name}'}}"
+        } for i, table_name in enumerate(table_names)]
+        conditions += [{'outputLane': stream_selector.output_lanes[len(table_names)], 'predicate': 'default'}]
+
+        stream_selector.condition = conditions
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        jdbc_multitable_consumer.table_configs[0]["tablePattern"] = f'{table_prefix}%'
+
+        sdc_executor.add_pipeline(pipeline)
+        status = sdc_executor.start_pipeline(pipeline)
+        status.wait_for_pipeline_output_records_count(all_row_count + all_row_count / 1000 + 9)
+
+        for i, rows in enumerate(all_rows):
+            assert len(rows) == len(wiretaps[i].output_records)
+            output_records = [{
+                'id': r.field['id'].value,
+                'NAME': r.field['NAME'].value
+            } for r in wiretaps[i].output_records]
+            output_records.sort(key=lambda r: r['id'])
+            assert rows == output_records
+        assert 0 == len(wiretaps[len(wiretaps) - 1].output_records)
+
+        finished_tables = set()
+        schema_finished_tables = set()
+        database_finished = False
+        for record in event_wiretap.output_records:
+            if record.header['values']['sdc.event.type'] == 'table-finished':
+                assert record.field['table'].value.lower() in table_names
+                finished_tables.add(record.field['table'])
+            elif record.header['values']['sdc.event.type'] == 'schema-finished':
+                assert len(schema_finished_tables) == 0
+                assert len(record.field['tables']) == len(table_names)
+                for table in record.field['tables']:
+                    assert table.value.lower() in table_names
+                    schema_finished_tables.add(table)
+
+            elif record.header['values']['sdc.event.type'] == 'no-more-data':
+                assert not database_finished
+                database_finished = True
+            else:
+                pytest.fail(f"Unexpected event type: {record.header['values']['sdc.event.type']}")
+
+        assert len(finished_tables) == len(table_names)
+        assert len(schema_finished_tables) == len(table_names)
+        assert database_finished
+
+    finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline)
+        for table in tables:
+            table.drop(database.engine)
 
 #
 # Auxiliary methods
