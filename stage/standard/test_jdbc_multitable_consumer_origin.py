@@ -707,7 +707,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
         # Read two records, generate 4 events, 6 records
         status.wait_for_pipeline_output_records_count(6)
 
-        records = wiretap.output_records
+        # Force lexicographically reverse order (table-finished, schema-finished, no-more-data)
+        records = sorted(wiretap.output_records, key=lambda row: row.header.values['sdc.event.type'], reverse=True)
         assert len(records) == 4
 
         # First two events should be table-finished (for any order of the tables though)
