@@ -738,7 +738,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
         # 1 record, 3 events more
         status.wait_for_pipeline_output_records_count(10)
 
-        records = wiretap.output_records
+        # Force lexicographically reverse order (table-finished, schema-finished, no-more-data)
+        records = sorted(wiretap.output_records, key=lambda row: row.header.values['sdc.event.type'], reverse=True)
         assert len(records) == 3
 
         assert records[0].header.values['sdc.event.type'] == 'table-finished'
@@ -760,7 +761,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
         # Start the pipeline and wait for it to read three records (3 events)
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3)
 
-        records = wiretap.output_records
+        # Force lexicographically reverse order (table-finished, schema-finished, no-more-data)
+        records = sorted(wiretap.output_records, key=lambda row: row.header.values['sdc.event.type'], reverse=True)
         assert len(records) == 3
 
         assert records[0].header.values['sdc.event.type'] == 'table-finished'
