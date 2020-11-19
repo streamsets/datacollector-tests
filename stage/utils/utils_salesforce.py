@@ -249,8 +249,11 @@ def clean_up(sdc_executor, pipeline, client, contact_ids):
     """
     if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
         logger.info('Stopping pipeline')
-        sdc_executor.stop_pipeline(pipeline)
-
+        try:
+            #Wait false is because no sincronization needed with the stop
+            sdc_executor.stop_pipeline(pipeline, wait=False)
+        except Exception:
+            logger.error('Unable to stop the pipeline...')
     try:
         if contact_ids:
             logger.info('Deleting records ...')
