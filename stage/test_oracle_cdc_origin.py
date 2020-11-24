@@ -1295,6 +1295,86 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
         connection.execute(f'DROP TYPE ARRAY_{table_name}')
 
 
+@sdc_min_version('3.20.0')
+@database('oracle')
+@pytest.mark.parametrize('peg_parser', [True, False])
+def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, peg_parser):
+    """ This tests OracleCDC origin when the table has an ADT column and an update
+    is executed on the ADT column. The expected behaviour would be to have an unsupported
+    operation type from the LOG MINER but instead of this we get an UPDATE operation and an empty
+    SQL Redo log from the LOG MINER on ORACLE 12c. See more details on SDC-16136.
+    We treat this as an unsupported column type and the user can choose how to manage this by
+    using the unsupported_field_type config.
+
+    In this test we will check if the implemented exception at SDC-16136 is thrown when we have an
+    empty REDO LOG. We will check it for both parsers: the default one and the PEG parser.
+
+    Oracle CDC >> Wiretap
+    """
+
+    connection = database.engine.connect()
+    db_version = _get_oracle_db_version(connection)
+
+    if db_version[0] != 12:
+        pytest.skip('To run this test Oracle DB version must be 12.')
+
+    table_name = get_random_string(string.ascii_uppercase, 10)
+    # We create a table that contains an ADT type column that has a collection type, in this case an VARRAY
+    type_array_create = f'CREATE TYPE ARRAY_{table_name} AS VARRAY (1048576) of NUMBER'
+    type_create = f'CREATE TYPE TPE_{table_name} AS OBJECT (EX_ARRAY ARRAY_{table_name}, EX_VARCHAR VARCHAR2(60 BYTE))'
+    table_create = f'CREATE TABLE {table_name} (ID_EX NUMBER NOT NULL ENABLE, ADT_EX TPE_{table_name}, ' \
+        f'NAME_EX VARCHAR2(60 BYTE), CONSTRAINT PK_{table_name}_EX PRIMARY KEY (ID_EX))'
+    names_insert = ["INDURAIN", "PANTANI", "ULRICH"]
+    num_records = len(names_insert)
+
+    try:
+        connection.execute(type_array_create)
+        connection.execute(type_create)
+        connection.execute(table_create)
+        for i in range(num_records):
+            connection.execute(f'INSERT INTO {table_name} (ID_EX, ADT_EX, NAME_EX) '
+                               f"VALUES ({i},NULL,'{names_insert[i]}')")
+
+        builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc = _get_oracle_cdc_client_origin(connection=connection,
+                                                   database=database,
+                                                   sdc_builder=sdc_builder,
+                                                   pipeline_builder=builder,
+                                                   buffer_locally=True,
+                                                   initial_change='LATEST',
+                                                   src_table_name=table_name,
+                                                   unsupported_field_type='TO_ERROR',
+                                                   add_unsupported_fields_to_records=True,
+                                                   parse_sql_query=True,
+                                                   send_redo_query_in_headers=True,
+                                                   use_peg_parser_in_beta=peg_parser,
+                                                   on_record_error='TO_ERROR',
+                                                   dictionary_source='DICT_FROM_ONLINE_CATALOG')
+
+        wiretap = builder.add_wiretap()
+
+        oracle_cdc >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        status = sdc_executor.start_pipeline(pipeline);
+        connection.execute(f"UPDATE {table_name} set ADT_EX = TPE_{table_name}("f"ARRAY_{table_name}(null),"
+                           f"'EXAMPLE')")
+
+        status.wait_for_pipeline_error_records_count(num_records)
+        sdc_executor.stop_pipeline(pipeline)
+        for i in range(num_records):
+            assert wiretap.error_records[i].header['errorCode'] == 'JDBC_85'
+            assert 'LogMiner returned empty SQL Redo statement' in wiretap.error_records[i].header['errorMessage']
+
+    finally:
+        logger.info('Dropping types %s and %s and table %s ...',
+                    f'ARRAY_{table_name}', f'TPE_{table_name}', f'TABLE {table_name}')
+        connection.execute(f'DROP TABLE {table_name}')
+        connection.execute(f'DROP TYPE TPE_{table_name}')
+        connection.execute(f'DROP TYPE ARRAY_{table_name}')
+
+
 @sdc_min_version('3.0.0.0')
 @database('oracle')
 def test_event_startup(sdc_builder, sdc_executor, database):
