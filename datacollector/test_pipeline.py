@@ -44,6 +44,31 @@ def test_pipeline_downgrade(sdc_executor):
     assert 'VALIDATION_0096' in e.value.issues
 
 
+def test_two_outputs_to_same_stage(sdc_executor):
+    """Ensure proper error is thrown when two or more outputs from a single stage leads to the same stage."""
+    builder = sdc_executor.get_pipeline_builder()
+
+    generator = builder.add_stage(label='Dev Data Generator')
+
+    selector = builder.add_stage('Stream Selector')
+
+    trash = builder.add_stage(label='Trash')
+
+    generator >> selector >> trash
+    selector >> trash
+
+    selector.condition = [dict(outputLane=selector.output_lanes[0], predicate='${1 == 1}'),
+                          dict(outputLane=selector.output_lanes[1], predicate='default')]
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+
+    with pytest.raises(Exception) as e:
+        sdc_executor.validate_pipeline(pipeline)
+
+    assert 'VALIDATION_0039' in e.value.issues
+
+
 @sdc_min_version('3.4.0')
 @database
 def test_pipeline_preview_with_test_stage(sdc_builder, sdc_executor, database):
