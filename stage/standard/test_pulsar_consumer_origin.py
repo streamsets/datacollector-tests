@@ -88,6 +88,7 @@ def test_object_names_topic(sdc_builder, sdc_executor, pulsar, test_name, topic_
             admin.delete_topic(producer.topic())
 
 
+@pulsar
 @pytest.mark.parametrize('test_name, consumer_group_name', CONSUMER_NAMES, ids=[t[0] for t in CONSUMER_NAMES])
 def test_object_names_consumer_group(sdc_builder, sdc_executor, pulsar, test_name, consumer_group_name, keep_data):
     message = 'Hello World from SDC & DPM!'
