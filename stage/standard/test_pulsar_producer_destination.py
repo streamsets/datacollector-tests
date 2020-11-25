@@ -82,7 +82,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, pulsar):
 
 @pulsar
 def test_multiple_batch(sdc_builder, sdc_executor, pulsar, keep_data):
-    batch_size = 1000
+    batch_size = 100
     batches = 10
     topic = get_random_string()
 
@@ -90,14 +90,16 @@ def test_multiple_batch(sdc_builder, sdc_executor, pulsar, keep_data):
 
     origin = builder.add_stage('Dev Data Generator')
     origin.batch_size = batch_size
+    origin.delay_between_batches = 0
     origin.fields_to_generate = [{
-        "type" : "LONG_SEQUENCE",
-        "field" : "seq"
+        "type": "LONG_SEQUENCE",
+        "field": "seq"
     }]
 
     producer = builder.add_stage('Pulsar Producer')
     producer.topic = topic
     producer.data_format = 'JSON'
+    producer.async_send = False
 
     origin >> producer
 
@@ -105,7 +107,7 @@ def test_multiple_batch(sdc_builder, sdc_executor, pulsar, keep_data):
 
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline)
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', batches)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', batch_size * batches)
     sdc_executor.stop_pipeline(pipeline)
 
     history = sdc_executor.get_pipeline_history(pipeline)
@@ -113,8 +115,6 @@ def test_multiple_batch(sdc_builder, sdc_executor, pulsar, keep_data):
 
     logger.info(f"Wrote {recordsCount} records")
     messages = _dump_messages_and_clean_up(topic, pulsar, keep_data)
-    assert len(messages) == recordsCount
-
     sequence = [int(json.loads(m)['seq']) for m in messages]
     assert sorted(sequence) == [*range(0, recordsCount)]
 
