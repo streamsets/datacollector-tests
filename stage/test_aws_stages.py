@@ -42,10 +42,10 @@ SERVICE_ENDPOINT_FORMAT = '{}.{}.amazonaws.com'
 def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
     """Test for Kinesis consumer origin stage. We do so by publishing data to a test stream using Kinesis client and
     having a pipeline which reads that data using Kinesis consumer origin stage. Data is then asserted for what is
-    published at Kinesis client and what we read in the pipeline snapshot. The pipeline looks like:
+    published at Kinesis client and what we read in the pipeline. The pipeline looks like:
 
     Kinesis Consumer pipeline:
-        kinesis_consumer >> trash
+        kinesis_consumer >> wiretap
     """
     # build consumer pipeline
     application_name = get_random_string(string.ascii_letters, 10)
@@ -59,9 +59,9 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
                                     initial_position='TRIM_HORIZON',
                                     stream_name=stream_name)
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    kinesis_consumer >> trash
+    kinesis_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build(title='Kinesis Consumer pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
@@ -79,11 +79,11 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         output_records = [record.field['text'].value
-                          for record in snapshot[kinesis_consumer.instance_name].output]
+                          for record in wiretap.output_records]
 
         assert set(output_records) == expected_messages
     finally:
@@ -128,10 +128,10 @@ def test_kinesis_consumer(sdc_builder, sdc_executor, aws):
 def test_kinesis_consumer_additional_properties(sdc_builder, sdc_executor, aws, additional_configurations):
     """Test for Kinesis consumer origin stage. We do so by publishing data to a test stream using Kinesis client and
     having a pipeline which reads that data using Kinesis consumer origin stage. Data is then asserted for what is
-    published at Kinesis client and what we read in the pipeline snapshot. The pipeline looks like:
+    published at Kinesis client and what we read in the pipeline. The pipeline looks like:
 
     Kinesis Consumer pipeline:
-        kinesis_consumer >> trash
+        kinesis_consumer >> wiretap
     """
     invalid_config = False
     # build consumer pipeline
@@ -147,9 +147,9 @@ def test_kinesis_consumer_additional_properties(sdc_builder, sdc_executor, aws, 
                                     stream_name=stream_name,
                                     kinesis_configuration=additional_configurations)
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    kinesis_consumer >> trash
+    kinesis_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build(title='Kinesis Consumer pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
@@ -167,11 +167,11 @@ def test_kinesis_consumer_additional_properties(sdc_builder, sdc_executor, aws, 
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         output_records = [record.field['text'].value
-                          for record in snapshot[kinesis_consumer.instance_name].output]
+                          for record in wiretap.output_records]
 
         assert set(output_records) == expected_messages
     except Exception as error:
@@ -201,7 +201,7 @@ def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
 
      The pipelines look like:
 
-     Kinesis Consumer pipeline: kinesis_consumer >> trash
+     Kinesis Consumer pipeline: kinesis_consumer >> wiretap
     """
 
     # build stream
@@ -223,6 +223,7 @@ def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
         timestamp = int(time.time()) * 1000
 
         # 3. Publish new data
+        expected_messages = set('Second Message {0}'.format(i) for i in range(10))
         put_records = [{'Data': f'Second Message {i}', 'PartitionKey': '111'} for i in range(10)]
         client.put_records(Records=put_records, StreamName=stream_name)
 
@@ -234,18 +235,19 @@ def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
                                         initial_position='AT_TIMESTAMP',
                                         initial_timestamp=timestamp,
                                         stream_name=stream_name)
-        trash = builder.add_stage('Trash')
-        kinesis_consumer >> trash
+        wiretap = builder.add_wiretap()
+        kinesis_consumer >> wiretap.destination
 
         consumer_origin_pipeline = builder.build(title='Kinesis Consumer pipeline').configure_for_environment(aws)
         sdc_executor.add_pipeline(consumer_origin_pipeline)
 
         # 5. messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
-        output_records = [record.field for record in snapshot[kinesis_consumer.instance_name].output]
+        output_records = [record.field['text'].value
+                          for record in wiretap.output_records]
 
-        assert all('Second' in str(output_record) for output_record in output_records)
+        assert set(output_records) == expected_messages
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
@@ -259,10 +261,10 @@ def test_kinesis_consumer_at_timestamp(sdc_builder, sdc_executor, aws):
 def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg):
     """Test for Kinesis consumer origin stage. We do so by publishing data to a test stream using Kinesis client and
     having a pipeline which reads that data using Kinesis consumer origin stage. Data is then asserted for what is
-    published at Kinesis client and what we read in the pipeline snapshot. The pipeline looks like:
+    published at Kinesis client and what we read in the pipeline. The pipeline looks like:
 
     Kinesis Consumer pipeline:
-        kinesis_consumer >> trash
+        kinesis_consumer >> wiretap
     """
     # build consumer pipeline
     application_name = get_random_string(string.ascii_letters, 10)
@@ -273,8 +275,8 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
     kinesis_consumer.set_attributes(application_name=application_name, data_format='TEXT',
                                     initial_position='TRIM_HORIZON',
                                     stream_name=stream_name)
-    trash = builder.add_stage('Trash')
-    kinesis_consumer >> trash
+    wiretap = builder.add_wiretap()
+    kinesis_consumer >> wiretap.destination
     consumer_origin_pipeline = builder.build(
         title=f'Kinesis Consumer Stop Resume: {no_of_msg}').configure_for_environment(aws)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
@@ -292,14 +294,12 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        # number of batches to be captured is the number of messages, batch_size is 1
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
-                                                 batches=no_of_msg, batch_size=1,
-                                                 timeout_sec=300).snapshot
+        # number of batches to be captured is the number of messages + 1
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(no_of_msg + 1)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
         output_records = [record.field['text'].value
-                          for batch in snapshot.snapshot_batches
-                          for record in batch.stage_outputs[kinesis_consumer.instance_name].output]
+                          for record in wiretap.output_records]
+
         assert set(output_records) == expected_messages
 
         expected_messages = set('Message B {0}'.format(i) for i in range(no_of_msg))
@@ -308,14 +308,12 @@ def test_kinesis_consumer_stop_resume(sdc_builder, sdc_executor, aws, no_of_msg)
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        # number of batches to be captured is the number of messages, batch_size is 1
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
-                                                 batches=no_of_msg, batch_size=1,
-                                                 timeout_sec=300).snapshot
+        # number of batches to be captured is the number of messages + 1
+        wiretap.reset()
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(no_of_msg+1)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
         output_records = [record.field['text'].value
-                          for batch in snapshot.snapshot_batches
-                          for record in batch.stage_outputs[kinesis_consumer.instance_name].output]
+                          for record in wiretap.output_records]
         assert set(output_records) == expected_messages
 
     finally:
@@ -331,11 +329,11 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
     """Test for Kinesis consumer origin stage using other as region and service endpoint. We do so by publishing data to
      a test stream using Kinesis client and having a pipeline which reads that data using Kinesis consumer origin stage.
      The region is set to other, and the service endpoint for kinesis is used.
-     Data is then asserted for what is published at Kinesis client and what we read in the pipeline snapshot.
+     Data is then asserted for what is published at Kinesis client and what we read in the pipeline.
      The pipeline looks like:
 
     Kinesis Consumer pipeline:
-        kinesis_consumer >> trash
+        kinesis_consumer >> wiretap
     """
     endpoint = SERVICE_ENDPOINT_FORMAT.format('kinesis', aws.region)
 
@@ -351,9 +349,8 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
                                     initial_position='TRIM_HORIZON',
                                     stream_name=stream_name)
 
-    trash = builder.add_stage('Trash')
-
-    kinesis_consumer >> trash
+    wiretap = builder.add_wiretap()
+    kinesis_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build().configure_for_environment(aws)
     kinesis_consumer.set_attributes(region='OTHER', endpoint=endpoint)
@@ -372,11 +369,10 @@ def test_kinesis_consumer_other_region(sdc_builder, sdc_executor, aws):
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_output_records_count(11)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
-
         output_records = [record.field['text'].value
-                          for record in snapshot[kinesis_consumer.instance_name].output]
+                          for record in wiretap.output_records]
 
         assert set(output_records) == expected_messages
     finally:
