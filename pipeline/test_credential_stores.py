@@ -131,6 +131,7 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch):
         start_command = sdc_executor.start_pipeline(pipeline)
 
         for i in range(10):
+            logger.info('Posting message number %s', i)
             data = {'doc_id': get_random_string(string.ascii_letters, 10)}
             http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
             http_res.request('POST', '/', json.dumps(data), {'X-SDC-APPLICATION-ID': 'admin'})
