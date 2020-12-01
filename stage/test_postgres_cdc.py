@@ -20,6 +20,7 @@ from collections import namedtuple
 
 import pytest
 import sqlalchemy
+from streamsets.sdk.utils import wait_for_condition
 from streamsets.testframework.environments import databases
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -53,6 +54,8 @@ POLL_INTERVAL = "${1 * SECONDS}"
 INSERTS_PER_THREAD = 20
 NUM_THREADS = 10
 TOTAL_THREADING_RECORDS = INSERTS_PER_THREAD * NUM_THREADS
+BLACKLISTED_WAL_SENDER_COLUMNS = set(["usename", "client_addr", "client_hostname"])
+WAL_SENDER_COLUMNS_TO_COMPARE = set(["application_name", "pid"])
 
 
 def _create_table_in_database(table_name, database):
@@ -130,6 +133,12 @@ def _delete(connection, table, delete_rows=DELETE_ROWS):
                                               None,  # No columnvalues expected.
                                               Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
     return operations_data
+
+
+def _get_wal_sender_status(connection):
+    results = connection.execute('select * from pg_stat_replication')
+    wal_sender_statuses = [{c: v for c, v in r.items()} for r in results]
+    return wal_sender_statuses[0] if len(wal_sender_statuses) > 0 else None
 
 
 @sdc_min_version('3.16.0')
@@ -890,5 +899,151 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         for t in table:
+            t.drop(database.engine)
+            logger.info('Table: %s dropped.', t.name)
+
+
+@database('postgresql')
+@sdc_min_version('3.21.0')
+def test_postgres_cdc_wal_sender_status_metrics(sdc_builder, sdc_executor, database):
+    """ Test Wal Sender Status gauge. Test whether after pipeline stop the metrics captured
+         has the right information from the database
+        The pipeline looks like:
+        postgres_cdc_client >> trash """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+                                       replication_slot=replication_slot_name,
+                                       max_batch_size_in_records=1,
+                                       poll_interval=POLL_INTERVAL,
+                                       tables=[{'schema': 'public',
+                                                'excludePattern': '',
+                                                'table': table_name}])
+    trash = pipeline_builder.add_stage('Trash')
+
+    postgres_cdc_client >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        table = _create_table_in_database(table_name, database)
+        start_command = sdc_executor.start_pipeline(pipeline)
+        connection = database.engine.connect()
+        expected_operations_data = []
+
+        expected_operations_data += _insert(connection=connection, table=table)
+        time.sleep(1)
+
+        expected_operations_data += _update(connection=connection, table=table)
+        time.sleep(1)
+
+        expected_operations_data += _delete(connection=connection, table=table)
+
+        start_command.wait_for_pipeline_output_records_count(3)
+
+        wal_sender_status_from_db = _get_wal_sender_status(connection)
+
+        assert wal_sender_status_from_db is not None
+
+        sdc_executor.stop_pipeline(pipeline)
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        wal_sender_status_from_metrics = history.latest.metrics.gauge(
+            'custom.PostgreSQLCDCClient_01.Wal Sender Status.0.gauge').value
+
+        # Black listed fields should not be available in metrics
+        assert all([k not in wal_sender_status_from_metrics for k in BLACKLISTED_WAL_SENDER_COLUMNS])
+        # Assert fields from wal sender properly available in gauge
+        assert ({k: str(v) for k, v in wal_sender_status_from_metrics.items() if k in WAL_SENDER_COLUMNS_TO_COMPARE}
+                == {k: str(v) for k, v in wal_sender_status_from_db.items() if k in WAL_SENDER_COLUMNS_TO_COMPARE})
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        table.drop(database.engine)
+        logger.info('Table: %s dropped.', table.name)
+
+
+@database('postgresql')
+@sdc_min_version('3.21.0')
+def test_postgres_cdc_queue_buffering_metrics(sdc_builder, sdc_executor, database):
+    """ Test Queue buffering Metrics are proper. Produce multiple batches and
+        assert the question size metrics are proper.
+        The pipeline looks like:
+        postgres_cdc_client >> delay >> wiretap.destination """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(9)]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+    queue_size = 6
+
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+                                       replication_slot=replication_slot_name,
+                                       max_batch_size_in_records=1,
+                                       cdc_generator_queue_size=queue_size,
+                                       poll_interval=POLL_INTERVAL,
+                                       tables=[{'schema': 'public',
+                                                'excludePattern': '',
+                                                'table': table_name} for table_name in table_names])
+    delay = pipeline_builder.add_stage('Delay')
+    delay.delay_between_batches = 5000
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    postgres_cdc_client >> delay >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        tables = [_create_table_in_database(table_name, database) for table_name in table_names]
+        start_command = sdc_executor.start_pipeline(pipeline)
+        connection = database.engine.connect()
+
+        expected_operations_data = []
+        for i in range(9):
+            expected_operations_data += _insert(connection=connection,
+                                                insert_rows=[{PRIMARY_KEY: 1, NAME_COLUMN: 'dummy'}],
+                                                table=tables[i])
+
+        def condition():
+            pipeline_metrics = sdc_executor.get_pipeline_metrics(pipeline)
+            queue_metrics = pipeline_metrics.gauge('custom.PostgreSQLCDCClient_01.CDC Metrics.0.gauge').value
+            output_records_from_origin = pipeline_metrics.counter(
+                'stage.PostgreSQLCDCClient_01.outputRecords.counter').count
+            if 0 < output_records_from_origin < len(expected_operations_data):
+                assert 0 < queue_metrics['Queue Size'] <= queue_size
+            assert queue_metrics['Queue Capacity'] == queue_size - queue_metrics['Queue Size']
+            return output_records_from_origin >= len(expected_operations_data)
+
+        def failure(timeout):
+            pipeline_metrics = sdc_executor.get_pipeline_metrics(pipeline)
+            output_records_from_origin = pipeline_metrics.counter(
+                'stage.PostgreSQLCDCClient_01.outputRecords.counter').count
+            raise Exception('Timed out after `{}` seconds waiting for Output record metrics `{}` to reach `{}` '.format(
+                timeout, output_records_from_origin, len(expected_operations_data)))
+
+        wait_for_condition(condition=condition,  timeout=120, failure=failure)
+
+        start_command.wait_for_pipeline_output_records_count(9)
+
+        sdc_executor.stop_pipeline(pipeline=pipeline)
+
+        assert len(wiretap.output_records) == len(expected_operations_data)
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        for t in tables:
             t.drop(database.engine)
             logger.info('Table: %s dropped.', t.name)
