@@ -24,7 +24,6 @@ from collections import OrderedDict
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
-from streamsets.testframework.environments.databases import OracleDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -1144,7 +1143,7 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
                 sqlalchemy.Column('NAME', sqlalchemy.String(32), quote=True)
             ]
-            rows = [{'id': j, 'NAME': get_random_string(string.ascii_lowercase, 32)} for j in range(rows_in_table)]
+            rows = [{'id': j + 1, 'NAME': get_random_string(string.ascii_lowercase, 32)} for j in range(rows_in_table)]
             all_rows += [rows]
             all_row_count += len(rows)
             table = sqlalchemy.Table(table_names[i], sqlalchemy.MetaData(), *columns, quote=True)
