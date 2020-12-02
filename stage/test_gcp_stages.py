@@ -19,6 +19,7 @@ import math
 import time
 from string import ascii_letters, ascii_lowercase
 from time import sleep
+import pytest
 
 from google.cloud.bigquery import Dataset, SchemaField, Table
 from streamsets.testframework.markers import gcp, sdc_min_version
@@ -954,6 +955,61 @@ def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
 
         logger.debug(rows_from_snapshot)
         assert rows_from_snapshot == data
+    finally:
+        created_bucket.delete(force=True)
+
+
+@gcp
+@sdc_min_version('3.0.0.0')
+def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
+    """
+    Start Google Cloud Storage pipeline with no previous offset and no data to consume.
+    Then produce messages and check that the pipeline hasn't stopped and it consumes all the new data.
+
+    The pipeline looks like:
+        google_cloud_storage_origin >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT')
+    wiretap = pipeline_builder.add_wiretap()
+
+    google_cloud_storage >> wiretap.destination
+
+    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = storage_client.create_bucket(bucket_name)
+    try:
+        logger.info('Starting GCS Origin pipeline and waiting for it to produce a snapshot ...')
+        start_command = sdc_executor.start_pipeline(pipeline)
+
+        # Wait for 5 seconds - in this time the pipeline should have ended
+        time.sleep(5)
+
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
+            blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test.txt')
+            blob.upload_from_string('\n'.join(data))
+
+            start_command.wait_for_pipeline_output_records_count(10)
+            sdc_executor.stop_pipeline(pipeline)
+
+            rows = [record.field['text']
+                                  for record in wiretap.output_records]
+
+            assert rows == data
+        else:
+            pytest.fail('Pipeline stopped before data was produced in the bucket.')
     finally:
         created_bucket.delete(force=True)
 
