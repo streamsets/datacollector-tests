@@ -142,6 +142,7 @@ DATA_TYPES_ORACLE = [
     ('string', 'BYTE_ARRAY', 'nchar(15)', 'string         '),
     ('string', 'BYTE_ARRAY', 'nvarchar2(15)', 'string'),
     ('string', 'BYTE_ARRAY', 'long', 'string'),
+    ('string', 'BYTE_ARRAY', 'blob', b'string'),
 ]
 @database('oracle')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_ORACLE, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_ORACLE])
