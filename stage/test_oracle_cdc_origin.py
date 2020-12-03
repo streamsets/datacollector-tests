@@ -1950,7 +1950,7 @@ def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data,
         for val in input_values:
             connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records, timeout_sec=360)
         sdc_executor.stop_pipeline(pipeline, force=True)
 
         output_values = [rec.field['ID'].value for rec in wiretap.output_records]
