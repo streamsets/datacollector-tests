@@ -1,7 +1,22 @@
+# Copyright 2020 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import pytest
 import json
 
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import sdc_min_version
 
 
 @pytest.mark.parametrize('stage_attributes', [
@@ -9,6 +24,7 @@ from streamsets.testframework.decorators import stub
     {'record_error': True, 'error': 'EXPRESSION_EVALUATION_FAILURE_03', 'data': {"value": True}, 'aggregation_expression': '${0/record:value("/value")}', 'expression': '/${record:value("/value")}'},
     {'record_error': False, 'error': 'INVALID_EXPRESSION_04', 'data': {"value": "value"}, 'aggregation_expression': '${fields', 'expression': '/${record:value("/value")}'},
 ])
+@sdc_min_version('3.8.0')
 def test_aggregation_expression(sdc_builder, sdc_executor, stage_attributes):
     """
     Here we want to test that
@@ -77,6 +93,7 @@ def test_append_list_values(sdc_builder, sdc_executor, stage_attributes):
     {'record_error': True, 'error': 'EXPRESSION_EVALUATION_FAILURE_03', 'data': {"value": True}, 'conditional_expression': '${0/record:value("/value")}', 'expression': '${record:value("/value")}', 'operate_on': 'FIELD_VALUES'},
     {'record_error': False, 'error': 'INVALID_EXPRESSION_04', 'data': {"value": "new_field_name"}, 'conditional_expression': '${f:name() == "value"', 'expression': '${record:value("/value")}', 'operate_on': 'FIELD_VALUES'}
 ])
+@sdc_min_version('3.8.0')
 def test_conditional_expression(sdc_builder, sdc_executor, stage_attributes):
     """
     Here we want to test that
@@ -146,6 +163,7 @@ def test_maintain_original_paths(sdc_builder, sdc_executor, stage_attributes):
     {'record_error': True, 'error': 'EXPRESSION_EVALUATION_FAILURE_03', 'data': {"value": True}, 'conditional_expression': '${f:name() == "value"}', 'expression': '${0/record:value("/value")}', 'operate_on': 'FIELD_VALUES'},
     {'record_error': False, 'error': 'INVALID_EXPRESSION_04', 'data': {"value": "value"}, 'conditional_expression': '${f:name() == "value"}', 'expression': '${record:value("/value")', 'operate_on': 'FIELD_VALUES'}
 ])
+@sdc_min_version('3.8.0')
 def test_mapping_expression(sdc_builder, sdc_executor, stage_attributes):
     """
     Here we want to test that
