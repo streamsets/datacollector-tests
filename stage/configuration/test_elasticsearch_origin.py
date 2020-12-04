@@ -19,7 +19,7 @@ import string
 import pytest
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import elasticsearch
+from streamsets.testframework.markers import elasticsearch, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
@@ -290,6 +290,7 @@ def test_secret_access_key(sdc_builder, sdc_executor, stage_attributes):
     {'with_valid_password': None, 'with_valid_username': None, 'error_code': 'ELASTICSEARCH_20'},
     {'with_valid_password': True, 'with_valid_username': True, 'error_code': None},
 ])
+@sdc_min_version('3.17.0') # The way the test validates various combinations isn't compatible with pre-3.17 pipelines
 def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch, stage_attributes):
     """
     To test the username and password configurations we create a pipeline as follows:
