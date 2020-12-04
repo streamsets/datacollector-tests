@@ -961,7 +961,7 @@ def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
 
 @gcp
 @sdc_min_version('3.0.0.0')
-def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
+def test_google_storage_origin_idle_start(sdc_builder, sdc_executor, gcp):
     """
     Start Google Cloud Storage pipeline with no previous offset and no data to consume.
     Then produce messages and check that the pipeline hasn't stopped and it consumes all the new data.
