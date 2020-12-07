@@ -15,6 +15,7 @@
 import logging
 import string
 import time
+import json
 
 import pytest
 from streamsets.testframework.environments import cloudera
@@ -530,6 +531,44 @@ def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
     produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, INPUT_DATA.encode(), 'TEXT')
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert [INPUT_DATA] == [f'{record.field["text"]}' for record in wiretap.output_records]
+
+
+# SDC-16127: KafkaMultiConsumer: Does not handle Null message
+@cluster('cdh', 'kafka')
+def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
+    """Check that retrieving a message with null payload from Kafka using Kafka Multitopic Consumer returns an error.
+    The message should be written to Kafka without using SDC.
+
+    Kafka Multitopic Consumer Origin pipeline with standalone mode:
+        kafka_multitopic_consumer >> wiretap.destination
+    """
+    message = json.dumps({'abc': '123'})
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster)
+    kafka_multitopic_consumer.set_attributes(data_format='JSON')
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_multitopic_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    # Add messages, one of them with null payload
+    producer = cluster.kafka.producer()
+    producer.send(kafka_multitopic_consumer.topic_list[0], message.encode())
+    producer.send(kafka_multitopic_consumer.topic_list[0], value=None, key='abc'.encode())
+    producer.flush()
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+
+    # Check the output records, there should be only 1 message, since the null should be discarded
+    output_records = [record.field for record in wiretap.output_records]
+    assert len(output_records) == 1
+    # Check that the null record did not generate an exception either
+    error_records = [record.field for record in wiretap.error_records]
+    assert len(error_records) == 0
 
 
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list=None):
