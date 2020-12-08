@@ -18,7 +18,7 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ def test_stored_procedure_postgresql(sdc_builder, sdc_executor, database, keep_d
                 language plpgsql
             as $$
             begin
-                return query 
+                return query
                     select * from {table_name};
             end;$$
         """)

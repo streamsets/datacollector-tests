@@ -18,7 +18,7 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import credentialstore, sap_hana, sdc_min_version
+from streamsets.testframework.markers import sap_hana, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from streamsets.sdk.exceptions import ValidationError
 
@@ -827,4 +827,3 @@ def test_timestamp_as_string(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
-

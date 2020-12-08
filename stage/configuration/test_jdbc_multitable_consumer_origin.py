@@ -5,7 +5,7 @@ import string
 import pytest
 import sqlalchemy
 from sqlalchemy import Column, Integer, String, CHAR
-from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__file__)

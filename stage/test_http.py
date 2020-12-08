@@ -30,8 +30,10 @@ from pretenders.common.constants import FOREVER
 from requests_gssapi import HTTPSPNEGOAuth
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
-from streamsets.testframework.constants import STF_TESTCONFIG_DIR
-from streamsets.testframework.markers import credentialstore, http, sdc_min_version, spnego
+from streamsets.testframework.constants import (CREDENTIAL_STORE_EXPRESSION, CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION,
+                                                STF_TESTCONFIG_DIR)
+from streamsets.testframework.credential_stores.jks import JKSCredentialStore
+from streamsets.testframework.markers import http, sdc_min_version, spnego
 from streamsets.testframework.utils import get_random_string
 
 
@@ -577,8 +579,6 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
                 'maxNumRetries':3
             },
         ]
-
-        #pprint(dir(http_client_processor))
         http_client_processor.result_field_path='/'
         http_client_processor.next_page_link_field='/foo'
         http_client_processor.stop_condition='1==1'
@@ -1091,13 +1091,14 @@ def test_http_server_with_spnego(sdc_builder, sdc_executor, http_client):
 
 
 @http
-@credentialstore
 @sdc_min_version("3.17.0")
-def test_http_client_remote_vault(sdc_builder, sdc_executor, http_client):
-
+def test_http_client_remote_vault(sdc_builder, sdc_executor, http_client, credential_store):
     # skip the test if the http client isn't ssl enabled.
-    if not hasattr(http_client, 'credential_store') or not http_client.ssl_enabled:
+    if not credential_store or not http_client.ssl_enabled:
         pytest.skip('Skipping since credential_store is not defined or ssl-reverse-proxy-url is not specified.')
+
+    if credential_store and isinstance(credential_store, JKSCredentialStore):
+        pytest.skip('Skipping for JKS - as it does not apply to store webserver certificate')
 
     expected_message = {'msg': 'hello'}
     try:
@@ -1108,8 +1109,10 @@ def test_http_client_remote_vault(sdc_builder, sdc_executor, http_client):
         http_client_origin = builder.add_stage('HTTP Client', type='origin')
         pretend_url = f'{mock.pretend_url}/hello'
 
-        cert_expression = ("${{credential:getWithOptions('{store_id}', 'all', 'webserver-certificate', "
-                           "'credentialType=certificate')}}".format(store_id=http_client.credential_store.store_id))
+        cert_expression = CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION.format(credential_store.store_id,
+                                                                          credential_store.group_id,
+                                                                          'webserver-certificate',
+                                                                          'credentialType=certificate')
         http_client_origin.set_attributes(resource_url=http_client.ssl_url(pretend_url),
                                           use_tls=True,
                                           use_remote_truststore=True,
@@ -1121,7 +1124,7 @@ def test_http_client_remote_vault(sdc_builder, sdc_executor, http_client):
 
         http_client_origin >> [wiretap.destination, trash]
 
-        pipeline = builder.build()
+        pipeline = builder.build().configure_for_environment(credential_store)
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
 
@@ -1132,22 +1135,26 @@ def test_http_client_remote_vault(sdc_builder, sdc_executor, http_client):
 
 
 @http
-@credentialstore
 @sdc_min_version("3.17.0")
-def test_http_server_remote_vault(sdc_builder, sdc_executor, http_client):
+def test_http_server_remote_vault(sdc_builder, sdc_executor, http_client, credential_store):
 
     # skip the test if the http client isn't ssl enabled.
-    if not hasattr(http_client, 'credential_store') or not http_client.ssl_enabled:
+    if not credential_store or not http_client.ssl_enabled:
         pytest.skip('Skipping since credential_store is not defined or ssl-reverse-proxy-url is not specified.')
+
+    if credential_store and isinstance(credential_store, JKSCredentialStore):
+        pytest.skip('Skipping for JKS - as it does not apply to store webserver certificate')
 
     try:
         builder = sdc_builder.get_pipeline_builder()
         http_server_origin = builder.add_stage('HTTP Server', type='origin')
 
-        key_expression = ("${{credential:get('{store_id}', 'all', 'webserver-privatekey')}}".format(
-            store_id=http_client.credential_store.store_id))
-        cert_expression = ("${{credential:getWithOptions('{store_id}', 'all', 'webserver-certificate', "
-                           "'credentialType=certificate')}}".format(store_id=http_client.credential_store.store_id))
+        key_expression = CREDENTIAL_STORE_EXPRESSION.format(credential_store.store_id, credential_store.group_id,
+                                                            'webserver-privatekey')
+        cert_expression = CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION.format(credential_store.store_id,
+                                                                          credential_store.group_id,
+                                                                          'webserver-certificate',
+                                                                          'credentialType=certificate')
         http_port = 9999
         http_server_origin.set_attributes(use_tls=True,
                                           data_format='JSON',
@@ -1161,7 +1168,7 @@ def test_http_server_remote_vault(sdc_builder, sdc_executor, http_client):
 
         http_server_origin >> [wiretap.destination, trash]
 
-        pipeline = builder.build()
+        pipeline = builder.build().configure_for_environment(credential_store)
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
 

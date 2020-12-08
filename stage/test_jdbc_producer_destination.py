@@ -20,7 +20,7 @@ import string
 import pytest
 import sqlalchemy
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase
-from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -981,7 +981,7 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
     """
 
     table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(0, 4 if dyn_table else 1)]
-    table_name_expression = ("${str:toUpper(record:attribute('tbl'))}" 
+    table_name_expression = ("${str:toUpper(record:attribute('tbl'))}"
         if database.type == 'Oracle'
         else "${record:attribute('tbl')}") if dyn_table else (
         table_names[0].upper() if database.type == 'Oracle'

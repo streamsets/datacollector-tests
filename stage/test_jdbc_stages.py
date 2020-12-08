@@ -21,7 +21,7 @@ import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase, MySqlDatabase
-from streamsets.testframework.markers import credentialstore, database, sdc_min_version
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -151,9 +151,8 @@ def _drop_schema(schema_name, database):
         sqlalchemy.schema.DropSchema(schema_name)
 
 
-@credentialstore
 @database
-def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database):
+def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database, credential_store):
     """Simple JDBC Lookup processor test.
     Pipeline will enrich records with the 'name' by adding a field as 'FirstName'.
     The pipeline looks like:
@@ -182,7 +181,7 @@ def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database):
 
     wiretap = pipeline_builder.add_wiretap()
     dev_raw_data_source >> jdbc_lookup >> wiretap.destination
-    pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database)
+    pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database, credential_store)
     sdc_executor.add_pipeline(pipeline)
 
     LOOKUP_EXPECTED_DATA = copy.deepcopy(ROWS_IN_DATABASE)

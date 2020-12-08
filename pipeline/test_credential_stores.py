@@ -20,7 +20,7 @@ import string
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import credentialstore, elasticsearch
+from streamsets.testframework.markers import elasticsearch
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -28,8 +28,7 @@ logger.setLevel(logging.INFO)
 
 
 @elasticsearch
-@credentialstore
-def test_dev_data_generator_to_elastic_search(sdc_builder, sdc_executor, elasticsearch):
+def test_dev_data_generator_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, credential_store):
     """Simple Dev data generator to Elastic search.
     Pipeline will send records to elastic search and then we will query elastic search to verify the data
 
@@ -58,7 +57,7 @@ def test_dev_data_generator_to_elastic_search(sdc_builder, sdc_executor, elastic
 
     dev_data_generator >> [target, wiretap.destination]
 
-    pipeline = builder.build().configure_for_environment(elasticsearch)
+    pipeline = builder.build().configure_for_environment(elasticsearch, credential_store)
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -85,8 +84,7 @@ def test_dev_data_generator_to_elastic_search(sdc_builder, sdc_executor, elastic
 
 
 @elasticsearch
-@credentialstore
-def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch):
+def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, credential_store):
     """Simple Http Server to Elastic search.
         Pipeline will send records to elastic search and then we will query elastic search to verify the data
 
@@ -121,7 +119,7 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch):
 
     http_server >> [target, wiretap.destination]
 
-    pipeline = builder.build().configure_for_environment(elasticsearch)
+    pipeline = builder.build().configure_for_environment(elasticsearch, credential_store)
     sdc_executor.add_pipeline(pipeline)
 
     try:
