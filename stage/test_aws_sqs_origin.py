@@ -14,7 +14,6 @@
 
 import json
 import logging
-import string
 
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version
@@ -29,19 +28,20 @@ logger.setLevel(logging.DEBUG)
 def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
     """Test for SQS consumer origin stage. We do so by publishing data to a test queue using SQS client and
     having a pipeline which reads that data using SQS consumer origin stage. Data is then asserted for what is
-    published at SQS client and what we read in the pipeline snapshot. The pipeline looks like:
+    published at SQS client and what we read from wiretap. The pipeline looks like:
 
     Amazon SQS Consumer pipeline:
-        amazon_sqs_consumer >> trash
+        amazon_sqs_consumer >> wiretap
     """
-    queue_name = '{}_{}'.format(aws.sqs_queue_prefix, get_random_string(string.ascii_letters, 10))
+    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string()}'
 
     builder = sdc_builder.get_pipeline_builder()
     amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
     amazon_sqs_consumer.set_attributes(data_format='TEXT',
                                        queue_name_prefixes=[queue_name])
-    trash = builder.add_stage('Trash')
-    amazon_sqs_consumer >> trash
+
+    wiretap = builder.add_wiretap()
+    amazon_sqs_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build(title='Amazon SQS Consumer pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
@@ -58,10 +58,11 @@ def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
             raise Exception('Test messages not successfully sent to the queue %s', queue_name)
 
         # messages are published, read through the pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
-        result_data = [str(record.field['text']) for record in snapshot[amazon_sqs_consumer.instance_name].output]
+        result_data = [str(record.field['text']) for record in wiretap.output_records]
         assert sorted(result_data) == sorted([message['MessageBody'] for message in message_entries])
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
@@ -85,9 +86,9 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
      We assert the number of input/output and number of batches. The pipeline looks like:
 
     Amazon SQS Consumer pipeline:
-        amazon_sqs_consumer >> trash
+        amazon_sqs_consumer >> wiretap
     """
-    queue_name = '{}_{}'.format(aws.sqs_queue_prefix, get_random_string(string.ascii_letters, 10))
+    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string()}'
 
     number_of_messages, max_batch_size = number_of_messages_sent_and_origin_batch_size
 
@@ -96,7 +97,8 @@ def test_standard_sqs_consumer_batch_size(sdc_builder, sdc_executor, aws,
     # to decide the number of batches, we will basically divide to get the number of batches
     # and if it is not properly divisible (i.e modulo is non zero), we will add one more batch
     number_of_batches = number_of_messages // max_batch_size + int(number_of_messages % max_batch_size > 0)
-    logger.info(f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, Number of batches be produced : {number_of_batches}')
+    logger.info(
+        f'Number of Messages : {number_of_messages}, Batch Size: {max_batch_size}, Number of batches be produced : {number_of_batches}')
 
     builder = sdc_builder.get_pipeline_builder()
     amazon_sqs_consumer = builder.add_stage('Amazon SQS Consumer')
@@ -212,7 +214,7 @@ def test_sqs_no_read_access(sdc_builder, sdc_executor, aws):
                 'stf-env': 'nightly-tests',
                 'managed-by': 'ep',
                 'dept': 'eng'
-        })
+            })
 
         all_responses = []
         for batch in range(number_of_messages // 10 + int(number_of_messages % 10 > 0)):
@@ -250,9 +252,9 @@ def test_sqs_specify_url_directly(sdc_builder, sdc_executor, aws):
      The pipeline looks like:
 
     Amazon SQS Consumer pipeline:
-        amazon_sqs_consumer >> trash
+        amazon_sqs_consumer >> wiretap
     """
-    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string(string.ascii_letters, 10)}'
+    queue_name = f'{aws.sqs_queue_prefix}_{get_random_string()}'
 
     number_of_messages = 10
     max_batch_size = 10
@@ -352,7 +354,8 @@ def test_sqs_origin_delivery_guarantee(sdc_builder, sdc_executor, aws, delivery_
         if len(sent_response.get('Successful', [])) != len(message_entries):
             raise Exception('Test messages not successfully sent to the queue %s', queue_name)
 
-        sdc_executor.start_pipeline(consumer_origin_pipeline, wait=False).wait_for_status(status='RUN_ERROR', ignore_errors=True)
+        sdc_executor.start_pipeline(consumer_origin_pipeline, wait=False).wait_for_status(status='RUN_ERROR',
+                                                                                          ignore_errors=True)
         status = sdc_executor.get_pipeline_status(consumer_origin_pipeline).response.json()
 
         response = client.receive_message(QueueUrl=queue_url, WaitTimeSeconds=8)
