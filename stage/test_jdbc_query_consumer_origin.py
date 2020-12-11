@@ -1,4 +1,4 @@
-# Copyright 20202 StreamSets Inc.
+# Copyright 2020 StreamSets Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database,
     We test the stage with different batch sizes, since the logic is different depending on the whole table
     fit in a batch or not (see e.g. SDC-14882 for an issue with the second case).
 
-    Pipeline:  jdbc_consumer >> trash
+    Pipeline:  jdbc_consumer >> wiretap
                jdbc_consumer >= finisher
 
     """
@@ -65,10 +65,10 @@ def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database,
     origin.set_attributes(incremental_mode=False,
                           sql_query=sql_query,
                           max_batch_size_in_records=batch_size)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
 
-    origin >> trash
+    origin >> wiretap.destination
     origin >= finisher
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -87,15 +87,12 @@ def test_jdbc_consumer_non_incremental_mode(sdc_builder, sdc_executor, database,
         # Run the pipeline and check the stage consumed all the expected records. Repeat several times to
         # ensure non-incremental mode works as expected after restarting the pipeline.
         for i in range(3):
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                     start_pipeline=True,
-                                                     batches=math.ceil(num_records / batch_size),
-                                                     batch_size=batch_size).snapshot
+            wiretap.reset()
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
             sdc_records = [record.field
-                           for batch in snapshot.snapshot_batches
-                           for record in batch[origin.instance_name].output]
+                           for record in wiretap.output_records]
             assert sdc_records == input_data
-            sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
