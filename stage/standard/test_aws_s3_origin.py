@@ -97,12 +97,12 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucke
                              json_content='ARRAY_OBJECTS',
                              prefix_pattern=f'{s3_key}*')
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= pipeline_finished_executor
 
     s3_origin_pipeline = builder.build().configure_for_environment(aws)
@@ -127,9 +127,8 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucke
         # Insert objects into S3.
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).wait_for_finished().snapshot
-
-        output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+        output_records_values = [record.field for record in wiretap.output_records]
 
         assert len(output_records_values) == 10
         assert output_records_values == data
@@ -168,12 +167,12 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
                              json_content='ARRAY_OBJECTS',
                              prefix_pattern=f'{s3_key}*')
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= pipeline_finished_executor
 
     s3_origin_pipeline = builder.build().configure_for_environment(aws)
@@ -186,9 +185,8 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
         # Insert objects into S3.
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True).wait_for_finished().snapshot
-
-        output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+        output_records_values = [record.field for record in wiretap.output_records]
 
         assert len(output_records_values) == 10
         assert output_records_values == data
@@ -223,13 +221,11 @@ def test_dataflow_events_new_file(sdc_builder, sdc_executor, aws):
                              json_content='ARRAY_OBJECTS',
                              prefix_pattern=f'{s3_key}*')
 
-    trash = builder.add_stage('Trash')
+    events_wiretap = builder.add_wiretap()
+    records_wiretap = builder.add_wiretap()
 
-    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
-    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
-
-    s3_origin >> trash
-    s3_origin >= pipeline_finished_executor
+    s3_origin >> records_wiretap.destination
+    s3_origin >= events_wiretap.destination
 
     s3_origin_pipeline = builder.build().configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
@@ -241,19 +237,18 @@ def test_dataflow_events_new_file(sdc_builder, sdc_executor, aws):
         # Insert objects into S3.
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline,
-                                                 start_pipeline=True).wait_for_finished().snapshot
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'output_record_count', 1)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
 
-        output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
-
+        output_records_values = [record.field for record in records_wiretap.output_records]
         assert len(output_records_values) == 10
         assert output_records_values == data
 
-        assert len(snapshot[s3_origin.instance_name].event_records) == 1
-
-        event_record = snapshot[s3_origin.instance_name].event_records[0]
+        # We have exactly one output record, check that it is a new-file event
+        event_record = events_wiretap.output_records[0]
         event_type = event_record.header.values['sdc.event.type']
-        assert event_type == 'new-file', 'Received %s as event type (expected no-more-data)' % event_type
+        assert event_type == 'new-file', 'Received %s as event type (expected new-file)' % event_type
     finally:
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')
@@ -283,17 +278,12 @@ def test_dataflow_events_no_more_data(sdc_builder, sdc_executor, aws):
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format='JSON', prefix_pattern=f'{s3_key}/*')
 
     trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    # Pipeline Finisher Executor, note the precondition
-    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
-    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
-
-    # Implement pipeline topology
     s3_origin >> trash
-    s3_origin >= pipeline_finished_executor
+    s3_origin >= wiretap.destination
 
-    s3_origin_pipeline = builder.build(title='Amazon S3 origin multithreaded pipeline no data no more data event'). \
-        configure_for_environment(aws)
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
     # This is not supposed to fail under any context
     s3_origin_pipeline.configuration['shouldRetry'] = False
 
@@ -301,10 +291,10 @@ def test_dataflow_events_no_more_data(sdc_builder, sdc_executor, aws):
     sdc_executor.add_pipeline(s3_origin_pipeline)
 
     try:
-        # Run the pipeline
-        # Do not continue until the pipeline finishes
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True, timeout_sec=70).snapshot
-        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=60)
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'output_record_count', 1)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
         # If we are here this means that a no-more-data was sent
 
@@ -312,12 +302,12 @@ def test_dataflow_events_no_more_data(sdc_builder, sdc_executor, aws):
         input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
         output_records = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
         assert input_records == 0, 'Observed %d input records (expected 0)' % input_records
-        assert output_records == 1, 'Observed %d output records (expected 1)' % output_records
+        # We expect 2 since wiretap duplicates it
+        assert output_records == 2, 'Observed %d output records (expected 2)' % output_records
 
         # We have exactly one output record, check that it is a no-more-data event
-        num_event_records = len(snapshot[s3_origin.instance_name].event_records)
-        assert num_event_records == 1, 'Received %d event records (expected 1)' % num_event_records
-        event_record = snapshot[s3_origin.instance_name].event_records[0]
+        assert len(wiretap.output_records) == 1, 'Received %d event records (expected 1)' % len(wiretap.output_records)
+        event_record = wiretap.output_records[0]
         event_type = event_record.header.values['sdc.event.type']
         assert event_type == 'no-more-data', 'Received %s as event type (expected no-more-data)' % event_type
 
