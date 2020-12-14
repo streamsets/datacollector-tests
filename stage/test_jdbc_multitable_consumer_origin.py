@@ -515,7 +515,7 @@ def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_bu
 
     Pipeline looks like:
 
-    jdbc_multitable_consumer >> trash
+    jdbc_multitable_consumer >> wiretap
     """
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
     table_name = f'{src_table_prefix}_{get_random_string(string.ascii_lowercase, 20)}'
@@ -533,9 +533,8 @@ def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_bu
                                                             }]
                                                             }])
 
-    trash = pipeline_builder.add_stage('Trash')
-
-    jdbc_multitable_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    jdbc_multitable_consumer >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
 
@@ -559,13 +558,12 @@ def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_bu
     connection.execute(f'INSERT INTO {table_name} VALUES(4, "Romualdo", 19, "2000-06-15 18:30:00.10523121")')
 
     try:
-
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3)
         sdc_executor.stop_pipeline(pipeline)
 
         name_id_from_output = [(record.field['name'], record.field['id'])
-                               for record in snapshot[jdbc_multitable_consumer].output]
+                               for record in wiretap.output_records]
 
         assert len(name_id_from_output) == 2
         assert name_id_from_output == [('Romualdo', 4), ('Charly', 1)]
@@ -581,10 +579,10 @@ def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_bu
 def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc_executor, database):
     """
     Ensure that the multi-table JDBC origin can handle large gaps between offset columns in partitioned mode
-    The destination is trash, and there is a finisher waiting for the no-more-data event
+    The destination is wiretap, and there is a finisher waiting for the no-more-data event
 
-    The pipeline will be started, and we will capture two snapshots (to ensure all expected rows are covered),
-    then assert those captured snapshot rows match the expected data.
+    The pipeline will be started, and we will capture the information retrieved using a wiretap,
+    then we assert those captured rows match the expected data.
     """
     if database.type == 'Oracle':
         pytest.skip("This test depends on proper case for column names that Oracle auto-uppers.")
@@ -603,8 +601,8 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
         "maxNumActivePartitions": -1
     }])
 
-    trash = pipeline_builder.add_stage('Trash')
-    jdbc_multitable_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    jdbc_multitable_consumer >> wiretap.destination
 
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
     finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
@@ -630,15 +628,13 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
         connection.close()
 
         sdc_executor.add_pipeline(pipeline)
-        # need to capture two batches, one for row IDs 1-3, and one for the last row after the large gap
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, batches=2, start_pipeline=True).snapshot
-        rows_from_snapshot = [(record.get_field_data('/name').value, record.get_field_data('/id').value)
-                              for batch in snapshot.snapshot_batches
-                              for record in batch.stage_outputs[jdbc_multitable_consumer.instance_name].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        rows_from_wiretap = [(record.get_field_data('/name').value, record.get_field_data('/id').value)
+                              for record in wiretap.output_records]
 
         expected_data = [(row['name'], row['id']) for row in rows_with_gap]
-        logger.info('Actual %s expected %s', rows_from_snapshot, expected_data)
-        assert rows_from_snapshot == expected_data
+        logger.info('Actual %s expected %s', rows_from_wiretap, expected_data)
+        assert rows_from_wiretap == expected_data
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
@@ -653,7 +649,7 @@ def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, databa
         When the 'On Unknown Type' action is set to STOP_PIPELINE,the pipeline should stop with a StageException Error since it cannot convert DATETIMEOFFSET field
         When the 'On Unknown Type' action is set to CONVERT_TO_STRING, the pipeline should convert the unknown type to string and process next record
         The pipeline will look like:
-            JDBC_Multitable_Consumer >> trash
+            JDBC_Multitable_Consumer >> wiretap
     """
 
     if Version(sdc_executor.version) >= Version('3.14.0'):
@@ -674,10 +670,10 @@ def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, databa
                                             on_unknown_type=on_unknown_type_action)
 
     # Setup destination
-    trash=pipeline_builder.add_stage('Trash')
+    wiretap=pipeline_builder.add_wiretap()
 
     # Connect the pipeline stages
-    jdbc_multitable_consumer >> trash
+    jdbc_multitable_consumer >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -701,9 +697,8 @@ def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, databa
             status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
             assert 'RUN_ERROR' == status
         else:
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-            output_records = snapshot[jdbc_multitable_consumer].output
-
+            sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(2)
+            output_records = wiretap.output_records
             assert len(output_records) == 1
             assert output_records[0].field == EXPECTED_OUTCOME
 
@@ -862,7 +857,7 @@ def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured
     Verify that origin does not ingest the records more than once (duplicates) when initial value for offset is set
 
     Pipeline:
-        JDBC MT Consumer >> Trash
+        JDBC MT Consumer >> Wiretap
                          >= Pipeline Finisher (no-more-data)
     """
     if database.type == 'Oracle':
@@ -891,8 +886,8 @@ def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured
     jdbc_multitable_consumer.number_of_threads = 2
     jdbc_multitable_consumer.maximum_pool_size = 2
 
-    trash = pipeline_builder.add_stage('Trash')
-    jdbc_multitable_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    jdbc_multitable_consumer >> wiretap.destination
 
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
     finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
@@ -922,16 +917,15 @@ def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured
         connection.close()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, batches=2, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        rows_from_snapshot = [(record.get_field_data('/name').value,
+        rows_from_wiretap = [(record.get_field_data('/name').value,
                                record.get_field_data('/id').value,
                                record.get_field_data('/created').value)
-                              for batch in snapshot.snapshot_batches
-                              for record in batch.stage_outputs[jdbc_multitable_consumer.instance_name].output]
+                              for record in wiretap.output_records]
 
         expected_data = [(row['name'], row['id'], row['created']) for row in rows_in_table]
-        assert rows_from_snapshot == expected_data
+        assert rows_from_wiretap == expected_data
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
@@ -956,9 +950,9 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
     origin.table_configs = [{"tablePattern": f'{table_name}'}]
     origin.max_batch_size_in_records = 10
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(database)
     # Work-arounding STF behavior of upper-casing table name configuration
@@ -979,7 +973,7 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
         connection.execute(table.insert(), [{'id': input_string}])
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(2)
         sdc_executor.stop_pipeline(pipeline)
 
         # There should be no errors reported
@@ -988,8 +982,8 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
         assert history.latest.metrics.counter('stage.JDBCMultitableConsumer_01.stageErrors.counter').count == 0
 
         # And verify that we properly read that one record
-        assert len(snapshot[origin].output) == 1
-        assert snapshot[origin].output[0].get_field_data('/id') == input_string
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].get_field_data('/id') == input_string
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
