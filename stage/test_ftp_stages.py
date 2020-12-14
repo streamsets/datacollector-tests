@@ -583,7 +583,7 @@ def test_ftp_origin_SDC_Record(sdc_builder, sdc_executor, ftp):
 
 @sdc_min_version('3.17.0')
 @ftp
-def test_ftp_origin_whole_file_to_s3_no_read_permission(sdc_builder, sdc_executor, ftp):
+def test_ftp_origin_whole_file_with_no_read_permission(sdc_builder, sdc_executor, ftp):
     """This is a test for SDC-14867.  It creates a file with no read permissions and creates one more file
      with read permissions, when the pipeline runs we will start ingesting from the second file and first
      file is skipped and an error is reported. We also drop another file when the pipeline is running and
@@ -595,7 +595,7 @@ def test_ftp_origin_whole_file_to_s3_no_read_permission(sdc_builder, sdc_executo
     ftp_file_name2 = f'{prefix}{get_random_string(string.ascii_letters, 10)}.txt'
     ftp_file_name3 = f'{prefix}{get_random_string(string.ascii_letters, 10)}.txt'
 
-    raw_text_data = get_random_string(string.printable, 1000)
+    raw_text_data = get_random_string(string.printable, 30000000)
 
     ftp.put_string(ftp_file_name1, raw_text_data)
     ftp.chmod(ftp_file_name1, 000)
