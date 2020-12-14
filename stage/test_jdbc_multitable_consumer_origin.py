@@ -716,7 +716,7 @@ def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, databa
 def test_jdbc_sqlserver_datetimeoffset_as_primary_key(sdc_builder, sdc_executor, database):
     """Test JDBC Multitable Consumer with SQLServer table configured with DATETIMEOFFSET column as primary key.
         The pipeline will look like:
-            JDBC_Multitable_Consumer >> trash
+            JDBC_Multitable_Consumer >> wiretap
     """
     INPUT_COLUMN_TYPE, INPUT_DATE = 'DATETIMEOFFSET', "'2004-05-23 14:25:10.3456 -08:00'"
     EXPECTED_TYPE, EXPECTED_VALUE = 'ZONED_DATETIME', '2004-05-23T14:25:10.3456-08:00'
@@ -729,9 +729,9 @@ def test_jdbc_sqlserver_datetimeoffset_as_primary_key(sdc_builder, sdc_executor,
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
     jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{table_name}%'}])
 
-    trash=pipeline_builder.add_stage('Trash')
+    wiretap=pipeline_builder.add_wiretap()
 
-    jdbc_multitable_consumer >> trash
+    jdbc_multitable_consumer >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -744,11 +744,11 @@ def test_jdbc_sqlserver_datetimeoffset_as_primary_key(sdc_builder, sdc_executor,
     connection.execute(f"INSERT INTO {table_name} VALUES({INPUT_DATE})")
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[jdbc_multitable_consumer].output) == 1
-        record = snapshot[jdbc_multitable_consumer].output[0]
+        assert len(wiretap.output_records) == 1
+        record = wiretap.output_records[0]
 
         assert record.field['dto'].type == EXPECTED_TYPE
         assert record.field['dto'].value == EXPECTED_VALUE
@@ -768,7 +768,7 @@ def test_jdbc_producer_db2_long_record(sdc_builder, sdc_executor, database):
 
      The pipeline looks like:
 
-     directory_origin >> jdbc_producer
+     directory_origin >> [jdbc_producer, wiretap]
 
      In order to create the file read by directory origin another pipeline is used that looks like:
 
@@ -808,18 +808,16 @@ def test_jdbc_producer_db2_long_record(sdc_builder, sdc_executor, database):
                                  stage_on_record_error='TO_ERROR',
                                  data_sqlstate_codes=["22001"])
 
-    directory >> jdbc_producer
+    wiretap = pipeline_builder.add_wiretap()
+    directory >> [jdbc_producer, wiretap.destination]
 
     directory_jdbc_producer_pipeline = pipeline_builder.build(
         title='Directory - JDBC Producer. Test DB2 sql code error').configure_for_environment(database)
     sdc_executor.add_pipeline(directory_jdbc_producer_pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(directory_jdbc_producer_pipeline, start_pipeline=True, batch_size=1,
-                                                 batches=5).snapshot
+        sdc_executor.start_pipeline(directory_jdbc_producer_pipeline).wait_for_pipeline_output_records_count(4)
         sdc_executor.stop_pipeline(directory_jdbc_producer_pipeline)
-
-        assert 5 == len(snapshot.snapshot_batches)
 
         result = database.engine.execute(f'SELECT ID,A FROM {table_name};')
         data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # Order by id.
@@ -829,11 +827,10 @@ def test_jdbc_producer_db2_long_record(sdc_builder, sdc_executor, database):
         assert data_from_database == [(record[0], record[1]) for record in
                                       [unified_record.split(',') for unified_record in csv_records[:-1]]]
 
-        stage = snapshot.snapshot_batches[4][jdbc_producer.instance_name]
+        error_msgs = wiretap.error_records
+        assert 1 == len(error_msgs)
 
-        assert 1 == len(stage.error_records)
-
-        error_record = stage.error_records[0]
+        error_record = error_msgs[0]
 
         assert 'hellolargerword' == error_record.field['1']
         assert 'JDBC_14' == error_record.header['errorCode']
