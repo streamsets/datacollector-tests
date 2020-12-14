@@ -77,7 +77,8 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, anonymou
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  raw_data=raw_str)
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
 
     record_deduplicator = builder.add_stage('Record Deduplicator')
     to_error = builder.add_stage('To Error')
@@ -105,10 +106,7 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, anonymou
         if anonymous:
             public_access_block, bucket_policy = allow_public_access(client, s3_bucket, True, True)
 
-        # Start pipeline and stop after processing the record.
-        sdc_executor.start_pipeline(s3_exec_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_exec_pipeline, 'data_batch_count', 1)
-        sdc_executor.stop_pipeline(s3_exec_pipeline)
+        sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_finished()
 
         # Assert record count to S3 the size of the objects put.
         list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
@@ -158,7 +156,7 @@ def test_s3_executor_copy_object(sdc_builder, sdc_executor, aws):
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=json.dumps(input_data))
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=json.dumps(input_data), stop_after_first_batch=True)
 
     s3_executor = builder.add_stage('Amazon S3', type='executor')
     s3_executor.set_attributes(bucket='${record:value("/bucket")}',
@@ -178,10 +176,8 @@ def test_s3_executor_copy_object(sdc_builder, sdc_executor, aws):
         # Create source object in S3 bucket.
         client.put_object(Body=object_content, Bucket=s3_bucket, Key=s3_key_src)
 
-        # Start pipeline and stop after processing the record.
-        sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
-        sdc_executor.stop_pipeline(pipeline)
+        # Start pipeline and wait for finished
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Check if there exists an object with the destination key.
         list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key_dst)
@@ -224,7 +220,8 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  raw_data=raw_str)
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
 
     record_deduplicator = builder.add_stage('Record Deduplicator')
     to_error = builder.add_stage('To Error')
@@ -248,10 +245,7 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
         # Pre-create the object so that it exists.
         client.put_object(Body='Secret Data', Bucket=s3_bucket, Key=s3_key)
 
-        # And run the pipeline for at least one record (rest will be removed by the de-dup).
-        sdc_executor.start_pipeline(s3_exec_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_exec_pipeline, 'data_batch_count', 1)
-        sdc_executor.stop_pipeline(s3_exec_pipeline)
+        sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_finished()
 
         tags = client.get_object_tagging(Bucket=s3_bucket, Key=s3_key)['TagSet']
         assert len(tags) == 1
