@@ -207,16 +207,16 @@ def test_jdbc_producer_insert_type_err(sdc_builder, sdc_executor, database):
                                  table_name=table_name,
                                  field_to_column_mapping=FIELD_MAPPINGS,
                                  stage_on_record_error='TO_ERROR')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> jdbc_producer
+    dev_raw_data_source >> [jdbc_producer, wiretap.destination]
 
     pipeline = pipeline_builder.build(title="JDBC producer with error")
 
     sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         result = database.engine.execute(table.select())
         data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
@@ -225,9 +225,7 @@ def test_jdbc_producer_insert_type_err(sdc_builder, sdc_executor, database):
         assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE
                                       if record['id'] != 'X']
 
-        stage = snapshot[jdbc_producer.instance_name]
-
-        assert 'JDBC_23' == stage.error_records[0].header['errorCode']
+        assert 'JDBC_23' == wiretap.error_records[0].header['errorCode']
 
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
@@ -271,21 +269,19 @@ def test_jdbc_producer_no_implicit_mapping(sdc_builder, sdc_executor, database, 
                                  use_multi_row_operation=multi_row,
                                  field_to_column_mapping=FIELD_MAPPINGS,
                                  stage_on_record_error='TO_ERROR')
-
-    dev_raw_data_source >> jdbc_producer
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> [jdbc_producer, wiretap.destination]
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
 
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        stage = snapshot[jdbc_producer.instance_name]
-        assert len(stage.error_records) == 2
-        assert 'JDBC_90' == stage.error_records[0].header['errorCode']
-        assert 'JDBC_90' == stage.error_records[1].header['errorCode']
+        assert len(wiretap.error_records) == 2
+        assert 'JDBC_90' == wiretap.error_records[0].header['errorCode']
+        assert 'JDBC_90' == wiretap.error_records[1].header['errorCode']
 
         result = database.engine.execute(table.select())
         data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
@@ -303,7 +299,7 @@ def test_mssql_producer_bigdecimal(sdc_builder, sdc_executor, database):
     """
     Insert a Decimal value with up to 38 decimals into a Float column in MSSQL.
     This will look like:
-    dev_data_generator >> jdbc_producer
+    dev_data_generator >> [jdbc_producer, wiretap]
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = sqlalchemy.Table(
@@ -335,17 +331,18 @@ def test_mssql_producer_bigdecimal(sdc_builder, sdc_executor, database):
                                  table_name=table_name,
                                  field_to_column_mapping=FIELD_MAPPINGS,
                                  stage_on_record_error='STOP_PIPELINE')
-    dev_data_generator >> jdbc_producer
+    wiretap = pipeline_builder.add_wiretap()
+    dev_data_generator >> [jdbc_producer, wiretap.destination]
 
     pipeline = pipeline_builder.build('MSSQL BigDecimal')
     sdc_executor.add_pipeline(pipeline.configure_for_environment(database))
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
 
         sdc_executor.stop_pipeline(pipeline)
 
-        records = [record.field for record in snapshot[dev_data_generator.instance_name].output]
+        records = [record.field for record in wiretap.output_records]
 
         result = database.engine.execute(table.select())
         data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
@@ -1040,7 +1037,8 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
     if database.type == 'Oracle':
         producer.enclose_object_names = True
 
-    data_source >> expression >> remover >> producer
+    wiretap = builder.add_wiretap()
+    data_source >> expression >> remover >> [producer, wiretap.destination]
 
     pipeline = builder.build().configure_for_environment(database)
 
@@ -1062,15 +1060,11 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
                 {'id': 3, 'operation': 'insert'}
             ])
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         logger.info('pipeline: %s', pipeline)
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
-        stage = snapshot[producer.instance_name]
-
-        assert expected_error_record_count == len(stage.error_records)
+        assert expected_error_record_count == len(wiretap.error_records)
         for i in range(0, expected_error_record_count):
-            assert 'JDBC_62' == stage.error_records[i].header['errorCode']
+            assert 'JDBC_62' == wiretap.error_records[i].header['errorCode']
     finally:
         for i in range(0, created_table_count):  # We will drop only the tables we have created
             tables[i].drop(database.engine)
