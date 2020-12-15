@@ -37,13 +37,15 @@ def test_solr_write_records_cdh(sdc_builder, sdc_executor, cluster):
     field_val_1 = get_random_string(string.ascii_letters, 10)
     field_val_2 = get_random_string(string.ascii_letters, 10)
 
-    json_str = json.dumps({'id': field_val_1, 'title': field_val_2, '_root_': None, '_version_': 0, '_text_': ''})
+    json_str = json.dumps({'id': field_val_1, 'title': field_val_2, '_root_': None, '_version_': 0, '_text_': '',
+                           '_nest_path_':''})
 
     json_fields_map = [{'field': '/id', 'solrFieldName': field_name_1},
                        {'field': '/title', 'solrFieldName': field_name_2},
                        {'field': '/_root_', 'solrFieldName': '_root_'},
                        {'field': '/_version_', 'solrFieldName': '_version_'},
-                       {'field': '/_text_', 'solrFieldName': '_text_'}]
+                       {'field': '/_text_', 'solrFieldName': '_text_'},
+                       {'field': '/_nest_path_', 'solrFieldName': '_nest_path_'}]
 
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -136,7 +138,8 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
                        {'field': '/title', 'solrFieldName': 'title'},
                        {'field': '/_root_', 'solrFieldName': '_root_'},
                        {'field': '/_version_', 'solrFieldName': '_version_'},
-                       {'field': '/_text_', 'solrFieldName': '_text_'}]
+                       {'field': '/_text_', 'solrFieldName': '_text_'},
+                       {'field': '/_nest_path_', 'solrFieldName': '_nest_path_'}]
 
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -189,7 +192,8 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
                        {'field': '/title', 'solrFieldName': 'title'},
                        {'field': '/_root_', 'solrFieldName': '_root_'},
                        {'field': '/_version_', 'solrFieldName': '_version_'},
-                       {'field': '/_text_', 'solrFieldName': '_text_'}]
+                       {'field': '/_text_', 'solrFieldName': '_text_'},
+                       {'field': '/_nest_path_', 'solrFieldName': '_nest_path_'}]
 
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -247,7 +251,8 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
                        {'field': '/title', 'solrFieldName': field_name_2},
                        {'field': '/_root_', 'solrFieldName': '_root_'},
                        {'field': '/_version_', 'solrFieldName': '_version_'},
-                       {'field': '/_text_', 'solrFieldName': '_text_'}]
+                       {'field': '/_text_', 'solrFieldName': '_text_'},
+                       {'field': '/_nest_path_', 'solrFieldName': '_nest_path_'}]
 
     # build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -303,7 +308,8 @@ def test_solr_write_records_error_stop_pipeline(sdc_builder, sdc_executor, clust
                        {'field': '/title', 'solrFieldName': 'title'},
                        {'field': '/_root_', 'solrFieldName': '_root_'},
                        {'field': '/_version_', 'solrFieldName': '_version_'},
-                       {'field': '/_text_', 'solrFieldName': '_text_'}]
+                       {'field': '/_text_', 'solrFieldName': '_text_'},
+                       {'field': '/_nest_path_', 'solrFieldName': '_nest_path_'}]
 
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -354,7 +360,8 @@ def test_solr_write_record_empty_stop_pipeline(sdc_builder, sdc_executor, cluste
                        {'field': '/title', 'solrFieldName': 'title'},
                        {'field': '/_root_', 'solrFieldName': '_root_'},
                        {'field': '/_version_', 'solrFieldName': '_version_'},
-                       {'field': '/_text_', 'solrFieldName': '_text_'}]
+                       {'field': '/_text_', 'solrFieldName': '_text_'},
+                       {'field': '/_nest_path_', 'solrFieldName': '_nest_path_'}]
 
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -405,7 +412,8 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
                        {'field': '/title', 'solrFieldName': 'title'},
                        {'field': '/_root_', 'solrFieldName': '_root_'},
                        {'field': '/_version_', 'solrFieldName': '_version_'},
-                       {'field': '/_text_', 'solrFieldName': '_text_'}]
+                       {'field': '/_text_', 'solrFieldName': '_text_'},
+                       {'field': '/_nest_path_', 'solrFieldName': '_nest_path_'}]
 
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -461,7 +469,8 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
                        {'field': '/title', 'solrFieldName': 'title'},
                        {'field': '/_root_', 'solrFieldName': '_root_'},
                        {'field': '/_version_', 'solrFieldName': '_version_'},
-                       {'field': '/_text_', 'solrFieldName': '_text_'}]
+                       {'field': '/_text_', 'solrFieldName': '_text_'},
+                       {'field': '/_nest_path_', 'solrFieldName': '_nest_path_'}]
 
     # build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
