@@ -246,24 +246,25 @@ def test_s3_destination_non_existing_bucket(sdc_builder, sdc_executor, aws):
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  raw_data=raw_str)
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
 
     s3_destination = builder.add_stage('Amazon S3', type='destination')
     s3_destination.set_attributes(bucket='${record:value("/bucket")}', data_format='JSON', partition_prefix=s3_key)
 
-    dev_raw_data_source >> s3_destination
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> [s3_destination, wiretap.destination]
 
     s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(s3_dest_pipeline)
 
-    # Read snapshot of the pipeline
-    snapshot = sdc_executor.capture_snapshot(s3_dest_pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(s3_dest_pipeline)
+    sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
 
     # All records should go to error stream.
-    input_records = snapshot[dev_raw_data_source.instance_name].output
-    stage = snapshot[s3_destination.instance_name]
-    assert len(stage.error_records) == len(input_records)
+    assert len(wiretap.error_records) == 1
+    assert 'S3_21' == wiretap.error_records[0].header['errorCode']
+    assert 'The specified bucket does not exist' in wiretap.error_records[0].header['errorMessage']
 
 
 @aws('s3')
