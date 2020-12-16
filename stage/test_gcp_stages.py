@@ -16,7 +16,9 @@ import base64
 import json
 import logging
 import math
+import string
 import time
+import os
 from string import ascii_letters, ascii_lowercase
 from time import sleep
 import pytest
@@ -24,6 +26,7 @@ import pytest
 from google.cloud.bigquery import Dataset, SchemaField, Table
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from xlwt import Workbook
 
 logger = logging.getLogger(__name__)
 
@@ -1271,6 +1274,66 @@ def test_google_storage_origin_stop_resume(sdc_builder, sdc_executor, gcp):
         logger.debug(rows_from_snapshot)
         assert rows_from_snapshot == data
 
+
+    finally:
+        created_bucket.delete(force=True)
+
+
+@gcp
+@sdc_min_version('3.0.0.0')
+def test_google_storage_small_batch_size(sdc_builder, sdc_executor, gcp):
+    """
+    Write Excel file to Google Cloud Storage, create an origin with a batch size smaller than the number of
+    records in the file and check that no data is duplicated when reading the file.
+
+    The pipeline looks like:
+        google_cloud_storage_origin >> wiretap.destination
+    """
+
+    gcp_file_name = 'test_9_records.xls'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern=gcp_file_name,
+                                        data_format='EXCEL',
+                                        max_batch_size_in_records=1,
+                                        excel_header_option='WITH_HEADER')
+
+    pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher_executor.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'],
+                                              on_record_error='DISCARD')
+
+    google_cloud_storage >= pipeline_finisher_executor
+
+    wiretap = pipeline_builder.add_wiretap()
+    google_cloud_storage >> wiretap.destination
+
+    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = storage_client.create_bucket(bucket_name)
+    try:
+        blob = created_bucket.blob('gcs-test/'+gcp_file_name)
+        blob.upload_from_filename('resources/gcp/'+gcp_file_name)
+
+        # Start the pipeline and make sure the timeout is defined, since the original bug involved
+        # an infinite loop reading the same file over and over again
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=300)
+
+        # Check that the file has been read through exactly once
+        output_records = [record.field for record in wiretap.output_records]
+        assert len(output_records) == 9
+        # Check that no error records were generated
+        error_records = [record.field for record in wiretap.error_records]
+        assert len(error_records) == 0
 
     finally:
         created_bucket.delete(force=True)
