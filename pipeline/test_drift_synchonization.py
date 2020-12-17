@@ -408,7 +408,12 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
         elif external_table:
             expected_location_of_table = table_path
         else:
-            expected_location_of_table = f'{_get_hive_warehouse_dir(hive_cursor)}/{db}.db/{table_name}'
+            if isinstance(cluster, ClouderaManagerCluster) and cluster.version.startswith('cdh7'):
+                # https://docs.cloudera.com/cdp/latest/data-migration/topics/cdp-data-migration-table-create.html
+                # CDH 7 uses ACID for managed tables, so "internal non-acid tables" are slashed into external directory.
+                expected_location_of_table = f'{_get_hive_warehouse_external_dir(hive_cursor)}/{db}.db/{table_name}'
+            else:
+                expected_location_of_table = f'{_get_hive_warehouse_dir(hive_cursor)}/{db}.db/{table_name}'
 
         assert expected_location_of_table == location_of_table
 
@@ -2142,4 +2147,10 @@ def _get_table_columns_and_type(hive_cursor, db, table_name):
 def _get_hive_warehouse_dir(hive_cursor):
     """Return the directory path used by default to store databases in Hive."""
     hive_cursor.execute("SET hive.metastore.warehouse.dir")
+    return hive_cursor.fetchone()[0].split('=')[1]
+
+
+def _get_hive_warehouse_external_dir(hive_cursor):
+    """Return the directory path used by default to store external databases in Hive."""
+    hive_cursor.execute("SET hive.metastore.warehouse.external.dir")
     return hive_cursor.fetchone()[0].split('=')[1]
