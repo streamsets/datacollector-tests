@@ -366,6 +366,10 @@ def test_database_and_table_location(sdc_builder, sdc_executor, cluster,
                              data_format='AVRO',
                              directory_in_header=True,
                              use_roll_attribute=True)
+    # CDH 7 works in a bit more mysterious ways and it seems that the default creation path doesn't allow us
+    # to write data into HDFS if Hive metastore created the directory for the table first.
+    if isinstance(cluster, ClouderaManagerCluster) and cluster.version.startswith('cdh7'):
+        hadoop_fs.impersonation_user = "root"
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
