@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 
 import pytest
 import sqlalchemy
+from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.environments.hortonworks import AmbariCluster
 from streamsets.testframework.markers import database, cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
@@ -952,6 +953,9 @@ def test_special_characters_in_table_and_columns(sdc_builder, sdc_executor, clus
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
         and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
+    # https://docs.cloudera.com/cdp/latest/data-migration/topics/cdp-data-migration-dbtable.html
+    if isinstance(cluster, ClouderaManagerCluster) and cluster.version.startswith('cdh7') and special_character == '.':
+        pytest.skip(f"CDH 7 ({cluster.version}) doesn't support dot in a table name")
 
     object_name_prefix_suffix = get_random_string(string.ascii_lowercase, 5)
 
