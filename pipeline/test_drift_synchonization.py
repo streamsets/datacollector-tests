@@ -1137,11 +1137,12 @@ def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location)
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
     hive_metadata.set_attributes(data_format='AVRO',
                                  database_expression="default",
-                                 external_table=False,
+                                 external_table=True,
                                  partition_configuration=[],
                                  decimal_scale_expression='2',
                                  decimal_precision_expression='4',
-                                 table_name=table_name)
+                                 table_name=table_name,
+                                 table_path_template=f"/tmp/{table_name}")
 
     hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
     hadoop_fs.set_attributes(avro_schema_location='HEADER',
@@ -1166,11 +1167,11 @@ def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location)
     if str.startswith(location, '/'):
         expected_location = location
     elif location == "${str:concat('a', 'b')}":
-        expected_location = f'{_get_hive_warehouse_dir(hive_cursor)}/{table_name}/ab'
+        expected_location = f'/tmp/{table_name}/ab'
     elif location:
-        expected_location = f'{_get_hive_warehouse_dir(hive_cursor)}/{table_name}/{location}'
+        expected_location = f'/tmp/{table_name}/{location}'
     else:
-        expected_location = f'{_get_hive_warehouse_dir(hive_cursor)}/{table_name}/.schemas'
+        expected_location = f'/tmp/{table_name}/.schemas'
 
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -1186,7 +1187,7 @@ def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location)
 
 @sdc_min_version('3.0.0.0')
 @cluster('cdh', 'hdp')
-def test_decimal_values(sdc_builder, sdc_executor, cluster):
+def test_decimal_values(sdc_builder, sdc_executor, cluster, keep_data):
     """Validate different decimal values. The pipeline looks like:
 
         dev_raw_data_source >> field_type_converter >> hive_metadata
@@ -1221,17 +1222,20 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
     hive_metadata.set_attributes(data_format='AVRO',
                                  database_expression="default",
-                                 external_table=False,
+                                 external_table=True,
                                  partition_configuration=[],
                                  decimal_scale_expression='2',
                                  decimal_precision_expression='4',
-                                 table_name=table_name)
+                                 table_name=table_name,
+                                 table_path_template=f"/tmp/{table_name}")
 
     hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
     hadoop_fs.set_attributes(avro_schema_location='HEADER',
                              data_format='AVRO',
                              directory_in_header=True,
                              use_roll_attribute=True)
+    if isinstance(cluster, ClouderaManagerCluster) and cluster.version.startswith('cdh7'):
+        hadoop_fs.impersonation_user = "root"
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
@@ -1239,11 +1243,11 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
     hive_metadata >> hadoop_fs
     hive_metadata >> hive_metastore
 
-    pipeline = pipeline_builder.build(title='Hive drift test - Decimal Test').configure_for_environment(cluster)
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
-    create_table_command = ('CREATE TABLE IF NOT EXISTS {0} (id int, number decimal(4, 2))'
-                            ' STORED AS AVRO').format(_get_qualified_table_name(None, table_name))
+    create_table_command = ('CREATE EXTERNAL TABLE IF NOT EXISTS {0} (id int, number decimal(4, 2))'
+                            ' STORED AS AVRO LOCATION "/tmp/{1}"').format(_get_qualified_table_name(None, table_name), table_name)
     hive_cursor.execute(create_table_command)
     try:
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
@@ -1260,8 +1264,9 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster):
         assert error_values == [[Decimal(str(v)) if k == 'number' else v for k, v in row.items()]
                                 for row in invalid_rows]
     finally:
-        logger.info('Dropping table %s in Hive...', table_name)
-        hive_cursor.execute('DROP TABLE `{0}`'.format(table_name))
+        if not keep_data:
+            logger.info('Dropping table %s in Hive...', table_name)
+            hive_cursor.execute('DROP TABLE `{0}`'.format(table_name))
 
 
 @sdc_min_version('3.0.0.0')
@@ -1751,12 +1756,13 @@ def test_native_parquet_timestamps(sdc_builder, sdc_executor, cluster):
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
     hive_metadata.set_attributes(data_format='PARQUET',
                                  database_expression="${record:attribute('db')}",
-                                 external_table=False,
+                                 external_table=True,
                                  partition_configuration=partition_configuration,
                                  decimal_scale_expression='5',
                                  decimal_precision_expression='10',
                                  table_name="${record:attribute('table_name')}",
-                                 time_basis="${record:value('/timestamp')}")
+                                 time_basis="${record:value('/timestamp')}",
+                                 table_path_template=f"/tmp/{table_name}")
 
     hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
     hadoop_fs.set_attributes(avro_schema_location='HEADER',
@@ -1776,8 +1782,7 @@ def test_native_parquet_timestamps(sdc_builder, sdc_executor, cluster):
     hive_metadata >> hive_metastore
     hadoop_fs >= mapreduce
 
-    pipeline = pipeline_builder.build(
-        title='Hive drift test - hive parquet native timestamps').configure_for_environment(cluster)
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
 
     hive_cursor = cluster.hive.client.cursor()
@@ -2008,7 +2013,9 @@ def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cl
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
     hive_metadata.set_attributes(data_format='AVRO',
                                  partition_configuration=partition_configuration,
-                                 table_name=table_name)
+                                 external_table=True,
+                                 table_name=table_name,
+                                 table_path_template=f"/tmp/{table_name}")
 
     hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
     hadoop_fs.set_attributes(avro_schema_location='HEADER',
@@ -2026,14 +2033,10 @@ def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cl
     sdc_executor.add_pipeline(pipeline)
 
     hive_cursor = cluster.hive.client.cursor()
-    create_table_command = ('CREATE TABLE IF NOT EXISTS {0} ({1} INT, {2} STRING) '
-                            'PARTITIONED BY ({3} STRING) '
-                            ' STORED AS AVRO'
-                            ).format(table_name, id, username, partition_name)
-    logger.info('Creating table %s in Hive', table_name)
-    hive_cursor.execute(create_table_command)
 
     try:
+        sdc_executor.start_pipeline(pipeline).wait_for_status(status='FINISHED')
+
         snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
         sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
 
@@ -2047,6 +2050,7 @@ def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cl
     finally:
         logger.info('Dropping table %s in Hive...', table_name)
         hive_cursor.execute('DROP TABLE {}'.format(table_name))
+
 
 @sdc_min_version('3.0.0.0')
 @cluster('cdh', 'hdp')
@@ -2080,11 +2084,12 @@ def test_hdfs_avro_update_schema_stored_externally(sdc_builder, sdc_executor, cl
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
     hive_metadata.set_attributes(data_format='AVRO',
                                  database_expression="default",
-                                 external_table=False,
+                                 external_table=True,
                                  partition_configuration=[],
                                  decimal_scale_expression='2',
                                  decimal_precision_expression='4',
-                                 table_name=table_name)
+                                 table_name=table_name,
+                                 table_path_template=f"/tmp/{table_name}")
 
     hadoop_fs = pipeline_builder.add_stage('Hadoop FS', type='destination')
     hadoop_fs.set_attributes(avro_schema_location='HEADER',
