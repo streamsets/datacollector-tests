@@ -25,7 +25,7 @@ from streamsets.testframework.markers import aws, sdc_min_version, large
 from streamsets.testframework.utils import get_random_string, Version
 from xlwt import Workbook
 
-from .utils.utils_aws import allow_public_access, restore_public_access, configure_stage_for_anonymous, create_bucket
+from .utils.utils_aws import configure_stage_for_anonymous, create_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     The pipeline looks like:
 
     S3 Origin pipeline:
-        s3_origin >> trash
+        s3_origin >> wiretap
         s3_origin >= pipeline_finished_executor
     """
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
@@ -65,9 +65,7 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     data = dict(f1=get_random_string(), f2=get_random_string())
 
     s3_obj_count = 10
-    total_error_count = s3_obj_count
-    input_records = 0
-    output_records = 0
+    total_record_count = 0
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -79,15 +77,15 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
                              prefix_pattern=f'{s3_key}/*', number_of_threads=MULTITHREADED,
                              read_order=DEFAULT_READ_ORDER)
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= pipeline_finished_executor
 
-    s3_origin_pipeline = builder.build(title='Amazon S3 origin multithreaded pipeline').configure_for_environment(aws)
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(s3_origin_pipeline)
 
@@ -95,37 +93,25 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     try:
 
         for iteration in range(1, 4):
+            wiretap.reset()
             # Insert objects into S3.
             for i in range(s3_obj_count):
                 client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{iteration}-{i}', Body=json.dumps(data))
 
             # In case of multithreaded pipeline we want to verify the amount of records.
-            snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True,  timeout_sec=70).snapshot
+            sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
 
-            sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status('FINISHED')
-
-            records = [record.field for record in snapshot[s3_origin.instance_name].output]
+            records = [record.field for record in wiretap.output_records]
 
             for x in range(0, len(records)):
                 assert records[x]['f1'] == data['f1']
                 assert records[x]['f2'] == data['f2']
 
-            history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-            input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-            output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+            assert len(records) == s3_obj_count
 
-            assert output_records == total_error_count + iteration  # Adding iteration because of the events
-            assert input_records == total_error_count
+            total_record_count += len(records)
 
-            total_error_count += s3_obj_count
-
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        input_records += history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        output_records += history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
-        assert output_records == total_error_count + iteration + 1  # Adding +1 because of the last event
-        assert input_records == total_error_count
-
+        assert 3 * s3_obj_count == total_record_count  # 3 iterations of 10 elements each
     finally:
         # Clean up S3.
         delete_keys = {'Objects': [{'Key': k['Key']}
@@ -175,7 +161,6 @@ def test_s3_origin_multithreaded_text_data_format(sdc_builder, sdc_executor, aws
 @sdc_min_version('3.16.0')
 def test_s3_origin_anonymous(sdc_builder, sdc_executor, aws):
     """Tests accessing a public object where we can list bucket contents. """
-
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
                    DEFAULT_NUMBER_OF_RECORDS, anonymous=True)
 
@@ -203,7 +188,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     created to avoid concurrent access to the same bucket and locking problems. The pipeline looks like:
 
     S3 Origin pipeline:
-        s3_origin >> trash
+        s3_origin >> wiretap
         s3_origin >= pipeline_finished_executor
     """
     if anonymous:
@@ -243,19 +228,15 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
     if use_path_style_address_model is not None:
         s3_origin.use_path_style_address_model = use_path_style_address_model
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= pipeline_finished_executor
 
-    pipeline_name = (
-        f'Amazon S3 - threads: {number_of_threads} - read order: {read_order} - format: {data_format} - '
-        f'records: {number_of_records} anonymous: {anonymous}')
-
-    s3_origin_pipeline = builder.build(title=pipeline_name).configure_for_environment(aws)
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
 
     if anonymous:
@@ -272,25 +253,15 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
             client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=json.dumps(json_data), ACL=acl)
 
         if number_of_threads == SINGLETHREADED:
-            # Snapshot the pipeline and compare the records.
-            snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline,
-                                                     timeout_sec=70,
-                                                     start_pipeline=True).snapshot
-            sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
+            sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
 
-            output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
-
+            output_records = [record.field for record in wiretap.output_records]
             verify_data_formats(output_records, json.dumps(json_data), data_format)
-
         else:
             # In case of multithreaded pipeline we want to verify the amount of records.
-            sdc_executor.start_pipeline(s3_origin_pipeline)
-            sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
+            sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
 
-            history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-            assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == s3_obj_count
-            # We need to add 1 since the event is considered a record
-            assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == s3_obj_count + 1
+            assert len(wiretap.output_records) == s3_obj_count
 
     finally:
         try:
@@ -454,14 +425,15 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     Test that event pipeline finisher is being sent when no more data is available in S3
 
     S3 Origin pipeline:
-        s3_origin >> trash
+            s3_origin >> wiretap.destination
+            s3_origin >= pipeline_finished_executor
     """
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
 
     data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
 
-    s3_obj_count = 1
+    s3_obj_count = 10
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -472,17 +444,15 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON',
                              json_content='ARRAY_OBJECTS', prefix_pattern=f'{s3_key}*')
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= pipeline_finished_executor
 
-    pipeline_name = 'Amazon S3 - No more data event'
-
-    s3_origin_pipeline = builder.build(title=pipeline_name).configure_for_environment(aws)
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
 
     sdc_executor.add_pipeline(s3_origin_pipeline)
@@ -490,26 +460,14 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Body=json.dumps(data))
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True, timeout_sec=70).snapshot
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+        output_records_values = [record.field for record in wiretap.output_records]
 
-        output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
-
-        assert len(output_records_values) == s3_obj_count * 10
+        assert len(output_records_values) == s3_obj_count
         assert output_records_values == data
-
-        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=60)
-
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 10
-        # We need to add 1 since the event is considered a record
-        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 10 + 1
-
     finally:
-        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
-            sdc_executor.stop_pipeline(s3_origin_pipeline)
         # Clean up S3.
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
@@ -526,9 +484,9 @@ def test_s3_event_finisher_multiple_events(sdc_builder, sdc_executor, aws):
     evaluator produces a new event that stop the pipeline.
 
     S3 Origin pipeline:
-        s3_origin >> trash
+        s3_origin >> wiretap.destination
         s3_origin >= jython_evaluator
-        jython_evaluator >> trash2
+        jython_evaluator >> trash
         jython_evaluator >= pipeline_finished_executor
     """
     s3_bucket = aws.s3_bucket_name
@@ -537,8 +495,6 @@ def test_s3_event_finisher_multiple_events(sdc_builder, sdc_executor, aws):
 
     data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(records_per_file)]
     data2 = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(records_per_file)]
-
-    s3_obj_count = 1
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -549,8 +505,8 @@ def test_s3_event_finisher_multiple_events(sdc_builder, sdc_executor, aws):
     s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON',
                              json_content='ARRAY_OBJECTS', prefix_pattern=f'{s3_key}*')
 
+    wiretap = builder.add_wiretap()
     trash = builder.add_stage('Trash')
-    trash2 = builder.add_stage('Trash')
 
     jython_evaluator = builder.add_stage('Jython Evaluator')
     jython_evaluator.set_attributes(init_script="state['record-count'] = 0", script="""
@@ -567,9 +523,9 @@ if (state['record-count'] >= 2):
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'stop-pipeline'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= jython_evaluator
-    jython_evaluator >> trash2
+    jython_evaluator >> trash
     jython_evaluator >= pipeline_finished_executor
 
     s3_origin_pipeline = builder.build().configure_for_environment(aws)
@@ -580,23 +536,15 @@ if (state['record-count'] >= 2):
     client = aws.s3
     try:
         # Insert objects into S3, process them and add an additional file
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}-1', Body=json.dumps(data))
-        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_output_records_count(10, timeout_sec=300)
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}-2', Body=json.dumps(data2))
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-1', Body=json.dumps(data))
+        pipeline_cmd = sdc_executor.start_pipeline(s3_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'data_batch_count', 1)
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-2', Body=json.dumps(data2))
 
-        # Take snapshot and check output records
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline,  timeout_sec=70).snapshot
-        output_records_values = [record.field for record in snapshot[s3_origin.instance_name].output]
-        assert len(output_records_values) == s3_obj_count * records_per_file
-        assert output_records_values == data2
-
-        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=300)
-
-        # Check that the origin has produced the expected records
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        output_count = history.latest.metrics.counter(f'stage.{s3_origin.instance_name}.outputRecords.counter').count
-        assert 2 * records_per_file == output_count
-
+        pipeline_cmd.wait_for_finished()
+        output_records_values = [record.field for record in wiretap.output_records]
+        assert len(output_records_values) == 2 * records_per_file
+        assert output_records_values == data + data2
     finally:
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')
@@ -614,18 +562,16 @@ def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
     Tests that verifies that all the records are properly read when the batch size is the same as the number of records
     per object.
 
-    Using the snapshot we will verify the content of the records and using the pipeline history the amount of records
-    processed.
-
     S3 Origin pipeline:
-        s3_origin >> trash
+        s3_origin >> wiretap
     """
     S3_OBJ_COUNT = 5
 
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
 
-    data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(50)]
+    data = [dict(id=get_random_string()) for _ in range(50)]
+    total_data = []
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -639,12 +585,12 @@ def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
                              prefix_pattern=f'{s3_key}*',
                              max_batch_size_in_records=50)
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= pipeline_finished_executor
 
     pipeline_name = f'Amazon S3 - ReadAllRecordsFromS3toFS'
@@ -659,22 +605,13 @@ def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
         # Insert objects into S3.
         for i in range(S3_OBJ_COUNT):
             client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{i}', Body=json.dumps(data))
+            total_data = total_data + data
 
-        # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True,  timeout_sec=70).snapshot
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
+        output_records = [record.field for record in wiretap.output_records]
 
-        output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
-
-        for i in range(0, len(output_records)):
-            assert output_records[i]['f1'] == data[i]['f1']
-            assert output_records[i]['f2'] == data[i]['f2']
-
-        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
-
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        output_records_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        assert output_records_count == S3_OBJ_COUNT * 50 + 1  # Adding +1 since event also count as record
-
+        assert len(output_records) == S3_OBJ_COUNT * 50 == len(total_data)
+        assert output_records == total_data
     finally:
         # Clean up S3.
         delete_keys = {'Objects': [{'Key': k['Key']}
@@ -763,7 +700,7 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
     Test that an excel file on a s3 bucket is properly read
 
     S3 Origin pipeline:
-        s3_origin >> trash
+        s3_origin >> wiretap.destination
     """
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
@@ -797,12 +734,12 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
                              prefix_pattern=f'{s3_key}*',
                              excel_header_option="NO_HEADER")
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= pipeline_finished_executor
 
     s3_origin_pipeline = builder.build().configure_for_environment(aws)
@@ -815,29 +752,16 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
         # Insert objects into S3.
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Fileobj=file_excel)
 
-        # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True,  timeout_sec=70).snapshot
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
 
-        output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
-
-        len_records = len(output_records)
+        output_records = [record.field for record in wiretap.output_records]
+        assert len(output_records) == rowcount
 
         # Compare the results get from the output_records
-        for row_res in range(len_records):
+        for row_res in range(len(output_records)):
             for col_res in range(colcount):
-                assert output_records[row_res][str(col_res)] == "TAB({row}, {col})".format(row=row_res, col=col_res)
-
-        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED', timeout_sec=60)
-
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == rowcount
-        # We need to add 1 since the event is considered a record
-        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == rowcount + 1
-
+                assert output_records[row_res][str(col_res)] == f'TAB({row_res}, {col_res})'
     finally:
-        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
-            sdc_executor.stop_pipeline(s3_origin_pipeline)
         # Clean up S3.
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
@@ -850,7 +774,7 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
     Tests that compressed file offsets are properly handled
 
     S3 Origin pipeline:
-        s3_origin >> trash
+        s3_origin >> wiretap
         s3_origin >= pipeline_finished_executor
     """
     s3_bucket = aws.s3_bucket_name
@@ -865,12 +789,15 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
     data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(50)]
 
     json_data = "".join(json.dumps(x) for x in data)
+    total_data = []
 
     with open(f'{directory_to_write}/{json1_file_name}.json', 'w') as outfile:
         outfile.write(json_data)
+        total_data = total_data + data
 
     with open(f'{directory_to_write}/{json2_file_name}.json', 'w') as outfile:
         outfile.write(json_data)
+        total_data = total_data + data
 
     with ZipFile(f'{zip_file_name}.zip', 'w') as zipfile:
         zipfile.write(f'{directory_to_write}/{json1_file_name}.json', f'{json1_file_name}.json')
@@ -889,12 +816,12 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
                              json_content='MULTIPLE_OBJECTS',
                              prefix_pattern=f'{s3_key}/*')
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
     s3_origin >= pipeline_finished_executor
 
     s3_origin_pipeline = builder.build().configure_for_environment(aws)
@@ -908,26 +835,17 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
         client.upload_file(Bucket=s3_bucket, Key=f'{s3_key}/{zip_file_name}.zip',
                            Filename=f'{zip_file_name}.zip')
 
-        # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(s3_origin_pipeline, start_pipeline=True,  timeout_sec=70).snapshot
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
 
-        output_records = [record.field for record in snapshot[s3_origin.instance_name].output]
+        output_records = [record.field for record in wiretap.output_records]
 
+        assert len(output_records) == len(total_data)
         for i in range(len(output_records)):
-            assert output_records[i]['f1'] == data[i]['f1']
-            assert output_records[i]['f2'] == data[i]['f2']
+            assert output_records[i]['f1'] == total_data[i]['f1']
+            assert output_records[i]['f2'] == total_data[i]['f2']
 
-        sdc_executor.get_pipeline_status(s3_origin_pipeline).wait_for_status(status='FINISHED')
-
-        history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
-        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 50 * 2
-        # We need to add 1 since the event is considered a record
-        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 50 * 2 + 1
-
+        assert len(output_records) == 50 * 2 == len(total_data)
     finally:
-        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
-            sdc_executor.stop_pipeline(s3_origin_pipeline)
         # Clean up S3.
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=s3_bucket)['Contents']]}
@@ -1108,9 +1026,9 @@ def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheet
     s3_origin.read_all_sheets = read_all_sheets
     s3_origin.import_sheets = ['A']
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
@@ -1120,18 +1038,20 @@ def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheet
         # Insert objects into S3.
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
-        # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True,  timeout_sec=70).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
         if read_all_sheets:
-            assert len(snapshot[s3_origin].output) == 2
+            assert len(wiretap.output_records) == 2
         else:
-            assert len(snapshot[s3_origin].output) == 1
+            assert len(wiretap.output_records) == 1
 
-        assert snapshot[s3_origin].output[0].get_field_data('/A') == 'a'
+        output_records = [record.field for record in wiretap.output_records]
+
+        assert output_records[0]['A'] == 'a'
         if read_all_sheets:
-            assert snapshot[s3_origin].output[1].get_field_data('/B') == 'b'
+            assert output_records[1]['B'] == 'b'
 
     finally:
         # Clean up S3.
@@ -1170,9 +1090,9 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
     s3_origin.excel_header_option = 'WITH_HEADER'
     s3_origin.skip_cells_with_no_header = skip
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
@@ -1182,19 +1102,21 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
         # Insert objects into S3.
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
-        # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True,  timeout_sec=70).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[s3_origin].output) == 1
-        assert snapshot[s3_origin].output[0].get_field_data('/A') == 'a'
+        output_records = [record.field for record in wiretap.output_records]
+
+        assert len(output_records) == 1
+        assert output_records[0]['A'] == 'a'
 
         if skip:
-            # Unclear how validate if given path doesn't exists
-            with pytest.raises(Exception) as ex:
-                snapshot[s3_origin].output[0].get_field_data('/2')
+            assert len(output_records[0]) == 1
         else:
-            assert snapshot[s3_origin].output[0].get_field_data('/2') == 'extra value with no header'
+            assert len(output_records[0]) == 3
+            assert output_records[0]['1'] == ''
+            assert output_records[0]['2'] == 'extra value with no header'
 
     finally:
         # Clean up S3.
@@ -1234,9 +1156,9 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
     s3_origin.prefix_pattern = f'{s3_key}*'
     s3_origin.excel_header_option = 'WITH_HEADER'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    s3_origin >> trash
+    s3_origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
@@ -1246,13 +1168,15 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
         # Insert objects into S3.
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
-        # Snapshot the pipeline and compare the records.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True,  timeout_sec=70).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[s3_origin].output) == 1
-        assert snapshot[s3_origin].output[0].get_field_data('/A') == 'a'
-        assert snapshot[s3_origin].output[0].get_field_data('/C') == 'c'
+        output_records = [record.field for record in wiretap.output_records]
+
+        assert len(output_records) == 1
+        assert output_records[0]['A'] == 'a'
+        assert output_records[0]['C'] == 'c'
 
     finally:
         # Clean up S3.
@@ -1336,8 +1260,8 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
     pipeline a second time, it will try to grab a non-existing next file and generate the no-more-data event.
 
     The pipeline looks like:
-    s3 origin >> trash
-    s3 origin >= [pipeline finisher executor, pipeline finisher executor]
+    origin >> records_wiretap
+    origin >= [file_finished_finisher, no_more_data_finisher, events_wiretap]
     """
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
     records_per_file = 3
@@ -1354,7 +1278,8 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
                           prefix_pattern=f'{s3_key}/*',
                           max_batch_size_in_records=batch_size)
 
-    target = builder.add_stage('Trash')
+    records_wiretap = builder.add_wiretap()
+    events_wiretap = builder.add_wiretap()
 
     file_finished_finisher = builder.add_stage('Pipeline Finisher Executor')
     file_finished_finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'finished-file'}"])
@@ -1362,8 +1287,8 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
     no_more_data_finisher = builder.add_stage('Pipeline Finisher Executor')
     no_more_data_finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    origin >> target
-    origin >= [file_finished_finisher, no_more_data_finisher]
+    origin >> records_wiretap.destination
+    origin >= [file_finished_finisher, no_more_data_finisher, events_wiretap.destination]
 
     pipeline = builder.build().configure_for_environment(aws)
     pipeline.configuration['shouldRetry'] = False
@@ -1376,34 +1301,36 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
                           Body='\n'.join(test_data).encode('ascii'))
 
         # Run until finished-file
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=batch_size,  timeout_sec=70).snapshot
-        output_records = snapshot[origin.instance_name].output
-        event_records = snapshot[origin.instance_name].event_records
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        # Assert that 3 records have been read and 2 events have been generated
+        output_records = [record.field['text'] for record in records_wiretap.output_records]
+
+        # Assert that 3 records have been read
         assert 3 == len(output_records)
-        assert 2 == len(event_records)
+        assert output_records == test_data
 
         # Assert that first event is of type new-file and contains the correct filepath
-        assert 'new-file' == event_records[0].header['values']['sdc.event.type']
-        assert f'{s3_key}/{data_file}' == event_records[0].field['filepath']
+        assert 2 == len(events_wiretap.output_records)
+        assert 'new-file' == events_wiretap.output_records[0].header.values['sdc.event.type']
+        assert f'{s3_key}/{data_file}' == events_wiretap.output_records[0].field['filepath']
 
         # Assert that second event is of type finished-file and contains the correct filepath, recordCount & errorCount
-        assert 'finished-file' == event_records[1].header['values']['sdc.event.type']
-        assert f'{s3_key}/{data_file}' == event_records[1].field['filepath']
-        assert 3 == event_records[1].field['record-count']
-        assert 0 == event_records[1].field['error-count']
+        assert 'finished-file' == events_wiretap.output_records[1].header.values['sdc.event.type']
+        assert f'{s3_key}/{data_file}' == events_wiretap.output_records[1].field['filepath']
+        assert 3 == events_wiretap.output_records[1].field['record-count']
+        assert 0 == events_wiretap.output_records[1].field['error-count']
 
         # Restart pipeline to generate no more data event
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=batch_size,  timeout_sec=70).snapshot
-        event_records = snapshot[origin.instance_name].event_records
-        assert 'no-more-data' == event_records[0].header['values']['sdc.event.type']
+        events_wiretap.reset()
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
+        assert 'no-more-data' == events_wiretap.output_records[0].header.values['sdc.event.type']
     finally:
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in
                                    client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
 
 @aws('s3')
 @large
@@ -1527,7 +1454,6 @@ def test_s3_single_file_in_directory_no_wildcards(sdc_builder, sdc_executor, aws
 def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_executor, aws, read_order):
     """ This test is for xml data format, which was not working properly when reset with file offset.
         It checks that no stage error happens after the pipeline is restarted with an offset halfway in the file.
-        Snapshot pipeline:
             s3_origin >> trash
     """
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
@@ -1602,7 +1528,6 @@ def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_execut
 def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executor, aws, read_order):
     """ This test is for xml data format, which was not working properly when reset with file offset.
         It checks that no stage error happens after the pipeline is restarted with an offset halfway in the file.
-        Snapshot pipeline:
             s3_origin >> trash
     """
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
@@ -1729,6 +1654,7 @@ def test_s3_whole_file_empty_directory(sdc_builder, sdc_executor, aws):
                                        'Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
+
 @aws('s3')
 def test_s3_stop_resume_file_not_found(sdc_builder, sdc_executor, aws):
     """Tests to process a file, stop the pipeline, delete the file and
@@ -1845,6 +1771,7 @@ def test_s3_continue_processing_after_file_error(sdc_builder, sdc_executor, aws)
                                        'Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
+
 @aws('s3')
 def test_s3_archive_idle_resume(sdc_builder, sdc_executor, aws):
     """Tests to process a file and archive it, stay idle, and
@@ -1897,7 +1824,7 @@ def test_s3_archive_idle_resume(sdc_builder, sdc_executor, aws):
         assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == [s3_file_name_1]
         assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
 
-       # Insert file 2 into S3.
+        # Insert file 2 into S3.
         client.put_object(Bucket=aws.s3_bucket_name, Key=s3_file_name_2,
                           Body='\n'.join(test_data).encode('ascii'))
 
@@ -1919,6 +1846,7 @@ def test_s3_archive_idle_resume(sdc_builder, sdc_executor, aws):
         # If no files have been processed we need to stop the pipeline, otherwise it will be finished
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
+
 
 @aws('s3')
 def test_s3_archive_JSON(sdc_builder, sdc_executor, aws):
@@ -1972,7 +1900,7 @@ def test_s3_archive_JSON(sdc_builder, sdc_executor, aws):
                           Body=json.dumps(data2))
 
         sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_batch_count(3)
-        assert [record.field for record in wiretap.output_records] == [data1,data2]
+        assert [record.field for record in wiretap.output_records] == [data1, data2]
         assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
 
     finally:
