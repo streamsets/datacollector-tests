@@ -59,10 +59,11 @@ def test_standard_sqs_consumer(sdc_builder, sdc_executor, aws):
 
         # messages are published, read through the pipeline and assert
         sdc_executor.start_pipeline(consumer_origin_pipeline)
-        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'data_batch_count', 1)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', number_of_messages)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         result_data = [str(record.field['text']) for record in wiretap.output_records]
+        assert len(result_data) == number_of_messages
         assert sorted(result_data) == sorted([message['MessageBody'] for message in message_entries])
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, consumer_origin_pipeline)
