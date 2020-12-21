@@ -114,27 +114,21 @@ def list_dir(sdc_executor):
                                  file_name_pattern_mode='GLOB',
                                  files_directory=files_directory,
                                  process_subdirectories=recursive)
-
         trash = builder.add_stage('Trash')
+        events_wiretap = builder.add_wiretap()
 
         pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
         pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'],
                                          on_record_error='DISCARD')
 
         directory >> trash
-        directory >= pipeline_finisher
+        directory >= [events_wiretap.destination, pipeline_finisher]
 
         pipeline = builder.build('List dir pipeline')
         sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 batches=batches,
-                                                 batch_size=batch_size,
-                                                 start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-
-        files = [str(record.field['filepath']) for b in range(len(snapshot.snapshot_batches))
-                 for record in snapshot.snapshot_batches[b][directory.instance_name].event_records
+        files = [str(record.field['filepath']) for record in events_wiretap.output_records
                  if record.header.values['sdc.event.type'] == 'new-file']
 
         sdc_executor.remove_pipeline(pipeline)
@@ -589,11 +583,12 @@ mv $FILENAME $SUBDIR/${{WORD}}_$COUNT.txt.gz
 @sdc_min_version('3.0.0.0')
 def test_directory_origin_avro_produce_less_file(sdc_builder, sdc_executor):
     """Test Directory Origin in Avro data format. The sample Avro file has 5 lines and
-    the batch size is 1. The pipeline should produce the event, "new-file" and 1 record
+    the batch size is 1. The pipeline should produce the event, "new-file", "finished-file"
+     and "no-more-data", and 1 record
 
     The pipelines looks like:
 
-        directory >> trash
+        directory >> wiretap
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
@@ -603,29 +598,33 @@ def test_directory_origin_avro_produce_less_file(sdc_builder, sdc_executor):
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='AVRO', file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP')
-    trash = pipeline_builder.add_stage('Trash')
+                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=1)
 
-    directory >> trash
+    records_wiretap = pipeline_builder.add_wiretap()
+    events_wiretap = pipeline_builder.add_wiretap()
+
+    directory >> records_wiretap.destination
+    directory >= [events_wiretap.destination]
+
     directory_pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(directory_pipeline)
 
     # assert all the data captured have the same raw_data
-    output_records = snapshot[directory.instance_name].output
-    event_records = snapshot[directory.instance_name].event_records
 
-    assert 1 == len(event_records)
-    assert 1 == len(output_records)
+    assert 'new-file' == events_wiretap.output_records[0].header.values['sdc.event.type']
+    assert 'finished-file' == events_wiretap.output_records[1].header.values['sdc.event.type']
+    assert 'no-more-data' == events_wiretap.output_records[2].header.values['sdc.event.type']
 
-    assert 'new-file' == event_records[0].header['values']['sdc.event.type']
-
-    assert output_records[0].get_field_data('/name') == avro_records[0].get('name')
-    assert output_records[0].get_field_data('/age') == avro_records[0].get('age')
-    assert output_records[0].get_field_data('/emails') == avro_records[0].get('emails')
-    assert output_records[0].get_field_data('/boss') == avro_records[0].get('boss')
+    assert 5 == len(records_wiretap.output_records)
+    for i in range(0, 5):
+        assert records_wiretap.output_records[i].get_field_data('/name') == avro_records[i].get('name')
+        assert records_wiretap.output_records[i].get_field_data('/age') == avro_records[i].get('age')
+        assert records_wiretap.output_records[i].get_field_data('/emails') == avro_records[i].get('emails')
+        assert records_wiretap.output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
 
 
 @sdc_min_version('3.8.0')
@@ -668,7 +667,7 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
     temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test6.csv', ',', True))
     for row in temp_data_from_csv_file:
         data_from_csv_files.append(f'{row[0]},{row[1]},{row[2]}')
-        
+
     # assert all the data captured have the same raw_data
     output_records = wiretap.output_records
     output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
@@ -682,12 +681,12 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
 @sdc_min_version('3.0.0.0')
 def test_directory_origin_avro_produce_full_file(sdc_builder, sdc_executor):
     """ Test Directory Origin in Avro data format. The sample Avro file has 5 lines and
-    the batch size is 10. The pipeline should produce the event, "new-file" and "finished-file"
-    and 5 records
+    the batch size is 10. The pipeline should produce the event, "new-file", "finished-file"
+    and "no-more-data" and 5 records
 
     The pipelines looks like:
 
-        directory >> trash
+        directory >> wiretap
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
@@ -697,31 +696,33 @@ def test_directory_origin_avro_produce_full_file(sdc_builder, sdc_executor):
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='AVRO', file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP')
-    trash = pipeline_builder.add_stage('Trash')
+                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=10)
 
-    directory >> trash
+    records_wiretap = pipeline_builder.add_wiretap()
+    events_wiretap = pipeline_builder.add_wiretap()
+
+    directory >> records_wiretap.destination
+    directory >= [events_wiretap.destination]
+
     directory_pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 5)
     sdc_executor.stop_pipeline(directory_pipeline)
 
     # assert all the data captured have the same raw_data
-    output_records = snapshot[directory.instance_name].output
-    event_records = snapshot[directory.instance_name].event_records
+    assert 'new-file' == events_wiretap.output_records[0].header.values['sdc.event.type']
+    assert 'finished-file' == events_wiretap.output_records[1].header.values['sdc.event.type']
+    assert 'no-more-data' == events_wiretap.output_records[2].header.values['sdc.event.type']
 
-    assert 2 == len(event_records)
-    assert 5 == len(output_records)
-
-    assert 'new-file' == event_records[0].header['values']['sdc.event.type']
-    assert 'finished-file' == event_records[1].header['values']['sdc.event.type']
+    assert 5 == len(records_wiretap.output_records)
 
     for i in range(0, 5):
-        assert output_records[i].get_field_data('/name') == avro_records[i].get('name')
-        assert output_records[i].get_field_data('/age') == avro_records[i].get('age')
-        assert output_records[i].get_field_data('/emails') == avro_records[i].get('emails')
-        assert output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
+        assert records_wiretap.output_records[i].get_field_data('/name') == avro_records[i].get('name')
+        assert records_wiretap.output_records[i].get_field_data('/age') == avro_records[i].get('age')
+        assert records_wiretap.output_records[i].get_field_data('/emails') == avro_records[i].get('emails')
+        assert records_wiretap.output_records[i].get_field_data('/boss') == avro_records[i].get('boss')
 
 
 @sdc_min_version('3.12.0')
@@ -734,7 +735,7 @@ def test_directory_origin_bom_file(sdc_builder, sdc_executor, csv_record_type):
 
     The pipeline looks like:
 
-        directory >> trash
+        directory >> wiretap
 
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -748,38 +749,37 @@ def test_directory_origin_bom_file(sdc_builder, sdc_executor, csv_record_type):
                              read_order='TIMESTAMP',
                              root_field_type=csv_record_type)
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    directory >> trash
+    directory >> wiretap.destination
     directory_pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 1)
     sdc_executor.stop_pipeline(directory_pipeline)
-
-    output_records = snapshot[directory.instance_name].output
 
     # contents of file_with_bom.csv: <BOM>abc,123,xyz
     if csv_record_type == 'LIST_MAP':
-        assert 'abc' == output_records[0].get_field_data('/0')
-        assert '123' == output_records[0].get_field_data('/1')
-        assert 'xyz' == output_records[0].get_field_data('/2')
+        assert 'abc' == wiretap.output_records[0].get_field_data('/0')
+        assert '123' == wiretap.output_records[0].get_field_data('/1')
+        assert 'xyz' == wiretap.output_records[0].get_field_data('/2')
     else:
-        assert 'abc' == output_records[0].get_field_data('/0').get('value')
-        assert '123' == output_records[0].get_field_data('/1').get('value')
-        assert 'xyz' == output_records[0].get_field_data('/2').get('value')
+        assert 'abc' == wiretap.output_records[0].get_field_data('/0').get('value')
+        assert '123' == wiretap.output_records[0].get_field_data('/1').get('value')
+        assert 'xyz' == wiretap.output_records[0].get_field_data('/2').get('value')
 
 
 @sdc_min_version('3.0.0.0')
 @pytest.mark.parametrize('csv_record_type', ['LIST_MAP', 'LIST'])
 def test_directory_origin_csv_produce_full_file(sdc_builder, sdc_executor, csv_record_type):
     """ Test Directory Origin in CSV data format. The sample CSV file has 3 lines and
-    the batch size is 10. The pipeline should produce the event, "new-file" and "finished-file"
-    and 3 records
+    the batch size is 10. The pipeline should produce the event, "new-file", "finished-file"
+    and "no-more-data" and 3 records
 
     The pipelines looks like:
 
-        directory >> trash
+        directory >> wiretap
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
@@ -792,34 +792,36 @@ def test_directory_origin_csv_produce_full_file(sdc_builder, sdc_executor, csv_r
                              file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=tmp_directory,
                              process_subdirectories=True, read_order='TIMESTAMP',
-                             root_field_type=csv_record_type)
+                             root_field_type=csv_record_type, batch_size_in_recs=10)
 
-    trash = pipeline_builder.add_stage('Trash')
+    records_wiretap = pipeline_builder.add_wiretap()
+    events_wiretap = pipeline_builder.add_wiretap()
 
-    directory >> trash
+    directory >> records_wiretap.destination
+    directory >= [events_wiretap.destination]
+
     directory_pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 3)
     sdc_executor.stop_pipeline(directory_pipeline)
 
-    # assert all the data captured have the same csv_records
-    output_records = snapshot[directory.instance_name].output
-    event_records = snapshot[directory.instance_name].event_records
+    # assert all the data captured has the same csv_records
+    assert 3 == len(records_wiretap.output_records)
+    for i in range(0, len(csv_records)):
+        records = records_wiretap.output_records[i].get_field_data(0)
+        for j in range(0, 2):
+            if csv_record_type == 'LIST_MAP':
+                assert csv_records[i].split(',')[j] == list(records.values())[j]
+            elif csv_record_type == 'LIST':
+                assert csv_records[i].split(',')[j] == records[j].get('value')
 
-    assert 2 == len(event_records)
-    assert 3 == len(output_records)
-
-    assert 'new-file' == event_records[0].header['values']['sdc.event.type']
-    assert 'finished-file' == event_records[1].header['values']['sdc.event.type']
-
-    for i in range(0, 3):
-        csv_record_fields = csv_records[i].split(',')
-        for j in range(0, len(csv_record_fields)):
-            if type(output_records[i].get_field_data(f'/{j}')) is dict:
-               output_records[i].get_field_data(f'/{j}').get('value') == csv_record_fields[j]
-            else:
-                output_records[i].get_field_data(f'/{j}') == csv_record_fields[j]
+    # assert events are correct
+    assert 3 == len(events_wiretap.output_records)
+    assert 'new-file' == events_wiretap.output_records[0].header.values['sdc.event.type']
+    assert 'finished-file' == events_wiretap.output_records[1].header.values['sdc.event.type']
+    assert 'no-more-data' == events_wiretap.output_records[2].header.values['sdc.event.type']
 
 
 @sdc_min_version('3.0.0.0')
@@ -827,12 +829,13 @@ def test_directory_origin_csv_produce_full_file(sdc_builder, sdc_executor, csv_r
 @pytest.mark.parametrize('header_line', ['WITH_HEADER', 'IGNORE_HEADER', 'NO_HEADER'])
 def test_directory_origin_csv_produce_less_file(sdc_builder, sdc_executor, csv_record_type, header_line):
     """ Test Directory Origin in CSV data format. The sample CSV file has 3 lines and
-    the batch size is 1. The pipeline should produce the event, "new-file"
-    and 1 record
+    the batch size is 1. The pipeline should produce the event, "new-file", "finished-file"
+    and "no-more-data" and 3 (or 2) records
 
     The pipelines looks like:
 
-        directory >> trash
+        directory >> records_wiretap.destination
+        directory >= [events_wiretap.destination]
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
@@ -844,32 +847,49 @@ def test_directory_origin_csv_produce_less_file(sdc_builder, sdc_executor, csv_r
                              file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=tmp_directory,
                              header_line=header_line, process_subdirectories=True,
-                             read_order='TIMESTAMP', root_field_type=csv_record_type)
-    trash = pipeline_builder.add_stage('Trash')
+                             read_order='TIMESTAMP', root_field_type=csv_record_type, batch_size_in_recs=1)
 
-    directory >> trash
+    records_wiretap = pipeline_builder.add_wiretap()
+    events_wiretap = pipeline_builder.add_wiretap()
+
+    directory >> records_wiretap.destination
+    directory >= [events_wiretap.destination]
+
     directory_pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 1)
     sdc_executor.stop_pipeline(directory_pipeline)
 
-    # assert all the data captured have the same csv_records
-    output_records = snapshot[directory.instance_name].output
-    event_records = snapshot[directory.instance_name].event_records
+    # assert all the data captured has the same csv_records values
+    # if WITH_HEADER, header is not treated as a record (2 records)
+    # if IGNORE_HEADER, header is discarded (2 records)
+    # if NO_HEADER, the possible header is treated as a record (3 records)
+    # if LIST_MAP, field is OrderedDict with 0,1,...
+    # if LIST, field has values
+    # offset is used to include or avoid header in the values check
 
-    assert 1 == len(event_records)
-    assert 1 == len(output_records)
+    if header_line == 'WITH_HEADER' or header_line == 'IGNORE_HEADER':
+        assert 2 == len(records_wiretap.output_records)
+        offset = 1
+    elif header_line == 'NO_HEADER':
+        assert 3 == len(records_wiretap.output_records)
+        offset = 0
 
-    assert 'new-file' == event_records[0].header['values']['sdc.event.type']
+    for i in range(offset, len(csv_records)):
+        records = records_wiretap.output_records[i - offset].get_field_data(0)
+        for j in range(0, 2):
+            if csv_record_type == 'LIST_MAP':
+                assert csv_records[i].split(',')[j] == list(records.values())[j]
+            elif csv_record_type == 'LIST':
+                assert csv_records[i].split(',')[j] == records[j].get('value')
 
-    csv_record_fields = csv_records[0].split(',')
-    for j in range(0, len(csv_record_fields)):
-        name = csv_record_fields[j] if header_line == 'WITH_HEADER' and csv_record_type == 'LIST_MAP' else j
-        if type(output_records[0].get_field_data(f'/{name}')) is dict:
-           output_records[0].get_field_data(f'/{name}').get('value') == csv_record_fields[j]
-        else:
-            output_records[0].get_field_data(f'/{name}') == csv_record_fields[j]
+    # assert events are correct
+    assert 3 == len(events_wiretap.output_records)
+    assert 'new-file' == events_wiretap.output_records[0].header.values['sdc.event.type']
+    assert 'finished-file' == events_wiretap.output_records[1].header.values['sdc.event.type']
+    assert 'no-more-data' == events_wiretap.output_records[2].header.values['sdc.event.type']
 
 
 @sdc_min_version('3.0.0.0')
@@ -878,7 +898,7 @@ def test_directory_origin_csv_custom_file(sdc_builder, sdc_executor):
 
     The pipelines looks like:
 
-        directory >> trash
+        directory >> wiretap
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
@@ -890,19 +910,18 @@ def test_directory_origin_csv_custom_file(sdc_builder, sdc_executor):
                              file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=tmp_directory,
                              process_subdirectories=True, read_order='TIMESTAMP')
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    directory >> trash
+    directory >> wiretap.destination
     directory_pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 1)
     sdc_executor.stop_pipeline(directory_pipeline)
 
-    output_records = snapshot[directory.instance_name].output
-
-    assert 1 == len(output_records)
-    assert output_records[0].get_field_data('/0') == ' '.join(csv_records)
+    assert 1 == len(wiretap.output_records)
+    assert wiretap.output_records[0].get_field_data('/0') == ' '.join(csv_records)
 
 @sdc_min_version('3.8.0')
 def test_directory_origin_multi_char_delimited(sdc_builder, sdc_executor):
@@ -912,7 +931,7 @@ def test_directory_origin_multi_char_delimited(sdc_builder, sdc_executor):
 
     The pipeline looks like:
 
-        directory >> trash
+        directory >> wiretap
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
@@ -933,28 +952,28 @@ def test_directory_origin_multi_char_delimited(sdc_builder, sdc_executor):
                              header_line='WITH_HEADER',
                              file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP')
-    trash = pipeline_builder.add_stage('Trash')
+                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=3)
+    wiretap = pipeline_builder.add_wiretap()
 
-    directory >> trash
+    directory >> wiretap.destination
     directory_pipeline = pipeline_builder.build('Multi Char Delimited Directory')
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=3).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 3)
     sdc_executor.stop_pipeline(directory_pipeline)
 
-    output_records = snapshot[directory.instance_name].output
+    assert 3 == len(wiretap.output_records)
+    assert wiretap.output_records[0].get_field_data('/first') == '1'
+    assert wiretap.output_records[0].get_field_data('/second') == '11'
+    assert wiretap.output_records[0].get_field_data('/third') == '111'
+    assert wiretap.output_records[1].get_field_data('/first') == '2'
+    assert wiretap.output_records[1].get_field_data('/second') == '22'
+    assert wiretap.output_records[1].get_field_data('/third') == '222'
+    assert wiretap.output_records[2].get_field_data('/first') == '31'
+    assert wiretap.output_records[2].get_field_data('/second') == '3,3'
+    assert wiretap.output_records[2].get_field_data('/third') == '3,_/-_3,3'
 
-    assert 3 == len(output_records)
-    assert output_records[0].get_field_data('/first') == '1'
-    assert output_records[0].get_field_data('/second') == '11'
-    assert output_records[0].get_field_data('/third') == '111'
-    assert output_records[1].get_field_data('/first') == '2'
-    assert output_records[1].get_field_data('/second') == '22'
-    assert output_records[1].get_field_data('/third') == '222'
-    assert output_records[2].get_field_data('/first') == '31'
-    assert output_records[2].get_field_data('/second') == '3,3'
-    assert output_records[2].get_field_data('/third') == '3,_/-_3,3'
 
 @sdc_min_version('3.0.0.0')
 def test_directory_origin_csv_custom_comment_file(sdc_builder, sdc_executor):
@@ -963,7 +982,7 @@ def test_directory_origin_csv_custom_comment_file(sdc_builder, sdc_executor):
 
     The pipelines looks like:
 
-        directory >> trash
+        directory >> wiretap
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
@@ -973,26 +992,24 @@ def test_directory_origin_csv_custom_comment_file(sdc_builder, sdc_executor):
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
                              file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                             enable_comments = True,
+                             enable_comments=True,
                              file_post_processing='DELETE',
                              files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP')
-    trash = pipeline_builder.add_stage('Trash')
+                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=10)
+    wiretap = pipeline_builder.add_wiretap()
 
-    directory >> trash
+    directory >> wiretap.destination
     directory_pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 2)
     sdc_executor.stop_pipeline(directory_pipeline)
 
     # assert all the data captured have the same raw_data
-    output_records = snapshot[directory.instance_name].output
-
-    assert 2 == len(output_records)
-
-    assert output_records[0].get_field_data('/0') == csv_records[0]
-    assert output_records[1].get_field_data('/0') == csv_records[2]
+    assert 2 == len(wiretap.output_records)
+    assert wiretap.output_records[0].get_field_data('/0') == csv_records[0]
+    assert wiretap.output_records[1].get_field_data('/0') == csv_records[2]
 
 
 @sdc_min_version('3.0.0.0')
@@ -1004,60 +1021,59 @@ def test_directory_origin_custom_csv_empty_line_file(sdc_builder, sdc_executor, 
 
     The pipelines looks like:
 
-        directory >> trash
+        directory >> wiretap
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
     csv_records = setup_dilimited_with_empty_line_file(sdc_executor, tmp_directory)
-    empty_line_position = [1]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
-                             ignore_empty_lines = ignore_empty_line,
+                             ignore_empty_lines=ignore_empty_line,
                              file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE',
                              files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP')
-    trash = pipeline_builder.add_stage('Trash')
-
-    directory >> trash
-    directory_pipeline = pipeline_builder.build()
-    sdc_executor.add_pipeline(directory_pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=10).snapshot
-    sdc_executor.stop_pipeline(directory_pipeline)
-
-    # assert all the data captured have the same raw_data
-    output_records = snapshot[directory.instance_name].output
+                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=10)
+    wiretap = pipeline_builder.add_wiretap()
 
     expected_record_size = len(csv_records)
     if ignore_empty_line:
         expected_record_size = 2
-    assert expected_record_size == len(output_records)
 
-    assert output_records[0].get_field_data('/0') == csv_records[0]
+    directory >> wiretap.destination
+    directory_pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(directory_pipeline)
+
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', expected_record_size)
+    sdc_executor.stop_pipeline(directory_pipeline)
+
+    # assert all the data captured have the same raw_data
+    assert expected_record_size == len(wiretap.output_records)
+
+    assert wiretap.output_records[0].get_field_data('/0') == csv_records[0]
 
     if ignore_empty_line:
-        assert output_records[1].get_field_data('/0') == csv_records[2]
+        assert wiretap.output_records[1].get_field_data('/0') == csv_records[2]
     else:
-        assert output_records[2].get_field_data('/0') == csv_records[2]
+        assert wiretap.output_records[2].get_field_data('/0') == csv_records[2]
 
 
 @sdc_min_version('3.0.0.0')
-@pytest.mark.parametrize('batch_size', [3,4,5,6])
+@pytest.mark.parametrize('batch_size', [15])#4,5,6
 def test_directory_origin_csv_record_overrun_on_batch_boundary(sdc_builder, sdc_executor, batch_size):
     """ Test Directory Origin in Delimited data format. The long delimited record in [2,4,5,8,9]th in the file
     the long delimited record should be ignored in the batch
 
     The pipelines looks like:
 
-        directory >> trash
+    directory >> wiretap.destination
+    directory >= pipeline_finisher
 
     """
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
     csv_records = setup_long_dilimited_file(sdc_executor, tmp_directory)
-    long_dilimited_record_position = [2,4,5,8,9]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
@@ -1065,35 +1081,43 @@ def test_directory_origin_csv_record_overrun_on_batch_boundary(sdc_builder, sdc_
                              file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE', files_directory=tmp_directory,
                              max_record_length_in_chars=10,
-                             process_subdirectories=True, read_order='TIMESTAMP')
+                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=batch_size)
 
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'])
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    directory >> trash
+    directory >> wiretap.destination
+    directory >= pipeline_finisher
+
     directory_pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=batch_size).snapshot
-    sdc_executor.stop_pipeline(directory_pipeline)
+    sdc_executor.start_pipeline(directory_pipeline).wait_for_finished()
 
-    # assert all the data captured have the same raw_data
-    output_records = snapshot[directory.instance_name].output
+    # assert all the data captured has the same raw_data
+    # select shorter records, expected result
+    expected_data = []
+    for csv_record in csv_records:
+        if 10 > len(csv_record):
+            expected_data.append(csv_record)
 
-    expected_batch_size = batch_size
-    for i in range(0, batch_size):
-        if i in long_dilimited_record_position:
-            expected_batch_size = expected_batch_size - 1
+    output_data = []
+    for record in wiretap.output_records:
+        output_data.append(','.join(str(e) for e in record.get_field_data(0).values()))
 
-    assert expected_batch_size == len(output_records)
+    assert expected_data == output_data
 
-    j = 0
-    for i in range(0, batch_size):
-        if j not in long_dilimited_record_position:
-            csv_record_fields = csv_records[j].split(',')
-            for k in range(0, len(csv_record_fields)):
-                output_records[0].get_field_data(f'/{k}') == csv_record_fields[k]
-            j = j + 1
+    # assert that the batch count is:
+    # 3 batches for batchsize 6, 4 batches for batchsize 5, 5 batches for batchsize 3
+    history = sdc_executor.get_pipeline_history(directory_pipeline)
+    if batch_size == 3:
+        assert 5 == history.latest.metrics.counter('pipeline.batchCount.counter').count
+    elif batch_size == 5:
+        assert 4 == history.latest.metrics.counter('pipeline.batchCount.counter').count
+    elif batch_size == 6:
+        assert 3 == history.latest.metrics.counter('pipeline.batchCount.counter').count
 
 
 # SDC-10424
@@ -1153,15 +1177,19 @@ def test_directory_post_delete_on_batch_failure(sdc_builder, sdc_executor):
                           files_directory=tmp_directory,
                           process_subdirectories=True,
                           read_order='TIMESTAMP')
-    trash = builder.add_stage('Trash')
-    origin >> trash
+    wiretap = builder.add_wiretap()
+
+    origin >> wiretap.destination
 
     pipeline = builder.build('Validation')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
     sdc_executor.stop_pipeline(pipeline)
-    assert 1 == len(snapshot[origin.instance_name].output)
+
+    assert 1 == len(wiretap.output_records)
+
 
 # SDC-13559: Directory origin fires one batch after another when Allow Late directories is in effect
 def test_directory_allow_late_directory_wait_time(sdc_builder, sdc_executor):
@@ -1217,21 +1245,21 @@ def test_directory_origin_read_different_file_type(sdc_builder, sdc_executor):
                              files_directory=tmp_directory,
                              error_directory=tmp_directory,
                              read_order='LEXICOGRAPHICAL')
-    trash = builder.add_stage('Trash')
-    directory >> trash
+
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'])
+
+    wiretap = builder.add_wiretap()
+
+    directory >> wiretap.destination
+    directory >= pipeline_finisher
 
     pipeline = builder.build('Validation')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     assert 10 == len(sdc_executor.get_stage_errors(pipeline, directory))
-
-    sdc_executor.stop_pipeline(pipeline)
-
-    output_records = snapshot[directory.instance_name].output
-
-    assert 0 == len(output_records)
+    assert 0 == len(wiretap.output_records)
 
 
 @pytest.mark.parametrize('no_of_threads', [4])
@@ -1706,7 +1734,8 @@ def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
     """Test that directory origin can stop and resume.
     test4.csv file from resources directory is used.
     The test reads the first ten records, stops and resume.
-        directory >> [trash, finisher]
+        directory >> wiretap.destination
+        directory >= pipeline_finisher_executor
     """
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -1714,31 +1743,25 @@ def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
     directory.set_attributes(data_format='DELIMITED', header_line='WITH_HEADER', file_name_pattern='test4.csv',
                              file_name_pattern_mode='GLOB', file_post_processing='NONE',
                              files_directory='/resources/resources/directory_origin', read_order='LEXICOGRAPHICAL',
-                             batch_size_in_recs=1, )
-    trash = pipeline_builder.add_stage('Trash')
+                             batch_size_in_recs=1)
 
-
-
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
     pipeline_finisher_executor.set_attributes(preconditions=['${record:value(\'/Name\') == \'Gino Wehner\'}'],
                                               on_record_error='DISCARD')
 
-    directory >> [trash, pipeline_finisher_executor]
+    directory >> wiretap.destination
+    directory >= pipeline_finisher_executor
 
     directory_pipeline = pipeline_builder.build(
         title='test_directory_stop_resume')
     sdc_executor.add_pipeline(directory_pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1,
-                                             batches=10, wait_for_statuses=['FINISHED'], timeout_sec=120).snapshot
+    sdc_executor.start_pipeline(directory_pipeline).wait_for_finished()
 
     # assert all the data captured have the same raw_data
 
-    output_records = [record for batch in snapshot.snapshot_batches
-                        for record in batch.stage_outputs[directory.instance_name].output]
-
     output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
-                                  output_records]
+                                 wiretap.output_records]
 
     temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
     data_from_csv_files = [f'{row[0]},{row[1]},{row[2]}' for row in temp_data_from_csv_file]
@@ -1750,23 +1773,17 @@ def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
         preconditions=['${record:value(\'/Name\') == \'Dean Hartmann\'}'])
     sdc_executor.update_pipeline(directory_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True, batch_size=1,
-                                             batches=40, wait_for_statuses=['FINISHED'], timeout_sec=120).snapshot
-
     # assert all the data captured have the same raw_data
 
-    output_records = [record for batch in snapshot.snapshot_batches
-                        for record in batch.stage_outputs[directory.instance_name].output]
-
     output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
-                                  output_records]
+                                  wiretap.output_records]
 
     temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
     data_from_csv_files = [f'{row[0]},{row[1]},{row[2]}' for row in temp_data_from_csv_file]
 
     assert len(data_from_csv_files[10:50]) == len(output_records_text_fields)
     assert sorted(data_from_csv_files[10:50]) == sorted(output_records_text_fields)
-    assert output_records_text_fields[0] ==  'Porter Bode,Real-Estate Director,25007'
+    assert output_records_text_fields[0] == 'Porter Bode,Real-Estate Director,25007'
 
 
 @sdc_min_version('3.19.0')
