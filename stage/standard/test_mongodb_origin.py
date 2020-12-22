@@ -12,19 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import string
-import copy
-import pytest
-import json
-import sqlalchemy
 
-from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import mongodb, sdc_min_version
+import pytest
+from streamsets.testframework.markers import mongodb
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
 
 @mongodb
 def test_data_types(sdc_builder, sdc_executor, mongodb):
@@ -45,6 +43,8 @@ INDEX_DATABASE = [
     ('comma', get_random_string(string.ascii_letters, 5).lower() + ',' + get_random_string(string.ascii_letters, 5).lower()),
     ('short', 'a'),
 ]
+
+
 @mongodb
 @pytest.mark.parametrize('database_name_category,index', INDEX_DATABASE, ids=[i[0] for i in INDEX_DATABASE])
 def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name_category, index):
@@ -62,8 +62,8 @@ def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name
                                   database=database,
                                   collection=collection)
 
-    trash = pipeline_builder.add_stage('Trash')
-    mongodb_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
@@ -80,15 +80,13 @@ def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name
         insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
         assert len(insert_list) == len(docs_in_database)
 
-        # Start pipeline and verify the documents using snaphot.
+        # Start pipeline and verify the documents using wiretap.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'name':
-                               record.field['name'].value}
-                              for record in snapshot[mongodb_origin].output]
 
-        assert rows_from_snapshot == ORIG_DOCS
+        assert ORIG_DOCS == [{'name': record.field['name'].value} for record in wiretap.output_records]
 
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
@@ -104,6 +102,8 @@ INDEX_COLLECTION = [
     ('comma', get_random_string(string.ascii_letters, 5).lower() + ',' + get_random_string(string.ascii_letters, 5).lower()),
     ('short', 'a'),
 ]
+
+
 @mongodb
 @pytest.mark.parametrize('collection_name_category,index', INDEX_COLLECTION, ids=[i[0] for i in INDEX_COLLECTION])
 def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_name_category, index):
@@ -121,8 +121,8 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
                                   database=database,
                                   collection=collection)
 
-    trash = pipeline_builder.add_stage('Trash')
-    mongodb_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
@@ -139,16 +139,13 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
         insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
         assert len(insert_list) == len(docs_in_database)
 
-        # Start pipeline and verify the documents using snaphot.
+        # Start pipeline and verify the documents using wiretap.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'name':
-                               record.field['name'].value}
-                              for record in snapshot[mongodb_origin].output]
 
-        assert rows_from_snapshot == ORIG_DOCS
-
+        assert ORIG_DOCS == [{'name': record.field['name'].value} for record in wiretap.output_records]
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
         mongodb.engine.drop_database(mongodb_origin.database)
@@ -157,6 +154,8 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
 NO_EVENTS_DOCS = [
     {'name': 'Flute'}
 ]
+
+
 @mongodb
 def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
     """
@@ -180,9 +179,10 @@ def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
     trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
     mongodb_origin >> trash
-    mongodb_origin >= pipeline_finished_executor
+    mongodb_origin >= [pipeline_finished_executor, wiretap.destination]
 
     pipeline = pipeline_builder.build(title='MongoDB origin no more data event').configure_for_environment(mongodb)
     sdc_executor.add_pipeline(pipeline)
@@ -200,8 +200,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
         assert len(insert_list) == len(docs_in_database)
 
         # Run the pipeline.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=70).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED', timeout_sec=60)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         history = sdc_executor.get_pipeline_history(pipeline)
         # If we are here this means that a no-more-data was sent
@@ -210,12 +209,12 @@ def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
         input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
         output_records = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
         assert input_records == 1, 'Observed %d input records (expected 0)' % input_records
-        assert output_records == 2, 'Observed %d output records (expected 1)' % output_records
+        assert output_records == 4, 'Observed %d output records (expected 4)' % output_records
 
         # We have exactly one output record, check that it is a no-more-data event
-        num_event_records = len(snapshot[mongodb_origin.instance_name].event_records)
+        num_event_records = len(wiretap.output_records)
         assert num_event_records == 1, 'Received %d event records (expected 1)' % num_event_records
-        event_record = snapshot[mongodb_origin.instance_name].event_records[0]
+        event_record = wiretap.output_records[0]
         event_type = event_record.header.values['sdc.event.type']
         assert event_type == 'no-more-data', 'Received %s as event type (expected no-more-data)' % event_type
 
@@ -256,7 +255,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb, batch_size):
 
     try:
         totals_docs = []
-        for i in range(0, 100):
+        for _ in range(0, 100):
             actual_data = dict(f1=get_random_string(string.ascii_letters, 5))
             totals_docs.append(actual_data)
 
