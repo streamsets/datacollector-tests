@@ -149,9 +149,9 @@ def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc
 
     # Using Google pub/sub client, create topic and subscription
     logger.info('Creating topic %s using Google pub/sub client ...', topic_name)
-    topic = pubsub_publisher_client.create_topic(topic_path)
+    pubsub_publisher_client.create_topic(topic_path)
 
-    subscription = pubsub_subscriber_client.create_subscription(subscription_path, topic_path)
+    pubsub_subscriber_client.create_subscription(subscription_path, topic_path)
 
     # Pipeline error configured to google pub sub topic and project
     write_to_google_pub_sub = pipeline_builder.add_error_stage('Write to Google Pub Sub')
@@ -174,22 +174,24 @@ def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc
                                         data_format='TEXT',
                                         stage_on_record_error='TO_ERROR')
 
-    dev_raw_data_source >> google_cloud_storage
+    wiretap = pipeline_builder.add_wiretap()
 
-    pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
+    dev_raw_data_source >> [google_cloud_storage, wiretap.destination]
+
+    write_to_google_pub_sub = pipeline_builder.add_error_stage('Write to Google Pub Sub')
+    write_to_google_pub_sub.set_attributes(topic_id=topic_name,
+                                           project_id=project_id)
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
 
     sdc_executor.add_pipeline(pipeline)
 
     logger.info('Starting GCS Destination pipeline and waiting for it to produce records'
                 ' and transition to finished...')
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    stage = snapshot[google_cloud_storage.instance_name]
-    assert len(stage.error_records) == 10
-    for _ in range(0, 10):
-        assert 'GCS_09' == stage.error_records[_].header['errorCode']
+    assert len(wiretap.output_records) == 10
 
     msgs_to_be_received = 10
     results = []
@@ -216,6 +218,12 @@ def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc
                      message in results]
 
     assert msgs_received == ['GCS_09'] * 10
+
+    history = sdc_executor.get_pipeline_history(pipeline)
+
+    assert history.latest.metrics.counter('stage.GoogleCloudStorage_01.inputRecords.counter').count == 10
+    assert history.latest.metrics.counter('stage.GoogleCloudStorage_01.outputRecords.counter').count == 0
+    assert history.latest.metrics.counter('stage.GoogleCloudStorage_01.errorRecords.counter').count == 10
 
     pubsub_subscriber_client.delete_subscription(subscription_path)
     pubsub_publisher_client.delete_topic(topic_path)
