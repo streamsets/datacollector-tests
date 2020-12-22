@@ -13,13 +13,13 @@
 # limitations under the License.
 
 import copy
-import logging
-import pytest
-import time
-from bson import binary, DBRef, decimal128
-from string import ascii_letters
 import json
+import logging
+import time
+from string import ascii_letters
 
+import pytest
+from bson import binary, DBRef, decimal128
 from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import mongodb, sdc_min_version
@@ -77,20 +77,24 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
     Insert data in MongoDB and then check if MongoDB Oplog origin captures changes in data from MongoDB correctly.
 
     The pipeline looks like:
-        mongodb_oplog >> trash
+        mongodb_oplog >> wiretap
     """
+    input_rec_count = 6
+    input_rec_count2 = 2
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
     time_now = int(time.time())
     mongodb_oplog = pipeline_builder.add_stage('MongoDB Oplog')
     database_name = get_random_string(ascii_letters, 10)
-    # Specify that MongoDB Oplog needs to read changes occuring after time_now.
+    # Specify that MongoDB Oplog needs to read changes occurring after time_now.
     mongodb_oplog.set_attributes(collection='oplog.rs', initial_timestamp_in_secs=time_now, initial_ordinal=1)
 
-    trash = pipeline_builder.add_stage('Trash')
-    mongodb_oplog >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_oplog >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    sdc_executor.add_pipeline(pipeline)
 
     try:
         # Insert documents in MongoDB using PyMongo.
@@ -98,16 +102,15 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
         # Then documents are inserted in that collection.
         mongodb_database = mongodb.engine[database_name]
         mongodb_collection = mongodb_database[get_random_string(ascii_letters, 10)]
-        input_rec_count = 6
         inserted_list = mongodb_collection.insert_many([{'x': i} for i in range(input_rec_count)])
         assert len(inserted_list.inserted_ids) == input_rec_count
 
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', input_rec_count)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[mongodb_oplog].output) == input_rec_count
-        for i, record in enumerate(snapshot[mongodb_oplog].output):
+        assert len(wiretap.output_records) == input_rec_count
+        for i, record in enumerate(wiretap.output_records):
             assert record.field['o']['x'].value == i
             # Verify the operation type is 'i' which is for 'insert' since we inserted the records earlier.
             assert record.field['op'].value == 'i'
@@ -115,14 +118,16 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
 
         # Now we want to make sure that the previous offset is respected over the
         # configured initial timestamp and ordinal
-        input_rec_count2 = 2
         inserted_list2 = mongodb_collection.insert_many([{'x': i} for i in range(input_rec_count2)])
         assert len(inserted_list2.inserted_ids) == input_rec_count2
 
-        snapshot2 = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        wiretap.reset()
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', input_rec_count2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot2[mongodb_oplog].output) == 2
+        assert len(wiretap.output_records) == 2
     finally:
         logger.info('Dropping %s database...', database_name)
         mongodb.engine.drop_database(database_name)
@@ -134,7 +139,7 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
     Create 3 simple documents in MongoDB and confirm that MongoDB origin reads them.
 
     The pipeline looks like:
-        mongodb_origin >> trash
+        mongodb_origin >> wiretap
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -144,8 +149,8 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
                                   database=get_random_string(ascii_letters, 5),
                                   collection=get_random_string(ascii_letters, 10))
 
-    trash = pipeline_builder.add_stage('Trash')
-    mongodb_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
@@ -164,14 +169,11 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
 
         # Start pipeline and verify the documents using snaphot.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'name':
-                               record.field['name'].value}
-                              for record in snapshot[mongodb_origin].output]
 
-        assert rows_from_snapshot == ORIG_DOCS
-
+        assert ORIG_DOCS == [{'name': record.field['name'].value} for record in wiretap.output_records]
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
         mongodb.engine.drop_database(mongodb_origin.database)
@@ -187,7 +189,7 @@ def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
     Step 3. Confirm that MongoDB origin reads the test documents from collection #2
 
     The pipeline looks like:
-        mongodb_origin >> trash
+        mongodb_origin >> wiretap
     """
     database_name = get_random_string(ascii_letters, 5)
     collection1 = get_random_string(ascii_letters, 10)
@@ -202,8 +204,8 @@ def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
                                   database=database_name,
                                   collection=collection2)
 
-    trash = pipeline_builder.add_stage('Trash')
-    mongodb_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
     sdc_executor.add_pipeline(pipeline)
 
@@ -221,20 +223,23 @@ def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
         mongodb_collection2 = mongodb_database[collection2]
         docs_in_col1 = [] # This will be used to compare the result
         # Obtain sample document's _id from collection #1 and assign it to test document as inserting into collection #2
-        for doc in mongodb_collection1.find().sort('_id', 1): # Sort by _id so that we can compare the result easily later
+        for doc in mongodb_collection1.find().sort('_id', 1):
+            # Sort by _id so that we can compare the result easily later
             mongodb_collection2.insert_one({'test_ref': DBRef(collection=collection1, id=doc['_id'])})
             docs_in_col1.append(doc)
 
-        # Step 3. Start pipeline and verify the documents using snapshot.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        # Step 3. Start pipeline and verify the documents using wiretap.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
-        for record, expected in zip(snapshot[mongodb_origin].output, docs_in_col1):
+        for record, expected in zip(wiretap.output_records, docs_in_col1):
             assert record.get_field_data('/test_ref/$ref') == collection1
             assert record.get_field_data('/test_ref/$id') == str(expected['_id'])
 
     finally:
         logger.info('Dropping %s database...', database_name)
         mongodb.engine.drop_database(mongodb_origin.database)
+
 
 @mongodb
 @sdc_min_version('3.0.1.0')
@@ -243,7 +248,7 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
     Create 3 simple documents consists with BSON Binary data type in MongoDB and confirm that MongoDB origin reads them.
 
     The pipeline looks like:
-        mongodb_origin >> trash
+        mongodb_origin >> wiretap
     """
 
     ORIG_BINARY_DOCS = [
@@ -260,8 +265,8 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
                                   database=get_random_string(ascii_letters, 5),
                                   collection=get_random_string(ascii_letters, 10))
 
-    trash = pipeline_builder.add_stage('Trash')
-    mongodb_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
@@ -278,17 +283,18 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
         insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
         assert len(insert_list) == len(docs_in_database)
 
-        # Start pipeline and verify the documents using snaphot.
+        # Start pipeline and verify the documents using wiretap.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'data': str(record.field['data'])} for record in snapshot[mongodb_origin].output]
 
-        assert rows_from_snapshot == [{'data': str(record.get('data'))} for record in ORIG_BINARY_DOCS]
-
+        assert [{'data': str(record.field['data'])} for record in wiretap.output_records] == [
+            {'data': str(record.get('data'))} for record in ORIG_BINARY_DOCS]
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
         mongodb.engine.drop_database(mongodb_origin.database)
+
 
 @mongodb
 @sdc_min_version('3.8.3')
@@ -297,7 +303,7 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
     Validate that we properly process decimal type.
 
     The pipeline looks like:
-        mongodb_origin >> trash
+        mongodb_origin >> wiretap
     """
     ORIG_BINARY_DOCS = [{'data': decimal128.Decimal128("0.5")}]
 
@@ -309,8 +315,8 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
                                   database=get_random_string(ascii_letters, 5),
                                   collection=get_random_string(ascii_letters, 10))
 
-    trash = pipeline_builder.add_stage('Trash')
-    mongodb_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
@@ -332,18 +338,16 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
                                     for item in
                                     mongodb.engine[mongodb_origin.database][mongodb_origin.collection].find()]
 
-        # Start pipeline and verify the documents using snapshot.
+        # Start pipeline and verify the documents using wiretap.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'data': decimal128.Decimal128(str(record.field['data']))}
-                              for record in snapshot[mongodb_origin].output]
 
-        assert rows_from_snapshot == ORIG_BINARY_DOCS
-
+        assert [{'data': decimal128.Decimal128(str(record.field['data']))} for record in wiretap.output_records] == ORIG_BINARY_DOCS
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
-#        mongodb.engine.drop_database(mongodb_origin.database)
+        mongodb.engine.drop_database(mongodb_origin.database)
 
 
 @mongodb
@@ -353,7 +357,7 @@ def test_mongodb_origin_nested_field_offset(sdc_builder, sdc_executor, mongodb):
     nested field.
 
     The pipeline looks like:
-        mongodb_origin >> trash
+        mongodb_origin >> wiretap
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -366,8 +370,8 @@ def test_mongodb_origin_nested_field_offset(sdc_builder, sdc_executor, mongodb):
                                   offset_field_type='STRING',
                                   offset_field='data.data.foo')
 
-    trash = pipeline_builder.add_stage('Trash')
-    mongodb_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
@@ -384,16 +388,14 @@ def test_mongodb_origin_nested_field_offset(sdc_builder, sdc_executor, mongodb):
         insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
         assert len(insert_list) == len(docs_in_database)
 
-        # Start pipeline and verify the documents using snaphot.
+        # Start pipeline and verify the documents using wiretap.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
-        rows_from_snapshot = [{'foo':
-                               record.field['data']['data']['foo'].value}
-                              for record in snapshot[mongodb_origin].output]
 
-        assert rows_from_snapshot == [{'foo': 'bar'}]
-
+        assert [{'foo': record.field['data']['data']['foo'].value} for record in wiretap.output_records] == [
+            {'foo': 'bar'}]
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
         mongodb.engine.drop_database(mongodb_origin.database)
@@ -422,7 +424,7 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
     Create 2 nested documents in MongoDB and confirm that MongoDB Lookup Processor can find the documents.
 
     The pipeline looks like:
-        dev_raw_data_source >> MongoDB Lookup Processor >> trash
+        dev_raw_data_source >> MongoDB Lookup Processor >> wiretap
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -441,8 +443,8 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
     setattr(mongodb_lookup, mongodbLookupResultFieldName(sdc_builder), '/result')
     setattr(mongodb_lookup, mongodbLookupMappingName(sdc_builder), mapping)
 
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> mongodb_lookup >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> mongodb_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
@@ -460,10 +462,11 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
         insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
         assert len(insert_list) == len(docs_in_database)
 
-        # Start pipeline and verify the documents using snaphot.
+        # Start pipeline and verify the documents using wiretap.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-        for record, actual in zip(snapshot[mongodb_lookup].output, NESTED_DOCS):
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        for record, actual in zip(wiretap.output_records, NESTED_DOCS):
             assert record.get_field_data('/result/location/city') == actual['location']['city']
             assert record.get_field_data('/result/location/state') == actual['location']['state']
 
@@ -578,7 +581,7 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
     Create 2 nested documents in MongoDB and confirm that MongoDB Lookup Processor can find the documents.
 
     The pipeline looks like:
-        dev_raw_data_source >> MongoDB Lookup Processor >> trash
+        dev_raw_data_source >> MongoDB Lookup Processor >> wiretap
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -599,8 +602,8 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
     setattr(mongodb_lookup, mongodbLookupResultFieldName(sdc_builder), '/result')
     setattr(mongodb_lookup, mongodbLookupMappingName(sdc_builder), mapping)
 
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> mongodb_lookup >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> mongodb_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
     try:
@@ -618,15 +621,18 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
         insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
         assert len(insert_list) == len(docs_in_database)
 
-        # Start pipeline and verify the documents using snaphot.
+        # Start pipeline and verify the documents using wiretap.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-        for record, actual in zip(snapshot[mongodb_lookup].output, NESTED_DOCS):
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        for record, actual in zip(wiretap.output_records, NESTED_DOCS):
             assert record.get_field_data('/result/location/city')  == actual['location']['city']
 
     finally:
         logger.info('Dropping %s database...', mongodb_lookup.database)
         mongodb.engine.drop_database(mongodb_lookup.database)
+
 
 @mongodb
 def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
