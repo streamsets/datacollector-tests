@@ -124,7 +124,10 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'TEXT', wiretap)
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -171,9 +174,11 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'WITH_KEY')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'TEXT', wiretap)
-
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -263,7 +268,10 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'XML')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'XML', wiretap)
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -310,7 +318,10 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected,
                                     'XML_MULTI_ELEMENT', wiretap)
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -356,7 +367,10 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster, port):
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'CSV')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'CSV', wiretap)
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -402,7 +416,10 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster, port):
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'BINARY')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'BINARY', wiretap)
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -450,7 +467,10 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster, po
         produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg, 'AVRO', wiretap)
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -501,7 +521,10 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster,
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg,
                                     'AVRO_WITHOUT_SCHEMA', wiretap)
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -560,9 +583,11 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster, port):
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'SYSLOG')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'SYSLOG', wiretap)
-
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -622,9 +647,11 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster, port):
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'NETFLOW')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'NETFLOW', wiretap)
-
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -701,9 +728,11 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster, port):
         # Publish messages to Kafka and verify using snapshot if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'COLLECTD')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'COLLECTD', wiretap)
-
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
@@ -754,7 +783,10 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster, port):
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'LOG')
         verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, 'LOG', wiretap)
     finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        try:
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
+        except Exception as e:
+            logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
         sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
