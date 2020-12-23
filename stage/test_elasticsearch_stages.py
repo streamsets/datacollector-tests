@@ -86,9 +86,9 @@ def test_offset_upgrade(sdc_builder, sdc_executor, elasticsearch):
     builder = sdc_builder.get_pipeline_builder()
     es_origin = builder.add_stage('Elasticsearch', type='origin')
     es_origin.set_attributes(index=es_index, query="{'query': {'match_all': {}}}")
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    es_origin >> trash
+    es_origin >> wiretap.destination
     pipeline = builder.build().configure_for_environment(elasticsearch)
     sdc_executor.add_pipeline(pipeline)
 
@@ -106,13 +106,15 @@ def test_offset_upgrade(sdc_builder, sdc_executor, elasticsearch):
         elasticsearch.client.create_document(es_index, es_doc_id, raw)
 
         # Run pipeline and assert
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         # no need to stop pipeline - as ES origin shuts off once data is read from Elasticsearch
-        snapshot_data = snapshot[es_origin.instance_name].output[0].field
+
+        assert len(wiretap.output_records) == 1
         # assert ES meta
-        assert snapshot_data['_index'] == es_index and snapshot_data['_id'] == es_doc_id
+        assert wiretap.output_records[0].field['_index'] == es_index
+        assert wiretap.output_records[0].field['_id'] == es_doc_id
         # assert ES data
-        assert snapshot_data['_source']['body'] == raw_str
+        assert wiretap.output_records[0].field['_source']['body'] == raw_str
 
         # Now let's validate that the offset doesn't have the poll key any more
         offset = sdc_executor.api_client.get_pipeline_committed_offsets(pipeline.id).response.json()
