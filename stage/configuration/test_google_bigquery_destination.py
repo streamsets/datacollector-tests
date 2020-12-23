@@ -68,7 +68,7 @@ def test_insert_id_expression(sdc_builder, sdc_executor):
 def test_on_record_error(sdc_builder, sdc_executor, gcp, stage_attributes):
     """Test that BigQuery API does not return a NullPointerException if asked for an empty table name
     Pipeline:
-        dev_raw_data_source >> google_bigquery
+        dev_raw_data_source >> [google_bigquery, wiretap]
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -87,14 +87,15 @@ def test_on_record_error(sdc_builder, sdc_executor, gcp, stage_attributes):
                                    table_name=table_name,
                                    stage_on_record_error=stage_attributes['on_record_error'])
 
+    wiretap = pipeline_builder.add_wiretap()
+
     # Implement pipeline topology
-    dev_raw_data_source >> google_bigquery
+    dev_raw_data_source >> [google_bigquery, wiretap.destination]
 
     pipeline = pipeline_builder.build().configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
     except Exception as e:
         if stage_attributes['on_record_error'] == 'STOP_PIPELINE':
             logger.info("Verify that pipeline transitioned to RUN_ERROR state...")
@@ -103,11 +104,10 @@ def test_on_record_error(sdc_builder, sdc_executor, gcp, stage_attributes):
             assert 'BIGQUERY_18' in e.response['message']
     finally:
         if stage_attributes['on_record_error'] == 'TO_ERROR':
-            stage = snapshot[google_bigquery.instance_name]
             logger.info("Verify that destination stage produced 1 error record...")
             # Verify that we have exactly one record
-            assert len(stage.error_records) == 1
-            assert stage.error_records[0].header['errorCode'] == 'BIGQUERY_18'
+            assert len(wiretap.error_records) == 1
+            assert wiretap.error_records[0].header['errorCode'] == 'BIGQUERY_18'
             status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
             assert status == 'FINISHED'
 
