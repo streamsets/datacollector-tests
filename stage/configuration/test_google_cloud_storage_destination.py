@@ -283,7 +283,7 @@ def test_on_missing_field(sdc_builder, sdc_executor, stage_attributes):
 def test_on_record_error(sdc_builder, sdc_executor, gcp, stage_attributes):
     """Send data to Google cloud storage from Dev Raw Data Source and generate an error record
        The pipeline looks like:
-           dev_raw_data_source >> google_cloud_storage
+           dev_raw_data_source >> [google_cloud_storage, wiretap]
      """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -300,13 +300,14 @@ def test_on_record_error(sdc_builder, sdc_executor, gcp, stage_attributes):
                                         data_format='JSON',
                                         stage_on_record_error=stage_attributes['on_record_error'])
 
-    dev_raw_data_source >> google_cloud_storage
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> [google_cloud_storage, wiretap.destination]
 
     pipeline = pipeline_builder.build().configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
     except Exception as e:
         if stage_attributes['on_record_error'] == 'STOP_PIPELINE':
             logger.info("Verify that pipeline transitioned to RUN_ERROR state...")
@@ -315,11 +316,10 @@ def test_on_record_error(sdc_builder, sdc_executor, gcp, stage_attributes):
             assert 'GCS_09' in e.response['message']
     finally:
         if stage_attributes['on_record_error'] == 'TO_ERROR':
-            stage = snapshot[google_cloud_storage.instance_name]
             logger.info("Verify that destination stage produced 1 error record...")
             # Verify that we have exactly one record
-            assert len(stage.error_records) == 1
-            assert stage.error_records[0].header['errorCode'] == 'GCS_09'
+            assert len(wiretap.error_records) == 1
+            assert wiretap.error_records[0].header['errorCode'] == 'GCS_09'
             status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
             assert status == 'FINISHED'
 
