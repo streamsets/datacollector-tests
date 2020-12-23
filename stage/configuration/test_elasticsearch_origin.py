@@ -74,7 +74,7 @@ def test_index(sdc_builder, sdc_executor, elasticsearch, valid_index):
     """
     To test the index configuration we create a pipeline as follows:
 
-    Elasticsearch >> Trash
+    Elasticsearch >> Wiretap
 
     Then we add a document to an index. When a valid index name is used we expect to find the document in the index.
     When an invalid index name is used we expect an error to happen.
@@ -90,9 +90,9 @@ def test_index(sdc_builder, sdc_executor, elasticsearch, valid_index):
     origin.query = '{"query": {"match_all": {}}}'
     origin.index = origin_index
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(elasticsearch)
 
@@ -104,11 +104,11 @@ def test_index(sdc_builder, sdc_executor, elasticsearch, valid_index):
 
     try:
         if valid_index:
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-            assert len(snapshot[origin].output) == 1
+            assert len(wiretap.output_records) == 1
 
-            record = snapshot[origin].output[0]
+            record = wiretap.output_records[0]
             assert record.field['_id'] == doc_id
             assert record.field['_index'] == index
             assert record.field['_source'] == {"number": 1}
@@ -180,7 +180,7 @@ def test_query(sdc_builder, sdc_executor, elasticsearch, test_data):
 
     The pipeline is as follows:
 
-    Elasticsearch >> Trash
+    Elasticsearch >> Wiretap
 
     """
 
@@ -204,9 +204,9 @@ def test_query(sdc_builder, sdc_executor, elasticsearch, test_data):
         origin.index = index
         origin.query = test_data['query']
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(elasticsearch)
 
@@ -220,12 +220,12 @@ def test_query(sdc_builder, sdc_executor, elasticsearch, test_data):
             assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find(test_data['error_code']) != -1
 
         else:
-            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-            assert len(snapshot[origin].output) == doc_count
+            assert len(wiretap.output_records) == doc_count
 
             for i in range(0, doc_count):
-                record = snapshot[origin].output[i]
+                record = wiretap.output_records[i]
                 assert record.field['_index'] == index
                 assert record.field['_source'] == {"number": i + 1}
 
@@ -290,12 +290,12 @@ def test_secret_access_key(sdc_builder, sdc_executor, stage_attributes):
     {'with_valid_password': None, 'with_valid_username': None, 'error_code': 'ELASTICSEARCH_20'},
     {'with_valid_password': True, 'with_valid_username': True, 'error_code': None},
 ])
-@sdc_min_version('3.17.0') # The way the test validates various combinations isn't compatible with pre-3.17 pipelines
+@sdc_min_version('3.17.0')  # The way the test validates various combinations isn't compatible with pre-3.17 pipelines
 def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch, stage_attributes):
     """
     To test the username and password configurations we create a pipeline as follows:
 
-    Elasticsearch >> Trash
+    Elasticsearch >> Wiretap
 
     Then we check different combinations of valid/invalid/empty username/password configuration values.
     We expect no errors when the username and password are not empty and are valid.
@@ -325,9 +325,9 @@ def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch
     origin.query = '{"query": {"match_all": {}}}'
     origin.index = index
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(elasticsearch)
 
@@ -346,11 +346,11 @@ def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch
         elasticsearch.client.create_document(index=index, id=doc_id, body={"number": 1})
 
         try:
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-            assert len(snapshot[origin].output) == 1
+            assert len(wiretap.output_records) == 1
 
-            record = snapshot[origin].output[0]
+            record = wiretap.output_records[0]
             assert record.field['_index'] == index
             assert record.field['_id'] == doc_id
             assert record.field['_source'] == {"number": 1}
@@ -377,7 +377,7 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
     """
     To test the ssl truststore password configuration we create a pipeline as follows:
 
-    Elasticsearch >> Trash
+    Elasticsearch >> Wiretap
 
     Then we copy a keystore file from the STF to SDC container and configure the Elasticsearch origin to use this file.
     If the file is a valid JKS file and the password is correct we search for a document in the index we have put before.
@@ -408,9 +408,9 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
         origin.ssl_truststore_path = keystore_file_path
         origin.ssl_truststore_password = get_random_string() if stage_attributes['password'] is None else stage_attributes['password']
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(elasticsearch)
 
@@ -422,11 +422,11 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
             elasticsearch.client.create_document(index=origin.index, id=doc_id, body={"number": 1})
 
             try:
-                snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-                assert len(snapshot[origin].output) == 1
+                assert len(wiretap.output_records) == 1
 
-                record = snapshot[origin].output[0]
+                record = wiretap.output_records[0]
                 assert record.field['_id'] == doc_id
                 assert record.field['_index'] == origin.index
                 assert record.field['_source'] == {"number": 1}
@@ -439,7 +439,8 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
                 sdc_executor.validate_pipeline(pipeline)
 
             assert e.value.issues['issueCount'] == 1
-            assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find(stage_attributes['error_code']) != -1
+            assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find(
+                stage_attributes['error_code']) != -1
 
     finally:
         sdc_executor.execute_shell(f'rm -frv {files_directory}')
@@ -462,7 +463,7 @@ def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasti
     """
     To test the ssl truststore path configuration we create a pipeline as follows:
 
-    Elasticsearch >> Trash
+    Elasticsearch >> Wiretap
 
     Then we copy a keystore file from the STF to SDC container.
     If the ssl_truststore_path configuration points to an existing file the pipeline should succeed
@@ -496,9 +497,9 @@ def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasti
             else (keystore_file_path if stage_attributes['valid_file_path'] else get_random_string())
         origin.ssl_truststore_password = stage_attributes['password']
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(elasticsearch)
 
@@ -518,11 +519,11 @@ def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasti
             elasticsearch.client.create_document(index=origin.index, id=doc_id, body={"number": 1})
 
             try:
-                snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-                assert len(snapshot[origin].output) == 1
+                assert len(wiretap.output_records) == 1
 
-                record = snapshot[origin].output[0]
+                record = wiretap.output_records[0]
                 assert record.field['_id'] == doc_id
                 assert record.field['_index'] == origin.index
                 assert record.field['_source'] == {"number": 1}
@@ -540,7 +541,7 @@ def test_use_security(sdc_builder, sdc_executor, elasticsearch, stage_attributes
     """
     To test the use security configuration we create a pipeline as follows:
 
-    Elasticsearch >> Trash
+    Elasticsearch >> Wiretap
 
     Since the Elasticsearch server requires using a username with a password
     an error should happen if the use security property is false.
@@ -556,9 +557,9 @@ def test_use_security(sdc_builder, sdc_executor, elasticsearch, stage_attributes
     origin.query = '{"query": {"match_all": {}}}'
     origin.index = index
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(elasticsearch)
 
@@ -577,11 +578,11 @@ def test_use_security(sdc_builder, sdc_executor, elasticsearch, stage_attributes
 
     try:
         if stage_attributes['use_security']:
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-            assert len(snapshot[origin].output) == 1
+            assert len(wiretap.output_records) == 1
 
-            record = snapshot[origin].output[0]
+            record = wiretap.output_records[0]
             assert record.field['_id'] == doc_id
             assert record.field['_index'] == index
             assert record.field['_source'] == {"number": 1}
