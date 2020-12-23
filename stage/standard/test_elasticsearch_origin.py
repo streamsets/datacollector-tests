@@ -16,7 +16,7 @@ import logging
 import string
 
 import pytest
-from streamsets.testframework.markers import elasticsearch, sdc_min_version
+from streamsets.testframework.markers import elasticsearch
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -31,13 +31,15 @@ def test_data_types(sdc_builder, sdc_executor, elasticsearch):
 
 
 INDEX_NAMES = [
-    ('max_size', get_random_string(string.ascii_letters, 255).lower()),
-    ('underscore', get_random_string(string.ascii_letters, 10).lower() + '_' + get_random_string(string.ascii_letters, 10).lower()),
-    ('hyphen', get_random_string(string.ascii_letters, 10).lower() + '-' + get_random_string(string.ascii_letters, 10).lower()),
-    ('plus', get_random_string(string.ascii_letters, 10).lower() + '+' + get_random_string(string.ascii_letters, 10).lower()),
-    ('dot', get_random_string(string.ascii_letters, 10).lower() + '.' + get_random_string(string.ascii_letters, 10).lower()),
-    ('numbers', get_random_string(string.ascii_letters, 10).lower() + '1234567890'),
+    ('max_size', get_random_string(string.ascii_lowercase, 255)),
+    ('underscore', get_random_string(string.ascii_lowercase, 10) + '_' + get_random_string(string.ascii_lowercase, 10)),
+    ('hyphen', get_random_string(string.ascii_lowercase, 10) + '-' + get_random_string(string.ascii_lowercase, 10)),
+    ('plus', get_random_string(string.ascii_lowercase, 10) + '+' + get_random_string(string.ascii_lowercase, 10)),
+    ('dot', get_random_string(string.ascii_lowercase, 10) + '.' + get_random_string(string.ascii_lowercase, 10)),
+    ('numbers', get_random_string(string.ascii_lowercase, 10) + '1234567890'),
 ]
+
+
 @elasticsearch
 @pytest.mark.parametrize('name_category,index', INDEX_NAMES, ids=[i[0] for i in INDEX_NAMES])
 def test_object_names(sdc_builder, sdc_executor, elasticsearch, name_category, index):
@@ -48,9 +50,9 @@ def test_object_names(sdc_builder, sdc_executor, elasticsearch, name_category, i
     builder = sdc_builder.get_pipeline_builder()
     origin = builder.add_stage('Elasticsearch', type='origin')
     origin.set_attributes(index=index, query="{'query': {'match_all': {}}}")
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
     es_origin_pipeline = builder.build().configure_for_environment(elasticsearch)
     sdc_executor.add_pipeline(es_origin_pipeline)
 
@@ -58,8 +60,8 @@ def test_object_names(sdc_builder, sdc_executor, elasticsearch, name_category, i
         # Put data to Elasticsearch
         elasticsearch.client.create_document(index, doc_id, raw)
 
-        snapshot = sdc_executor.capture_snapshot(es_origin_pipeline, start_pipeline=True).snapshot
-        record = snapshot[origin].output[0]
+        sdc_executor.start_pipeline(es_origin_pipeline).wait_for_finished()
+        record = wiretap.output_records[0]
 
         assert record.field['_index'] == index
         assert record.field['_id'] == doc_id
@@ -73,7 +75,7 @@ def test_object_names(sdc_builder, sdc_executor, elasticsearch, name_category, i
 def test_multiple_batches(sdc_builder, sdc_executor, elasticsearch, incremental):
     max_batch_size = 1000
     batches = 10
-    index = get_random_string(string.ascii_letters, 10).lower()
+    index = get_random_string(string.ascii_lowercase, 10)
 
     builder = sdc_builder.get_pipeline_builder()
     origin = builder.add_stage('Elasticsearch', type='origin')
@@ -141,7 +143,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, elasticsearch):
 def test_resume_offset(sdc_builder, sdc_executor, elasticsearch):
     iterations = 3
     records_per_iteration = 10
-    index = get_random_string(string.ascii_letters, 10).lower()
+    index = get_random_string(string.ascii_lowercase, 10)
 
     builder = sdc_builder.get_pipeline_builder()
     origin = builder.add_stage('Elasticsearch', type='origin')
