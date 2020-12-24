@@ -1,7 +1,21 @@
-import dateutil.parser
+# Copyright 2020 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import json
 from collections import OrderedDict
 
+import dateutil.parser
 import pytest
 
 # A dictionary that maps default data types to default values
@@ -18,6 +32,7 @@ DEFAULT_TYPE_TO_VALUE = {
     'STRING': 'Default Value',
     'TIME': '2019-11-11T12:00Z'
 }
+
 
 @pytest.mark.parametrize('stage_attributes', [{'default_type': 'BOOLEAN', 'missing_fields': 'USE_DEFAULT'},
                                               {'default_type': 'DATE', 'missing_fields': 'USE_DEFAULT'},
@@ -49,6 +64,7 @@ def test_default_value(sdc_builder, sdc_executor, stage_attributes):
     stage_attributes['default_type'] = 'STRING'
     test_default_type(sdc_builder, sdc_executor, stage_attributes)
 
+
 @pytest.mark.parametrize('stage_attributes', [{'extra_fields': 'TO_ERROR'}])
 def test_discard_fields(sdc_builder, sdc_executor, stage_attributes):
     """Tests the discard_fields configuration property.  If a discarded field is
@@ -62,8 +78,9 @@ def test_discard_fields(sdc_builder, sdc_executor, stage_attributes):
     stage_attributes.update(dict(discard_fields=['/f1'],
                                  fields_to_order=['/f3', '/f2']))
 
-    stage_snapshot = _get_pipeline_snapshot(sdc_builder, sdc_executor, data, stage_attributes)
-    assert [record.field for record in stage_snapshot.output] == [expected_data]
+    wiretap = _get_pipeline_records(sdc_builder, sdc_executor, data, stage_attributes)
+    assert [record.field for record in wiretap.output_records] == [expected_data]
+
 
 @pytest.mark.parametrize('stage_attributes', [{'extra_fields': 'DISCARD'}, {'extra_fields': 'TO_ERROR'}])
 def test_extra_fields(sdc_builder, sdc_executor, stage_attributes):
@@ -77,13 +94,13 @@ def test_extra_fields(sdc_builder, sdc_executor, stage_attributes):
     expected_data = OrderedDict([('f3', 'f3'), ('f2', 'f2')])
 
     stage_attributes['fields_to_order'] = ['/f3', '/f2']
-    stage_snapshot = _get_pipeline_snapshot(sdc_builder, sdc_executor, data,
-                                            stage_attributes)
+    wiretap = _get_pipeline_records(sdc_builder, sdc_executor, data, stage_attributes)
 
     if stage_attributes['extra_fields'] == 'TO_ERROR':
-        assert len(stage_snapshot.error_records) == 1
+        assert len(wiretap.error_records) == 1
     else:
-        assert [record.field for record in stage_snapshot.output] == [expected_data]
+        assert [record.field for record in wiretap.output_records] == [expected_data]
+
 
 def test_fields_to_order(sdc_builder, sdc_executor):
     """Test the most basic configuration of the field order processor stage.
@@ -94,9 +111,9 @@ def test_fields_to_order(sdc_builder, sdc_executor):
     stage_attributes = {'fields_to_order': ['/f1', '/f3', '/f2']}
     expected_data = OrderedDict([('f1', 'f1'), ('f3', 'f3'), ('f2', 'f2')])
 
-    stage_snapshot = _get_pipeline_snapshot(sdc_builder, sdc_executor, data,
-                                            stage_attributes)
-    assert [record.field for record in stage_snapshot.output] == [expected_data]
+    wiretap = _get_pipeline_records(sdc_builder, sdc_executor, data, stage_attributes)
+    assert [record.field for record in wiretap.output_records] == [expected_data]
+
 
 @pytest.mark.parametrize('stage_attributes', [{'missing_fields': 'TO_ERROR'}, {'missing_fields': 'USE_DEFAULT'}])
 def test_missing_fields(sdc_builder, sdc_executor, stage_attributes):
@@ -113,27 +130,25 @@ def test_missing_fields(sdc_builder, sdc_executor, stage_attributes):
 
     stage_attributes['fields_to_order'] = ['/f1', '/f2', '/f3', '/f4']
 
-    stage_snapshot = _get_pipeline_snapshot(sdc_builder, sdc_executor, data,
-                                            stage_attributes)
+    wiretap = _get_pipeline_records(sdc_builder, sdc_executor, data, stage_attributes)
     if stage_attributes['missing_fields'] == 'USE_DEFAULT':
-        assert [record.field['f4'].type for record in stage_snapshot.output] == [
-            stage_attributes['default_type']]
+        assert [record.field['f4'].type for record in wiretap.output_records] == [stage_attributes['default_type']]
 
         default_input_value = [stage_attributes['default_value']]
-        default_output_value = [str(record.field['f4'].value) for record in
-                                stage_snapshot.output]
+        default_output_value = [str(record.field['f4'].value) for record in wiretap.output_records]
 
         # If the default data type is a DATE, DATETIME or TIME, just comparing
         # strings doesn't really work.  You'll need to convert to the
         # appropriate datetime objects with the correct timezone and then
         # compare.
-        if (stage_attributes['default_type'] in ['DATE', 'DATETIME', 'TIME']):
+        if stage_attributes['default_type'] in ['DATE', 'DATETIME', 'TIME']:
             default_output_value = [dateutil.parser.parse(f"{record.field['f4'].value.isoformat()}Z")
-                                    for record in stage_snapshot.output]
+                                    for record in wiretap.output_records]
             default_input_value = [dateutil.parser.parse(stage_attributes['default_value'])]
         assert default_output_value == default_input_value
     else:
-        assert len(stage_snapshot.error_records) == 1
+        assert len(wiretap.error_records) == 1
+
 
 @pytest.mark.parametrize('stage_attributes', [{'on_record_error': 'DISCARD'},
                                               {'on_record_error': 'STOP_PIPELINE'},
@@ -153,26 +168,26 @@ def test_on_record_error(sdc_builder, sdc_executor, stage_attributes):
         pipeline_builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(
             data_format='JSON',
-            raw_data=json.dumps(source_data))
+            raw_data=json.dumps(source_data),
+            stop_after_first_batch=True
+        )
         pipeline_builder.add_error_stage('Discard')
         field_order = pipeline_builder.add_stage('Field Order').set_attributes(**stage_attributes)
-        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
-        dev_raw_data_source >> field_order >> [trash, pipeline_finisher]
+        dev_raw_data_source >> field_order >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline,
-                                                 start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # if on_record_error is DISCARD, check that output and error counts are
         # 0.  If on_record_error is TO_ERROR, then error counts should be 1
         if stage_attributes['on_record_error'] == 'DISCARD':
-            assert len(snapshot[field_order].output) == 0
-            assert len(snapshot[field_order].error_records) == 0
+            assert len(wiretap.output_records) == 0
+            assert len(wiretap.error_records) == 0
         elif stage_attributes['on_record_error'] == 'TO_ERROR':
-            assert len(snapshot[field_order].error_records) == 1
+            assert len(wiretap.error_records) == 1
         else:
             # The third condition is when on_record_error is set to
             # STOP_PIPELINE, in which case there should be an exception
@@ -187,10 +202,7 @@ def test_on_record_error(sdc_builder, sdc_executor, stage_attributes):
         test_succeeded = (status_message == 'RUN_ERROR') if (stage_attributes['on_record_error'] ==
                                                              'STOP_PIPELINE') else False
         assert test_succeeded
-    finally:
-        status = sdc_executor.get_pipeline_status(pipeline).response.json()['status']
-        if status == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
+
 
 @pytest.mark.parametrize('stage_attributes', [{'output_type': 'LIST'}, {'output_type': 'LIST_MAP'}])
 def test_output_type(sdc_builder, sdc_executor, stage_attributes):
@@ -202,10 +214,10 @@ def test_output_type(sdc_builder, sdc_executor, stage_attributes):
                                   'LIST') else OrderedDict
 
     stage_attributes['fields_to_order'] = ['/f3', '/f2', '/f1']
-    stage_snapshot = _get_pipeline_snapshot(sdc_builder, sdc_executor, data,
-                                            stage_attributes)
+    wiretap = _get_pipeline_records(sdc_builder, sdc_executor, data, stage_attributes)
 
-    assert [type(record.field) for record in stage_snapshot.output] == [expected_data_type]
+    assert [type(record.field) for record in wiretap.output_records] == [expected_data_type]
+
 
 def test_preconditions(sdc_builder, sdc_executor):
     """Tests the preconditions configuration.  This is setup to fail the
@@ -216,9 +228,9 @@ def test_preconditions(sdc_builder, sdc_executor):
         'fields_to_order': ['/f3', '/f2', '/f1'],
         'preconditions': ["${record:value('/f1') == 'f2'}"]
     }
-    stage_snapshot = _get_pipeline_snapshot(sdc_builder, sdc_executor, data,
-                                            stage_attributes)
-    assert len(stage_snapshot.error_records) == 1
+    wiretap = _get_pipeline_records(sdc_builder, sdc_executor, data, stage_attributes)
+    assert len(wiretap.error_records) == 1
+
 
 def test_required_fields(sdc_builder, sdc_executor):
     """Tests the required_fields configuration.  This test is setup to fail by
@@ -230,40 +242,35 @@ def test_required_fields(sdc_builder, sdc_executor):
         'required_fields': ['/f4']
     }
 
-    stage_snapshot = _get_pipeline_snapshot(sdc_builder, sdc_executor, data,
-                                            stage_attributes)
+    wiretap = _get_pipeline_records(sdc_builder, sdc_executor, data, stage_attributes)
 
     # The one processed record should trigger an error since
     # a required field is missing in the source data
-    assert len(stage_snapshot.error_records) == 1
+    assert len(wiretap.error_records) == 1
 
-def _get_pipeline_snapshot(sdc_builder, sdc_executor, source_data, stage_attributes):
+
+def _get_pipeline_records(sdc_builder, sdc_executor, source_data, stage_attributes):
     """A utility function that creates a pipeline which includes a dev raw data
-    source, a field order processor.  The destination is Trash. The
-    pipeline is executed and a snapshot of the field order stage is returned.
+    source, a field order processor.  The destination is Wiretap. The
+    pipeline is executed and the wiretap output is returned.
     The pipeline runs for only one batch of input and is removed once
     completed. This function is used by all other test functions in this module
     except the test_on_record_error test case which needs some special
     handling.
     """
-    try:
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        dev_raw_data_source = pipeline_builder.add_stage(
-            'Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                  raw_data=json.dumps(source_data))
-        pipeline_builder.add_error_stage('Discard')
-        field_order = pipeline_builder.add_stage('Field Order').set_attributes(**stage_attributes)
-        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        trash = pipeline_builder.add_stage('Trash')
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage(
+        'Dev Raw Data Source').set_attributes(data_format='JSON',
+                                              raw_data=json.dumps(source_data),
+                                              stop_after_first_batch=True)
+    pipeline_builder.add_error_stage('Discard')
+    field_order = pipeline_builder.add_stage('Field Order').set_attributes(**stage_attributes)
+    wiretap = pipeline_builder.add_wiretap()
 
-        dev_raw_data_source >> field_order >> [trash, pipeline_finisher]
-        pipeline = pipeline_builder.build()
+    dev_raw_data_source >> field_order >> wiretap.destination
+    pipeline = pipeline_builder.build()
 
-        sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline,
-                                                 start_pipeline=True).snapshot
-        return snapshot[field_order]
-    finally:
-        status = sdc_executor.get_pipeline_status(pipeline).response.json()['status']
-        if status == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    return wiretap
