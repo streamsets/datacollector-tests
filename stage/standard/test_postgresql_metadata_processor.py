@@ -39,7 +39,7 @@ DATA_TYPES = [
     ('2020-01-01 10:00:00', 'DATE', datetime.datetime(2020, 1, 1, 10, 0), 'date'),
     ('2020-01-01 10:00:00', 'TIME', datetime.datetime(2020, 1, 1, 10, 0), 'time without time zone'),
     ('2020-01-01 10:00:00', 'DATETIME', datetime.datetime(2020, 1, 1, 10, 0), 'timestamp without time zone'),
-    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', '2020-01-01T10:00Z', 'timestamp with time zone'),
+    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', '2020-01-01T10:00:00Z', 'timestamp with time zone'),
     ('string', 'STRING', 'string', 'character varying'),
     ('string', 'BYTE_ARRAY', b'string', 'bytea'),
 ]
