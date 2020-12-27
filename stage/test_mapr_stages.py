@@ -433,6 +433,8 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     MapR Streams consumer pipeline:
         mapr_streams_consumer >> trash
     """
+    if cluster.mep_version != '6.0':
+        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
     # MapR Stream name has to be pre-created in MapR cluster. Clusterdock MapR image has this already.
     stream_name = '/sample-stream'
     stream_topic_name = stream_name + ':' + get_random_string(string.ascii_letters, 10)
@@ -578,6 +580,8 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
     MapR Streams consumer pipeline:
         mapr_streams_consumer >> trash
     """
+    if cluster.mep_version != '6.0':
+        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
     _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, cluster, False)
 
 
@@ -594,6 +598,8 @@ def test_mapr_standalone_multitopic_streams_with_timestamp(sdc_builder, sdc_exec
     MapR Streams consumer pipeline:
         mapr_streams_consumer >> trash
     """
+    if cluster.mep_version != '6.0':
+        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
     _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, cluster, True)
 
 
