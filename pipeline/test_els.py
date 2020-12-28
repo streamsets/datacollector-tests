@@ -39,18 +39,19 @@ def test_pipeline_el_user(random_expression_pipeline_builder, sdc_executor):
 
     # Run the pipeline as one user.
     sdc_executor.set_user('arvind')
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
     sdc_executor.stop_pipeline(pipeline)
 
-    record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
+    record = random_expression_pipeline_builder.wiretap.output_records[0]
     assert record.header['values']['user'] == 'arvind'
 
     # And then try different user.
+    random_expression_pipeline_builder.wiretap.reset()
     sdc_executor.set_user('girish')
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
     sdc_executor.stop_pipeline(pipeline)
 
-    record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
+    record = random_expression_pipeline_builder.wiretap.output_records[0]
     assert record.header['values']['user'] == 'girish'
 
 
@@ -65,10 +66,10 @@ def test_pipeline_el_name_title_id_version(random_expression_pipeline_builder, s
     pipeline.metadata['dpm.pipeline.version'] = 42
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
     sdc_executor.stop_pipeline(pipeline)
 
-    record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
+    record = random_expression_pipeline_builder.wiretap.output_records[0]
     assert record.header['values']['name'] == pipeline.id
     assert record.header['values']['id'] == pipeline.id
     assert record.header['values']['title'] == pipeline.title
@@ -79,10 +80,8 @@ def test_str_unescape_and_replace_el(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'TEXT'
-    dev_raw_data_source.raw_data = 'here\nis\tsome\ndata'
-    dev_raw_data_source.use_custom_delimiter = True
-    dev_raw_data_source.custom_delimiter = '^^^'
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='here\nis\tsome\ndata',
+                                       use_custom_delimiter=True, custom_delimiter='^^^')
 
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     expression_evaluator.field_expressions = [
@@ -92,15 +91,20 @@ def test_str_unescape_and_replace_el(sdc_builder, sdc_executor):
          'expression': '${str:replace(record:value("/transformed"), str:unescapeJava("\\\\t"), "<TAB>")}'}
     ]
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> expression_evaluator >> trash
+
+    dev_raw_data_source >> [expression_evaluator, wiretap_1.destination]
+    expression_evaluator >> wiretap_2.destination
+
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    input_records = snapshot[dev_raw_data_source.instance_name].output
-    output_records = snapshot[expression_evaluator.instance_name].output
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(10)
+    sdc_executor.stop_pipeline(pipeline)
+    input_records = wiretap_1.output_records
+    output_records = wiretap_2.output_records
     assert len(output_records) == len(input_records)
     assert input_records[0].field['text'] == 'here\nis\tsome\ndata'
     assert output_records[0].field['text'] == 'here\nis\tsome\ndata'
@@ -115,10 +119,10 @@ def test_record_el(random_expression_pipeline_builder, sdc_executor):
     pipeline = random_expression_pipeline_builder.pipeline_builder.build(title='Record ELs')
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
     sdc_executor.stop_pipeline(pipeline)
 
-    record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
+    record = random_expression_pipeline_builder.wiretap.output_records[0]
     assert record.header['values']['valueOrDefault'] == '3'
 
 
@@ -130,10 +134,10 @@ def test_runtime_resources_dir_path_el(random_expression_pipeline_builder, sdc_e
     pipeline = random_expression_pipeline_builder.pipeline_builder.build(title='Resources Directory Path EL')
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
     sdc_executor.stop_pipeline(pipeline)
 
-    record = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name].output[0]
+    record = random_expression_pipeline_builder.wiretap.output_records[0]
     assert record.header['values']['resourcesDirPath'] is not None
     assert len(record.header['values']['resourcesDirPath']) > 0
 

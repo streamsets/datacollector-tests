@@ -28,10 +28,14 @@ def random_expression_pipeline_builder(sdc_builder):
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     trash = pipeline_builder.add_stage('Trash')
 
-    dev_data_generator >> expression_evaluator >> trash
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_data_generator >> expression_evaluator >> [trash, wiretap.destination]
 
     yield namedtuple('PipelineBuilder', ['pipeline_builder',
                                          'dev_data_generator',
-                                         'expression_evaluator'])(pipeline_builder,
-                                                                  dev_data_generator,
-                                                                  expression_evaluator)
+                                         'expression_evaluator',
+                                         'wiretap'])(pipeline_builder,
+                                                     dev_data_generator,
+                                                     expression_evaluator,
+                                                     wiretap)
