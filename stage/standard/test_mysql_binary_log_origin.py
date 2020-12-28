@@ -13,11 +13,11 @@
 # limitations under the License.
 
 import logging
+import random
 import string
 
 import pytest
 import sqlalchemy
-import random
 from streamsets.testframework.environments.databases import MySqlDatabase, MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture(autouse=True)
 def preflight_check(database):
     if isinstance(database, MySqlDatabase) and not database.is_cdc_enabled:
-            pytest.skip('Test only runs against MySQL with CDC enabled.')
+        pytest.skip('Test only runs against MySQL with CDC enabled.')
     if isinstance(database, MemSqlDatabase):
         pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
 
@@ -76,8 +76,10 @@ DATA_TYPES = [
 #    ("POLYGON", "Polygon(LineString(Point(0,0),Point(10,0),Point(10,10),Point(0,10),Point(0,0)),LineString(Point(5,5),Point(7,5),Point(7,7),Point(5,7),Point(5,5)))", 'STRING', 'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
     ("JSON", "'{\"a\":\"b\"}'", 'STRING', '{\"a\":\"b\"}'),
 ]
-@sdc_min_version('3.0.0.0')
+
+
 @database('mysql')
+@sdc_min_version('3.0.0.0')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES, ids=[i[0] for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -91,9 +93,8 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         origin.server_id = _get_server_id()
         origin.include_tables = database.database + '.' + table_name
 
-        trash = builder.add_stage('Trash')
-
-        origin >> trash
+        wiretap = builder.add_wiretap()
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
@@ -111,13 +112,14 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         # And a null
         connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
 
-
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        # Run pipeline and verify output.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # TLKT-177: Add ability for field to return raw value
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
@@ -150,6 +152,8 @@ OBJECT_NAMES = [
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
     ('special', get_random_string(string.ascii_letters, 5) + "$_", get_random_string(string.ascii_letters, 5) + "$_"),
 ]
+
+
 @database('mysql')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
 def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, offset_name, keep_data):
@@ -160,9 +164,8 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
     origin.server_id = _get_server_id()
     origin.include_tables = database.database + '.' + table_name
 
-    trash = builder.add_stage('Trash')
-
-    origin >> trash
+    wiretap = builder.add_wiretap()
+    origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(database)
 
@@ -182,12 +185,15 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
         connection.execute(table.insert(), [{offset_name: 1}])
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+
+        # Run pipeline and verify output.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
         # Verify that we properly read that one record
-        assert len(snapshot[origin].output) == 1
-        assert snapshot[origin].output[0].field['Data'][offset_name] == 1
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['Data'][offset_name] == 1
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
