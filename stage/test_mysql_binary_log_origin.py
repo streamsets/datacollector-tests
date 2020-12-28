@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 import logging
 import random
 import string
+import time
 
 import pytest
 import sqlalchemy
@@ -39,7 +39,7 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_
 
     Pipeline looks like:
 
-        mysql_binary_log >> trash
+        mysql_binary_log >> wiretap
     """
     table = None
     connection = None
@@ -64,18 +64,19 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_
                                         initial_offset=_get_initial_offset(database),
                                         server_id=_get_server_id(),
                                         include_tables=database.database + '.' + table_name)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
-        mysql_binary_log >> trash
+        mysql_binary_log >> wiretap.destination
 
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Run pipeline and verify output.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        for record in snapshot.snapshot_batches[0][mysql_binary_log.instance_name].output:
+        for record in wiretap.output_records:
             assert record.field['Data']['id'] == 100
             assert record.field['Data']['name'] == 'a'
             assert record.field['Data']['json_column'].value == '{"a":123,"b":456}'
