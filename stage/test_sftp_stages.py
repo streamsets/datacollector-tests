@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 @sftp
 def test_sftp_origin(sdc_builder, sdc_executor, sftp):
     """Smoke test SFTP origin. We first create a file on SFTP server and have the SFTP origin stage read it.
-    We then assert its snapshot. The pipeline look like:
-        sftp_ftp_client >> trash
+    We then assert the ingested data using wiretap. The pipeline looks like:
+        sftp_ftp_client >> wiretap
     """
     sftp_file_name = get_random_string(string.ascii_letters, 10)
     raw_text_data = 'Hello World!'
@@ -39,17 +39,17 @@ def test_sftp_origin(sdc_builder, sdc_executor, sftp):
     sftp_ftp_client.file_name_pattern = sftp_file_name
     sftp_ftp_client.data_format = 'TEXT'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    sftp_ftp_client >> trash
+    sftp_ftp_client >> wiretap.destination
     sftp_ftp_client_pipeline = builder.build('SFTP Origin Pipeline').configure_for_environment(sftp)
     sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(sftp_ftp_client_pipeline).wait_for_pipeline_output_records_count(1)
     sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
 
-    assert len(snapshot[sftp_ftp_client].output) == 1
-    assert snapshot[sftp_ftp_client].output[0].field['text'] == raw_text_data
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].field['text'] == raw_text_data
 
     # Delete the test SFTP origin file we created
     transport, client = sftp.client
