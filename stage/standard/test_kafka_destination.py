@@ -23,7 +23,6 @@ import json
 
 logger = logging.getLogger(__name__)
 
-SNAPSHOT_TIMEOUT_SEC = 120
 
 # Reference: https://stackoverflow.com/questions/37062904/what-are-apache-kafka-topic-name-limitations
 KAFKA_NAMES = [

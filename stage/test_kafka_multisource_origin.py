@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import string
 import time
-import json
 
 import pytest
 from streamsets.testframework.environments import cloudera
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
-SNAPSHOT_TIMEOUT_SEC = 120
 SDC_RPC_LISTENING_PORT = 21512
 
 
@@ -104,14 +103,15 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
     kafka_multitopic_consumer.set_attributes(auto_offset_reset='TIMESTAMP',
                                              auto_offset_reset_timestamp_in_ms=timestamp,
                                              consumer_group=get_random_string())
-    trash = pipeline_builder.add_stage('Trash')
+
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_multitopic_consumer >> [trash, pipeline_finisher]
+    kafka_multitopic_consumer >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert [record.field for record in snapshot[kafka_multitopic_consumer].output] == EXPECTED_OUTPUT
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT
 
 
 # SDC-10501: Option to enable/disable Kafka auto commit Offsets
@@ -172,8 +172,8 @@ for record in sdc.records:
         sdc_executor.start_pipeline(pipeline, runtime_parameters={'DIVISOR': 0}).wait_for_status('RUN_ERROR',
                                                                                                  ignore_errors=True)
 
-        # Adding second message so that the topic have at least one new message, so that getting snapshot on older
-        # versions wont't time out but returns immediately.
+        # Adding second message so that the topic have at least one new message, so that getting an older
+        # versions won't time out but returns immediately.
         producer = cluster.kafka.producer()
         producer.send(topic, 'Not So Super Secret Message'.encode())
         producer.flush()
@@ -295,8 +295,8 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
                                              max_batch_size_in_records=10,
                                              batch_wait_time_in_ms=30000)
 
-    trash = builder.add_stage(label='Trash')
-    kafka_multitopic_consumer >> trash
+    wiretap = builder.add_wiretap()
+    kafka_multitopic_consumer >> wiretap.destination
     kafka_consumer_pipeline = builder.build(title='Kafka Multitopic pipeline Maximum batch size threshold') \
         .configure_for_environment(cluster)
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
@@ -304,25 +304,14 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
 
     sdc_executor.add_pipeline(kafka_consumer_pipeline)
 
-    try:
-        # First test checking Max Batch Size is reached
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
-        # Start Pipeline.
-        snapshot = sdc_executor.capture_snapshot(kafka_consumer_pipeline,
-                                                 start_pipeline=True,
-                                                 batches=num_batches,
-                                                 batch_size=10).snapshot
-        records_fields = []
+    # First test checking Max Batch Size is reached
+    # Publish messages to Kafka and verify using wiretap if the same messages are received.
+    # Start Pipeline.
 
-        for snapshot_batch in snapshot.snapshot_batches:
-            for value in snapshot_batch[kafka_consumer_pipeline[0].instance_name].output_lanes.values():
-                for record in value:
-                    records_fields.append(str(record.field['text']))
+    sdc_executor.start_pipeline(kafka_consumer_pipeline)
+    sdc_executor.wait_for_pipeline_metric(kafka_consumer_pipeline, 'input_record_count', num_batches * 10)
 
-        assert expected == records_fields
-
-    finally:
-        sdc_executor.stop_pipeline(kafka_consumer_pipeline, force=True)
+    assert expected == [record.field['text'] for record in wiretap.output_records]
 
 
 # SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
@@ -374,20 +363,16 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
     sdc_rpc_origin.sdc_rpc_id = sdc_rpc_id
 
-    trash = builder.add_stage(label='Trash')
+    wiretap = builder.add_wiretap()
 
-    sdc_rpc_origin >> trash
+    sdc_rpc_origin >> wiretap.destination
 
     rpc_origin_pipeline = builder.build('SDC RPC origin pipeline for kafka Max Batch Wait Time')
 
     sdc_executor.add_pipeline(rpc_origin_pipeline, kafka_consumer_pipeline)
 
     try:
-        snapshot_command = sdc_executor.capture_snapshot(rpc_origin_pipeline,
-                                                         start_pipeline=True,
-                                                         batch_size=20,
-                                                         wait=False)
-
+        sdc_executor.start_pipeline(rpc_origin_pipeline)
         sdc_executor.get_pipeline_status(rpc_origin_pipeline).wait_for_status('RUNNING')
 
         start_kafka_pipeline_command = sdc_executor.start_pipeline(kafka_consumer_pipeline)
@@ -398,17 +383,9 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
         total_time = (end - start)
         assert total_time < 5.0
 
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        sdc_executor.wait_for_pipeline_metric(rpc_origin_pipeline, 'input_record_count', 20)
 
-        records_fields = []
-
-        for snapshot_batch in snapshot.snapshot_batches:
-            for value in snapshot_batch[rpc_origin_pipeline[0].instance_name].output_lanes.values():
-                for record in value:
-                    records_fields.append(str(record.field['text']))
-
-        assert expected == records_fields
-
+        assert expected == [record.field['text'] for record in wiretap.output_records]
     finally:
         status = sdc_executor.get_pipeline_status(kafka_consumer_pipeline).response.json().get('status')
         if status != 'STOPPED':
@@ -432,25 +409,24 @@ def test_kafka_origin_only_errors(sdc_builder, sdc_executor, cluster):
     # We explicitly read files as JSON
     origin.data_format = 'JSON'
 
-    trash = builder.add_stage(label='Trash')
-    origin >> trash
+    wiretap = builder.add_wiretap()
+    origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     pipeline.configuration['executionMode'] = 'STANDALONE'
 
     sdc_executor.add_pipeline(pipeline)
-    try:
-        # Produce three text messages (e.g. no JSON)
-        produce_kafka_messages_list(origin.topic_list[0], cluster, ["A", "B", "C"], 'TEXT')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    # Produce three text messages (e.g. no JSON)
+    produce_kafka_messages_list(origin.topic_list[0], cluster, ["A", "B", "C"], 'TEXT')
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+    sdc_executor.stop_pipeline(pipeline)
 
-        # No normal records should be read
-        assert len(snapshot[origin].output) == 0
-        # But we should see the 3 errors
-        assert len(snapshot[origin].error_records) == 3
-    finally:
-        sdc_executor.stop_pipeline(pipeline)
+    # No normal records should be read
+    assert len(wiretap.output_records) == 0
+    # But we should see the 3 errors
+    assert len(wiretap.error_records) == 3
 
 
 # SDC-14063: Kafka multitopic consumer commits offset in a preview mode
@@ -460,8 +436,8 @@ def test_kafka_preview_not_committing_offset(sdc_builder, sdc_executor, cluster)
     builder = sdc_builder.get_pipeline_builder()
     origin = get_kafka_multitopic_consumer_stage(builder, cluster)
 
-    trash = builder.add_stage(label='Trash')
-    origin >> trash
+    wiretap = builder.add_wiretap()
+    origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
@@ -476,8 +452,9 @@ def test_kafka_preview_not_committing_offset(sdc_builder, sdc_executor, cluster)
 
         # Produce additional 3 messages and ensure that normal pipeline run can see all 6 records (e.g. no commit after preview)
         produce_kafka_messages_list(origin.topic_list[0], cluster, ["D", "E", "F"], 'TEXT')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        assert [record.field['text'] for record in snapshot[origin].output] == ['A', 'B', 'C', 'D', 'E', 'F']
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        assert [record.field['text'] for record in wiretap.output_records] == ['A', 'B', 'C', 'D', 'E', 'F']
     finally:
         sdc_executor.stop_pipeline(pipeline)
 
@@ -562,7 +539,6 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
 
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-
     # Check the output records, there should be only 1 message, since the null should be discarded
     output_records = [record.field for record in wiretap.output_records]
     assert len(output_records) == 1
@@ -624,33 +600,3 @@ def produce_kafka_messages_list(topic, cluster, message_list, data_format):
             producer.send(topic, message.encode())
 
     producer.flush()
-
-
-def verify_kafka_origin_results(kafka_multitopic_consumer_pipeline, sdc_executor, message, data_format):
-    """Start, stop pipeline and verify results using snapshot"""
-
-    # Start Pipeline.
-    snapshot_pipeline_command = sdc_executor.capture_snapshot(kafka_multitopic_consumer_pipeline,
-                                                              start_pipeline=True,
-                                                              wait=False)
-
-    logger.debug('Finish the snapshot and verify')
-    snapshot_command = snapshot_pipeline_command.wait_for_finished(timeout_sec=SNAPSHOT_TIMEOUT_SEC)
-    snapshot = snapshot_command.snapshot
-
-    basic_data_formats = ['XML', 'CSV', 'SYSLOG', 'COLLECTD', 'TEXT', 'JSON', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
-
-    # Verify snapshot data.
-    if data_format in basic_data_formats:
-        record_field = [record.field for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
-        assert message == [str(record_field[0]), str(record_field[1])]
-
-    elif data_format == 'TEXT_TIMESTAMP':
-        record_field = [record.field for record in snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
-        record_header = [record.header for record in
-                         snapshot[kafka_multitopic_consumer_pipeline[0].instance_name].output]
-        for element in record_header:
-            logger.debug('ELEMENT: %s', element['values'])
-            assert 'timestamp' in element['values']
-            assert 'timestampType' in element['values']
-        assert message == str(record_field[0])
