@@ -1746,44 +1746,30 @@ def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
                              batch_size_in_recs=1)
 
     wiretap = pipeline_builder.add_wiretap()
-    pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    pipeline_finisher_executor.set_attributes(preconditions=['${record:value(\'/Name\') == \'Gino Wehner\'}'],
-                                              on_record_error='DISCARD')
 
     directory >> wiretap.destination
-    directory >= pipeline_finisher_executor
 
-    directory_pipeline = pipeline_builder.build(
-        title='test_directory_stop_resume')
+    directory_pipeline = pipeline_builder.build(title='test_directory_stop_resume')
     sdc_executor.add_pipeline(directory_pipeline)
-    sdc_executor.start_pipeline(directory_pipeline).wait_for_finished()
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 1)
+    sdc_executor.stop_pipeline(directory_pipeline)
 
-    # assert all the data captured have the same raw_data
-
-    output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
-                                 wiretap.output_records]
-
-    temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
-    data_from_csv_files = [f'{row[0]},{row[1]},{row[2]}' for row in temp_data_from_csv_file]
-
-    assert len(data_from_csv_files[0:10]) == len(output_records_text_fields)
-    assert sorted(data_from_csv_files[0:10]) == sorted(output_records_text_fields)
-
-    directory_pipeline.stages.get(label=pipeline_finisher_executor.label).set_attributes(
-        preconditions=['${record:value(\'/Name\') == \'Dean Hartmann\'}'])
     sdc_executor.update_pipeline(directory_pipeline)
 
-    # assert all the data captured have the same raw_data
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 1)
+    sdc_executor.stop_pipeline(directory_pipeline)
 
+    # assert all the data captured have the same raw_data
     output_records_text_fields = [f'{record.field["Name"]},{record.field["Job"]},{record.field["Salary"]}' for record in
                                   wiretap.output_records]
 
     temp_data_from_csv_file = (read_csv_file('./resources/directory_origin/test4.csv', ',', True))
     data_from_csv_files = [f'{row[0]},{row[1]},{row[2]}' for row in temp_data_from_csv_file]
 
-    assert len(data_from_csv_files[10:50]) == len(output_records_text_fields)
-    assert sorted(data_from_csv_files[10:50]) == sorted(output_records_text_fields)
-    assert output_records_text_fields[0] == 'Porter Bode,Real-Estate Director,25007'
+    assert len(data_from_csv_files) == len(output_records_text_fields)
+    assert sorted(data_from_csv_files) == sorted(output_records_text_fields)
 
 
 @sdc_min_version('3.19.0')
