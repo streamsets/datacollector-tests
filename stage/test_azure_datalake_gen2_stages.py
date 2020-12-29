@@ -467,7 +467,7 @@ def test_datalake_origin_events(sdc_builder, sdc_executor, azure):
 def test_datalake_origin_resume_offset(sdc_builder, sdc_executor, azure):
     """ Test for Data Lake Store origin stage. We do so by creating a file in Azure Data Lake Storage using the
     STF client, then reading the file using the ALDS Gen2 Origin Stage, to assert data ingested by the pipeline
-    is the expected data from the file. We then create more data, restart the pipeline, and take another snapshot to
+    is the expected data from the file. We then create more data, restart the pipeline, and read from wiretap to
     ensure that the stage properly resumes from where the offset left off. The pipeline looks like:
     The pipeline looks like:
 
