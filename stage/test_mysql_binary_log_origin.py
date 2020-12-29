@@ -54,14 +54,10 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_
                                  sqlalchemy.Column('json_column', sqlalchemy.JSON))
         table.create(database.engine)
 
-        # Insert data into table.
-        connection.execute(table.insert(), {'id': 100, 'name': 'a', 'json_column': {'a': 123, 'b': 456}})
-
         # Create Pipeline.
         pipeline_builder = sdc_builder.get_pipeline_builder()
         mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
-        mysql_binary_log.set_attributes(
-                                        initial_offset=_get_initial_offset(database),
+        mysql_binary_log.set_attributes(initial_offset=_get_initial_offset(database),
                                         server_id=_get_server_id(),
                                         include_tables=database.database + '.' + table_name)
         wiretap = pipeline_builder.add_wiretap()
@@ -73,8 +69,14 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_
 
         # Run pipeline and verify output.
         sdc_executor.start_pipeline(pipeline)
+
+        # Insert data into table.
+        connection.execute(table.insert(), {'id': 100, 'name': 'a', 'json_column': {'a': 123, 'b': 456}})
+
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
+
+        assert 1 == len(wiretap.output_records)
 
         for record in wiretap.output_records:
             assert record.field['Data']['id'] == 100
