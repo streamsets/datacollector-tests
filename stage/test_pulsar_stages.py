@@ -505,7 +505,7 @@ def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, puls
     A pulsar_consumer_3 is included. Its name does not begin with SDC
     """
 
-    message = 'Xavi,Developer, Very Long Message In Order To Spend More Time Sending It'
+    message = 'Xavi, Developer, Very Long Message In Order To Spend More Time Sending It'
 
     topic1 = 'SDC' + get_random_string(string.ascii_letters, 10)
     topic2 = 'XXX' + get_random_string(string.ascii_letters, 10)
@@ -574,7 +574,7 @@ def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, puls
 
     pulsar_consumer = get_pulsar_consumer_stage(pulsar_consumer_pipeline_builder, topic1, 'EARLIEST')
     pulsar_consumer.set_attributes(topics_selector='TOPICS_PATTERN',
-                                   topics_pattern='persistent://public/default/(' + topic1 + '|' + topic3 + ')',
+                                   topics_pattern=f'persistent://public/default/({topic1}|{topic2}|{topic3})',
                                    subscription_type='EXCLUSIVE',
                                    read_compacted=False,
                                    max_batch_size_in_records=10,
@@ -588,18 +588,20 @@ def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, puls
     sdc_executor.add_pipeline(pulsar_consumer_pipeline)
 
     # Publish messages to Pulsar and verify using wiretap if the same messages are received.
-    sdc_executor.start_pipeline(pulsar_consumer_pipeline)
+    sdc_executor.start_pipeline(pulsar_consumer_pipeline).wait_for_status('RUNNING')
+
     sdc_executor.start_pipeline(pulsar_producer_pipeline1).wait_for_finished()
     sdc_executor.start_pipeline(pulsar_producer_pipeline2).wait_for_finished()
     sdc_executor.start_pipeline(pulsar_producer_pipeline3).wait_for_finished()
 
-    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
+    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1, timeout_sec=100)
     sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
 
     assert len(wiretap.output_records) == 3
+
     records = [record.field for record in wiretap.output_records]
     for record in records:
-        assert record == message
+        assert ','.join(str(element) for element in record.values()) == message
 
 
 @pulsar
