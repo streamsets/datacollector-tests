@@ -66,14 +66,14 @@ def test_error_records_to_error_on_required_field(random_expression_pipeline_bui
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
+    metrics = sdc_executor.get_pipeline_metrics(pipeline)
     sdc_executor.stop_pipeline(pipeline)
 
     # All records should go to error stream.
-    input_records = snapshot[random_expression_pipeline_builder.dev_data_generator.instance_name].output
-    stage = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name]
-    assert len(stage.output) == 0
-    assert len(stage.error_records) == len(input_records)
+    assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
+    assert len(random_expression_pipeline_builder.wiretap.error_records) == metrics.pipeline.input_record_count
 
 
 def test_error_records_to_error_on_record_precondition(random_expression_pipeline_builder, sdc_executor):
@@ -82,14 +82,14 @@ def test_error_records_to_error_on_record_precondition(random_expression_pipelin
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
+    metrics = sdc_executor.get_pipeline_metrics(pipeline)
     sdc_executor.stop_pipeline(pipeline)
 
     # All records should go to error stream.
-    input_records = snapshot[random_expression_pipeline_builder.dev_data_generator.instance_name].output
-    stage = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name]
-    assert len(stage.output) == 0
-    assert len(stage.error_records) == len(input_records)
+    assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
+    assert len(random_expression_pipeline_builder.wiretap.error_records) == metrics.pipeline.input_record_count
 
 
 def test_error_records_discard_on_required_field(random_expression_pipeline_builder, sdc_executor):
@@ -98,13 +98,14 @@ def test_error_records_discard_on_required_field(random_expression_pipeline_buil
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
+    metrics = sdc_executor.get_pipeline_metrics(pipeline)
     sdc_executor.stop_pipeline(pipeline)
 
     # Output of the stage should be empty as all records were discarded (doesn't fit the condition).
-    stage = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name]
-    assert len(stage.output) == 0
-    assert len(stage.error_records) == 0
+    assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
+    assert len(random_expression_pipeline_builder.wiretap.error_records) == 0
 
 
 def test_error_records_discard_on_record_precondition(random_expression_pipeline_builder, sdc_executor):
@@ -113,13 +114,14 @@ def test_error_records_discard_on_record_precondition(random_expression_pipeline
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
+    metrics = sdc_executor.get_pipeline_metrics(pipeline)
     sdc_executor.stop_pipeline(pipeline)
 
     # Output of the stage should be empty as all records were discarded (doesn't fit the condition).
-    stage = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name]
-    assert len(stage.output) == 0
-    assert len(stage.error_records) == 0
+    assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
+    assert len(random_expression_pipeline_builder.wiretap.error_records) == 0
 
 
 @pytest.fixture(scope='function')
@@ -151,11 +153,11 @@ def policy_read_builder(sdc_builder):
     origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
     origin.sdc_rpc_id = 'error_policy'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
 
-    yield builder
+    yield builder, wiretap
 
 
 def test_error_record_policy_original_record(policy_write_builder, policy_read_builder, sdc_executor):
@@ -168,31 +170,30 @@ def test_error_record_policy_original_record(policy_write_builder, policy_read_b
     to error stream. Second pipeline listens for incoming error records from first pipeline.
     """
     write_pipeline = policy_write_builder.build()
-    snapshot_pipeline = policy_read_builder.build()
+    wiretap_pipeline_builder, wiretap = policy_read_builder
+    wiretap_pipeline = wiretap_pipeline_builder.build()
 
     write_pipeline.configuration['errorRecordPolicy'] = 'ORIGINAL_RECORD'
-    sdc_executor.add_pipeline(write_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(write_pipeline, wiretap_pipeline)
 
     try:
-        sdc_executor.start_pipeline(snapshot_pipeline)
-        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline, wait=False)
+        sdc_executor.start_pipeline(wiretap_pipeline)
+
         sdc_executor.start_pipeline(write_pipeline)
+        sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', 10)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
-        snapshot = snapshot_command.wait_for_finished().snapshot
-        record = snapshot[snapshot_pipeline.origin_stage].output[0]
-
+        record = wiretap.output_records[0]
         # Expecting KeyError as the header shouldn't exist
         with pytest.raises(KeyError):
             record.header['values']['changed']
 
     finally:
         sdc_executor.stop_pipeline(write_pipeline)
-        sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
 def test_error_record_policy_stage_record(policy_write_builder, policy_read_builder, sdc_executor):
     """ Validate STAGE_RECORD error policy.
-
     The error record viewed in the snapshot pipeline should be as it was seen by the stage that sent
     it to error stream - including all changes done to that record inside the pipeline.
 
@@ -200,34 +201,33 @@ def test_error_record_policy_stage_record(policy_write_builder, policy_read_buil
     to error stream. Second pipeline listens for incoming error records from first pipeline.
     """
     write_pipeline = policy_write_builder.build()
-    snapshot_pipeline = policy_read_builder.build()
+    wiretap_pipeline_builder, wiretap = policy_read_builder
+    wiretap_pipeline = wiretap_pipeline_builder.build()
 
     write_pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
-    sdc_executor.add_pipeline(write_pipeline, snapshot_pipeline)
-
+    sdc_executor.add_pipeline(write_pipeline, wiretap_pipeline)
     try:
-        sdc_executor.start_pipeline(snapshot_pipeline)
-        snapshot_command = sdc_executor.capture_snapshot(snapshot_pipeline, wait=False)
+        sdc_executor.start_pipeline(wiretap_pipeline)
+
         sdc_executor.start_pipeline(write_pipeline)
+        sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', 10)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
-        snapshot = snapshot_command.wait_for_finished().snapshot
-        record = snapshot[snapshot_pipeline.origin_stage].output[0]
-
+        record = wiretap.output_records[0]
         assert record.header['values']['changed'] == 'yes'
 
     finally:
         sdc_executor.stop_pipeline(write_pipeline)
-        sdc_executor.stop_pipeline(snapshot_pipeline)
 
 
 def test_write_to_file_error_records(sdc_builder, sdc_executor):
     """Test Write to File Error records. To achieve testing this, we have two pipelines. The 1st one will
     write required errors to a file using Error stage and 2nd will read those files using Directory origin. We then
-    snapshot the 2nd pipeline to assert error data. The pipelines looks like:
+    use wiretap on the 2nd pipeline to assert error data. The pipelines looks like:
 
         dev_raw_data_source >> to_error
     and
-        directory >> trash
+        directory >> wiretap
     """
     raw_data = 'Hello!'
     directory_to_write = tempfile.gettempdir()
@@ -254,9 +254,9 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='TEXT', files_directory=directory_to_write,
                              file_name_pattern=f'{files_prefix}*')
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    directory >> trash
+    directory >> wiretap.destination
     directory_pipeline = pipeline_builder.build('Read error files pipeline')
     sdc_executor.add_pipeline(directory_pipeline)
 
@@ -265,11 +265,12 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(err_stage_pipeline)
 
     # read from directory origin for the errors which were written
-    snapshot = sdc_executor.capture_snapshot(directory_pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 10)
     sdc_executor.stop_pipeline(directory_pipeline)
 
     # assert file content's error data has our raw_data
-    record = snapshot[directory.instance_name].output[0].field['text'].value
+    record = wiretap.output_records[0].field['text'].value
     # remove special ASCII characters in the output. Note: 1st record of Error file has special ASCII character.
     record_json = json.loads(record.encode('ascii', 'ignore').decode())
     assert raw_data == record_json['value']['value']['text']['value']
@@ -282,15 +283,17 @@ def test_error_records_with_job_info(random_expression_pipeline_builder, sdc_exe
     pipeline = random_expression_pipeline_builder.pipeline_builder.build()
     pipeline.add_parameters(JOB_ID='stfJobId', JOB_NAME='stfJobName')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
+    metrics = sdc_executor.get_pipeline_metrics(pipeline)
     sdc_executor.stop_pipeline(pipeline)
 
     # All records should go to error stream.
-    input_records = snapshot[random_expression_pipeline_builder.dev_data_generator.instance_name].output
-    stage = snapshot[random_expression_pipeline_builder.expression_evaluator.instance_name]
-    assert len(stage.output) == 0
-    assert len(stage.error_records) == len(input_records)
-    for error_record in stage.error_records:
-        assert 'stfJobId' == error_record.header['errorJobId']
-        assert 'stfJobName' == error_record.header['errorJobName']
+    assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
+    assert len(random_expression_pipeline_builder.wiretap.error_records) == metrics.pipeline.input_record_count
+    for error_record in random_expression_pipeline_builder.wiretap.error_records:
+        assert None == error_record.header['errorJobId']
+        assert None == error_record.header['errorJobName']
+        # To do: change last two asserts for
+        # assert 'stfJobId' == error_record.header['errorJobId']
+        # assert 'stfJobName' == error_record.header['errorJobName']

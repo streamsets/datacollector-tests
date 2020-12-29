@@ -25,6 +25,8 @@ def random_expression_pipeline_builder(sdc_builder):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(delay_between_batches=10000,
+                                      batch_size = 10)
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     trash = pipeline_builder.add_stage('Trash')
 
