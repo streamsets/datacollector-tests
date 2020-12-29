@@ -12,23 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import string
-from collections import OrderedDict
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
+from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
 
 @database('sqlserver')
 def test_sql_server_change_tracking_no_more_data(sdc_builder, sdc_executor, database):
     """Validate end-to-end case with stopping pipeline after it read all the data from database. The pipeline
     will look like:
-        sqlserver_change_tracking >> trash
+        sqlserver_change_tracking >> wiretap
     """
     if not database.is_ct_enabled:
         pytest.skip('Test only runs against SQL Server with CT enabled.')
@@ -48,9 +47,9 @@ def test_sql_server_change_tracking_no_more_data(sdc_builder, sdc_executor, data
     sql_server_change_tracking = pipeline_builder.add_stage('SQL Server Change Tracking Client')
     sql_server_change_tracking.set_attributes(table_configs=[{'initialOffset': 0, 'schema': 'dbo', 'tablePattern': f'{table_name}'}])
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    sql_server_change_tracking >> trash
+    sql_server_change_tracking >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
@@ -68,11 +67,12 @@ def test_sql_server_change_tracking_no_more_data(sdc_builder, sdc_executor, data
         logger.info('Adding %s rows into %s...', len(rows_in_database), table_name)
         connection.execute(table.insert(), rows_in_database)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=10).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline)
 
         # assert all the data captured have the same raw_data
-        output_records = snapshot[sql_server_change_tracking.instance_name].output
+        output_records = wiretap.output_records
 
         assert 3 == len(output_records)
 
@@ -80,6 +80,9 @@ def test_sql_server_change_tracking_no_more_data(sdc_builder, sdc_executor, data
             assert output_records[i].get_field_data('/id') == rows_in_database[i].get('id')
             assert output_records[i].get_field_data('/name') == rows_in_database[i].get('name')
             assert output_records[i].get_field_data('/dt') == rows_in_database[i].get('dt')
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 3
     finally:
         logger.info('Dropping table %s...', table_name)
         table.drop(database.engine)
@@ -90,7 +93,7 @@ def test_sql_server_change_tracking_no_more_data(sdc_builder, sdc_executor, data
 def test_sql_server_change_tracking_with_committed_offset(sdc_builder, sdc_executor, database, include_record):
     """Validate the pipeline with committed offset. Start the pipeline run the first batch, stop the pipeline and restart the pipeline
     with committed offset. The pipeline will look like:
-        sqlserver_change_tracking >> trash
+        sqlserver_change_tracking >> wiretap
     """
     if not database.is_ct_enabled:
         pytest.skip('Test only runs against SQL Server with CT enabled.')
@@ -112,9 +115,9 @@ def test_sql_server_change_tracking_with_committed_offset(sdc_builder, sdc_execu
     sql_server_change_tracking.set_attributes(include_the_latest_data_in_the_record=include_record,
                                               table_configs=table_configs)
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    sql_server_change_tracking >> trash
+    sql_server_change_tracking >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
@@ -139,16 +142,22 @@ def test_sql_server_change_tracking_with_committed_offset(sdc_builder, sdc_execu
         logger.info('Deleting %s rows into %s...', len(rows_in_database), table_name)
         connection.execute(table.delete(), rows_in_database)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=10).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline)
 
         # assert all the data captured have the same raw_data
-        output_records = snapshot[sql_server_change_tracking.instance_name].output
+        output_records = wiretap.output_records
 
-        assert 3 == len(output_records)
-
+        assert 6 == len(output_records)
         for i in range(0, 3):
             assert output_records[i].get_field_data('/id') == rows_in_database[i].get('id')
+        # Wiretap duplicates some records
+        for i in range(3, 6):
+            assert output_records[i].get_field_data('/id') == rows_in_database[i - 3].get('id')
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 3
     finally:
         logger.info('Dropping table %s...', table_name)
         table.drop(database.engine)
@@ -159,7 +168,7 @@ def test_sql_server_change_tracking_reserved_words(sdc_builder, sdc_executor, da
     """Validate the pipeline with committed offset on a table that has a reserved word 'Order'.
     Start the pipeline run the first batch, stop the pipeline and restart the pipeline
     with committed offset. The pipeline will look like:
-        sqlserver_change_tracking >> trash
+        sqlserver_change_tracking >> wiretap
     """
     if not database.is_ct_enabled:
         pytest.skip('Test only runs against SQL Server with CT enabled.')
@@ -181,9 +190,9 @@ def test_sql_server_change_tracking_reserved_words(sdc_builder, sdc_executor, da
     sql_server_change_tracking.set_attributes(include_the_latest_data_in_the_record=True,
                                               table_configs=table_configs)
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    sql_server_change_tracking >> trash
+    sql_server_change_tracking >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
@@ -208,16 +217,22 @@ def test_sql_server_change_tracking_reserved_words(sdc_builder, sdc_executor, da
         logger.info('Deleting %s rows into %s...', len(rows_in_database), table_name)
         connection.execute(table.delete(), rows_in_database)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=10).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline)
 
         # assert all the data captured have the same raw_data
-        output_records = snapshot[sql_server_change_tracking.instance_name].output
+        output_records = wiretap.output_records
 
-        assert 3 == len(output_records)
-
+        assert 6 == len(output_records)
         for i in range(0, 3):
             assert output_records[i].get_field_data('/id') == rows_in_database[i].get('id')
+        # Wiretap duplicates some records
+        for i in range(3, 6):
+            assert output_records[i].get_field_data('/id') == rows_in_database[i - 3].get('id')
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 3
     finally:
         logger.info('Dropping table %s...', table_name)
         table.drop(database.engine)
@@ -226,9 +241,9 @@ def test_sql_server_change_tracking_reserved_words(sdc_builder, sdc_executor, da
 @database('sqlserver')
 @pytest.mark.parametrize('include_record', [True, False])
 def test_sql_server_change_tracking_with_composite_primary_key(sdc_builder, sdc_executor, database, include_record):
-    """Validate the pipeline on composite primary key. Start the pipeline run the first batch, stop the pipeline and restart the pipeline
-    with committed offset. The pipeline will look like:
-        sqlserver_change_tracking >> trash
+    """Validate the pipeline on composite primary key. Start the pipeline run the first batch, stop the pipeline and
+    restart the pipeline with committed offset. The pipeline will look like:
+        sqlserver_change_tracking >> wiretap
     """
     if not database.is_ct_enabled:
         pytest.skip('Test only runs against SQL Server with CT enabled.')
@@ -249,9 +264,9 @@ def test_sql_server_change_tracking_with_composite_primary_key(sdc_builder, sdc_
     sql_server_change_tracking = pipeline_builder.add_stage('SQL Server Change Tracking Client')
     sql_server_change_tracking.set_attributes(include_the_latest_data_in_the_record=include_record,
                                               table_configs=table_configs)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    sql_server_change_tracking >> trash
+    sql_server_change_tracking >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
@@ -273,19 +288,28 @@ def test_sql_server_change_tracking_with_composite_primary_key(sdc_builder, sdc_
         assert offset is not None
         assert offset['offsets'] is not None
         expected_key = [f"tableName=dbo.{table_name};;;partitioned=false;;;partitionSequence=-1;;;partitionStartOffsets=;;;partitionMaxOffsets=;;;usingNonIncrementalLoad=false"]
-        list(offset['offsets'].keys()) == expected_key
+        assert list(offset['offsets'].keys()) == expected_key
 
         # delete sample data
         logger.info('Deleting %s rows into %s...', len(rows_in_database), table_name)
         connection.execute(table.delete(), rows_in_database)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=10).snapshot
+        sdc_executor.start_pipeline(pipeline)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline)
 
         # assert all the data captured have the same raw_data
-        output_records = snapshot[sql_server_change_tracking.instance_name].output
-        assert 3 == len(output_records)
+        output_records = wiretap.output_records
+
+        assert 6 == len(output_records)
         for i in range(0, 3):
             assert output_records[i].get_field_data('/id') == rows_in_database[i].get('id')
+        # Wiretap duplicates some records
+        for i in range(3, 6):
+            assert output_records[i].get_field_data('/id') == rows_in_database[i - 3].get('id')
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 3
     finally:
         logger.info('Dropping table %s...', table_name)
         table.drop(database.engine)
