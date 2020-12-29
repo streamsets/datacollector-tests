@@ -13,10 +13,8 @@
 # limitations under the License.
 
 import binascii
-import json
 import logging
 import string
-from collections import OrderedDict
 from time import sleep, time
 
 import pytest
@@ -151,7 +149,7 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
             tables.append(table)
             table_configs.append({'capture_instance': f'{schema_name}_{table_name}'})
 
-        target_rows = rows_in_database[target_table_index * no_of_records: (target_table_index + 1) * no_of_records]
+        rows_in_database[target_table_index * no_of_records: (target_table_index + 1) * no_of_records]
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
@@ -315,9 +313,6 @@ def test_sql_server_cdc_with_nonempty_initial_offset(sdc_builder, sdc_executor, 
         sql_server_cdc >> jdbc_producer
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-
-        # wait for data captured by cdc jobs in sql server before starting the pipeline
-        ct_table_name = f'{capture_instance_name}_CT'
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(second_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
@@ -701,7 +696,7 @@ def test_sql_server_cdc_no_more_events(sdc_builder, sdc_executor, database):
 
         # create the destination table
         dest_table_name = get_random_string(string.ascii_uppercase, 9)
-        dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
+        create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
 
         trash = pipeline_builder.add_stage('Trash')
 
@@ -728,7 +723,7 @@ def test_sql_server_cdc_no_more_events(sdc_builder, sdc_executor, database):
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 2)
 
-        #One more record is processed and one no more data is produced: 2 output records
+        # One more record is processed and one no more data is produced: 2 output records
         connection2 = database.engine.connect()
         add_data_to_table(connection2, table, rows_in_database[1:2])
         wait_for_data_in_ct_table(ct_table_name, total_no_of_records, database)
@@ -757,7 +752,7 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
         * jdbc.cdc.source_name = <source table>
 
     The pipeline looks like:
-        sql_server_cdc_origin >> trash
+        sql_server_cdc_origin >> wiretap
     """
     table = None
     connection = None
@@ -786,9 +781,9 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
                                       table_configs=[{'capture_instance': capture_instance_name}]
                                       )
 
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
-        sql_server_cdc >> trash
+        sql_server_cdc >> wiretap.destination
 
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
@@ -797,11 +792,12 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
         ct_table_name = f'{capture_instance_name}_CT'
         wait_for_data_in_ct_table(ct_table_name, total_no_of_records / 2, database)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
 
         # assert all the data captured have the same raw_data
-        for record in snapshot.snapshot_batches[0][sql_server_cdc.instance_name].output:
+        for record in wiretap.output_records:
             assert record.field['id'] == rows_in_database[0].get('id')
             assert record.field['name'] == rows_in_database[0].get('name')
             assert record.field['dt'] == rows_in_database[0].get('dt')
@@ -828,7 +824,7 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
         __$operation field was introduced after 3.8.0
 
     The pipeline looks like:
-        sql_server_cdc_origin >> trash
+        sql_server_cdc_origin >> wiretap
     """
     table = None
     connection = None
@@ -852,12 +848,11 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(fetch_size=1,
                                       max_batch_size_in_records=1,
-                                      table_configs=[{'capture_instance': capture_instance_name}]
-                                      )
+                                      table_configs=[{'capture_instance': capture_instance_name}])
 
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
-        sql_server_cdc >> trash
+        sql_server_cdc >> wiretap.destination
 
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
@@ -877,11 +872,12 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
         ct_table_name = f'{capture_instance_name}_CT'
         wait_for_data_in_ct_table(ct_table_name, total_no_of_records, database)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
 
         # assert all the data captured have the same raw_data
-        for record in snapshot.snapshot_batches[0][sql_server_cdc.instance_name].output:
+        for record in wiretap.output_records:
             assert record.field['id'] == rows_in_database[0].get('id')
             assert record.field['name'] == rows_in_database[0].get('name')
             assert record.field['dt'] == rows_in_database[0].get('dt')
