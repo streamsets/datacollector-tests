@@ -23,11 +23,13 @@ from streamsets.testframework.environments.databases import MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
+
 @pytest.fixture(scope='module')
 def sdc_builder_hook():
     def hook(data_collector):
         data_collector.SDC_JAVA_OPTS = '-Xmx2048m -Xms2048m'
     return hook
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -54,6 +56,8 @@ DATA_TYPES_ORACLE = [
     ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
     ('XMLType', "xmltype('<a></a>')", 'STRING', '<a/>')
 ]
+
+
 @sdc_min_version('3.0.0.0')
 @database('oracle')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_ORACLE, ids=[i[0] for i in DATA_TYPES_ORACLE])
@@ -81,19 +85,20 @@ def test_data_types_oracle(sdc_builder, sdc_executor, database, sql_type, insert
         origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
         origin.on_unknown_type = 'CONVERT_TO_STRING'
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # TLKT-177: Add ability for field to return raw value
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
@@ -153,6 +158,8 @@ DATA_TYPES_MYSQL = [
      'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
     ("JSON", "'{\"a\":\"b\"}'", 'STRING', '{\"a\": \"b\"}'),
 ]
+
+
 @sdc_min_version('3.0.0.0')
 @database('mysql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_MYSQL, ids=[i[0] for i in DATA_TYPES_MYSQL])
@@ -182,19 +189,20 @@ def test_data_types_mysql(sdc_builder, sdc_executor, database, sql_type, insert_
         origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
         origin.on_unknown_type = 'CONVERT_TO_STRING'
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
@@ -267,6 +275,8 @@ DATA_TYPES_POSTGRESQL = [
      '["2010-01-01 19:30:00+00","2010-01-01 20:30:00+00")'),
     ("daterange", "'[2010-01-01, 2010-01-02)'", 'STRING', '[2010-01-01,2010-01-02)'),
 ]
+
+
 @sdc_min_version('3.0.0.0')
 @database('postgresql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_POSTGRESQL, ids=[i[0] for i in DATA_TYPES_POSTGRESQL])
@@ -323,19 +333,20 @@ def test_data_types_postgresql(sdc_builder, sdc_executor, database, sql_type, in
         origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
         origin.on_unknown_type = 'CONVERT_TO_STRING'
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
@@ -386,6 +397,8 @@ DATA_TYPES_SQLSERVER = [
 #    ('GEOMETRY',"geometry::STGeomFromText('LINESTRING (100 100, 20 180, 180 180)', 0)", 'BYTE_ARRAY', 'AAAAAAEEAwAAAAAAAAAAAFlAAAAAAAAAWUAAAAAAAAA0QAAAAAAAgGZAAAAAAACAZkAAAAAAAIBmQAEAAAABAAAAAAEAAAD/////AAAAAAI='), # Not supported
     ('XML', "'<a></a>'", 'STRING', '<a/>')
 ]
+
+
 @sdc_min_version('3.0.0.0')
 @database('sqlserver')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_SQLSERVER, ids=[i[0] for i in DATA_TYPES_SQLSERVER])
@@ -412,8 +425,6 @@ def test_data_types_sqlserver(sdc_builder, sdc_executor, database, sql_type, ins
         origin = builder.add_stage('JDBC Multitable Consumer')
         origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
 
-        trash = builder.add_stage('Trash')
-
         # As a part of SDC-10125, DATETIMEOFFSET is natively supported in SDC, and is converted into ZONED_DATETIME
         if sql_type == 'DATETIMEOFFSET':
             if Version(sdc_executor.version) >= Version('3.14.0'):
@@ -425,17 +436,20 @@ def test_data_types_sqlserver(sdc_builder, sdc_executor, database, sql_type, ins
                 # This unknown_type_action setting is required, otherwise DATETIMEOFFSET tests for SDC < 3.14 will fail.
                 origin.on_unknown_type = 'CONVERT_TO_STRING'
 
-        origin >> trash
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
@@ -464,6 +478,8 @@ OBJECT_NAMES_ORACLE = [
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
     ('special', get_random_string(string.ascii_letters, 5) + "!@#$%^&*()_+=-?<>", get_random_string(string.ascii_letters, 5) + "!@#$%^&*()_+=-?<>"),
 ]
+
+
 @database('oracle')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_ORACLE, ids=[i[0] for i in OBJECT_NAMES_ORACLE])
 def test_object_names_oracle(sdc_builder, sdc_executor, database, test_name, table_name, offset_name):
@@ -481,6 +497,8 @@ OBJECT_NAMES_POSTGRESQL = [
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
     ('special', get_random_string(string.ascii_letters, 5) + "$_", get_random_string(string.ascii_letters, 5) + "$_"),
 ]
+
+
 @database('postgresql')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_POSTGRESQL, ids=[i[0] for i in OBJECT_NAMES_POSTGRESQL])
 def test_object_names_postgresql(sdc_builder, sdc_executor, database, test_name, table_name, offset_name):
@@ -499,12 +517,15 @@ OBJECT_NAMES_MYSQL = [
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
     ('special', get_random_string(string.ascii_letters, 5) + "$_", get_random_string(string.ascii_letters, 5) + "$_"),
 ]
+
+
 @database('mysql')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_MYSQL, ids=[i[0] for i in OBJECT_NAMES_MYSQL])
 def test_object_names_mysql(sdc_builder, sdc_executor, database, test_name, table_name, offset_name):
     if isinstance(database, MemSqlDatabase):
         pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
     _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_name)
+
 
 # Rules: https://stackoverflow.com/questions/5808332/sql-server-maximum-character-length-of-object-names
 # Rules:
@@ -518,6 +539,8 @@ OBJECT_NAMES_SQLSERVER = [
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
     ('special', get_random_string(string.ascii_letters, 5) + "!@#$%^&*()_+=-?<>", get_random_string(string.ascii_letters, 5) + "!@#$%^&*()_+=-?<>"),
 ]
+
+
 @database('sqlserver')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_SQLSERVER, ids=[i[0] for i in OBJECT_NAMES_SQLSERVER])
 def test_object_names_sqlserver(sdc_builder, sdc_executor, database, test_name, table_name, offset_name):
@@ -528,12 +551,12 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_n
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('JDBC Multitable Consumer')
-    origin.table_configs=[{"tablePattern": f'%{table_name}%'}]
+    origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
     origin.max_batch_size_in_records = 10
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(database)
     # Work-arounding STF behavior of upper-casing table name configuration
@@ -555,7 +578,8 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_n
         connection.execute(table.insert(), [{offset_name: 1}])
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         # We want to run for a few seconds to see if any errors show up (like that did in previous versions)
         time.sleep(10)
         sdc_executor.stop_pipeline(pipeline)
@@ -566,12 +590,12 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_n
         assert history.latest.metrics.counter('stage.JDBCMultitableConsumer_01.stageErrors.counter').count == 0
 
         # And verify that we properly read that one record
-        assert len(snapshot[origin].output) == 1
+        assert len(wiretap.output_records) == 1
         # SDC Will escape field names with certain characters, but not always...
         if "$" in offset_name:
-            assert snapshot[origin].output[0].field[f'"{offset_name}"'] == 1
+            assert wiretap.output_records[0].field[f'"{offset_name}"'] == 1
         else:
-            assert snapshot[origin].output[0].field[offset_name] == 1
+            assert wiretap.output_records[0].field[offset_name] == 1
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
