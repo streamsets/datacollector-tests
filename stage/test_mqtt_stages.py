@@ -27,9 +27,9 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
      1) load a pipeline that has a raw data (text) origin and MQTT destination
      2) create MQTT instance (broker and a subscribed client) and inject appropriate values into
         the pipeline config
-     3) run the pipeline and capture a snapshot
+     3) run the pipeline
      4) check messages received by the MQTT client and ensure their number and contents match the
-        pipeline origin data
+        origin data
     """
     # pylint: disable=too-many-locals
 
@@ -42,8 +42,7 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
 
         raw_str = 'dummy_value'
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.data_format = 'TEXT'
-        dev_raw_data_source.raw_data = raw_str
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_str, stop_after_first_batch=True)
 
         mqtt_target = pipeline_builder.add_stage('MQTT Publisher')
         mqtt_target.configuration.update({'publisherConf.topic': data_topic,
@@ -54,18 +53,12 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
         pipeline = pipeline_builder.build().configure_for_environment(mqtt_broker)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-
-        output_records = snapshot[dev_raw_data_source.instance_name].output
-        for output_record in output_records:
-            # sanity checks on output of raw data source
-            assert output_record.field['text'].value == raw_str
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # with QOS=2 (default), exactly one message should be received per published message
         # so we should have no trouble getting as many messages as output records from the
         # snapshot
-        pipeline_msgs = mqtt_broker.get_messages(data_topic, num=len(output_records))
+        pipeline_msgs = mqtt_broker.get_messages(data_topic)
         for msg in pipeline_msgs:
             assert msg.payload.decode().rstrip() == raw_str
             assert msg.topic == data_topic
@@ -77,12 +70,12 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
 def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
     """Integration test for the MQTT origin stage.
 
-     1) load a pipeline that has an MQTT origin (text format) to trash
+     1) load a pipeline that has an MQTT origin (text format) to wiretap
      2) create MQTT instance (broker and a subscribed client) and inject appropriate values into
         the pipeline config
-     3) run the pipeline and capture a snapshot
+     3) run the pipeline
      4) (in parallel) send message to the topic the pipeline is subscribed to
-     5) after snapshot completes, verify outputs from pipeline snapshot against published messages
+     5) after pipeline completes, verify outputs from pipeline against published messages
     """
     # pylint: disable=too-many-locals
 
@@ -96,17 +89,13 @@ def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
         mqtt_source.configuration.update({'subscriberConf.dataFormat': 'TEXT',
                                           'subscriberConf.topicFilters': [data_topic]})
 
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
-        mqtt_source >> trash
+        mqtt_source >> wiretap.destination
 
         pipeline = pipeline_builder.build().configure_for_environment(mqtt_broker)
         sdc_executor.add_pipeline(pipeline)
-
-        # the MQTT origin produces a single batch for each message it receieves, so we need
-        # to run a separate snapshot for each message to be received
-        running_snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True,
-                                                         batches=10, wait=False)
+        sdc_executor.start_pipeline(pipeline)
 
         # can't figure out a cleaner way to do this; it takes a bit of time for the pipeline
         # to ACTUALLY start listening on the MQTT port, so if we don't sleep here, the
@@ -118,18 +107,15 @@ def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
             mqtt_broker.publish_message(topic=data_topic, payload=expected_message)
             expected_messages.add(expected_message)
 
-        snapshot = running_snapshot.wait_for_finished().snapshot
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
         sdc_executor.stop_pipeline(pipeline)
 
-        for batch in snapshot.snapshot_batches:
-            output_records = batch[mqtt_source.instance_name].output
-            # each batch should only contain one record
-            assert len(output_records) == 1
+        assert len(wiretap.output_records) == 10
 
-            for output_record in output_records:
-                value = output_record.field['text'].value
-                assert value in expected_messages
-                assert expected_messages.remove(value) is None
+        for output_record in wiretap.output_records:
+            value = output_record.field['text'].value
+            assert value in expected_messages
+            assert expected_messages.remove(value) is None
         assert len(expected_messages) == 0
     finally:
         mqtt_broker.destroy()
