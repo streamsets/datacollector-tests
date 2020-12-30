@@ -865,7 +865,15 @@ def produce_kafka_messages(topic, cluster, message, data_format):
         data_file_writer.close()
         producer.send(topic, raw_bytes)
 
+    logger.info('Flushing producer')
     producer.flush()
+
+    logger.info('Validating that the message can be seen in Kafka')
+    consumer = cluster.kafka.consumer(consumer_timeout_ms=5000, auto_offset_reset='earliest')
+    consumer.subscribe([topic])
+
+    msgs_received = [msg for msg in consumer]
+    assert 1 == len(msgs_received)
 
 
 def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, data_format, wiretap):
@@ -879,7 +887,13 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
     logger.info("Waiting on first record available on the snapshot pipeline")
     # High timeout since cluster pipelines are slow and can take even 60+ second to boot up. On secured clusters in
     # cluster dock that can be significantly more and hence the high timeout.
-    sdc_executor.wait_for_pipeline_metric(snapshot_pipeline, 'input_record_count', 1, timeout_sec=300)
+    try:
+        sdc_executor.wait_for_pipeline_metric(snapshot_pipeline, 'input_record_count', 1, timeout_sec=300)
+    finally:
+        # In any case (even on failure), let's get various metrics from the execution that we can explore later
+        history = sdc_executor.get_pipeline_history(kafka_consumer_pipeline)
+        logger.info(f"History for the cluster pipeline {history._data}")
+
     output = wiretap.output_records
 
     basic_data_formats = ['JSON', 'CSV', 'SYSLOG', 'PROTOBUF', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
