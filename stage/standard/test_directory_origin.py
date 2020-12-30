@@ -16,8 +16,8 @@ import logging
 import os
 import string
 import tempfile
-import pytest
 
+import pytest
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def test_data_types(sdc_builder, sdc_executor):
 @pytest.mark.parametrize('name_category,directory', NAMES, ids=[i[0] for i in NAMES])
 def test_object_names_directory(sdc_builder, sdc_executor, name_category, directory):
     """ Test for different kind of valid names for directory.
-        Snapshot is used to assert correctness.
+        Wiretap is used to assert correctness.
         Pipeline structure: directory_origin >> trash
     """
 
@@ -56,15 +56,17 @@ def test_object_names_directory(sdc_builder, sdc_executor, name_category, direct
                                     file_name_pattern_mode='GLOB',
                                     file_post_processing='DELETE', files_directory=file_path,
                                     process_subdirectories=True, read_order='TIMESTAMP')
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    directory_origin >> trash
+    directory_origin >> wiretap.destination
     directory_origin_pipeline = builder.build()
     sdc_executor.add_pipeline(directory_origin_pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(directory_origin_pipeline, start_pipeline=True).snapshot
-        for record in snapshot.snapshot_batches[0][directory_origin.instance_name].output:
+        sdc_executor.start_pipeline(directory_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(directory_origin_pipeline, 'input_record_count', 1)
+        _stop_pipeline(sdc_executor, directory_origin_pipeline)
+        for record in wiretap.output_records:
             assert raw_str == record.field['text'].value
     finally:
         _stop_pipeline(sdc_executor, directory_origin_pipeline)
@@ -73,7 +75,7 @@ def test_object_names_directory(sdc_builder, sdc_executor, name_category, direct
 @pytest.mark.parametrize('name_category,file_name', NAMES, ids=[i[0] for i in NAMES])
 def test_object_names_file(sdc_builder, sdc_executor, name_category, file_name):
     """ Test for different kind of valid names for file name.
-        Snapshot is used to assert correctness.
+        Wiretap is used to assert correctness.
         Pipeline structure: directory_origin >> trash
     """
 
@@ -92,15 +94,17 @@ def test_object_names_file(sdc_builder, sdc_executor, name_category, file_name):
                                     file_name_pattern_mode='GLOB',
                                     file_post_processing='DELETE', files_directory=file_path,
                                     process_subdirectories=True, read_order='TIMESTAMP')
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    directory_origin >> trash
+    directory_origin >> wiretap.destination
     directory_origin_pipeline = builder.build()
     sdc_executor.add_pipeline(directory_origin_pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(directory_origin_pipeline, start_pipeline=True).snapshot
-        for record in snapshot.snapshot_batches[0][directory_origin.instance_name].output:
+        sdc_executor.start_pipeline(directory_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(directory_origin_pipeline, 'input_record_count', 1)
+        _stop_pipeline(sdc_executor, directory_origin_pipeline)
+        for record in wiretap.output_records:
             assert raw_str == record.field['text'].value
     finally:
         _stop_pipeline(sdc_executor, directory_origin_pipeline)
