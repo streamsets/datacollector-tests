@@ -47,6 +47,8 @@ DATA_TYPES_ORACLE = [
     ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
     ('XMLType', "xmltype('<a></a>')", 'STRING', '<a/>')
 ]
+
+
 @sdc_min_version('3.0.0.0')
 @database('oracle')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_ORACLE, ids=[i[0] for i in DATA_TYPES_ORACLE])
@@ -75,19 +77,20 @@ def test_data_types_oracle(sdc_builder, sdc_executor, database, sql_type, insert
         origin.incremental_mode = False
         origin.on_unknown_type = 'CONVERT_TO_STRING'
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # TLKT-177: Add ability for field to return raw value
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
@@ -143,6 +146,8 @@ DATA_TYPES_MYSQL = [
     ("POLYGON", "Polygon(LineString(Point(0,0),Point(10,0),Point(10,10),Point(0,10),Point(0,0)),LineString(Point(5,5),Point(7,5),Point(7,7),Point(5,7),Point(5,5)))", 'BYTE_ARRAY', 'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
     ("JSON", "'{\"a\":\"b\"}'", 'STRING', '{\"a\": \"b\"}'),
 ]
+
+
 @sdc_min_version('3.0.0.0')
 @database('mysql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_MYSQL, ids=[i[0] for i in DATA_TYPES_MYSQL])
@@ -173,19 +178,20 @@ def test_data_types_mysql(sdc_builder, sdc_executor, database, sql_type, insert_
         origin.incremental_mode = False
         origin.on_unknown_type = 'CONVERT_TO_STRING'
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
@@ -258,6 +264,8 @@ DATA_TYPES_POSTGRESQL = [
      '["2010-01-01 19:30:00+00","2010-01-01 20:30:00+00")'),
     ("daterange", "'[2010-01-01, 2010-01-02)'", 'STRING', '[2010-01-01,2010-01-02)'),
 ]
+
+
 @sdc_min_version('3.0.0.0')
 @database('postgresql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_POSTGRESQL, ids=[i[0] for i in DATA_TYPES_POSTGRESQL])
@@ -315,19 +323,20 @@ def test_data_types_postgresql(sdc_builder, sdc_executor, database, sql_type, in
         origin.incremental_mode = False
         origin.on_unknown_type = 'CONVERT_TO_STRING'
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
@@ -378,6 +387,8 @@ DATA_TYPES_SQLSERVER = [
 #    ('GEOMETRY',"geometry::STGeomFromText('LINESTRING (100 100, 20 180, 180 180)', 0)", 'BYTE_ARRAY', 'AAAAAAEEAwAAAAAAAAAAAFlAAAAAAAAAWUAAAAAAAAA0QAAAAAAAgGZAAAAAAACAZkAAAAAAAIBmQAEAAAABAAAAAAEAAAD/////AAAAAAI='), # Not supported
     ('XML', "'<a></a>'", 'STRING', '<a/>')
 ]
+
+
 @sdc_min_version('3.0.0.0')
 @database('sqlserver')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_SQLSERVER, ids=[i[0] for i in DATA_TYPES_SQLSERVER])
@@ -405,8 +416,6 @@ def test_data_types_sqlserver(sdc_builder, sdc_executor, database, sql_type, ins
         origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
         origin.incremental_mode = False
 
-        trash = builder.add_stage('Trash')
-
         # As a part of SDC-10125, DATETIMEOFFSET is natively supported in SDC, and is converted into ZONED_DATETIME
         if sql_type == 'DATETIMEOFFSET':
             if Version(sdc_executor.version) >= Version('3.14.0'):
@@ -418,17 +427,20 @@ def test_data_types_sqlserver(sdc_builder, sdc_executor, database, sql_type, ins
                 # This unknown_type_action setting is required, otherwise DATETIMEOFFSET tests for SDC < 3.14 will fail.
                 origin.on_unknown_type = 'CONVERT_TO_STRING'
 
-        origin >> trash
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
