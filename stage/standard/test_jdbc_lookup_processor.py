@@ -45,7 +45,7 @@ DATA_TYPES_ORACLE = [
     ('blob', "utl_raw.cast_to_raw('BLOB')", 'BYTE_ARRAY', 'QkxPQg=='),
     ('clob', "'CLOB'", 'STRING', 'CLOB'),
     ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
-    ('XMLType', "xmltype('<a></a>')", 'STRING', '<a/>\n')
+    ('XMLType', "xmltype('<a></a>')", 'STRING', '<a/>')
 ]
 @sdc_min_version('3.0.0.0')
 @database('oracle')
@@ -100,8 +100,11 @@ def test_data_types_oracle(sdc_builder, sdc_executor, database, sql_type, insert
         assert record.field['value'].type == expected_type
         assert null_record.field['value'].type == expected_type
 
-        assert record.field['value']._data['value'] == expected_value
         assert null_record.field['value'] == None
+        if sql_type == 'XMLType':
+            assert record.field['value']._data['value'].strip() == expected_value
+        else:
+            assert record.field['value']._data['value'] == expected_value
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
