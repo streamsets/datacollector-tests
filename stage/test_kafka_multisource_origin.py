@@ -313,6 +313,7 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
                                           'input_record_count',
                                           num_batches * 10,
                                           timeout_sec=60)
+    sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
     assert expected == sorted([str(record.field['text']) for record in wiretap.output_records])
 
