@@ -150,21 +150,20 @@ def test_delimited_data(sdc_executor, sdc_builder):
                                        header_line='WITH_HEADER',
                                        raw_data=data,
                                        stop_after_first_batch=True)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> trash
+    dev_raw_data_source >> wiretap.destination
 
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished().snapshot
-    assert [record.field for record in snapshot[dev_raw_data_source].output] == [expected]
-    assert [record.field for record in snapshot[dev_raw_data_source].error_records] == [expected_error]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    history = sdc_executor.get_pipeline_history(pipeline)
-    assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 2
-    assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
-    assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 1
+    assert len(wiretap.output_records) == 1
+    assert len(wiretap.error_records) == 1
+
+    assert [record.field for record in wiretap.output_records] == [expected]
+    assert [record.field for record in wiretap.error_records] == [expected_error]
 
 
 @sdc_min_version('3.5.1')
