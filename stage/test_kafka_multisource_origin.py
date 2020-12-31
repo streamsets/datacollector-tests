@@ -309,9 +309,12 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
     # Start Pipeline.
 
     sdc_executor.start_pipeline(kafka_consumer_pipeline)
-    sdc_executor.wait_for_pipeline_metric(kafka_consumer_pipeline, 'input_record_count', num_batches * 10)
+    sdc_executor.wait_for_pipeline_metric(kafka_consumer_pipeline,
+                                          'input_record_count',
+                                          num_batches * 10,
+                                          timeout_sec=60)
 
-    assert expected == [record.field['text'] for record in wiretap.output_records]
+    assert expected == sorted([str(record.field['text']) for record in wiretap.output_records])
 
 
 # SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
