@@ -3,7 +3,7 @@ import pytest
 
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.decorators import stub
-from ..utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, verify_by_snapshot
+from ..utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, _insert_data_and_verify_using_wiretap
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ def test_missing_values_behavior(sdc_builder, sdc_executor, stage_attributes):
 def test_multiple_values_behavior(sdc_builder, sdc_executor, salesforce, stage_attributes, use_bulk_api):
     """
     The pipeline looks like:
-        dev_raw_data_source >> salesforce_lookup >> trash
+        dev_raw_data_source >> salesforce_lookup >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -154,8 +154,8 @@ def test_multiple_values_behavior(sdc_builder, sdc_executor, salesforce, stage_a
                                      soql_query=query_str,
                                      use_bulk_api=use_bulk_api)
 
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> salesforce_lookup >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> salesforce_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
@@ -196,8 +196,8 @@ def test_multiple_values_behavior(sdc_builder, sdc_executor, salesforce, stage_a
                                 {'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest3@example.com',
                                  'LeadSource': 'Advertisement'}]
 
-    verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, lookup_expected_data,
-                       salesforce, data_to_insert, False)
+    _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, lookup_expected_data,
+                                          salesforce, data_to_insert, False)
 
 
 @stub

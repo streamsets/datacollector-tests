@@ -31,8 +31,8 @@ from sfdclib import SfdcSession, SfdcMetadataApi
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
-from .utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, verify_by_snapshot, \
-    verify_snapshot, get_ids, clean_up, TIMEOUT, create_push_topic, enable_cdc, verify_cdc_snapshot, disable_cdc, \
+from .utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, _insert_data_and_verify_using_wiretap, \
+    _verify_wiretap_data, get_ids, clean_up, TIMEOUT, create_push_topic, enable_cdc, verify_cdc_wiretap, disable_cdc, \
     add_custom_field_to_contact, delete_custom_field_from_contact, FOLDER_NAME, CASE_SUBJECT, \
     find_dataset_include_timestamp, find_dataset, CONTACTS_FOR_NO_MORE_DATA, ACCOUNTS_FOR_SUBQUERY, \
     CONTACTS_FOR_SUBQUERY
@@ -241,10 +241,10 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
 @pytest.mark.parametrize('prefixed_query', [True, False])  # Testing of SDC-9067
 def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, api, prefixed_query):
     """Create data using Salesforce client and then check if Salesforce origin
-    receives them using snapshot.
+    receives them using wiretap.
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -272,24 +272,24 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, api, prefixed_
                                      use_bulk_api=(api == 'bulk'),
                                      subscribe_for_notifications=False)
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, TEST_DATA['DATA_TO_INSERT'], salesforce,
-                       TEST_DATA['DATA_TO_INSERT'])
+    _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, TEST_DATA['DATA_TO_INSERT'], salesforce,
+                                          TEST_DATA['DATA_TO_INSERT'])
 
 
 @salesforce
 @pytest.mark.parametrize('api', ['soap', 'bulk'])
 def test_salesforce_origin_nulls(sdc_builder, sdc_executor, salesforce, api):
     """Create data using Salesforce client and then check if Salesforce origin
-    receives them using snapshot. This test checks that nulls are correctly
+    receives them using wiretap. This test checks that nulls are correctly
     read for fields that are not set in Salesforce (SDC-11086).
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -315,23 +315,23 @@ def test_salesforce_origin_nulls(sdc_builder, sdc_executor, salesforce, api):
                                      use_bulk_api=(api == 'bulk'),
                                      subscribe_for_notifications=False)
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, expected_data, salesforce, expected_data)
+    _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expected_data, salesforce, expected_data)
 
 
 @salesforce
 @pytest.mark.parametrize('api', ['soap', 'bulk'])
 def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
     """Create data using Salesforce client and then check if Salesforce origin
-    receives them using snapshot. This test checks that datetime fields can
+    receives them using wiretap. This test checks that datetime fields can
     be used as offsets (SDC-10352).
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -356,8 +356,8 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
                                      initial_offset='2018-10-16T00:00:00.000Z',
                                      offset_field='SystemModstamp')
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
@@ -368,16 +368,20 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
-
-        verify_snapshot(snapshot, salesforce_origin, TEST_DATA['DATA_TO_INSERT'])
-
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        _verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
+
+        wiretap.reset()
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 0)
+        sdc_executor.stop_pipeline(pipeline)
+
         rows_from_snapshot = [record.value['value']
-                              for record in snapshot[salesforce_origin].output]
+                              for record in wiretap.output_records]
 
         assert len(rows_from_snapshot) == 0
 
@@ -394,7 +398,7 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api,
     Pipeline will enrich records with the 'FirstName' of contacts by adding a field as 'surName'.
 
     The pipeline looks like:
-        dev_raw_data_source >> salesforce_lookup >> trash
+        dev_raw_data_source >> salesforce_lookup >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -438,16 +442,16 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api,
     if Version(sdc_builder.version) >= Version('3.16.0'):
         salesforce_lookup.set_attributes(use_bulk_api=(api == 'bulk'))
 
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> salesforce_lookup >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> salesforce_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
     LOOKUP_EXPECTED_DATA = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'])
     for record in LOOKUP_EXPECTED_DATA:
         record['surName'] = record.pop('LastName')
-    verify_by_snapshot(sdc_executor, pipeline, salesforce_lookup, LOOKUP_EXPECTED_DATA,
-                       salesforce, TEST_DATA['DATA_TO_INSERT'])
+    _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, LOOKUP_EXPECTED_DATA,
+                                          salesforce, TEST_DATA['DATA_TO_INSERT'])
 
 
 @salesforce
@@ -456,7 +460,7 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
     Pipeline will enrich records with the 'FirstName' of contacts by adding a field as 'surName'.
 
     The pipeline looks like:
-        dev_raw_data_source >> salesforce_lookup >> trash
+        dev_raw_data_source >> salesforce_lookup >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -488,21 +492,21 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
                                      object_type=CONTACT,
                                      field_mappings=field_mappings)
 
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> salesforce_lookup >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> salesforce_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # We need to look for surName field instead of LastName
         lookup_expected_data = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'])
         for record in lookup_expected_data:
             record['surName'] = record.pop('FirstName')
 
-        verify_snapshot(snapshot, salesforce_lookup, lookup_expected_data)
+        _verify_wiretap_data(wiretap, lookup_expected_data)
 
     finally:
         clean_up(sdc_executor, pipeline, client, contact_ids)
@@ -519,7 +523,7 @@ def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforc
     error.
 
     The pipeline looks like:
-        dev_raw_data_source >> salesforce_lookup >> trash
+        dev_raw_data_source >> salesforce_lookup >> wiretap
     """
     client = salesforce.client
     contact_ids = None
@@ -556,39 +560,39 @@ def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforc
                                          missing_values_behavior=missing_values_behavior,
                                          field_mappings=field_mappings)
 
-        trash = pipeline_builder.add_stage('Trash')
-        dev_raw_data_source >> salesforce_lookup >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        dev_raw_data_source >> salesforce_lookup >> wiretap.destination
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # We need to look for surName field instead of LastName
         lookup_expected_data = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'])
         for record in lookup_expected_data:
             record['surName'] = record.pop('FirstName')
 
-        rows_from_snapshot = [record.field
-                              for record in snapshot[salesforce_lookup].output]
+        rows_from_wiretap = [record.field
+                              for record in wiretap.output_records]
 
         if missing_values_behavior == 'PASS_RECORD_ON':
             # Middle record should just have its Id field
-            assert rows_from_snapshot[1]['Id'] == contact_ids[1]['Id']
+            assert rows_from_wiretap[1]['Id'] == contact_ids[1]['Id']
         else:
-            assert len(snapshot[salesforce_lookup].error_records) == 1
-            assert snapshot[salesforce_lookup].error_records[0].field['Id'] == contact_ids[1]['Id']
+            assert len(wiretap.error_records) == 1
+            assert wiretap.error_records[0].field['Id'] == contact_ids[1]['Id']
 
-        data_from_snapshot = [{field: record[field] for field in record if field not in ['Id', 'SystemModstamp']}
-                              for record in rows_from_snapshot]
+        data_from_wiretap = [{field: record[field] for field in record if field not in ['Id', 'SystemModstamp']}
+                              for record in rows_from_wiretap]
 
         # Remove the middle element(s) so we can do the next assert
         if missing_values_behavior == 'PASS_RECORD_ON':
-            del (data_from_snapshot[1])
+            del (data_from_wiretap[1])
 
         del (lookup_expected_data[1])
 
-        assert data_from_snapshot == lookup_expected_data
+        assert data_from_wiretap == lookup_expected_data
 
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -604,11 +608,11 @@ def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforc
 @pytest.mark.parametrize('api', ['soap', 'bulk'])
 def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
     """Create data using Salesforce client and then check if Salesforce origin
-    receives them using snapshot. This test focuses on following relationships
+    receives them using wiretap. This test focuses on following relationships
     (SDC-9493) and ordering in subqueries (SDC-9251).
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -629,8 +633,8 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
                                      use_bulk_api=(api == 'bulk'),
                                      subscribe_for_notifications=False)
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
     account_ids = None
@@ -656,12 +660,13 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
 
         contact_ids = get_ids(client.bulk.Contact.insert(expected_contacts), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
 
         # Verify correct rows are received using snapshot.
-        assert ACCOUNTS_FOR_SUBQUERY == len(snapshot[salesforce_origin].output)
-        for i, account in enumerate(snapshot[salesforce_origin].output):
+        assert ACCOUNTS_FOR_SUBQUERY == len(wiretap.output_records)
+        for i, account in enumerate(wiretap.output_records):
             assert expected_accounts[i]['Name'] == account.field['Name'].value
             assert CONTACTS_FOR_SUBQUERY == len(account.field['Contacts'])
             for j in range(CONTACTS_FOR_SUBQUERY):
@@ -678,10 +683,10 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
 @sdc_min_version('3.8.0')
 def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce):
     """Create data using Salesforce client and then check if Salesforce origin
-    retrieves correct aggregate data using snapshot (SDC-10694).
+    retrieves correct aggregate data using wiretap (SDC-10694).
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -698,8 +703,8 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
                                      subscribe_for_notifications=False,
                                      disable_query_validation=True)
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
     contact_ids = None
@@ -710,12 +715,12 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
         logger.info('Creating rows using Salesforce client ...')
         contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with a count field
-        assert len(snapshot[salesforce_origin].output) == 1
-        assert snapshot[salesforce_origin].output[0].field['count'] == 3
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['count'] == 3
 
     finally:
         clean_up(sdc_executor, pipeline, client, contact_ids)
@@ -725,10 +730,10 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
 @sdc_min_version('3.8.0')
 def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
     """Create data using Salesforce client and then check if Salesforce origin
-    retrieves correct aggregate data using snapshot.
+    retrieves correct aggregate data using wiretap.
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -749,8 +754,8 @@ def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
                                      subscribe_for_notifications=False,
                                      disable_query_validation=True)
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
     account_ids = None
@@ -775,14 +780,14 @@ def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
         account_ids = get_ids(client.bulk.Account.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with a count field
-        assert len(snapshot[salesforce_origin].output) == 1
-        assert snapshot[salesforce_origin].output[0].field['expr0'].value == 3
-        assert snapshot[salesforce_origin].output[0].field['expr1'].value == 3
-        assert snapshot[salesforce_origin].output[0].field['expr2'].value == 'Agriculture'
-        assert snapshot[salesforce_origin].output[0].field['expr3'].value == 1368
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['expr0'].value == 3
+        assert wiretap.output_records[0].field['expr1'].value == 3
+        assert wiretap.output_records[0].field['expr2'].value == 'Agriculture'
+        assert wiretap.output_records[0].field['expr3'].value == 1368
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -801,7 +806,7 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
     matches the /prefix field, adding the value as a string in the /count field
 
     The pipeline looks like:
-        dev_raw_data_source >> salesforce_lookup >> trash
+        dev_raw_data_source >> salesforce_lookup >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -820,8 +825,8 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
 
     salesforce_lookup.set_attributes(soql_query=query_str)
 
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> salesforce_lookup >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> salesforce_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
     contact_ids = None
@@ -832,12 +837,12 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
         logger.info('Creating rows using Salesforce client ...')
         contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with a /count field containing an integer
-        assert len(snapshot[salesforce_lookup].output) == 1
-        assert snapshot[salesforce_lookup].output[0].field['count'].value == 3
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['count'].value == 3
 
     finally:
         clean_up(sdc_executor, pipeline, client, contact_ids)
@@ -851,7 +856,7 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
     matches the /prefix field, adding the value as a string in the /count field
 
     The pipeline looks like:
-        dev_raw_data_source >> salesforce_lookup >> trash
+        dev_raw_data_source >> salesforce_lookup >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -875,8 +880,8 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
     salesforce_lookup.set_attributes(soql_query=query_str,
                                      field_mappings=field_mappings)
 
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> salesforce_lookup >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> salesforce_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
     contact_ids = None
@@ -888,14 +893,14 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
         logger.info('Creating rows using Salesforce client ...')
         contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with a /count field containing three strings
-        assert len(snapshot[salesforce_lookup].output) == 1
-        assert snapshot[salesforce_lookup].output[0].field['count'].value == str(len(TEST_DATA['DATA_TO_INSERT']))
-        assert snapshot[salesforce_lookup].output[0].field['expr1'].value == TEST_DATA['DATA_TO_INSERT'][0]['FirstName']
-        assert snapshot[salesforce_lookup].output[0].field['expr2'].value == TEST_DATA['DATA_TO_INSERT'][-1]['LastName']
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['count'].value == str(len(TEST_DATA['DATA_TO_INSERT']))
+        assert wiretap.output_records[0].field['expr1'].value == TEST_DATA['DATA_TO_INSERT'][0]['FirstName']
+        assert wiretap.output_records[0].field['expr2'].value == TEST_DATA['DATA_TO_INSERT'][-1]['LastName']
 
     finally:
         clean_up(sdc_executor, pipeline, client, contact_ids)
@@ -908,7 +913,7 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
     is running
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -931,8 +936,8 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
                                      repeat_query='FULL',
                                      query_interval=60)
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
@@ -942,9 +947,10 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
-        verify_snapshot(snapshot, salesforce_origin, TEST_DATA['DATA_TO_INSERT'])
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        _verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
         logger.info('Revoking Salesforce session')
         r = requests.get(f'https://{client.sf_instance}/services/oauth2/revoke',
@@ -955,9 +961,10 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         # able to delete the data in the finally block
         client = salesforce.client
 
-        logger.info('Capturing another snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, timeout_sec=TIMEOUT).snapshot
-        verify_snapshot(snapshot, salesforce_origin, TEST_DATA['DATA_TO_INSERT'])
+        logger.info('Capturing another wiretap')
+        wiretap.reset()
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        _verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)
@@ -966,12 +973,12 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
 @salesforce
 def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
     """Create data using Salesforce client, stop the pipeline
-    and then check if Salesforce origin receives them using snapshot.
+    and then check if Salesforce origin receives them using wiretap.
     Insert more data and check again.
 
     The pipeline looks like:
-        salesforce_origin >> trash
-        salesforce_origin >= trash_2
+        salesforce_origin >> wiretap
+        salesforce_origin >= wiretap_events
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -1005,11 +1012,11 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
     salesforce_origin.set_attributes(soql_query=query,
                                      subscribe_for_notifications=False)
 
-    trash = pipeline_builder.add_stage('Trash')
-    trash_2 = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
+    wiretap_events = pipeline_builder.add_wiretap()
 
-    salesforce_origin >> trash
-    salesforce_origin >= trash_2
+    salesforce_origin >> wiretap.destination
+    salesforce_origin >= wiretap_events.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
@@ -1023,15 +1030,15 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids_1 = get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        verify_snapshot(snapshot, salesforce_origin, data_to_insert)
+        _verify_wiretap_data(wiretap, data_to_insert)
 
         # Stage should produce events, and it does, since the fix for SDC-12418
-        assert len(snapshot[salesforce_origin].event_records) == 1
-        assert snapshot[salesforce_origin].event_records[0].header.values['sdc.event.type'] == 'no-more-data'
-        assert snapshot[salesforce_origin].event_records[0].field['record-count'] == len(data_to_insert)
+        assert len(wiretap_events.output_records) == 1
+        assert wiretap_events.output_records[0].header.values['sdc.event.type'] == 'no-more-data'
+        assert wiretap_events.output_records[0].field['record-count'] == len(data_to_insert)
 
         # Pipeline stops, but if it changes in a future version
         sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED', timeout_sec=TIMEOUT)
@@ -1043,15 +1050,17 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids_2 = get_ids(client.bulk.Contact.insert(data_to_insert_2), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot_2 = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        wiretap.reset()
+        wiretap_events.reset()
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        verify_snapshot(snapshot_2, salesforce_origin, data_to_insert + data_to_insert_2)
+        _verify_wiretap_data(wiretap, data_to_insert + data_to_insert_2)
 
         # stage should produce events...
-        assert len(snapshot[salesforce_origin].event_records) == 1
-        assert snapshot[salesforce_origin].event_records[0].header.values['sdc.event.type'] == 'no-more-data'
-        assert snapshot[salesforce_origin].event_records[0].field['record-count'] == len(data_to_insert_2)
+        assert len(wiretap_events.output_records) == 1
+        assert wiretap_events.output_records[0].header.values['sdc.event.type'] == 'no-more-data'
+        assert wiretap_events.output_records[0].field['record-count'] == len(data_to_insert_2) + len(data_to_insert)
 
     finally:
         inserted_ids = []
@@ -1069,7 +1078,7 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
     """Test that base64-encoded Document data can be correctly read (SDC-12041).
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -1086,8 +1095,8 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
                                      disable_query_validation=True,
                                      subscribe_for_notifications=False)
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
@@ -1126,12 +1135,12 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
         inserted_id = ret['id']
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with Id and Body fields
-        assert len(snapshot[salesforce_origin].output) == 1
-        assert snapshot[salesforce_origin].output[0].field['Id'].value == inserted_id
-        assert snapshot[salesforce_origin].output[0].field['Body'].value == body
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['Id'].value == inserted_id
+        assert wiretap.output_records[0].field['Body'].value == body
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -1292,10 +1301,10 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
 @pytest.mark.parametrize('subscription_type', [PUSH_TOPIC, CDC])
 def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscription_type):
     """Start pipeline, create data using Salesforce client
-    and then check if Salesforce origin receives notifications using snapshot.
+    and then check if Salesforce origin receives notifications using wiretap.
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -1328,14 +1337,13 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         else:
             salesforce_origin.set_attributes(change_data_capture_object=CONTACT)
 
-        trash = pipeline_builder.add_stage('Trash')
-        salesforce_origin >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        salesforce_origin >> wiretap.destination
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, timeout_sec=TIMEOUT)
-
+        sdc_executor.start_pipeline(pipeline)
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
 
@@ -1345,13 +1353,12 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         logger.info('Creating record using Salesforce client...')
         contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
 
-        logger.info('Taking snapshot')
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
 
         if subscription_type == PUSH_TOPIC:
-            verify_snapshot(snapshot, salesforce_origin, [TEST_DATA['DATA_TO_INSERT'][0]])
+            _verify_wiretap_data(wiretap, [TEST_DATA['DATA_TO_INSERT'][0]])
         else:
-            verify_cdc_snapshot(snapshot, salesforce_origin, TEST_DATA['DATA_TO_INSERT'][0])
+            verify_cdc_wiretap(wiretap, TEST_DATA['DATA_TO_INSERT'][0])
 
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -1373,10 +1380,10 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
 @sdc_min_version('3.7.0')
 def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
     """Start pipeline, create data using Salesforce client
-    and then check if Salesforce origin receives notifications using snapshot.
+    and then check if Salesforce origin receives notifications using wiretap.
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -1411,14 +1418,13 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
                                          subscription_type=CDC,
                                          change_data_capture_object=CONTACT)
 
-        trash = pipeline_builder.add_stage('Trash')
-        salesforce_origin >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        salesforce_origin >> wiretap.destination
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, timeout_sec=TIMEOUT)
-
+        sdc_executor.start_pipeline(pipeline)
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
 
@@ -1429,16 +1435,16 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
 
         logger.info('Taking snapshot')
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
 
         # CDC returns more than just the record fields, so verify_snapshot isn't so useful
-        assert len(snapshot[salesforce_origin].output) == 1
-        assert snapshot[salesforce_origin].output[0].header.values['salesforce.cdc.recordIds']
-        assert snapshot[salesforce_origin].output[0].field['Email'] == TEST_DATA['DATA_TO_INSERT'][0]['Email']
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].header.values['salesforce.cdc.recordIds']
+        assert wiretap.output_records[0].field['Email'] == TEST_DATA['DATA_TO_INSERT'][0]['Email']
         # CDC returns nested compound fields
-        assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][0][
+        assert wiretap.output_records[0].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][0][
             'FirstName']
-        assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][0][
+        assert wiretap.output_records[0].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][0][
             'LastName']
 
         logger.info('Stopping pipeline')
@@ -1455,23 +1461,24 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         delete_custom_field_from_contact(metadata)
 
         logger.info('Restarting pipeline')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, timeout_sec=TIMEOUT)
+        wiretap.reset()
+        sdc_executor.start_pipeline(pipeline)
 
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
 
         logger.info('Taking another snapshot')
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
 
-        assert len(snapshot[salesforce_origin].output) == 1
-        assert snapshot[salesforce_origin].output[0].header.values['salesforce.cdc.recordIds']
-        assert snapshot[salesforce_origin].output[0].field['Email'] == TEST_DATA['DATA_TO_INSERT']['Email']
-        assert snapshot[salesforce_origin].output[0].field['BoolCustField__c'] == TEST_DATA['DATA_TO_INSERT'][
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].header.values['salesforce.cdc.recordIds']
+        assert wiretap.output_records[0].field['Email'] == TEST_DATA['DATA_TO_INSERT']['Email']
+        assert wiretap.output_records[0].field['BoolCustField__c'] == TEST_DATA['DATA_TO_INSERT'][
             'BoolCustField__c']
         # CDC returns nested compound fields
-        assert snapshot[salesforce_origin].output[0].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][
+        assert wiretap.output_records[0].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][
             'FirstName']
-        assert snapshot[salesforce_origin].output[0].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][
+        assert wiretap.output_records[0].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][
             'LastName']
 
     finally:
@@ -1497,10 +1504,10 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
     succeed if it is ample (SDC-12771).
 
     Start pipeline with given buffer size, create data using Salesforce client,
-    check for error or correct snapshot as appropriate
+    check for error or correct wiretap as appropriate
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -1523,16 +1530,15 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
                                      push_topic=push_topic_name,
                                      streaming_buffer_size=(1048576 if enough_buffer_size else 256))
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
     try:
         logger.info('Starting pipeline')
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, timeout_sec=TIMEOUT)
-
+        sdc_executor.start_pipeline(pipeline)
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
 
@@ -1542,16 +1548,16 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
         logger.info('Creating record using Salesforce client...')
         contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
 
-        logger.info('Taking snapshot')
-        if enough_buffer_size:
-            snapshot = snapshot_command.wait_for_finished().snapshot
+        logger.info('Waiting for one record')
 
-            verify_snapshot(snapshot, salesforce_origin, [TEST_DATA['DATA_TO_INSERT'][0]])
+        if enough_buffer_size:
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+            _verify_wiretap_data(wiretap, [TEST_DATA['DATA_TO_INSERT'][0]])
         else:
             # Pipeline should stop with StageException
-            with pytest.raises(Exception):
-                snapshot_command.wait_for_finished().snapshot
-
+            assert len(wiretap.output_records) == 0
+            assert len(wiretap.output_records) == 0
+            sdc_executor.get_pipeline_status(pipeline).wait_for_status('RUN_ERROR')
             status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
             assert 'RUN_ERROR' == status
     finally:
@@ -1783,7 +1789,7 @@ def test_salesforce_datetime_in_history(sdc_builder, sdc_executor, salesforce, a
     ActivatedDate on Contract is one of the few datetime fields that will show up in a standard object's field history.
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -1814,22 +1820,22 @@ def test_salesforce_datetime_in_history(sdc_builder, sdc_executor, salesforce, a
                                          disable_query_validation=True,
                                          use_bulk_api=(api == 'bulk'),
                                          subscribe_for_notifications=False)
-        trash = pipeline_builder.add_stage('Trash')
-        salesforce_origin >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        salesforce_origin >> wiretap.destination
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with Id and NewValue fields. For SOAP API, NewValue should be a DATETIME, for
         # Bulk API it's a STRING
-        assert len(snapshot[salesforce_origin].output) == 1
-        assert snapshot[salesforce_origin].output[0].field['Id']
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['Id']
         if api == 'soap':
-            assert snapshot[salesforce_origin].output[0].field['NewValue'].type == 'DATETIME'
+            assert wiretap.output_records[0].field['NewValue'].type == 'DATETIME'
         else:
-            assert snapshot[salesforce_origin].output[0].field['NewValue'].type == 'STRING'
+            assert wiretap.output_records[0].field['NewValue'].type == 'STRING'
 
     finally:
         if con and con['id']:
@@ -1847,7 +1853,7 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
     Create data using Salesforce client and then check if Salesforce origin receives them using snapshot.
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -1867,13 +1873,26 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
                                      subscription_type=CDC,
                                      change_data_capture_object='')
 
-    trash = pipeline_builder.add_stage('Trash')
-    salesforce_origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    salesforce_origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    verify_by_snapshot(sdc_executor, pipeline, salesforce_origin, TEST_DATA['DATA_TO_INSERT'], salesforce,
-                       TEST_DATA['DATA_TO_INSERT'])
+    client = salesforce.client
+    inserted_ids = None
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
+
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+
+        _verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
+
+    finally:
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
 
 
 @salesforce
@@ -1977,11 +1996,11 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce, m
 @pytest.mark.parametrize('api', ['soap', 'bulk'])
 def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor, salesforce, subscription_type, api):
     """Start pipeline, write data using Salesforce client, read existing data via query,
-    check if Salesforce origin reads data via snapshot, write more data, check that Salesforce
+    check if Salesforce origin reads data via wiretap, write more data, check that Salesforce
     origin reads it via Push Topic/CDC.
 
     The pipeline looks like:
-        salesforce_origin >> trash
+        salesforce_origin >> wiretap
 
     Args:
         sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
@@ -2025,8 +2044,8 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         else:
             salesforce_origin.set_attributes(change_data_capture_object=CONTACT)
 
-        trash = pipeline_builder.add_stage('Trash')
-        salesforce_origin >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        salesforce_origin >> wiretap.destination
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
@@ -2035,13 +2054,11 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(first_data_to_insert), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(first_data_to_insert))
 
-        verify_snapshot(snapshot, salesforce_origin, first_data_to_insert)
-
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False,
-                                                         timeout_sec=TIMEOUT)
+        _verify_wiretap_data(wiretap, first_data_to_insert)
 
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
@@ -2050,15 +2067,16 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         # updates could flood a channel."
         # REST API in Simple Salesforce can only create one record at a time, so just create one contact
         logger.info('Creating record using Salesforce client...')
+        wiretap.reset()
         contact = client.Contact.create(second_data_to_insert)
 
-        logger.info('Taking snapshot')
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        logger.info('Capturing second batch data')
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(first_data_to_insert) + 1)
 
         if subscription_type == PUSH_TOPIC:
-            verify_snapshot(snapshot, salesforce_origin, [second_data_to_insert])
+            _verify_wiretap_data(wiretap, [second_data_to_insert])
         else:
-            verify_cdc_snapshot(snapshot, salesforce_origin, second_data_to_insert)
+            verify_cdc_wiretap(wiretap, second_data_to_insert)
 
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)

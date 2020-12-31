@@ -161,12 +161,11 @@ def get_dev_raw_data_source(pipeline_builder, raw_data):
     return dev_raw_data_source
 
 
-def verify_snapshot(snapshot, stage, expected_data, sort=True):
-    """Utility method to verify that a snapshot matches the expected data
+def _verify_wiretap_data(wiretap, expected_data, sort=True):
+    """Utility method to verify that a wiretap matches the expected data
 
     Args:
-        snapshot (:py:class:`streamsets.sdk.sdc_models.Snapshot`): Snapshot containing data to be verified
-        stage (:py:class:`streamsets.sdk.sdc_models.Stage`): Stage after which data is to be verified
+        wiretap: wiretap containing data to be verified
         expected_data (obj:`list`): Expected data as a list of dicts
         sort (Boolean): Whether to sort or not before comparing
 
@@ -174,11 +173,11 @@ def verify_snapshot(snapshot, stage, expected_data, sort=True):
         (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
     """
     # SDC-10773 - source IDs must be unique
-    source_ids = {record.header['sourceId'] for record in snapshot[stage].output}
-    assert len(source_ids) == len(snapshot[stage].output)
+    source_ids = {record.header['sourceId'] for record in wiretap.output_records}
+    assert len(source_ids) == len(wiretap.output_records)
 
     rows_from_snapshot = [record.field
-                          for record in snapshot[stage].output]
+                          for record in wiretap.output_records]
 
     data_from_snapshot = [{field: record[field] for field in record if field not in ['Id', 'SystemModstamp']}
                           for record in rows_from_snapshot]
@@ -192,14 +191,14 @@ def verify_snapshot(snapshot, stage, expected_data, sort=True):
         assert data_from_snapshot == expected_data
 
 
-def verify_by_snapshot(sdc_executor, pipeline, stage, expected_data, salesforce, data_to_insert, sort=True):
-    """Utility method to insert data into Salesforce, start a pipeline, capture a snapshot, verify that the snapshot
-    matches the expected data, and clean up the inserted records.
+def _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expected_data, salesforce, data_to_insert, sort=True):
+    """Utility method to insert data into Salesforce, start a pipeline, record a wiretap, verify that the data
+    in the wiretap matches the expected data, and clean up the inserted records.
 
     Args:
         sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
         pipeline (:py:class:`streamsets.sdk.sdc_models.Pipeline`): Pipeline instance
-        stage (:py:class:`streamsets.sdk.sdc_models.Stage`): Stage after which data is to be verified
+        wiretap: Wiretap after which data is to be verified
         expected_data (obj:`list`): Expected data as a list of dicts
         salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
         data_to_insert (obj:`list`): Data to be inserted, as a list of dicts
@@ -215,10 +214,10 @@ def verify_by_snapshot(sdc_executor, pipeline, stage, expected_data, salesforce,
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
 
-        logger.info('Starting pipeline and snapshot')
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=TIMEOUT).snapshot
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        verify_snapshot(snapshot, stage, expected_data, sort)
+        _verify_wiretap_data(wiretap, expected_data, sort)
 
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)
@@ -292,14 +291,14 @@ def find_dataset_include_timestamp(client, name):
     return None, None
 
 
-def verify_cdc_snapshot(snapshot, stage, inserted_data):
+def verify_cdc_wiretap(wiretap, inserted_data):
     # CDC returns more than just the record fields, so verify_snapshot isn't so useful
-    assert len(snapshot[stage].output) == 1
-    assert snapshot[stage].output[0].header.values['salesforce.cdc.recordIds']
-    assert snapshot[stage].output[0].field['Email'] == inserted_data['Email']
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].header.values['salesforce.cdc.recordIds']
+    assert wiretap.output_records[0].field['Email'] == inserted_data['Email']
     # CDC returns nested compound fields
-    assert snapshot[stage].output[0].field['Name']['FirstName'] == inserted_data['FirstName']
-    assert snapshot[stage].output[0].field['Name']['LastName'] == inserted_data['LastName']
+    assert wiretap.output_records[0].field['Name']['FirstName'] == inserted_data['FirstName']
+    assert wiretap.output_records[0].field['Name']['LastName'] == inserted_data['LastName']
 
 
 def add_custom_field_to_contact(metadata):
