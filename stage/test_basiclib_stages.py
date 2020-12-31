@@ -51,22 +51,22 @@ def test_shell_executor_impersonation(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(shell_pipeline)
     sdc_executor.start_pipeline(shell_pipeline).wait_for_finished()
 
-    # Build a separate pipeline to read the file written and check, using a snapshot, that the "correct" username
+    # Build a separate pipeline to read the file written and check, using wiretap, that the "correct" username
     # is in the file.
     builder = sdc_builder.get_pipeline_builder()
     file_to_tail = [dict(fileRollMode='REVERSE_COUNTER', patternForToken='.*', fileFullPath=f'{filepath}')]
     file_tail = builder.add_stage('File Tail').set_attributes(data_format='TEXT', file_to_tail=file_to_tail)
-    trash_1 = builder.add_stage('Trash')
-    trash_2 = builder.add_stage('Trash')
+    wiretap_1 = builder.add_wiretap()
+    wiretap_2 = builder.add_wiretap()
     pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
-    file_tail >> [trash_1, pipeline_finisher_executor]
-    file_tail >> trash_2
+    file_tail >> [wiretap_1.destination, pipeline_finisher_executor]
+    file_tail >> wiretap_2.destination
 
     file_tail_pipeline = builder.build()
     sdc_executor.add_pipeline(file_tail_pipeline)
-    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(file_tail_pipeline).wait_for_finished()
 
-    records = [record.field for record in snapshot[file_tail].output_lanes[file_tail.output_lanes[0]]]
+    records = [record.field for record in wiretap_1.output_records]
     assert records == [{'text': sdc_executor.username}]
 
 
@@ -74,12 +74,12 @@ def test_stream_selector_processor(sdc_builder, sdc_executor):
     """Smoke test for the Stream Selector processor.
 
     A handful of records containing Tour de France contenders and their number of wins is passed
-    to a Stream Selector with multi-winners going to one Trash stage and not multi-winners going
+    to a Stream Selector with multi-winners going to one wiretap stage and not multi-winners going
     to another.
 
                                                >> to_error
-    dev_raw_data_source >> record_deduplicator >> stream_selector >> trash (multi-winners)
-                                                                  >> trash (not multi-winners)
+    dev_raw_data_source >> record_deduplicator >> stream_selector >> wiretap (multi-winners)
+                                                                  >> wiretap (not multi-winners)
     """
     multi_winners = [dict(name='Chris Froome', wins='3'),
                      dict(name='Greg LeMond', wins='3')]
@@ -92,16 +92,17 @@ def test_stream_selector_processor(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        json_content='ARRAY_OBJECTS',
-                                       raw_data=json.dumps(tour_de_france_contenders))
+                                       raw_data=json.dumps(tour_de_france_contenders),
+                                       stop_after_first_batch=True)
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     to_error = pipeline_builder.add_stage('To Error')
     stream_selector = pipeline_builder.add_stage('Stream Selector')
-    trash_multi_winners = pipeline_builder.add_stage('Trash')
-    trash_not_multi_winners = pipeline_builder.add_stage('Trash')
+    wiretap_multi_winners = pipeline_builder.add_wiretap()
+    wiretap_not_multi_winners = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> record_deduplicator >> stream_selector >> trash_multi_winners
+    dev_raw_data_source >> record_deduplicator >> stream_selector >> wiretap_multi_winners.destination
     record_deduplicator >> to_error
-    stream_selector >> trash_not_multi_winners
+    stream_selector >> wiretap_not_multi_winners.destination
 
     stream_selector.condition = [dict(outputLane=stream_selector.output_lanes[0],
                                       predicate='${record:value("/wins") > 1}'),
@@ -111,20 +112,19 @@ def test_stream_selector_processor(sdc_builder, sdc_executor):
     pipeline = pipeline_builder.build('test_stream_selector_processor')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[0]]
-    multi_winners_from_snapshot = [{key: value
-                                    for key, value in record.field.items()}
-                                   for record in multi_winners_records]
-    assert multi_winners == multi_winners_from_snapshot
+    multi_winners_records = wiretap_multi_winners.output_records
+    multi_winners_from_records = [{key: value
+                                   for key, value in record.field.items()}
+                                  for record in multi_winners_records]
+    assert multi_winners == multi_winners_from_records
 
-    not_multi_winners_records = snapshot[stream_selector].output_lanes[stream_selector.output_lanes[1]]
-    not_multi_winners_from_snapshot = [{field: value
-                                        for field, value in record.field.items()}
-                                       for record in not_multi_winners_records]
-    assert not_multi_winners == not_multi_winners_from_snapshot
+    not_multi_winners_records = wiretap_not_multi_winners.output_records
+    not_multi_winners_from_records = [{field: value
+                                       for field, value in record.field.items()}
+                                      for record in not_multi_winners_records]
+    assert not_multi_winners == not_multi_winners_from_records
 
 
 # Log Parser tests
@@ -136,7 +136,7 @@ def test_log_parser_processor_multiple_grok_patterns(sdc_builder, sdc_executor):
     Test that logs matching different grok patterns are correctly parsed when all corresponding grok patterns are
     present in the grok patterns list configuration variable of log_parser stage. Pipeline looks like:
 
-    dev_raw_data_source >> log_parser >> trash
+    dev_raw_data_source >> log_parser >> wiretap
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -165,18 +165,17 @@ def test_log_parser_processor_multiple_grok_patterns(sdc_builder, sdc_executor):
                                                                                        '%{JUSTLOGLEVEL}'
                                                                                    ])
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> log_parser_processor >> trash
+    dev_raw_data_source >> log_parser_processor >> wiretap.destination
 
     log_parser_pipeline = pipeline_builder.build(
         title='Log Parser pipeline multiple grok patterns success')
 
     sdc_executor.add_pipeline(log_parser_pipeline)
 
-    snapshot_cmd = sdc_executor.capture_snapshot(log_parser_pipeline, start_pipeline=True, wait=False)
-    snapshot = snapshot_cmd.wait_for_finished().snapshot
-    records = [record.field for record in snapshot[log_parser_processor.instance_name].output]
+    sdc_executor.start_pipeline(log_parser_pipeline).wait_for_finished()
+    records = [record.field for record in wiretap.output_records]
 
     assert 2 == len(records)
 
@@ -229,18 +228,17 @@ def test_log_parser_processor_multiple_grok_patterns_not_all_present(sdc_builder
                                                                                        '%{COMBINEDAPACHELOG}'
                                                                                    ])
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> log_parser_processor >> trash
+    dev_raw_data_source >> log_parser_processor >> wiretap.destination
 
     log_parser_pipeline = pipeline_builder.build(
         title='Log Parser pipeline multiple grok patterns success')
 
     sdc_executor.add_pipeline(log_parser_pipeline)
 
-    snapshot_cmd = sdc_executor.capture_snapshot(log_parser_pipeline, start_pipeline=True, wait=False)
-    snapshot = snapshot_cmd.wait_for_finished().snapshot
-    correct_records = [record.field for record in snapshot[log_parser_processor.instance_name].output]
+    sdc_executor.start_pipeline(log_parser_pipeline).wait_for_finished()
+    correct_records = [record.field for record in wiretap.output_records]
 
     assert 1 == len(correct_records)
 
@@ -256,7 +254,7 @@ def test_log_parser_processor_multiple_grok_patterns_not_all_present(sdc_builder
     assert correct_records[0]['parsed_log']['httpversion'] == '1.0'
     assert correct_records[0]['parsed_log']['timestamp'] == '01/Feb/1998:01:08:46 -0800'
 
-    bad_records = [record.field for record in snapshot[log_parser_processor.instance_name].error_records]
+    bad_records = [record.field for record in wiretap.error_records]
 
     assert 1 == len(bad_records)
 
@@ -304,7 +302,7 @@ def test_javascript_sdc_record(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
-    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}', stop_after_first_batch=True)
     origin.stop_after_first_batch = True
 
     javascript = builder.add_stage('JavaScript Evaluator')
@@ -320,16 +318,16 @@ def test_javascript_sdc_record(sdc_builder, sdc_executor):
           }
         """
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> javascript >> trash
+    origin >> javascript >> wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    records = snapshot[javascript].output
+    records = wiretap.output_records
 
     assert len(records) == 1
     assert 'new-value' == records[0].field['new']
@@ -341,7 +339,7 @@ def test_javascript_event_creation(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
-    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}', stop_after_first_batch=True)
     origin.stop_after_first_batch = True
 
     javascript = builder.add_stage('JavaScript Evaluator')
@@ -354,22 +352,21 @@ event.value['value'] = "secret"
 sdcFunctions.toEvent(event)
 """
 
-    # TLKT-248: Add ability to directly read events from snapshots
     identity = builder.add_stage('Dev Identity')
-    event_trash = builder.add_stage('Trash')
-
     trash = builder.add_stage('Trash')
+
+    wiretap = builder.add_wiretap()
 
     origin >> javascript >> trash
     javascript >= identity
-    identity >> event_trash
+    identity >> wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert len(snapshot[identity].output) == 1
-    assert snapshot[identity].output[0].get_field_data('/value') == 'secret'
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/value') == 'secret'
 
 
 def test_expression_evaluator(sdc_builder, sdc_executor):
@@ -378,6 +375,7 @@ def test_expression_evaluator(sdc_builder, sdc_executor):
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'JSON'
     source.raw_data = '{"a" : "b"}'
+    source.stop_after_first_batch = True
 
     expression = builder.add_stage('Expression Evaluator')
     expression.field_expressions = [{
@@ -394,19 +392,18 @@ def test_expression_evaluator(sdc_builder, sdc_executor):
         "fieldAttributeExpression" : "Secret 3"
     }]
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> expression >> trash
+    source >> expression >> wiretap.destination
     pipeline = builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot[expression].output) == 1
-    assert snapshot[expression].output[0].get_field_data('/new_field') == 'Secret 1'
-    assert snapshot[expression].output[0].header['values']['new header'] == 'Secret 2'
-    assert snapshot[expression].output[0].get_field_data('/a').attributes['new field header'] == 'Secret 3'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/new_field') == 'Secret 1'
+    assert wiretap.output_records[0].header['values']['new header'] == 'Secret 2'
+    assert wiretap.output_records[0].get_field_data('/a').attributes['new field header'] == 'Secret 3'
 
 
 def test_expression_evaluator_self_referencing_expression(sdc_builder, sdc_executor):
@@ -418,6 +415,7 @@ def test_expression_evaluator_self_referencing_expression(sdc_builder, sdc_execu
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'JSON'
     source.raw_data = '{"a" : "b"}'
+    source.stop_after_first_batch = True
 
     expression = builder.add_stage('Expression Evaluator')
     expression.field_expressions = [{
@@ -426,17 +424,16 @@ def test_expression_evaluator_self_referencing_expression(sdc_builder, sdc_execu
         "expression": "${record:value('/')}"
     }]
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> expression >> trash
+    source >> expression >> wiretap.destination
     pipeline = builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot[expression].output) == 1
-    assert snapshot[expression].output[0].get_field_data('/new_field/a') == 'b'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/new_field/a') == 'b'
 
 
 @sdc_min_version('3.16.0')
@@ -444,8 +441,8 @@ def test_deduplicator_field_to_compare(sdc_builder, sdc_executor):
     """When field to compare in Record Deduplicator stage doesn't exists, it use On Record Error to manage
     the DEDUP error. The record error has to be "DEDUP_04: Field Path does not exist in the record".
 
-    dev_raw_data_source >> record_deduplicator  >> trash
-                                                >> trash
+    dev_raw_data_source >> record_deduplicator  >> wiretap
+                                                >> wiretap
     """
     raw_data = "Hello"
     field_to_compare = ["/ff", "/text"]
@@ -453,33 +450,32 @@ def test_deduplicator_field_to_compare(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='TEXT',
-                                       raw_data=raw_data)
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     record_deduplicator.set_attributes(on_record_error='TO_ERROR',
                                        compare="SPECIFIED_FIELDS",
                                        fields_to_compare=field_to_compare)
-    trash_one = pipeline_builder.add_stage('Trash')
-    trash_second = pipeline_builder.add_stage('Trash')
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> record_deduplicator >> trash_one
-    record_deduplicator >> trash_second
+    dev_raw_data_source >> record_deduplicator >> wiretap_1.destination
+    record_deduplicator >> wiretap_2.destination
 
     pipeline = pipeline_builder.build('test_deduplicator_field_to_compare')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    stage = snapshot[record_deduplicator.instance_name]
-    assert 1 == len(stage.error_records)
-    assert 'DEDUP_04' == stage.error_records[0].header['errorCode']
+    assert 1 == len(wiretap_2.error_records)
+    assert 'DEDUP_04' == wiretap_2.error_records[0].header['errorCode']
 
 
 def test_log_parser_cef_format(sdc_builder, sdc_executor):
     """This is a test for SDC-15376. It creates a pipeline with three stages.
     A dev_raw that produces a string with CEF format. The log record correctness is asserted.
     Pipeline looks like:
-    DevRawDataSource >> log_parser_processor >> Trash
+    DevRawDataSource >> log_parser_processor >> wiretap
     """
 
     record_text = "CEF:0|Tone Computacion|M Axes|3.19|port_scan|Port Scan|6|externalId=49062 cat=RECONNAISSANCE " \
@@ -496,32 +492,30 @@ def test_log_parser_cef_format(sdc_builder, sdc_executor):
                                        stop_after_first_batch=True)
     log_parser_processor = builder.add_stage('Log Parser')
     log_parser_processor.set_attributes(field_to_parse='/text', new_parsed_field='/cef', log_format="CEF")
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    dev_raw_data_source >> log_parser_processor >> trash
+    dev_raw_data_source >> log_parser_processor >> wiretap.destination
     cef_parser_pipeline = builder.build().configure_for_environment()
     sdc_executor.add_pipeline(cef_parser_pipeline)
 
     try:
         # start pipeline and process one record
-        snapshot_cmd = sdc_executor.capture_snapshot(cef_parser_pipeline, start_pipeline=True, batches=1,
-                                                     batch_size=1)
-        snapshot = snapshot_cmd.wait_for_finished().snapshot
+        sdc_executor.start_pipeline(cef_parser_pipeline).wait_for_finished()
 
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['product'].value == 'M Axes'
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+        assert wiretap.output_records[0].field['cef']['product'].value == 'M Axes'
+        assert wiretap.output_records[0].field['cef']['extensions'][
                    'triaged'].value == 'False'
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+        assert wiretap.output_records[0].field['cef']['extensions'][
                    'dst'].value == '162.3.2.3'
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+        assert wiretap.output_records[0].field['cef']['extensions'][
                    'src'].value == '162.2.2.3'
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions']['dhost'].value == ''
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions']['proto'].value == 'tcp'
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions']['dpt'].value == '80'
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions']['out'].value == 'None'
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+        assert wiretap.output_records[0].field['cef']['extensions']['dhost'].value == ''
+        assert wiretap.output_records[0].field['cef']['extensions']['proto'].value == 'tcp'
+        assert wiretap.output_records[0].field['cef']['extensions']['dpt'].value == '80'
+        assert wiretap.output_records[0].field['cef']['extensions']['out'].value == 'None'
+        assert wiretap.output_records[0].field['cef']['extensions'][
                    'start'].value == '2573599048000'
-        assert snapshot[log_parser_processor.instance_name].output[0].field['cef']['extensions'][
+        assert wiretap.output_records[0].field['cef']['extensions'][
                    'end'].value == '2584316799000'
 
     finally:
