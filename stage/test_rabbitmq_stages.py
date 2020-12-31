@@ -31,10 +31,10 @@ logger.setLevel(logging.DEBUG)
 def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
     """Test for RabbitMQ consumer origin stage. We do so by publishing data to a test queue using RabbitMQ client and
     having a pipeline which reads that data using RabbitMQ consumer origin stage. Data is then asserted for what is
-    published at RabbitMQ client and what we read in the pipeline snapshot. The pipeline looks like:
+    published at RabbitMQ client and what we read in the pipeline wiretap. The pipeline looks like:
 
     RabbitMQ Consumer pipeline:
-        rabbitmq_consumer >> trash
+        rabbitmq_consumer >> wiretap
     """
     # Build consumer pipeline.
     name = get_random_string(string.ascii_letters, 10)
@@ -48,14 +48,14 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
                                                                               durable=True,
                                                                               auto_delete=False,
                                                                               bindings=[])
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    rabbitmq_consumer >> trash
+    rabbitmq_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build(title='RabbitMQ Consumer pipeline').configure_for_environment(rabbitmq)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
+    sdc_executor.start_pipeline(consumer_origin_pipeline)
 
-    # Run pipeline and capture snapshot.
     expected_messages = set()
     connection = rabbitmq.blocking_connection
     channel = connection.channel()
@@ -79,10 +79,10 @@ def test_rabbitmq_rabbitmq_consumer(sdc_builder, sdc_executor, rabbitmq):
     connection.close()
 
     # Messages are published, read through the pipeline and assert.
-    snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True).snapshot
+    sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', 1)
     sdc_executor.stop_pipeline(consumer_origin_pipeline)
     output_records = [record.field['text'].value
-                      for record in snapshot[rabbitmq_consumer.instance_name].output]
+                      for record in wiretap.output_records]
 
     assert set(output_records) == expected_messages
 
@@ -219,7 +219,7 @@ def test_rabbitmq_rabbitmq_consumer_no_queue(sdc_builder, sdc_executor, rabbitmq
     as the consumer is unable to read without the queue.
 
     RabbitMQ Consumer pipeline:
-        rabbitmq_consumer >> trash
+        rabbitmq_consumer >> wiretap
     """
 
     builder = sdc_builder.get_pipeline_builder()
@@ -231,7 +231,6 @@ def test_rabbitmq_rabbitmq_consumer_no_queue(sdc_builder, sdc_executor, rabbitmq
                                                                               auto_delete=False,
                                                                               bindings=[])
     trash = builder.add_stage('Trash')
-
     rabbitmq_consumer >> trash
 
     consumer_origin_pipeline = builder.build(title='RabbitMQ Consumer pipeline').configure_for_environment(rabbitmq)
@@ -239,7 +238,7 @@ def test_rabbitmq_rabbitmq_consumer_no_queue(sdc_builder, sdc_executor, rabbitmq
 
     # We don't need to publish messages, we shouldn't be able to start the pipeline
     try:
-        sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True)
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
     except StartError as e:
         assert e.message.startswith("RABBITMQ_10")
     else:
@@ -250,13 +249,13 @@ def test_rabbitmq_rabbitmq_consumer_no_queue(sdc_builder, sdc_executor, rabbitmq
 def test_rabbitmq_rabbitmq_consumer_wrong_format(sdc_builder, sdc_executor, rabbitmq):
     """Test for RabbitMQ consumer origin stage. We do so by publishing data to a test queue using RabbitMQ client and
     having a pipeline which reads that data using RabbitMQ consumer origin stage. Data is then asserted for what is
-    published at RabbitMQ client and what we read in the pipeline snapshot.
+    published at RabbitMQ client and what we read in the pipeline wiretap.
     Ten records are treated. The second have wrong format an should be sent to error. The rest ones should be read.
     The batch size is set up to 1. It makes the connector to fail SDC-14644
     The pipeline looks like:
 
     RabbitMQ Consumer pipeline:
-        rabbitmq_consumer >> trash
+        rabbitmq_consumer >> wiretap
     """
     # Build consumer pipeline.
     name = get_random_string(string.ascii_letters, 10)
@@ -276,9 +275,9 @@ def test_rabbitmq_rabbitmq_consumer_wrong_format(sdc_builder, sdc_executor, rabb
                                                     type='DIRECT',
                                                     durable=True,
                                                     autoDelete=False)])
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    rabbitmq_consumer >> trash
+    rabbitmq_consumer >> wiretap.destination
 
     consumer_origin_pipeline = builder.build(title='RabbitMQ Consumer pipeline').configure_for_environment(rabbitmq)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
@@ -308,18 +307,17 @@ def test_rabbitmq_rabbitmq_consumer_wrong_format(sdc_builder, sdc_executor, rabb
     connection.close()
 
     # Messages are published, read through the pipeline and assert.
-    snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
-                                             batches=10, batch_size=1).wait_for_finished().snapshot
+    sdc_executor.start_pipeline(consumer_origin_pipeline)
+    sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'data_batch_count', 10)
+    sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
     # Second message produced an error - the last error in the list
 
     error_msg = sdc_executor.get_stage_errors(consumer_origin_pipeline, rabbitmq_consumer)[0].error_code
     assert error_msg == 'RABBITMQ_04'
 
-    sdc_executor.stop_pipeline(consumer_origin_pipeline)
     output_records = [record.field
-                      for batch in snapshot.snapshot_batches
-                      for record in batch.stage_outputs[rabbitmq_consumer.instance_name].output]
+                      for record in wiretap.output_records]
 
     # Datacollector does not guarantee the order of the messages, so we sort them.
     assert sorted(output_records, key=lambda rec: rec['msg'].value) == expected_messages
