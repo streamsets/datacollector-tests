@@ -31,7 +31,7 @@ logger.setLevel(logging.DEBUG)
 def test_field_flattener(sdc_builder, sdc_executor):
     """Test field flattener processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_flattener >> trash
+        dev_raw_data_source >> field_flattener >> wiretap
 
     With given raw_data below, /contact/address will move to newcontact/address and its elements will be flatten as
     home.state and home.zipcode
@@ -57,21 +57,19 @@ def test_field_flattener(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_flattener = pipeline_builder.add_stage('Field Flattener')
     field_flattener.set_attributes(fields=['/contact/address'], flatten_in_place=False,
                                    target_field='/newcontact/address', flatten='SPECIFIC_FIELDS',
                                    name_separator=name_separator, remove_flattened_field=True)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_flattener >> trash
+    dev_raw_data_source >> field_flattener >> wiretap.destination
     pipeline = pipeline_builder.build('Field Flattener pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    new_value = snapshot[field_flattener.instance_name].output[0].field
+    new_value = wiretap.output_records[0].field
     # assert remove_flatten_field
     assert 'address' not in new_value['contact']
     # assert flatten_target_field with name_seperator
@@ -82,7 +80,7 @@ def test_field_flattener(sdc_builder, sdc_executor):
 def test_field_flattener_all(sdc_builder, sdc_executor):
     """Test field flattener processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_flattener >> trash
+        dev_raw_data_source >> field_flattener >> wiretap
 
     With given raw_data below, all elements will be flattened and use '_._' as the separator
     """
@@ -104,19 +102,17 @@ def test_field_flattener_all(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_flattener = pipeline_builder.add_stage('Field Flattener')
     field_flattener.set_attributes(flatten='ENTIRE_RECORD', name_separator=name_separator)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_flattener >> trash
+    dev_raw_data_source >> field_flattener >> wiretap.destination
     pipeline = pipeline_builder.build('Field Flattener (all) pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    new_value = snapshot[field_flattener.instance_name].output[0].field
+    new_value = wiretap.output_records[0].field
     # assert everything has been flattened and there's no extra fields
     assert new_value[f'contact{name_separator}name'] == 'Jane Smith'
     assert new_value[f'contact{name_separator}id'] == '557'
@@ -128,7 +124,7 @@ def test_field_flattener_all(sdc_builder, sdc_executor):
 def test_field_hasher(sdc_builder, sdc_executor):
     """Test field hasher. The pipeline would look like:
 
-        dev_raw_data_source >> field_hasher >> trash
+        dev_raw_data_source >> field_hasher >> wiretap
 
     With the given config below, we will have md5passcode, sha1passcode, sha2passcode and myrecord md5 holding for
     entire record.  In versions >= 3.7.0, we'll have sha256passcode instead of sha2passcode, as well as sha512passcode.
@@ -186,24 +182,22 @@ def test_field_hasher(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_hasher = pipeline_builder.add_stage('Field Hasher')
     field_hasher.set_attributes(hash_in_place=hash_in_place,
                                 hash_to_target=hash_to_target,
                                 hash_entire_record=True, hash_type='MD5',
                                 header_attribute='myrecord', include_record_header=False,
                                 target_field='/myrecord')
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_hasher >> trash
+    dev_raw_data_source >> field_hasher >> wiretap.destination
     pipeline = pipeline_builder.build('Field Hasher pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    new_header = snapshot[field_hasher.instance_name].output[0].header
-    new_value = snapshot[field_hasher.instance_name].output[0].field
+    new_header = wiretap.output_records[0].header
+    new_value = wiretap.output_records[0].field
     # assert new header fields are created same as generated value fields
     assert new_header['values']['sha1passcode'] == new_value['sha1passcode'].value
     assert new_header['values']['myrecord'] == new_value['myrecord'].value
@@ -242,7 +236,7 @@ def test_field_hasher(sdc_builder, sdc_executor):
 def test_field_merger(sdc_builder, sdc_executor):
     """Test field merger processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_merger >> trash
+        dev_raw_data_source >> field_merger >> wiretap
 
     With the given config below, /contact will move to existing path /dupecontact and /identity will move to new path
     /uniqueid.
@@ -273,19 +267,17 @@ def test_field_merger(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_merger = pipeline_builder.add_stage('Field Merger')
     field_merger.set_attributes(fields_to_merge=fields_to_merge, overwrite_fields=True)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_merger >> trash
+    dev_raw_data_source >> field_merger >> wiretap.destination
     pipeline = pipeline_builder.build('Field Merger pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    new_value = snapshot[field_merger.instance_name].output[0].field
+    new_value = wiretap.output_records[0].field
     # assert overwrite existing works
     assert len(new_value['dupecontact']) > 0
     # assert merge works by comparing `identity` to new `uniqueid` dict
@@ -298,7 +290,7 @@ def test_field_merger(sdc_builder, sdc_executor):
 def test_field_order(sdc_builder, sdc_executor):
     """Test field order processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_order >> trash
+        dev_raw_data_source >> field_order >> wiretap
 
     With given config, 3 ordered_fields will be created by dropping all the rest. /address/home/country is a new
     path being created with extra_field_value (eg 'USA').
@@ -321,21 +313,19 @@ def test_field_order(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_order = pipeline_builder.add_stage('Field Order')
     field_order.set_attributes(extra_fields='DISCARD', fields_to_order=fields_to_order,
                                missing_fields='USE_DEFAULT', default_type='STRING',
                                default_value=default_value, output_type='LIST_MAP')
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_order >> trash
+    dev_raw_data_source >> field_order >> wiretap.destination
     pipeline = pipeline_builder.build('Field Order pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    new_value = snapshot[field_order.instance_name].output[0].field
+    new_value = wiretap.output_records[0].field
     # assert we got ordered fields and we don't have discarded fields
     assert fields_to_order == ['/{}'.format(i.replace('"', '').replace('.', '/')) for i in new_value]
     # assert we got extra field value as expected
@@ -346,7 +336,7 @@ def test_field_order(sdc_builder, sdc_executor):
 def test_field_pivoter(sdc_builder, sdc_executor):
     """Test field pivoter processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_pivoter >> trash
+        dev_raw_data_source >> field_pivoter >> wiretap
 
     With the given config, data will pivot at field_to_pivot (/ballpoint/color_list). In this case by creating
     3 records (one for each of ['black', 'blue', 'red']) for one input record.
@@ -359,38 +349,39 @@ def test_field_pivoter(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_pivoter = pipeline_builder.add_stage('Field Pivoter')
     field_pivoter.set_attributes(copy_all_fields=True, field_to_pivot=field_to_pivot,
                                  original_field_name_path=field_name_path, pivoted_items_path=pivoted_item_path,
                                  save_original_field_name=True)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_pivoter >> trash
+    dev_raw_data_source >> field_pivoter >> wiretap.destination
     pipeline = pipeline_builder.build('Field Pivoter pipeline')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # We should generate 3 records
-    assert len(snapshot[field_pivoter].output) == 3
+    assert len(wiretap.output_records) == 3
 
     # Some fields are different in each record
-    assert snapshot[field_pivoter].output[0].get_field_data('/ballpoint/color') == 'black'
-    assert snapshot[field_pivoter].output[1].get_field_data('/ballpoint/color') == 'blue'
-    assert snapshot[field_pivoter].output[2].get_field_data('/ballpoint/color') == 'red'
+    assert wiretap.output_records[0].get_field_data('/ballpoint/color') == 'black'
+    assert wiretap.output_records[1].get_field_data('/ballpoint/color') == 'blue'
+    assert wiretap.output_records[2].get_field_data('/ballpoint/color') == 'red'
 
     # While others should be exactly the same
     for i in range(3):
-        assert snapshot[field_pivoter].output[i].get_field_data('/ballpoint/unit_cost') == '.10'
-        assert snapshot[field_pivoter].output[i].get_field_data('/ballpoint/color_list_path') == '/ballpoint/color_list'
+        assert wiretap.output_records[i].get_field_data('/ballpoint/unit_cost') == '.10'
+        assert wiretap.output_records[i].get_field_data('/ballpoint/color_list_path') == '/ballpoint/color_list'
 
 
 def test_field_remover(sdc_builder, sdc_executor):
     """Test field remover processor for three different actions. The pipeline would look like:
 
-        dev_raw_data_source >> field_remover1 >> field_remover2 >> field_remover3 >> trash
+        dev_raw_data_source >> field_remover1 >> field_remover2 >> field_remover3
+        field_remover1 >> wiretap1
+        field_remover2 >> wiretap2
+        field_remover3 >> wiretap3
 
     With given 3 different field remover configs, the field_remover1 will remove /name and /id paths. field_remover2
     will remove any input fields which are null - in this case /checknull1 and /checknull2. field_remover3 will remove
@@ -413,25 +404,28 @@ def test_field_remover(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_remover1 = pipeline_builder.add_stage('Field Remover')
     field_remover1.set_attributes(fields=['/id', '/name'], action='REMOVE')
     field_remover2 = pipeline_builder.add_stage('Field Remover')
     field_remover2.set_attributes(fields=['/checknull1', '/checknull2'], action='REMOVE_NULL')
     field_remover3 = pipeline_builder.add_stage('Field Remover')
     field_remover3.set_attributes(fields=['/address/home/zipcode', '/address/home/country'], action='KEEP')
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap1 = pipeline_builder.add_wiretap()
+    wiretap2 = pipeline_builder.add_wiretap()
+    wiretap3 = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_remover1 >> field_remover2 >> field_remover3 >> trash
+    dev_raw_data_source >> field_remover1 >> [field_remover2, wiretap1.destination]
+    field_remover2 >> [field_remover3, wiretap2.destination]
+    field_remover3 >> wiretap3.destination
+
     pipeline = pipeline_builder.build('Field Remover pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    remover1_value = snapshot[field_remover1.instance_name].output[0].field
-    remover2_value = snapshot[field_remover2.instance_name].output[0].field
-    remover3_value = snapshot[field_remover3.instance_name].output[0].field
+    remover1_value = wiretap1.output_records[0].field
+    remover2_value = wiretap2.output_records[0].field
+    remover3_value = wiretap3.output_records[0].field
 
     # assert remove listed fields action
     assert 'name' not in remover1_value and 'id' not in remover1_value
@@ -444,7 +438,7 @@ def test_field_remover(sdc_builder, sdc_executor):
 def test_field_renamer(sdc_builder, sdc_executor):
     """Test field renamer processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_renamer >> trash
+        dev_raw_data_source >> field_renamer >> wiretap
 
     With the given config below, based on regex, the incoming fields OPS_name1 and OPS_name2 will be renamed to
     name1 and name2 respectively.
@@ -455,20 +449,18 @@ def test_field_renamer(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_renamer = pipeline_builder.add_stage('Field Renamer')
     field_renamer.fields_to_rename = [{'fromFieldExpression': f'(.*){strip_word}(.*)',
                                        'toFieldExpression': '$1$2'}]
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_renamer >> trash
+    dev_raw_data_source >> field_renamer >> wiretap.destination
     pipeline = pipeline_builder.build('Field Renamer pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    new_value = snapshot[field_renamer.instance_name].output[0].field
+    new_value = wiretap.output_records[0].field
     for key in raw_dict:
         assert key not in new_value and key.strip(strip_word) in new_value
 
@@ -481,20 +473,18 @@ def test_field_renamer_uppercasing(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_renamer = pipeline_builder.add_stage('Field Renamer')
     field_renamer.fields_to_rename = [{'fromFieldExpression':'/(.*)',
                                        'toFieldExpression': '/${str:toUpper("$1")}'}]
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_renamer >> trash
+    dev_raw_data_source >> field_renamer >> wiretap.destination
     pipeline = pipeline_builder.build('Field Renamer pipeline: Upper casing of fields')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    record = snapshot[field_renamer.instance_name].output[0]
+    record = wiretap.output_records[0]
     assert record.field['FIRST_KEY'] == "IPO"
     assert record.field['SECOND_KEY'] == "StreamSets"
 
@@ -503,7 +493,7 @@ def test_field_renamer_uppercasing(sdc_builder, sdc_executor):
 def test_field_replacer(sdc_builder, sdc_executor):
     """Test field replacer processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_replacer >> trash
+        dev_raw_data_source >> field_replacer >> wiretap
 
     With the given replacement rules, we do following:
         change value of ssn field to be 'XXX-XX-XXXX',
@@ -517,33 +507,31 @@ def test_field_replacer(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_replacer = pipeline_builder.add_stage('Field Replacer')
     field_replacer.replacement_rules = [{'setToNull': False, 'fields': '/ssn', 'replacement': 'XXX-XX-XXXX'},
                                         {'setToNull': True, 'fields': '/ranking'},
                                         {'setToNull': True,
                                          'fields': '/*[${f:value() == "NA" || f:value() == "not_available"}]'}]
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_replacer >> trash
+    dev_raw_data_source >> field_replacer >> wiretap.destination
     pipeline = pipeline_builder.build('Field Replacer pipeline')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     for rec in winners:
         rec['ssn'] = 'XXX-XX-XXXX'
         rec['ranking'] = None
         if rec['statistics'] == 'NA' or rec['statistics'] == 'not_available':
             rec['statistics'] = None
-    actual_data = [rec.field for rec in snapshot[field_replacer.instance_name].output]
+    actual_data = [rec.field for rec in wiretap.output_records]
     assert actual_data == winners
 
 
 @sdc_min_version('3.1.0.0')
 def test_field_replacer_self_referencing_expression(sdc_builder, sdc_executor):
-    """Field Replacer supports self-refercing expressions and we need to make sure that they work properly and don't
+    """Field Replacer supports self-referencing expressions and we need to make sure that they work properly and don't
     run into StackOverflowError (which can happen with some optimizations like SDC-14645).
     """
     builder = sdc_builder.get_pipeline_builder()
@@ -555,22 +543,21 @@ def test_field_replacer_self_referencing_expression(sdc_builder, sdc_executor):
     replacer = builder.add_stage('Field Replacer')
     replacer.replacement_rules = [{'setToNull': False, 'fields': '/new', 'replacement': '${record:value("/")}'}]
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> replacer >> trash
+    source >> replacer >> wiretap.destination
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
-    assert len(snapshot[replacer].output) == 1
-    assert snapshot[replacer].output[0].get_field_data('/new/key') == 'value'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/new/key') == 'value'
 
 
 def test_field_splitter(sdc_builder, sdc_executor):
     """Test field splitter processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_splitter >> trash
+        dev_raw_data_source >> field_splitter >> wiretap
 
     With given config to process 3 records, the first record's /error/text value will split into /error/code and
     /error/message based on separator (,). The second record's /error/text value will split similarly but since it has
@@ -600,24 +587,23 @@ def test_field_splitter(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
     field_splitter = pipeline_builder.add_stage('Field Splitter')
     field_splitter.set_attributes(field_for_remaining_splits=f'/error/{etc_sub_field}',
                                   field_to_split=f'/error/{source_sub_field}', new_split_fields=split_fields,
                                   not_enough_splits='CONTINUE', original_field='REMOVE',
                                   separator=separator, too_many_splits='TO_LIST')
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_splitter >> trash
+    dev_raw_data_source >> field_splitter >> wiretap.destination
     pipeline = pipeline_builder.build('Field Splitter pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    record_1 = snapshot[field_splitter.instance_name].output[0].field['error']
-    record_2 = snapshot[field_splitter.instance_name].output[1].field['error']
-    record_3 = snapshot[field_splitter.instance_name].output[2].field['error']
+    record_1 = wiretap.output_records[0].field['error']
+    record_2 = wiretap.output_records[1].field['error']
+    record_3 = wiretap.output_records[2].field['error']
     # assert we got expected number of splits in record 1
     assert len(raw_list[0]['error']['text'].split(separator)) == len(record_1)
     # assert record 1 data
@@ -643,7 +629,7 @@ def test_field_type_converter_by_field_type(sdc_builder, sdc_executor):
     """Test field type converter processor. We will use one stage to test field by field type conversion.
     The pipeline would look like:
 
-        dev_raw_data_source >> field_type_converter_fields >> trash
+        dev_raw_data_source >> field_type_converter_fields >> wiretap
     """
     utc_datetime_str = '1978-01-05 19:38:01'
     utc_datetime = datetime.strptime(utc_datetime_str, '%Y-%m-%d %H:%M:%S')
@@ -684,21 +670,20 @@ def test_field_type_converter_by_field_type(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
     field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
                                                field_type_converter_configs=field_type_converter_configs)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_type_converter_fields >> trash
+    dev_raw_data_source >> field_type_converter_fields >> wiretap.destination
     pipeline = pipeline_builder.build('Field Type Converter pipeline')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # assert field by field type conversion
-    field_output = snapshot[field_type_converter_fields.instance_name].output
+    field_output = wiretap.output_records
     assert field_output[0].field['amInteger'].type == 'BYTE'
     assert field_output[1].field['amDouble'].type == 'INTEGER'
     assert field_output[2].field['amString'].type == 'CHAR'
@@ -715,7 +700,7 @@ def test_field_type_converter_by_data_type(sdc_builder, sdc_executor):
     """Test field type converter processor. We will use two stages to test field by field type conversion and
     data type conversion. The pipeline would look like:
 
-        dev_raw_data_source >> field_type_converter_fields >> field_type_converter_types >> trash
+        dev_raw_data_source >> field_type_converter_fields >> field_type_converter_types >> wiretap
 
     With given 2 stages for converter, field_type_converter_fields will convert field for field conversion. For e.g.,
     record1's /amInteger will convert from INTEGER to BYTE. field_type_converter_types will convert any field type to
@@ -798,24 +783,24 @@ def test_field_type_converter_by_data_type(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
     field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
                                                field_type_converter_configs=field_type_converter_configs)
     field_type_converter_types = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter_types.set_attributes(conversion_method='BY_TYPE',
                                               whole_type_converter_configs=whole_type_converter_configs)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_type_converter_fields >> field_type_converter_types >> trash
+    dev_raw_data_source >> field_type_converter_fields >> field_type_converter_types >> wiretap.destination
     pipeline = pipeline_builder.build('Field Type Converter pipeline')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # assert data type conversion
-    type_output = snapshot[field_type_converter_types.instance_name].output
+    type_output = wiretap.output_records
+
     assert type_output[0].field['amInteger'].type == 'DECIMAL'
     assert type_output[1].field['amDouble'].type == 'SHORT'
     assert type_output[2].field['amString'].type == 'STRING'
@@ -832,8 +817,9 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     """
     This is a test for SDC-10949.
 
-    This test creates a raw data -> converter -> trash pipeline.  The raw data will contain a decimal (in STRING form) with a high
-    precision.  The converter will convert this to DECIMAL type, and we assert that all digits were preserved in the process.
+    This test creates a raw data -> converter -> wiretap pipeline.  The raw data will contain a decimal (in STRING form)
+    with a high precision.  The converter will convert this to DECIMAL type, and we assert that all digits were
+    preserved in the process.
     """
     decimal_str_val = '11235813213455.55342113853211';
     raw_data = json.dumps([{'largeDecimal': decimal_str_val}])
@@ -850,37 +836,38 @@ def test_field_type_converter_long_decimals(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
-    trash = pipeline_builder.add_stage('Trash')
 
     # 1st pipeline where check field type before use Field Type Converter
-    dev_raw_data_source >> trash
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> wiretap.destination
     pipeline_test = pipeline_builder.build('Field without Converter')
     sdc_executor.add_pipeline(pipeline_test)
-    snapshot_test = sdc_executor.capture_snapshot(pipeline_test, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline_test)
+    sdc_executor.wait_for_pipeline_metric(pipeline_test, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(pipeline_test)
 
     # assert field coming out of origin is STRING (sanity check)
-    raw_output = snapshot_test[dev_raw_data_source.instance_name].output
+    raw_output = wiretap.output_records
     assert raw_output[0].field['largeDecimal'].type == 'STRING'
 
     # 2nd pipeline with Field Type Converter
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
     field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
                                                field_type_converter_configs=field_type_converter_configs)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_type_converter_fields >> trash
+    dev_raw_data_source >> field_type_converter_fields >> wiretap.destination
     pipeline = pipeline_builder.build('Field Type Converter large decimal pipeline')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # assertions on field coming out of field type converter
-    field_output = snapshot[field_type_converter_fields.instance_name].output
+    field_output = wiretap.output_records
     # assert the type
     assert field_output[0].field['largeDecimal'].type == 'DECIMAL'
     # and value
@@ -1009,16 +996,15 @@ def test_field_type_converter_trim(sdc_builder, sdc_executor):
     converter.conversion_method = 'BY_FIELD'
     converter.field_type_converter_configs = field_type_converter_configs
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> converter >> trash
+    source >> converter >> wiretap.destination
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # Verify metadata (types)
-    output = snapshot[converter].output
+    output = wiretap.output_records
     assert output[0].field['short'].type == 'SHORT'
     assert output[0].field['short'].value == 123
 
@@ -1084,31 +1070,29 @@ def test_field_type_converter_parse_errors(sdc_builder, sdc_executor, input, tar
 
     builder = sdc_builder.get_pipeline_builder()
     source = builder.add_stage('Dev Raw Data Source')
-    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
 
     converter = builder.add_stage('Field Type Converter')
     converter.set_attributes(conversion_method='BY_FIELD', field_type_converter_configs=converter_configs)
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> converter >> trash
+    source >> converter >> wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    output = snapshot[converter]
-    assert len(output.output) == 0
-    assert len(output.error_records) == 1
-    assert output.error_records[0].header['errorCode'] == 'CONVERTER_00'
+    assert len(wiretap.output_records) == 0
+    assert len(wiretap.error_records) == 1
+    assert wiretap.error_records[0].header['errorCode'] == 'CONVERTER_00'
 
 
 def test_field_zip(sdc_builder, sdc_executor):
     """Test field zip processor. The pipeline would look like:
 
-        dev_raw_data_source >> field_zip >> trash
+        dev_raw_data_source >> field_zip >> wiretap
 
     With given config, /basics and /additional will zip to /all path. For e.g., /all will have be a list of
     2 zipped maps of {id: 23, inventory:80}, {color: 20005, cost:5} similarly for /itemID and /cost.
@@ -1150,16 +1134,17 @@ def test_field_zip(sdc_builder, sdc_executor):
     field_zip = pipeline_builder.add_stage('Field Zip')
     field_zip.set_attributes(field_does_not_exist='CONTINUE', fields_to_zip=fields_to_zip_configs,
                              zip_values_only=False)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_zip >> trash
+    dev_raw_data_source >> field_zip >> wiretap.destination
+
     pipeline = pipeline_builder.build('Field Zip pipeline')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(pipeline)
 
-    record_result = snapshot[field_zip.instance_name].output[0].field
+    record_result = wiretap.output_records[0].field
     # assert we got expected number of merge fields
     assert len(raw_list[0]) + len(fields_to_zip_configs) == len(record_result)
     # assert data is merged as expected
@@ -1168,14 +1153,14 @@ def test_field_zip(sdc_builder, sdc_executor):
     record_field_merge = [tuple(float(b.value) for b in a.values()) for a in record_field_result]
     assert raw_merge == record_field_merge
     # assert the missing record fields do not merge anything
-    assert result_key_1 not in snapshot[field_zip.instance_name].output[1].field
-    assert result_key_2 not in snapshot[field_zip.instance_name].output[1].field
+    assert result_key_1 not in wiretap.output_records[1].field
+    assert result_key_2 not in wiretap.output_records[1].field
 
 
 def test_value_replacer(sdc_builder, sdc_executor):
     """Test Value Replacer processor replacing values in fields. The pipeline would look like:
 
-        dev_raw_data_source >> value_replacer >> trash
+        dev_raw_data_source >> value_replacer >> wiretap
     """
     expected_password_value = 'mysecretcode'
     expected_state_value = 'NC'
@@ -1199,7 +1184,7 @@ def test_value_replacer(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     value_replacer = pipeline_builder.add_stage('Value Replacer', type='processor')
     value_replacer.set_attributes(conditionally_replace_values=[{
         'fieldNames': ['/contact/address/home/state', '/contact/state'],
@@ -1213,16 +1198,15 @@ def test_value_replacer(sdc_builder, sdc_executor):
         'fieldsToNull': ['/contact/*name'],
         'condition': "${record:value('/contact/id') > 0}"
     }])
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> value_replacer >> trash
+    dev_raw_data_source >> value_replacer >> wiretap.destination
+
     pipeline = pipeline_builder.build('Value Replacer pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    new_value = snapshot[value_replacer.instance_name].output[0].field['contact']
+    new_value = wiretap.output_records[0].field['contact']
     # assert fields to null
     assert new_value['fname'].value is new_value['lname'].value is None
     # assert replace null values
@@ -1251,18 +1235,18 @@ def test_field_mapper_self_referencing_expression(sdc_builder, sdc_executor):
       mapping_expression = '${record:value("/")}'
     )
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> mapper >> trash
+    source >> mapper >> wiretap.destination
+
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
-    assert len(snapshot[mapper].output) == 1
-    assert snapshot[mapper].output[0].get_field_data('/key/key') == 'value'
-    assert snapshot[mapper].output[0].get_field_data('/old') == 'exists'
-    assert snapshot[mapper].output[0].get_field_data('/key/old') == 'exists'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/key/key') == 'value'
+    assert wiretap.output_records[0].get_field_data('/old') == 'exists'
+    assert wiretap.output_records[0].get_field_data('/key/old') == 'exists'
 
 
 @sdc_min_version('3.8.0')
@@ -1273,8 +1257,11 @@ def test_field_mapper_min_max(sdc_builder, sdc_executor):
     This pipeline calculates the minimum and maximum value of integer fields whose name contains the word "value".
 
     The pipeline that will be constructed is:
+    The pipeline that will be constructed is:
 
-        dev_raw_data_source (JSON data) >> field_mapper (max value) >> field_mapper (min value) >> trash
+        dev_raw_data_source (JSON data) >> field_mapper (max value) >> field_mapper (min value)
+        field_mapper (max value) >> wiretap
+        field_mapper (min value) >> wiretap
     """
     raw_data = """{
       "sensor_id": "abc123",
@@ -1295,7 +1282,7 @@ def test_field_mapper_min_max(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_mapper_max = pipeline_builder.add_stage('Field Mapper', type='processor')
     field_mapper_max.set_attributes(
       operate_on = 'FIELD_PATHS',
@@ -1312,23 +1299,25 @@ def test_field_mapper_min_max(sdc_builder, sdc_executor):
       aggregation_expression = '${min(fields)}',
       maintain_original_paths = True
     )
-    trash = pipeline_builder.add_stage('Trash')
 
-    dev_raw_data_source >> field_mapper_max >> field_mapper_min >> trash
+    wiretap1 = pipeline_builder.add_wiretap()
+    wiretap2 = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_mapper_max >> [field_mapper_min, wiretap1.destination]
+    field_mapper_min >> wiretap2.destination
+
     pipeline = pipeline_builder.build('Field mapper - sensor reading value min and max pipeline')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.remove_pipeline(pipeline)
 
-    max_processor_output = snapshot[field_mapper_max.instance_name].output
+    max_processor_output = wiretap1.output_records
     assert max_processor_output[0].get_field_data('/outputs/max').type == 'LONG'
     assert max_processor_output[0].get_field_data('/outputs/max').value == 99
     # ensure original field was left in place
     assert max_processor_output[0].get_field_data('/sensor_readings[2]/values[0]').value == 99
 
-    min_processor_output = snapshot[field_mapper_min.instance_name].output
+    min_processor_output = wiretap2.output_records
     assert min_processor_output[0].get_field_data('/outputs/min').type == 'LONG'
     assert min_processor_output[0].get_field_data('/outputs/min').value == -107
     # ensure original field was left in place
@@ -1346,7 +1335,7 @@ def test_field_mapper_gather_paths_with_predicate(sdc_builder, sdc_executor):
 
     The pipeline that will be constructed is:
 
-        dev_raw_data_source (JSON data) >> field_mapper (find Daves) >> trash
+        dev_raw_data_source (JSON data) >> field_mapper (find Daves) >> wiretap
     """
     raw_data = """{
       "first": {
@@ -1376,7 +1365,7 @@ def test_field_mapper_gather_paths_with_predicate(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
     field_mapper.set_attributes(
       operate_on = 'FIELD_PATHS',
@@ -1386,17 +1375,16 @@ def test_field_mapper_gather_paths_with_predicate(sdc_builder, sdc_executor):
       aggregation_expression = '${map(fields, fieldByPreviousPath())}',
       maintain_original_paths = True
     )
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_mapper >> trash
+    dev_raw_data_source >> field_mapper >> wiretap.destination
+
     pipeline = pipeline_builder.build('Field mapper - The Daves I Know')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.remove_pipeline(pipeline)
 
-    field_mapper_output = snapshot[field_mapper.instance_name].output
+    field_mapper_output = wiretap.output_records
     daves = field_mapper_output[0].get_field_data('/outputs/daves')
     assert len(daves) == 3
     assert daves[0]['/first/firstSub1/baz[3]'] == 'Dave Smith'
@@ -1411,7 +1399,7 @@ def test_field_mapper_sanitize_names(sdc_builder, sdc_executor):
 
     The pipeline that will be constructed is:
 
-        dev_raw_data_source (JSON data) >> field_mapper (sanitize names) >> trash
+        dev_raw_data_source (JSON data) >> field_mapper (sanitize names) >> wiretap
     """
     raw_data = """{
       "first": {
@@ -1438,24 +1426,23 @@ def test_field_mapper_sanitize_names(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
     field_mapper.set_attributes(
       operate_on = 'FIELD_NAMES',
       mapping_expression = '${str:replaceAll(f:name(), \'z\', \'2\')}',
       maintain_original_paths = False
     )
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_mapper >> trash
+    dev_raw_data_source >> field_mapper >> wiretap.destination
+
     pipeline = pipeline_builder.build('Field mapper - The Daves I Know')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.remove_pipeline(pipeline)
 
-    field_mapper_output = snapshot[field_mapper.instance_name].output
+    field_mapper_output = wiretap.output_records
     output_record = field_mapper_output[0];
     first_sub_1 = output_record.get_field_data('/first/firstSub1')
     assert first_sub_1.get('zug') == None
@@ -1482,7 +1469,7 @@ def test_field_mapper_operate_on_values(sdc_builder, sdc_executor):
 
     The pipeline that will be constructed is:
 
-        dev_raw_data_source (JSON data) >> field_mapper (ceiling) >> trash
+        dev_raw_data_source (JSON data) >> field_mapper (ceiling) >> wiretap
     """
     raw_data = """{
       "someData": {
@@ -1501,7 +1488,7 @@ def test_field_mapper_operate_on_values(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
     field_mapper.set_attributes(
       operate_on = 'FIELD_VALUES',
@@ -1509,18 +1496,16 @@ def test_field_mapper_operate_on_values(sdc_builder, sdc_executor):
       mapping_expression = '${math:ceil(f:value())}',
       maintain_original_paths = False
     )
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_mapper >> trash
+    dev_raw_data_source >> field_mapper >> wiretap.destination
+
     pipeline = pipeline_builder.build('Field mapper - The Daves I Know')
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.remove_pipeline(pipeline)
 
-    field_mapper_output = snapshot[field_mapper.instance_name].output
-    output_record = field_mapper_output[0];
+    output_record = wiretap.output_records[0]
     assert output_record.get_field_data('/someData/value1') == 20
     assert output_record.get_field_data('/someData/value2') == -16
     assert output_record.get_field_data('/someData/value3') == 1988
