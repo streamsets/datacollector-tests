@@ -16,8 +16,8 @@ import base64
 import io
 import json
 import logging
-import string
 import random
+import string
 
 import avro
 import pytest
@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_PORT = 20000
-SNAPSHOT_TIMEOUT_SEC = 300
 MAX_BATCH_WAIT_TIME = 30
 
 MIN_SDC_VERSION_WITH_SPARK_2_LIB = Version('3.3.0')
@@ -82,14 +81,14 @@ def check_ssl_supported(cluster, sdc_builder):
 @cluster('cdh')
 def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple text messages into Kafka and confirm that Kafka successfully reads them.
-    Because cluster mode pipelines don't support snapshots, we do this verification using a
+    Because cluster mode pipelines don't support wiretap as destination, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
     Specifically, this would look like:
 
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -107,7 +106,7 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
@@ -115,33 +114,33 @@ def test_kafka_origin_cluster(sdc_builder, sdc_executor, cluster, port):
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
 
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'TEXT')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'TEXT', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'TEXT', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
 def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, cluster, port):
     """Write simple text messages into Kafka multiple partitions and confirm that Kafka successfully reads them.
-    Because cluster mode pipelines don't support snapshots, we do this verification using a
+    Because cluster mode pipelines don't support wiretap as destination, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
     Specifically, this would look like:
 
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -159,27 +158,27 @@ def test_produce_string_records_multiple_partitions(sdc_builder, sdc_executor, c
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'WITH_KEY')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'TEXT', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'TEXT', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
@@ -188,8 +187,8 @@ def test_kafka_origin_multiple_json_objects_single_record_cluster(sdc_builder, s
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
-        sdc_rpc_origin >> trash
+    Wiretap pipeline:
+        sdc_rpc_origin >> wiretap
     """
     message = {'Alex': 'Developer', 'Xavi': 'Developer'}
 
@@ -202,7 +201,7 @@ def test_kafka_origin_multiple_json_objects_multiple_records_cluster(sdc_builder
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -217,7 +216,7 @@ def test_kafka_origin_json_array_cluster(sdc_builder, sdc_executor, cluster, por
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -233,7 +232,7 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -252,27 +251,27 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'XML')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'XML', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'XML', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
@@ -282,7 +281,7 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretpa pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -301,28 +300,28 @@ def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, c
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'XML')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected,
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected,
                                     'XML_MULTI_ELEMENT', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
@@ -332,7 +331,7 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster, port):
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -351,27 +350,27 @@ def test_kafka_csv_record_cluster(sdc_builder, sdc_executor, cluster, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'CSV')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'CSV', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'CSV', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
@@ -381,7 +380,7 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster, port):
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -400,40 +399,40 @@ def test_kafka_binary_record_cluster(sdc_builder, sdc_executor, cluster, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'BINARY')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'BINARY', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'BINARY', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
 def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster, port):
     """Write avro text messages into Kafka multiple partitions and confirm that Kafka successfully reads them.
-    Because cluster mode pipelines don't support snapshots, we do this verification using a
+    Because cluster mode pipelines don't support wiretap as destination, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
     Specifically, this would look like:
 
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    Wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -451,41 +450,41 @@ def test_produce_avro_records_with_schema(sdc_builder, sdc_executor, cluster, po
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg, 'AVRO', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, msg, 'AVRO', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
 def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster, port):
     """Write avro text messages into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
-    Because cluster mode pipelines don't support snapshots, we do this verification using a
+    Because cluster mode pipelines don't support wiretap as destination, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
     Specifically, this would look like:
 
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -504,28 +503,28 @@ def test_produce_avro_records_without_schema(sdc_builder, sdc_executor, cluster,
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, msg, 'AVRO_WITHOUT_SCHEMA')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, msg,
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, msg,
                                     'AVRO_WITHOUT_SCHEMA', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
@@ -533,14 +532,14 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster, port):
     """Write a text message using UDP datagram mode SYSLOG
     into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
-    Because cluster mode pipelines don't support snapshots, we do this verification using a
+    Because cluster mode pipelines don't support wiretap as destination, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
     Specifically, this would look like:
 
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    wiretap pipeline:
         sdc_rpc_origin >> trash
     """
     msg64packet = ("rO0ABXeOAAAAAQAAAAEAAAAAAAAAAQAJMTI3LjAuMC4xAAALuAAJMTI3LjAuMC4xAAAH0AAAAFw8MzQ+MSAyMDEz"
@@ -568,27 +567,27 @@ def test_kafka_origin_syslog_message(sdc_builder, sdc_executor, cluster, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'SYSLOG')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'SYSLOG', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'SYSLOG', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
@@ -596,14 +595,14 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster, port):
     """Write a text message using UDP datagram mode NETFLOW
     into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
-    Because cluster mode pipelines don't support snapshots, we do this verification using a
+    Because cluster mode pipelines don't support wiretap as destination, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
     Specifically, this would look like:
 
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -632,27 +631,27 @@ def test_kafka_origin_netflow_message(sdc_builder, sdc_executor, cluster, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'NETFLOW')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'NETFLOW', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'NETFLOW', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
@@ -660,14 +659,14 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster, port):
     """Write a text message using UDP datagram mode COLLECTD
     into Kafka multiple partitions with the schema in the records
     and confirm that Kafka successfully reads them.
-    Because cluster mode pipelines don't support snapshots, we do this verification using a
+    Because cluster mode pipelines don't support wiretap as destination, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the Kafka Consumer pipeline.
     Specifically, this would look like:
 
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -713,27 +712,27 @@ def test_kafka_origin_collecd_message(sdc_builder, sdc_executor, cluster, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, base64.b64decode(msg64packet), 'COLLECTD')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'COLLECTD', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'COLLECTD', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 @cluster('cdh')
@@ -743,7 +742,7 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster, port):
     Kafka Consumer Origin pipeline with cluster mode:
         kafka_consumer >> sdc_rpc_destination
 
-    Snapshot pipeline:
+    wiretap pipeline:
         sdc_rpc_origin >> trash
     """
 
@@ -767,27 +766,27 @@ def test_kafka_log_record_cluster(sdc_builder, sdc_executor, cluster, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, message.encode(), 'LOG')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, 'LOG', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, message, 'LOG', wiretap)
     finally:
         try:
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
         except Exception as e:
             logger.error(f"Failed to stop the Kafka consumer pipeline: {e}")
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
 
 def get_kafka_consumer_stage(sdc_version, pipeline_builder, cluster):
@@ -876,19 +875,19 @@ def produce_kafka_messages(topic, cluster, message, data_format):
     assert 1 == len(msgs_received)
 
 
-def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, message, data_format, wiretap):
-    """Start, stop pipeline and verify results using snapshot"""
+def verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, message, data_format, wiretap):
+    """Start, stop pipeline and verify results using wiretap"""
 
-    logger.info("Starting Snapshot Pipeline first")
-    sdc_executor.start_pipeline(snapshot_pipeline)
+    logger.info("Starting wiretap Pipeline first")
+    sdc_executor.start_pipeline(wiretap_pipeline)
     logger.info("Starting Kafka Consumer pipeline")
     sdc_executor.start_pipeline(kafka_consumer_pipeline)
 
-    logger.info("Waiting on first record available on the snapshot pipeline")
+    logger.info("Waiting on first record available on the wiretap pipeline")
     # High timeout since cluster pipelines are slow and can take even 60+ second to boot up. On secured clusters in
     # cluster dock that can be significantly more and hence the high timeout.
     try:
-        sdc_executor.wait_for_pipeline_metric(snapshot_pipeline, 'input_record_count', 1, timeout_sec=300)
+        sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', 1, timeout_sec=300)
     finally:
         # In any case (even on failure), let's get various metrics from the execution that we can explore later
         history = sdc_executor.get_pipeline_history(kafka_consumer_pipeline)
@@ -898,7 +897,7 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_
 
     basic_data_formats = ['JSON', 'CSV', 'SYSLOG', 'PROTOBUF', 'AVRO', 'AVRO_WITHOUT_SCHEMA']
 
-    # Verify snapshot data.
+    # Verify wiretap data.
     if data_format in basic_data_formats:
         assert [record.field for record in output] == [message]
 
@@ -936,21 +935,21 @@ def json_test(sdc_builder, sdc_executor, cluster, message, expected, port):
     kafka_consumer_pipeline.configuration['executionMode'] = 'CLUSTER_YARN_STREAMING'
     kafka_consumer_pipeline.configuration['shouldRetry'] = False
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = get_rpc_origin(builder, sdc_rpc_destination, port)
     wiretap = builder.add_wiretap()
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
-    sdc_executor.add_pipeline(kafka_consumer_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline, wiretap_pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         produce_kafka_messages(kafka_consumer.topic, cluster, json.dumps(message).encode(), 'JSON')
-        verify_kafka_origin_results(kafka_consumer_pipeline, snapshot_pipeline, sdc_executor, expected, 'JSON', wiretap)
+        verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_executor, expected, 'JSON', wiretap)
     finally:
         sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
