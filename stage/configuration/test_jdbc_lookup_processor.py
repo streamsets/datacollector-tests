@@ -159,22 +159,22 @@ def test_multiple_values_behavior(sdc_builder, sdc_executor, database, stage_att
     builder = sdc_builder.get_pipeline_builder()
     source = builder.add_stage('Dev Raw Data Source')
     source.set_attributes(data_format='JSON',
-                          raw_data='{"dept": "mt"}')
+                          raw_data='{"dept": "mt"}',
+                          stop_after_first_batch = True)
 
     lookup = builder.add_stage('JDBC Lookup')
     query_str = f"SELECT name FROM {table_name} WHERE dept = '${{record:value('/dept')}}' ORDER BY id ASC"
     column_mappings = [dict(dataType='USE_COLUMN_TYPE', columnName='name', field='/name')]
     lookup.set_attributes(sql_query=query_str, column_mappings=column_mappings, **stage_attributes)
 
-    trash = builder.add_stage('Trash')
-    source >> lookup >> trash
+    wiretap = builder.add_wiretap()
+    source >> lookup >> wiretap.destination
     pipeline = builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-        output = snapshot[lookup].output
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output = wiretap.output_records
 
         if stage_attributes['multiple_values_behavior'] == 'FIRST_ONLY':
             assert len(output) == 1

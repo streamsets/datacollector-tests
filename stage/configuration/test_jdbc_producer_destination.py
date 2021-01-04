@@ -130,7 +130,8 @@ def test_required_fields(sdc_builder, sdc_executor, database, keep_data):
                                                                                table_name=table_name,
                                                                                enclose_object_names=True)
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    dev_raw_data_source >> [jdbc_producer, pipeline_finisher]
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> [jdbc_producer, pipeline_finisher, wiretap.destination]
     pipeline = pipeline_builder.build().configure_for_environment(database)
 
     # Work-arounding STF behavior of upper-casing table name configuration
@@ -141,14 +142,15 @@ def test_required_fields(sdc_builder, sdc_executor, database, keep_data):
 
     sdc_executor.add_pipeline(pipeline)
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
         with database.engine.connect() as connection:
             result = connection.execute(table.select())
             data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
 
         assert (data_from_database == EXPECTED_OUTPUT and
                 ['COMMON_0001'] == [error_record.header['errorCode']
-                                    for error_record in snapshot[jdbc_producer].error_records])
+                                    for error_record in wiretap.error_records])
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)

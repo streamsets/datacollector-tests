@@ -42,8 +42,8 @@ def test_jdbc_multitable_consumer_origin_configuration_additional_jdbc_configura
         #Build the pipeline
         attributes = {'table_configs': [{"tablePattern": f'%{src_table_prefix}%'}],
                       'additional_jdbc_configuration_properties': properties}
-        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
-                                                                                            attributes)
+        wiretap, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database,
+                                                                           attributes)
 
         #Execute pipeline and check result.
         sdc_executor.add_pipeline(pipeline)
@@ -51,13 +51,14 @@ def test_jdbc_multitable_consumer_origin_configuration_additional_jdbc_configura
             with pytest.raises(Exception):
                 sdc_executor.start_pipeline().wait_for_status('FINISHED')
         else:
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+            sdc_executor.start_pipeline(pipeline)
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
 
             # Column names are converted to lower case since database table columns are in upper case.
             tuples_to_lower_name = lambda tup: (tup[0].lower(), tup[1])
-            rows_from_snapshot = [tuples_to_lower_name(list(record.field.items())[1])
-                                  for record in snapshot[pipeline[0].instance_name].output]
-            assert rows_from_snapshot == [('name', row['NAME']) for row in rows_in_database]
+            rows_from_wiretap = [tuples_to_lower_name(list(record.field.items())[1])
+                                  for record in wiretap.output_records]
+            assert rows_from_wiretap == [('name', row['NAME']) for row in rows_in_database]
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
@@ -85,14 +86,14 @@ def test_jdbc_multitable_consumer_origin_configuration_create_header_attributes(
         #Build the pipeline
         attributes = {'table_configs': [{"tablePattern": table_name}],
                       'create_jdbc_header_attributes': create_jdbc_header_attributes}
-        jdbc_multitable_consumer, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder,
-                                                                                            database,
-                                                                                            attributes)
-
+        wiretap, pipeline = get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder,
+                                                                           database,
+                                                                           attributes)
         #Execute pipeline and check result.
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-        fields_with_headers = list(snapshot[jdbc_multitable_consumer.instance_name].output[0].header.values.keys())
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        fields_with_headers = list(wiretap.output_records[0].header.values.keys())
 
         if create_jdbc_header_attributes:
             assert 5 <= len(fields_with_headers)
@@ -312,13 +313,13 @@ def get_jdbc_multitable_consumer_to_trash_pipeline(sdc_builder, database, attrib
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
     jdbc_multitable_consumer.set_attributes(**attributes)
-    trash = pipeline_builder.add_stage('Trash')
-    jdbc_multitable_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    jdbc_multitable_consumer >> wiretap.destination
     if configure_for_environment_flag:
         pipeline = pipeline_builder.build().configure_for_environment(database)
     else:
         pipeline = pipeline_builder.build()
-    return jdbc_multitable_consumer, pipeline
+    return wiretap, pipeline
 
 
 def insert_data_in_table(database, table, rows_to_insert):
