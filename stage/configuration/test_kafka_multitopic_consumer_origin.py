@@ -697,23 +697,27 @@ def test_principal(sdc_builder, sdc_executor, cluster, stage_attributes,
                                              topic_list=[topic_name],
                                              **stage_attributes)
 
-    trash = builder.add_stage(label='Trash')
-    kafka_multitopic_consumer >> trash
+    wiretap = builder.add_wiretap()
+    kafka_multitopic_consumer >> wiretap.destination
     pipeline = builder.build().configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         producer = cluster.kafka.producer()
         producer.send(topic_name, MESSAGE.encode())
-        # Start Pipeline.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
 
-        # Verify snapshot data.
-        records = [record.field for record in snapshot[kafka_multitopic_consumer].output]
+        # Start Pipeline.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Verify wiretap data.
+        records = [record.field for record in wiretap.output_records]
         assert [EXPECTED] == records
     finally:
-        sdc_executor.stop_pipeline(pipeline)
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
@@ -880,23 +884,27 @@ def test_topic_list(sdc_builder, sdc_executor, cluster):
                                                  data_format='TEXT',
                                                  topic_list=[topic_name])
 
-    trash = builder.add_stage(label='Trash')
-    kafka_multitopic_consumer >> trash
+    wiretap = builder.add_wiretap()
+    kafka_multitopic_consumer >> wiretap.destination
     pipeline = builder.build().configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        # Publish messages to Kafka and verify using snapshot if the same messages are received.
+        # Publish messages to Kafka and verify using wiretap if the same messages are received.
         producer = cluster.kafka.producer()
         producer.send(topic_name, MESSAGE.encode())
-        # Start Pipeline.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
 
-        # Verify snapshot data.
-        records = [record.field for record in snapshot[kafka_multitopic_consumer].output]
+        # Start Pipeline.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Verify wiretap data.
+        records = [record.field for record in wiretap.output_records]
         assert [EXPECTED] == records
     finally:
-        sdc_executor.stop_pipeline(pipeline)
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
