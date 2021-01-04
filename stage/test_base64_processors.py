@@ -26,7 +26,7 @@ def test_base64_field_decoder(sdc_builder, sdc_executor):
     intermediate Field Type Converter processor for converting our Base64 string to byte array.
     The pipeline would look like:
 
-        dev_raw_data_source >> field_type_converter >> base64_field_decoder >> trash
+        dev_raw_data_source >> field_type_converter >> base64_field_decoder >> wiretap
     """
     # input raw_data is a Base64 encoded string
     normal_string = 'hello there!'.encode()
@@ -34,23 +34,22 @@ def test_base64_field_decoder(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
     field_type_converter = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter.set_attributes(conversion_method='BY_FIELD',
                                         field_type_converter_configs=[{'fields': ['/text'],
                                                                        'targetType': 'BYTE_ARRAY'}])
     base64_field_decoder = pipeline_builder.add_stage('Base64 Field Decoder', type='processor')
     base64_field_decoder.set_attributes(field_to_decode='/text', target_field='/result')
-    trash = pipeline_builder.add_stage('Trash')
 
-    dev_raw_data_source >> field_type_converter >> base64_field_decoder >> trash
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_type_converter >> base64_field_decoder >> wiretap.destination
     pipeline = pipeline_builder.build('Base64 Decoder pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    result_data = snapshot[base64_field_decoder.instance_name].output[0].field['result'].value
+    result_data = wiretap.output_records[0].field['result'].value
     # result data is Base64 encoded for JSON transport, hence we can directly compare to our raw Base64 string
     assert normal_string == result_data
 
@@ -60,13 +59,13 @@ def test_base64_field_encoder(sdc_builder, sdc_executor):
     Converter processor which will help convert the raw input string to byte array.
     The pipeline would look like:
 
-        dev_raw_data_source >> field_type_converter >> base64_field_encoder >> trash
+        dev_raw_data_source >> field_type_converter >> base64_field_encoder >> wiretap
     """
     raw_data = 'hello there!'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
     field_type_converter = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter.set_attributes(conversion_method='BY_FIELD',
                                         field_type_converter_configs=[
@@ -74,16 +73,15 @@ def test_base64_field_encoder(sdc_builder, sdc_executor):
                                         ])
     base64_field_encoder = pipeline_builder.add_stage('Base64 Field Encoder', type='processor')
     base64_field_encoder.set_attributes(field_to_encode='/text', target_field='/result', url_safe=True)
-    trash = pipeline_builder.add_stage('Trash')
 
-    dev_raw_data_source >> field_type_converter >> base64_field_encoder >> trash
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_type_converter >> base64_field_encoder >> wiretap.destination
     pipeline = pipeline_builder.build('Base64 Encoder pipeline')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    result_data = snapshot[base64_field_encoder.instance_name].output[0].field['result'].value
+    result_data = wiretap.output_records[0].field['result'].value
     # result_data is Base64 encoded by the Base64 encoder stage and for JSON transport it is again encoded, hence
     # we encode our raw_data twice for assertion
     assert base64.b64encode(raw_data.encode()) == result_data
