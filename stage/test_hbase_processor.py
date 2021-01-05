@@ -38,7 +38,7 @@ def test_hbase_lookup_processor(sdc_builder, sdc_executor, cluster):
     """Simple HBase Lookup processor test.
     Pipeline will enrich records with the name of Grand Tours by adding a field containing the year
     of their first editions, which will come from an HBase table.
-    dev_raw_data_source >> hbase_lookup >> trash
+    dev_raw_data_source >> hbase_lookup >> wiretap
     """
     # Generate some silly data.
     bike_races = [dict(name='Tour de France', first_edition='1903'),
@@ -61,17 +61,17 @@ def test_hbase_lookup_processor(sdc_builder, sdc_executor, cluster):
 
     # Create Dev Raw Data Source stage.
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
 
     # Create HBase Lookup processor.
     hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
     hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name)
 
-    # Create trash destination.
-    trash = pipeline_builder.add_stage('Trash')
+    # Create wiretap destination.
+    wiretap = pipeline_builder.add_wiretap()
 
     # Build pipeline.
-    dev_raw_data_source >> hbase_lookup >> trash
+    dev_raw_data_source >> hbase_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -87,14 +87,11 @@ def test_hbase_lookup_processor(sdc_builder, sdc_executor, cluster):
             batch.put(bike_race['name'].encode(), {b'info:first_edition': bike_race['first_edition'].encode()})
         batch.send()
 
-        # Take a pipeline snapshot.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Validate output.
-        assert [dict(name=record.field['text'],
-                     first_edition=record.field['founded'])
-                for record in snapshot[hbase_lookup.instance_name].output] == bike_races
+        assert [dict(name=record.field['text'], first_edition=record.field['founded'])
+                for record in wiretap.output_records] == bike_races
 
     finally:
         # Delete HBase table.
@@ -353,7 +350,7 @@ def test_hbase_empty_key_expression(sdc_builder, sdc_executor, cluster):
 @cluster('cdh', 'hdp')
 def test_hbase_get_empty_key_to_discard(sdc_builder, sdc_executor, cluster):
     """Check no error record when there is no key in the record and ignore row missing field is set to true
-    dev_raw_data_source >> hbase_lookup >> trash
+    dev_raw_data_source >> hbase_lookup >> wiretap
     """
 
     data = {'row_key': 11, 'columnField': 'cf1:column'}
@@ -371,19 +368,20 @@ def test_hbase_get_empty_key_to_discard(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Create Dev Raw Data Source stage.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = json_data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=json_data,
+                                                                                           stop_after_first_batch=True)
 
     # Create HBase Lookup processor.
-    hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
-    hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name, on_record_error='TO_ERROR')
+    hbase_lookup = pipeline_builder.add_stage('HBase Lookup').set_attributes(lookup_parameters=lookup_parameters,
+                                                                             table_name=table_name,
+                                                                             on_record_error='TO_ERROR')
 
-    # Create trash destination.
-    trash = pipeline_builder.add_stage('Trash')
+    # Create wiretap destination.
+    wiretap = pipeline_builder.add_wiretap()
 
     # Build pipeline.
-    dev_raw_data_source >> hbase_lookup >> trash
+    dev_raw_data_source >> hbase_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -392,19 +390,12 @@ def test_hbase_get_empty_key_to_discard(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', table_name)
         cluster.hbase.client.create_table(name=table_name, families={'cf1': {}})
 
-        # Take a pipeline snapshot.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         scan = cluster.hbase.client.table(table_name).scan()
 
         assert 0 == len(list(scan))
-
-        stage = snapshot[hbase_lookup.instance_name]
-        logger.info('Error records %s ...', stage.error_records)
-
-        assert len(stage.error_records) == 0
-
+        assert len(wiretap.error_records) == 0
     finally:
         # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
@@ -414,7 +405,7 @@ def test_hbase_get_empty_key_to_discard(sdc_builder, sdc_executor, cluster):
 @cluster('cdh', 'hdp')
 def test_hbase_get_empty_key_to_error(sdc_builder, sdc_executor, cluster):
     """Check record is sent to error when there is no key in the record and ignore row missing field is set to false
-    dev_raw_data_source >> hbase_lookup >> trash
+    dev_raw_data_source >> hbase_lookup >> wiretap
     """
 
     data = {'columnField': 'cf1:column'}
@@ -432,20 +423,21 @@ def test_hbase_get_empty_key_to_error(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Create Dev Raw Data Source stage.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = json_data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=json_data,
+                                                                                           stop_after_first_batch=True)
 
     # Create HBase Lookup processor.
-    hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
-    hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name, on_record_error='TO_ERROR',
-                                ignore_row_missing_field=False)
+    hbase_lookup = pipeline_builder.add_stage('HBase Lookup').set_attributes(lookup_parameters=lookup_parameters,
+                                                                             table_name=table_name,
+                                                                             on_record_error='TO_ERROR',
+                                                                             ignore_row_missing_field=False)
 
-    # Create trash destination.
-    trash = pipeline_builder.add_stage('Trash')
+    # Create wiretap destination.
+    wiretap = pipeline_builder.add_wiretap()
 
     # Build pipeline.
-    dev_raw_data_source >> hbase_lookup >> trash
+    dev_raw_data_source >> hbase_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -454,19 +446,12 @@ def test_hbase_get_empty_key_to_error(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', table_name)
         cluster.hbase.client.create_table(name=table_name, families={'cf1': {}})
 
-        # Take a pipeline snapshot.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        
         scan = cluster.hbase.client.table(table_name).scan()
 
         assert 0 == len(list(scan))
-
-        stage = snapshot[hbase_lookup.instance_name]
-        logger.info('Error records %s ...', stage.error_records)
-
-        assert len(stage.error_records) == 1
-
+        assert len(wiretap.error_records) == 1
     finally:
         # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
@@ -539,7 +524,7 @@ def test_hbase_lookup_processor_get_row(sdc_builder, sdc_executor, cluster):
     It is expected the 'info:first_edition' be added as a new '/founded' record field.
 
     Pipeline:
-        dev_raw_data_source >> hbase_lookup >> trash
+        dev_raw_data_source >> hbase_lookup >> wiretap
 
     """
     # Generate some silly data.
@@ -566,18 +551,19 @@ def test_hbase_lookup_processor_get_row(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Create Dev Raw Data Source stage.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                           raw_data=raw_data,
+                                                                                           stop_after_first_batch=True)
 
     # Create HBase Lookup processor.
     hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
     hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name)
 
-    # Create trash destination.
-    trash = pipeline_builder.add_stage('Trash')
+    # Create wiretap destination.
+    wiretap = pipeline_builder.add_wiretap()
 
     # Build pipeline.
-    dev_raw_data_source >> hbase_lookup >> trash
+    dev_raw_data_source >> hbase_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -593,19 +579,15 @@ def test_hbase_lookup_processor_get_row(sdc_builder, sdc_executor, cluster):
             batch.put(bike_race['name'].encode(), {b'info:first_edition': bike_race['first_edition'].encode()})
         batch.send()
 
-        # Take a pipeline snapshot.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Validate output.
         assert [dict(name=record.field['text'],
                      first_edition=record.field['founded'])
-                for record in snapshot[hbase_lookup.instance_name].output] == bike_races
+                for record in wiretap.output_records] == bike_races
 
         # Validate output.
-        result_list = list(cluster.hbase.client.table(table_name).scan())
-        assert result_list == expected
-
+        assert list(cluster.hbase.client.table(table_name).scan()) == expected
     finally:
         # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
@@ -619,8 +601,7 @@ def test_hbase_lookup_processor_row_key_lookup(sdc_builder, sdc_executor, cluste
     For a single row key, we expect all column families (in this case 2) to be returned.
 
     Pipeline:
-        dev_raw_data_source >> hbase_lookup >> trash
-
+        dev_raw_data_source >> hbase_lookup >> wiretap
     """
     # Generate some silly data.
     bike_races = [{'name': 'Tour de France', 'location:country': 'France', 'date:month': 'July'},
@@ -641,18 +622,19 @@ def test_hbase_lookup_processor_row_key_lookup(sdc_builder, sdc_executor, cluste
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Create Dev Raw Data Source stage.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                           raw_data=raw_data,
+                                                                                           stop_after_first_batch=True)
 
     # Create HBase Lookup processor.
     hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
     hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name)
 
-    # Create trash destination.
-    trash = pipeline_builder.add_stage('Trash')
+    # Create wiretap destination.
+    wiretap = pipeline_builder.add_wiretap()
 
     # Build pipeline.
-    dev_raw_data_source >> hbase_lookup >> trash
+    dev_raw_data_source >> hbase_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -669,15 +651,12 @@ def test_hbase_lookup_processor_row_key_lookup(sdc_builder, sdc_executor, cluste
                                                    b'date:month': bike_race['date:month'].encode()})
         batch.send()
 
-        # Take a pipeline snapshot.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Validate output.
         assert [dict(dict(name=record.field['text']),
                      **record.field['data'])
-                for record in snapshot[hbase_lookup.instance_name].output] == bike_races
-
+                for record in wiretap.output_records] == bike_races
     finally:
         # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
@@ -709,7 +688,7 @@ def test_hbase_lookup_processor_row_timestamp_keys_lookup(sdc_builder, sdc_execu
     # Create Dev Raw Data Source stage.
     raw_data = '\n'.join(json.dumps(rec) for rec in data)
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
 
     # Create Field Type Converter
     conversions = [{'fields': ['/timestamp'],
@@ -727,11 +706,11 @@ def test_hbase_lookup_processor_row_timestamp_keys_lookup(sdc_builder, sdc_execu
     hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
     hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name)
 
-    # Create trash destination.
-    trash = pipeline_builder.add_stage('Trash')
+    # Create wiretap destination.
+    wiretap = pipeline_builder.add_wiretap()
 
     # Build pipeline.
-    dev_raw_data_source >> field_type_converter >> hbase_lookup >> trash
+    dev_raw_data_source >> field_type_converter >> hbase_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -752,15 +731,12 @@ def test_hbase_lookup_processor_row_timestamp_keys_lookup(sdc_builder, sdc_execu
                        b'location:city': record['location:city'].encode()},
                       timestamp=ts)
 
-        # Take a pipeline snapshot.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Validate output.
-        for rec in snapshot[hbase_lookup.instance_name].output:
+        for rec in wiretap.output_records:
             assert rec.field['location:country'] == rec.field['hbase']['location:country']
             assert rec.field['location:city'] == rec.field['hbase']['location:city']
-
     finally:
         # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
@@ -776,7 +752,7 @@ def test_hbase_lookup_processor_row_column_timestamp_keys_lookup(sdc_builder, sd
     versions for a given column employing the column and timestamp keys.
 
     Pipeline:
-        dev_raw_data_source >> field_type_converter >> hbase_lookup >> trash
+        dev_raw_data_source >> field_type_converter >> hbase_lookup >> wiretap
 
     """
     # Generate some silly data.
@@ -792,7 +768,7 @@ def test_hbase_lookup_processor_row_column_timestamp_keys_lookup(sdc_builder, sd
     # Create Dev Raw Data Source stage.
     raw_data = '\n'.join(json.dumps(rec) for rec in data)
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
 
     # Create Field Type Converter
     conversions = [{'fields': ['/timestamp'],
@@ -811,11 +787,11 @@ def test_hbase_lookup_processor_row_column_timestamp_keys_lookup(sdc_builder, sd
     hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
     hbase_lookup.set_attributes(lookup_parameters=lookup_parameters, table_name=table_name)
 
-    # Create trash destination.
-    trash = pipeline_builder.add_stage('Trash')
+    # Create wiretap destination.
+    wiretap = pipeline_builder.add_wiretap()
 
     # Build pipeline.
-    dev_raw_data_source >> field_type_converter >> hbase_lookup >> trash
+    dev_raw_data_source >> field_type_converter >> hbase_lookup >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -836,14 +812,11 @@ def test_hbase_lookup_processor_row_column_timestamp_keys_lookup(sdc_builder, sd
                        b'location:city': record['location:city'].encode()},
                       timestamp=ts)
 
-        # Take a pipeline snapshot.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Validate output.
-        for rec in snapshot[hbase_lookup.instance_name].output:
+        for rec in wiretap.output_records:
             assert rec.field['location:country'] == rec.field['hbase']
-
     finally:
         # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
