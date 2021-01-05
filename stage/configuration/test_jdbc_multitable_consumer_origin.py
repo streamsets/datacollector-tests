@@ -16,7 +16,8 @@ import string
 
 import pytest
 import sqlalchemy
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, CHAR
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -118,6 +119,78 @@ def test_jdbc_multitable_consumer_origin_configuration_create_header_attributes(
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
         delete_table([table], database)
+
+
+@pytest.mark.parametrize('quote_character', ['BACKTICK', 'DOUBLE_QUOTES', 'NONE', 'SQUARE_BRACKETS'])
+def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_builder, sdc_executor, quote_character, database):
+    builder = sdc_builder.get_pipeline_builder()
+    table_name = get_random_string(string.ascii_letters, 10)
+    offset_name = get_random_string(string.ascii_letters, 10)
+
+    origin = builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+    origin.max_batch_size_in_records = 10
+
+    wiretap = builder.add_wiretap()
+
+    origin >> wiretap.destination
+    pipeline = builder.build().configure_for_environment(database)
+    # Work-arounding STF behavior of upper-casing table name configuration
+    origin.table_configs[0]["tablePattern"] = f'%{table_name}%'
+
+    origin.set_attributes(quote_character=quote_character)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column(offset_name, sqlalchemy.Integer, primary_key=True, quote=True),
+        quote=True
+    )
+
+
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+
+        connection.execute(table.insert(), [{offset_name: 1}])
+
+        sdc_executor.add_pipeline(pipeline)
+
+        # Check if this DB and quoting character combination is correct
+        if (quote_character is 'BACKTICK' and database.type is 'SQLServer')\
+                or (quote_character in ('DOUBLE_QUOTES', 'SQUARE_BRACKETS') and database.type is 'MySQL')\
+                or (quote_character in ('BACKTICK', 'NONE', 'SQUARE_BRACKETS') and database.type is 'Oracle')\
+                or (quote_character in ('BACKTICK', 'NONE', 'SQUARE_BRACKETS') and database.type is 'PostgreSQL'):
+            # If the combination is not allowed, check that the correct error is thrown
+            try:
+                sdc_executor.validate_pipeline(pipeline)
+                assert False, 'This line should not be reached'
+            except ValidationError as error:
+                assert error.issues['issueCount'] == 1
+                assert 'JDBC_414' in error.issues['stageIssues']['JDBCMultitableConsumer_01'][0]['message']
+
+        else :
+            # If the combination is correct, execute normally and check results
+            sdc_executor.start_pipeline(pipeline)
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+            sdc_executor.stop_pipeline(pipeline)
+
+            # There should be no errors reported
+            history = sdc_executor.get_pipeline_history(pipeline)
+            assert history.latest.metrics.counter('stage.JDBCMultitableConsumer_01.errorRecords.counter').count == 0
+            assert history.latest.metrics.counter('stage.JDBCMultitableConsumer_01.stageErrors.counter').count == 0
+
+            # And verify that we properly read that one record
+            assert len(wiretap.output_records) == 1
+            assert wiretap.output_records[0].field[offset_name] == 1
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
 
 
 @pytest.mark.parametrize('auto_commit', [False, True])
@@ -268,12 +341,6 @@ def test_jdbc_multitable_consumer_origin_configuration_per_batch_strategy(sdc_bu
 
 @pytest.mark.skip('Not yet implemented')
 def test_jdbc_multitable_consumer_origin_configuration_queries_per_second(sdc_builder, sdc_executor):
-    pass
-
-
-@pytest.mark.parametrize('quote_character', ['BACKTICK', 'DOUBLE_QUOTES', 'NONE'])
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_builder, sdc_executor, quote_character):
     pass
 
 

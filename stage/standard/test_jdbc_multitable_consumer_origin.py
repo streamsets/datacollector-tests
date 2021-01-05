@@ -537,7 +537,7 @@ OBJECT_NAMES_SQLSERVER = [
     ('max_table_name', get_random_string(string.ascii_letters, 128), get_random_string(string.ascii_letters, 20)),
     ('max_column_name', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 128)),
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
-    ('special', get_random_string(string.ascii_letters, 5) + "!@#$%^&*()_+=-?<>", get_random_string(string.ascii_letters, 5) + "!@#$%^&*()_+=-?<>"),
+    ('special', get_random_string(string.ascii_letters, 5) + "!@#$%^&*()_+=-?<>/", get_random_string(string.ascii_letters, 5) + "!@#$%^&*()_+=-?<>"),
 ]
 
 
@@ -561,6 +561,9 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_n
     pipeline = builder.build().configure_for_environment(database)
     # Work-arounding STF behavior of upper-casing table name configuration
     origin.table_configs[0]["tablePattern"] = f'%{table_name}%'
+
+    if database is 'sqlserver':
+        origin.set_attributes(quote_character='SQUARE_BRACKETS')
 
     metadata = sqlalchemy.MetaData()
     table = sqlalchemy.Table(
