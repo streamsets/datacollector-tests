@@ -87,7 +87,7 @@ def test_object_names_topic(sdc_builder, sdc_executor, cluster, test_name, topic
     producer.flush()
 
     sdc_executor.start_pipeline(pipeline)
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=120)
     sdc_executor.stop_pipeline(pipeline)
 
     assert [record.field for record in wiretap.output_records] == [expected_output]
