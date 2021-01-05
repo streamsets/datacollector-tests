@@ -21,7 +21,6 @@ import string
 import time
 
 import pytest
-import sqlalchemy
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -82,10 +81,9 @@ def test_avro_orc_mapreduce_executor(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        snapshot = sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_records, timeout_sec=3600)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_records, timeout_sec=3600)
         sdc_executor.stop_pipeline(pipeline).wait_for_stopped()
 
-        hdfs_files = []
         sleep_time = 10
         max_wait_iters = 50
         for wait_iter in range(max_wait_iters):
@@ -96,7 +94,7 @@ def test_avro_orc_mapreduce_executor(sdc_builder, sdc_executor, cluster):
                 break
             else:
                 logger.info('Waiting for %d seconds (up to %d more times) for all files in %s to be converted to ORC',
-                             sleep_time, max_wait_iters - wait_iter, hdfs_directory)
+                            sleep_time, max_wait_iters - wait_iter, hdfs_directory)
                 time.sleep(sleep_time)
         else:
             pytest.fail(f'Reached {max_wait_iters} iterations without reaching expected '
