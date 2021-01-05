@@ -19,9 +19,9 @@ import time
 
 import pytest
 from streamsets.sdk.utils import Version
+from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
-from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 
 logger = logging.getLogger(__name__)
 
@@ -392,7 +392,7 @@ def test_hbase_field_mapping_ignore_invalid_column(sdc_builder, sdc_executor, cl
 def test_hbase_field_mapping_not_ignore_invalid_column(sdc_builder, sdc_executor, cluster):
     """HBase field mapping not ignore invalid column
     should discard the record
-    dev_raw_data_source >> hbase
+    dev_raw_data_source >> [hbase, wiretap.destination]
     """
 
     data = {'key': 'key', 'Hello': '20180702113435000', 'cf:b': '20180702113435000'}
@@ -404,22 +404,24 @@ def test_hbase_field_mapping_not_ignore_invalid_column(sdc_builder, sdc_executor
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Add Dev Raw Data Source stage to pipeline.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = json_data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=json_data,
+                                                                                           stop_after_first_batch=True)
 
     # Add HBase stage to pipeline.
     hbase = pipeline_builder.add_stage('HBase', type='destination')
-    hbase.table_name = random_table_name
-    hbase.row_key = '/key'
     hbase.fields = [dict(columnValue='/cf:a', columnStorageType='TEXT', columnName='cf:a'),
                     dict(columnValue='/cf:b', columnStorageType='TEXT', columnName='cf:b')]
-    hbase.set_attributes(on_record_error='TO_ERROR',
+    hbase.set_attributes(table_name=random_table_name,
+                         row_key='/key',
+                         on_record_error='TO_ERROR',
                          implicit_field_mapping=True,
                          ignore_invalid_column=False)
 
+    wiretap = pipeline_builder.add_wiretap()
+
     # Build pipeline.
-    dev_raw_data_source >> hbase
+    dev_raw_data_source >> [hbase, wiretap.destination]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -429,18 +431,14 @@ def test_hbase_field_mapping_not_ignore_invalid_column(sdc_builder, sdc_executor
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         scan = cluster.hbase.client.table(random_table_name).scan()
 
         assert 0 == len(list(scan))
 
-        stage = snapshot[hbase.instance_name]
-        logger.info('Error record %s ...', stage.error_records)
-
-        assert 1 == len(stage.error_records)
-        assert 'HBASE_28' == stage.error_records[0].header['errorCode']
+        assert 1 == len(wiretap.error_records)
+        assert 'HBASE_28' == wiretap.error_records[0].header['errorCode']
     finally:
         # Delete table.
         logger.info('Deleting HBase table %s ...', random_table_name)
@@ -451,7 +449,7 @@ def test_hbase_field_mapping_not_ignore_invalid_column(sdc_builder, sdc_executor
 def test_hbase_write_wrong_column(sdc_builder, sdc_executor, cluster):
     """HBase write records into a wrong column
     should send the record to error records
-    dev_raw_data_source >> hbase
+    dev_raw_data_source >> [hbase, wiretap.destination]
     """
 
     data = {'key': 'key', 'invalidcf:a': 'Hi', 'cf:b': 'Hello'}
@@ -463,25 +461,27 @@ def test_hbase_write_wrong_column(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Add Dev Raw Data Source stage to pipeline.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = json_data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=json_data,
+                                                                                           stop_after_first_batch=True)
 
     # Add HBase stage to pipeline.
     hbase = pipeline_builder.add_stage('HBase', type='destination')
-    hbase.table_name = random_table_name
-    hbase.row_key = '/key'
 
     hbase.fields = [dict(columnValue='/cf:a', columnStorageType='TEXT', columnName='cf:a'),
                     dict(columnValue='/cf:b', columnStorageType='TEXT', columnName='cf:b')]
 
-    hbase.set_attributes(storage_type='TEXT',
+    hbase.set_attributes(table_name=random_table_name,
+                         storage_type='TEXT',
+                         row_key='/key',
                          on_record_error='TO_ERROR',
                          implicit_field_mapping=True,
                          ignore_invalid_column=False)
 
+    wiretap = pipeline_builder.add_wiretap()
+
     # Build pipeline.
-    dev_raw_data_source >> hbase
+    dev_raw_data_source >> [hbase, wiretap.destination]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -492,16 +492,12 @@ def test_hbase_write_wrong_column(sdc_builder, sdc_executor, cluster):
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
         try:
-            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-            sdc_executor.stop_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
             assert 0 == len(list(cluster.hbase.client.table(random_table_name).scan()))
 
-            stage = snapshot[hbase.instance_name]
-            logger.info('Error record %s ...', stage.error_records)
-            assert 1 == len(stage.error_records)
-            logger.error('Errors: ' + stage.error_records[0].header['errorCode'])
-            assert 'HBASE_10' == stage.error_records[0].header['errorCode']
+            assert 1 == len(wiretap.error_records)
+            assert 'HBASE_10' == wiretap.error_records[0].header['errorCode']
         except Exception as e:
             assert 'HBASE_02' in e.response['message']
 
@@ -513,8 +509,10 @@ def test_hbase_write_wrong_column(sdc_builder, sdc_executor, cluster):
 
 @cluster('cdh', 'hdp')
 def test_hbase_invalid_row_key(sdc_builder, sdc_executor, cluster):
-    """HBase invalid row key
-    dev_raw_data_source >> hbase
+    """
+    HBase invalid row key
+
+    dev_raw_data_source >> [hbase, wiretap.destination]
     """
 
     data = {'data1': '20180702113435000', 'data2': '20180702113435000'}
@@ -526,21 +524,23 @@ def test_hbase_invalid_row_key(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Add Dev Raw Data Source stage to pipeline.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'TEXT'
-    dev_raw_data_source.raw_data = json_data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                           raw_data=json_data,
+                                                                                           stop_after_first_batch=True)
 
     # Add HBase stage to pipeline.
     hbase = pipeline_builder.add_stage('HBase', type='destination')
-    hbase.table_name = random_table_name
-    hbase.row_key = '/invalid'
     hbase.fields = [dict(columnValue='[1]', columnStorageType='TEXT', columnName='cf:a')]
-    hbase.set_attributes(on_record_error='TO_ERROR',
+    hbase.set_attributes(table_name=random_table_name,
+                         row_key='/invalid',
+                         on_record_error='TO_ERROR',
                          implicit_field_mapping=True,
                          ignore_invalid_column=False)
 
+    wiretap = pipeline_builder.add_wiretap()
+
     # Build pipeline.
-    dev_raw_data_source >> hbase
+    dev_raw_data_source >> [hbase, wiretap.destination]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -550,15 +550,12 @@ def test_hbase_invalid_row_key(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        sdc_executor.stop_pipeline(pipeline)
         assert 0 == len(list(cluster.hbase.client.table(random_table_name).scan()))
 
-        stage = snapshot[hbase.instance_name]
-        logger.info('Error record %s ...', stage.error_records)
-        assert 1 == len(stage.error_records)
-        assert 'HBASE_27' == stage.error_records[0].header['errorCode']
+        assert 1 == len(wiretap.error_records)
+        assert 'HBASE_27' == wiretap.error_records[0].header['errorCode']
 
     finally:
         # Delete table.
@@ -621,8 +618,9 @@ def test_hbase_not_flat_map(sdc_builder, sdc_executor, cluster):
 
 @cluster('cdh', 'hdp')
 def test_hbase_not_map_error(sdc_builder, sdc_executor, cluster):
-    """HBase not map record (list)
-    dev_raw_data_source >> hbase
+    """
+    HBase not map record (list)
+    dev_raw_data_source >> [hbase, wiretap.destination]
     """
 
     data = ['key', 'Hi', 'Hello', 'Hola']
@@ -634,25 +632,27 @@ def test_hbase_not_map_error(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Add Dev Raw Data Source stage to pipeline.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = json_data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                           raw_data=json_data,
+                                                                                           stop_after_first_batch=True)
 
     # Add HBase stage to pipeline.
     hbase = pipeline_builder.add_stage('HBase', type='destination')
-    hbase.table_name = random_table_name
-    hbase.row_key = '/key'
 
     hbase.fields = [dict(columnValue='[1]', columnStorageType='TEXT', columnName='cf:a'),
                     dict(columnValue='[2]', columnStorageType='TEXT', columnName='cf:b'),
                     dict(columnValue='[3]', columnStorageType='TEXT', columnName='cf:c')]
 
-    hbase.set_attributes(on_record_error='TO_ERROR',
+    hbase.set_attributes(table_name=random_table_name,
+                         row_key='/key',
+                         on_record_error='TO_ERROR',
                          implicit_field_mapping=False,
                          ignore_invalid_column=True)
 
+    wiretap = pipeline_builder.add_wiretap()
+
     # Build pipeline.
-    dev_raw_data_source >> hbase
+    dev_raw_data_source >> [hbase, wiretap.destination]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -662,17 +662,14 @@ def test_hbase_not_map_error(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        sdc_executor.stop_pipeline(pipeline)
         scan = cluster.hbase.client.table(random_table_name).scan()
 
         assert 0 == len(list(scan))
 
-        stage = snapshot[hbase.instance_name]
-        logger.info('Error record %s ...', stage.error_records)
-        assert 1 == len(stage.error_records)
-        assert 'HBASE_27' == stage.error_records[0].header['errorCode']
+        assert 1 == len(wiretap.error_records)
+        assert 'HBASE_27' == wiretap.error_records[0].header['errorCode']
 
     finally:
         # Delete table.
@@ -723,7 +720,6 @@ def test_hbase_destination_single_record_binary_storage(sdc_builder, sdc_executo
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
         sdc_executor.start_pipeline(pipeline)
-
         sdc_executor.stop_pipeline(pipeline)
 
         elements = list(cluster.hbase.client.table(random_table_name).scan())
@@ -949,8 +945,10 @@ def test_hbase_write_records_on_error_discard(sdc_builder, sdc_executor, cluster
 
 @cluster('cdh', 'hdp')
 def test_hbase_write_records_on_error_send_to_error(sdc_builder, sdc_executor, cluster):
-    """HBase write records on error send to error
-    dev_raw_data_source >> hbase
+    """
+    HBase write records on error send to error
+
+    dev_raw_data_source >> [hbase, wiretap.destination]
     """
 
     data = {'key': 'key', 'cf:a': 20, 'cf:b': 'Hello', 'cf:c': 'Hello', 'cf:d': 21}
@@ -962,27 +960,29 @@ def test_hbase_write_records_on_error_send_to_error(sdc_builder, sdc_executor, c
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Add Dev Raw Data Source stage to pipeline.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = json_data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=json_data,
+                                                                                           stop_after_first_batch=True)
 
     # Add HBase stage to pipeline.
     hbase = pipeline_builder.add_stage('HBase', type='destination')
-    hbase.table_name = random_table_name
-    hbase.row_key = '/key'
 
     hbase.fields = [dict(columnValue='/cf:a', columnStorageType='BINARY', columnName='cf:a'),
                     dict(columnValue='/cf:b', columnStorageType='BINARY', columnName='cf:b'),
                     dict(columnValue='/cf:c', columnStorageType='TEXT', columnName='cf:c'),
                     dict(columnValue='/cf:d', columnStorageType='TEXT', columnName='cf:d')]
 
-    hbase.set_attributes(storage_type='TEXT',
+    hbase.set_attributes(table_name=random_table_name,
+                         row_key='/key',
+                         storage_type='TEXT',
                          on_record_error='TO_ERROR',
                          implicit_field_mapping=False,
                          ignore_invalid_column=False)
 
-    # Build pipeline
-    dev_raw_data_source >> hbase
+    wiretap = pipeline_builder.add_wiretap()
+
+    # Build pipeline.
+    dev_raw_data_source >> [hbase, wiretap.destination]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
 
@@ -991,27 +991,22 @@ def test_hbase_write_records_on_error_send_to_error(sdc_builder, sdc_executor, c
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         assert 0 == len(list(cluster.hbase.client.table(random_table_name).scan()))
 
-        stage = snapshot[hbase.instance_name]
-        logger.info('Error record %s ...', stage.error_records)
-        assert 1 == len(stage.error_records)
-        assert 'HBASE_12' == stage.error_records[0].header['errorCode']
-
+        assert 1 == len(wiretap.error_records)
+        assert 'HBASE_12' == wiretap.error_records[0].header['errorCode']
     finally:
         # Delete table.
-
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
 
 @cluster('cdh', 'hdp')
 def test_hbase_write_records_on_error_stop_pipeline(sdc_builder, sdc_executor, cluster):
-    """HBase write records on error stop pipeline
+    """
+    HBase write records on error stop pipeline
     dev_raw_data_source >> hbase
     """
 
@@ -1071,8 +1066,9 @@ def test_hbase_write_records_on_error_stop_pipeline(sdc_builder, sdc_executor, c
 
 @cluster('cdh', 'hdp')
 def test_hbase_multiple_records_on_error(sdc_builder, sdc_executor, cluster):
-    """HBase write multiple records
-    dev_raw_data_source >> hbase
+    """
+    HBase write multiple records
+    dev_raw_data_source >> [hbase, wiretap.destination]
     """
 
     data = """{"key": "key", "cf:a": "10", "cf:b": "1992-12-02"}
@@ -1085,25 +1081,27 @@ def test_hbase_multiple_records_on_error(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Add Dev Raw Data Source stage to pipeline.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=data,
+                                                                                           stop_after_first_batch=True)
 
     # Add HBase stage to pipeline.
     hbase = pipeline_builder.add_stage('HBase', type='destination')
-    hbase.table_name = random_table_name
-    hbase.row_key = '/key'
 
     hbase.fields = [dict(columnValue='/cf:a', columnStorageType='TEXT', columnName='cf:a'),
                     dict(columnValue='/cf:b', columnStorageType='BINARY', columnName='cf:b')]
 
-    hbase.set_attributes(storage_type='TEXT',
+    hbase.set_attributes(table_name=random_table_name,
+                         row_key='/key',
+                         storage_type='TEXT',
                          on_record_error='TO_ERROR',
                          implicit_field_mapping=False,
                          ignore_invalid_column=False)
 
+    wiretap = pipeline_builder.add_wiretap()
+
     # Build pipeline.
-    dev_raw_data_source >> hbase
+    dev_raw_data_source >> [hbase, wiretap.destination]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -1113,23 +1111,18 @@ def test_hbase_multiple_records_on_error(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         scan = cluster.hbase.client.table(random_table_name).scan()
 
         assert 0 == len(list(scan))
 
-        stage = snapshot[hbase.instance_name]
-        logger.info('Error record %s ...', stage.error_records)
-        assert 3 == len(stage.error_records)
-        assert 'HBASE_12' == stage.error_records[0].header['errorCode']
-        assert 'HBASE_12' == stage.error_records[1].header['errorCode']
-        assert 'HBASE_12' == stage.error_records[2].header['errorCode']
+        assert 3 == len(wiretap.error_records)
+        assert 'HBASE_12' == wiretap.error_records[0].header['errorCode']
+        assert 'HBASE_12' == wiretap.error_records[1].header['errorCode']
+        assert 'HBASE_12' == wiretap.error_records[2].header['errorCode']
 
     finally:
         # Delete table.
-
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
 
@@ -1539,7 +1532,7 @@ def test_hbase_proxy_user(sdc_builder, sdc_executor, cluster):
 
 def single_record_binary_storage_date_time_types(sdc_builder, sdc_executor, cluster, data_type):
     """HBase destination test using JSON data checking fields type conversion
-    dev_raw_data_source >> expression_evaluator >> field_type_converter >> hbase
+    dev_raw_data_source >> expression_evaluator >> field_type_converter >> [hbase, wiretap.destination]
     """
 
     data = {'key': 11}
@@ -1554,9 +1547,9 @@ def single_record_binary_storage_date_time_types(sdc_builder, sdc_executor, clus
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Add Dev Raw Data Source stage to pipeline.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'JSON'
-    dev_raw_data_source.raw_data = json_data
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=json_data,
+                                                                                           stop_after_first_batch=True)
 
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     logger.debug(dir(expression_evaluator.field_expressions))
@@ -1580,10 +1573,15 @@ def single_record_binary_storage_date_time_types(sdc_builder, sdc_executor, clus
     hbase.table_name = random_table_name
     hbase.row_key = '/key'
     hbase.fields = [dict(columnValue='/converted_date', columnStorageType='BINARY', columnName='cf:a')]
-    hbase.set_attributes(storage_type='BINARY', implicit_field_mapping=False, ignore_missing_field=False)
+    hbase.set_attributes(row_key='/key',
+                         table_name=random_table_name,
+                         storage_type='BINARY',
+                         implicit_field_mapping=False,
+                         ignore_missing_field=False)
+    wiretap = pipeline_builder.add_wiretap()
 
     # Build pipeline.
-    dev_raw_data_source >> expression_evaluator >> field_type_converter >> hbase
+    dev_raw_data_source >> expression_evaluator >> field_type_converter >> [hbase, wiretap.destination]
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -1593,15 +1591,12 @@ def single_record_binary_storage_date_time_types(sdc_builder, sdc_executor, clus
         logger.info('Creating HBase table %s ...', random_table_name)
         cluster.hbase.client.create_table(name=random_table_name, families={'cf:': {}})
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert 1 == len(wiretap.error_records)
 
-        stage = snapshot[hbase.instance_name]
-        assert 1 == len(stage.error_records)
-
-        assert 'HBASE_12' == stage.error_records[0].header['errorCode']
+        assert 'HBASE_12' == wiretap.error_records[0].header['errorCode']
         assert 'HBASE_12 - Cannot convert type: ' + str(data_type) + ' to BINARY' == \
-               stage.error_records[0].header['errorMessage']
+               wiretap.error_records[0].header['errorMessage']
 
         elements = list(cluster.hbase.client.table(random_table_name).scan())
         assert 0 == len(elements)
