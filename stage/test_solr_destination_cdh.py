@@ -124,7 +124,7 @@ def test_solr_write_records_fields_automatically_mapped_cdh(sdc_builder, sdc_exe
 @sdc_min_version('3.9.0')
 def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster):
     """Solr write records on error discard test case.
-    dev_raw_data_source >> solr_target
+    dev_raw_data_source >> [solr_target, wiretap.destination]
     """
 
     # Mandatory to have an id of the document for CDH Solr schemaless.
@@ -144,7 +144,9 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=json_str,
+                                                                                  stop_after_first_batch=True)
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(map_fields_automatically=False,
@@ -152,7 +154,9 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
                                ignore_optional_fields=False,
                                on_record_error='DISCARD')
 
-    dev_raw_data_source >> solr_target
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> [solr_target, wiretap.destination]
 
     pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
@@ -161,15 +165,13 @@ def test_solr_write_records_on_error_discard(sdc_builder, sdc_executor, cluster)
     # Assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
         results = solr_client.search(q=query)
         assert 0 == len(results)
 
-        stage = snapshot[solr_target.instance_name]
-        assert 0 == len(stage.error_records)
+        assert 0 == len(wiretap.error_records)
     finally:
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
@@ -198,7 +200,9 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=json_str,
+                                                                                  stop_after_first_batch=True)
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='TO_ERROR',
@@ -206,7 +210,9 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
                                fields=json_fields_map,
                                ignore_optional_fields=False)
 
-    dev_raw_data_source >> solr_target
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> [solr_target, wiretap.destination]
 
     pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
@@ -215,16 +221,14 @@ def test_solr_write_records_on_error_to_error(sdc_builder, sdc_executor, cluster
     # Assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
         results = solr_client.search(q=query)
         assert len(results) == 0
 
-        stage = snapshot[solr_target.instance_name]
-        assert 1 == len(stage.error_records)
-        assert 'SOLR_06' == stage.error_records[0].header['errorCode']
+        assert 1 == len(wiretap.error_records)
+        assert 'SOLR_06' == wiretap.error_records[0].header['errorCode']
     finally:
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
@@ -257,7 +261,9 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
     # build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=json_str,
+                                                                                  stop_after_first_batch=True)
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='TO_ERROR',
@@ -265,7 +271,9 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
                                fields=json_fields_map,
                                ignore_optional_fields=False)
 
-    dev_raw_data_source >> solr_target
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> [solr_target, wiretap.destination]
 
     pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
@@ -274,16 +282,14 @@ def test_solr_write_records_indexing_error_to_error(sdc_builder, sdc_executor, c
     # assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         query = f'{{!term f={field_name_2}}}{field_val_2}'
         results = solr_client.search(q=query)
         assert len(results) == 0
 
-        stage = snapshot[solr_target.instance_name]
-        assert 1 == len(stage.error_records)
-        assert 'SOLR_06' == stage.error_records[0].header['errorCode']
+        assert 1 == len(wiretap.error_records)
+        assert 'SOLR_06' == wiretap.error_records[0].header['errorCode']
     finally:
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
@@ -418,7 +424,9 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
     # Build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=json_str,
+                                                                                  stop_after_first_batch=True)
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='TO_ERROR',
@@ -426,7 +434,9 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
                                fields=json_fields_map,
                                ignore_optional_fields=False)
 
-    dev_raw_data_source >> solr_target
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> [solr_target, wiretap.destination]
 
     pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
@@ -435,16 +445,14 @@ def test_solr_write_record_empty_to_error(sdc_builder, sdc_executor, cluster):
     # Assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
         results = solr_client.search(q=query)
         assert len(results) == 0
 
-        stage = snapshot[solr_target.instance_name]
-        assert 1 == len(stage.error_records)
-        assert 'SOLR_06' == stage.error_records[0].header['errorCode']
+        assert 1 == len(wiretap.error_records)
+        assert 'SOLR_06' == wiretap.error_records[0].header['errorCode']
     finally:
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
@@ -475,7 +483,9 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
     # build Solr target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data=json_str)
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=json_str,
+                                                                                  stop_after_first_batch=True)
 
     solr_target = builder.add_stage('Solr', type='destination')
     solr_target.set_attributes(on_record_error='DISCARD',
@@ -483,7 +493,9 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
                                fields=json_fields_map,
                                ignore_optional_fields=False)
 
-    dev_raw_data_source >> solr_target
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> [solr_target, wiretap.destination]
 
     pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
@@ -492,15 +504,13 @@ def test_solr_write_record_empty_discard(sdc_builder, sdc_executor, cluster):
     # assert data ingested into Solr.
     solr_client = cluster.solr.client
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         query = f'{{!term f={field_name_1}}}{field_val_1}'
         results = solr_client.search(q=query)
         assert 0 == len(results)
 
-        stage = snapshot[solr_target.instance_name]
-        assert 0 == len(stage.error_records)
+        assert 0 == len(wiretap.error_records)
     finally:
         # Delete Solr document created in the test.
         solr_client.delete(id=field_val_1)
