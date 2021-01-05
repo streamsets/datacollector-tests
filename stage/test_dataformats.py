@@ -32,6 +32,7 @@ def create_text_pipeline(sdc_builder, data_format, content, **parser_configs):
     origin = builder.add_stage('Dev Raw Data Source')
     origin.data_format = 'TEXT'
     origin.raw_data = content
+    origin.stop_after_first_batch = True
 
     parser = builder.add_stage('Data Parser')
 
@@ -42,24 +43,23 @@ def create_text_pipeline(sdc_builder, data_format, content, **parser_configs):
     if parser_configs:
         parser.set_attributes(**parser_configs)
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> parser >> trash
+    origin >> parser >> wiretap.destination
 
-    return builder.build('Parse {}'.format(data_format))
+    return builder.build('Parse {}'.format(data_format)), wiretap
 
 
 @sdc_min_version('3.0.0.0')
 def test_parse_json(sdc_builder, sdc_executor):
     """Validate parsing of JSON content via the Data Parser processor."""
-    pipeline = create_text_pipeline(sdc_builder, 'JSON', '{"key" : "value"}')
+    pipeline, wiretap = create_text_pipeline(sdc_builder, 'JSON', '{"key" : "value"}')
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot['DataParser_01'].output) == 1
-    assert snapshot['DataParser_01'].output[0].get_field_data('/key') == 'value'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/key') == 'value'
 
 
 @sdc_min_version('3.0.0.0')
@@ -71,43 +71,40 @@ def test_parse_json(sdc_builder, sdc_executor):
 ])
 def test_parse_json_constants(sdc_builder, sdc_executor, param, expected):
     """Ensure that we properly read JSON constants outside of just 'objects'."""
-    pipeline = create_text_pipeline(sdc_builder, 'JSON', param)
+    pipeline, wiretap = create_text_pipeline(sdc_builder, 'JSON', param)
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot['DataParser_01'].output) == 1
-    assert snapshot['DataParser_01'].output[0].get_field_data('/') == expected
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/') == expected
 
 
 @sdc_min_version('3.0.0.0')
 def test_parse_delimited(sdc_builder, sdc_executor):
     """Validate parsing of delimited content via the Data Parser processor."""
-    pipeline = create_text_pipeline(sdc_builder, 'DELIMITED', '1,2,3')
+    pipeline, wiretap = create_text_pipeline(sdc_builder, 'DELIMITED', '1,2,3')
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot['DataParser_01'].output) == 1
-    assert snapshot['DataParser_01'].output[0].get_field_data('[0]') == '1'
-    assert snapshot['DataParser_01'].output[0].get_field_data('[1]') == '2'
-    assert snapshot['DataParser_01'].output[0].get_field_data('[2]') == '3'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('[0]') == '1'
+    assert wiretap.output_records[0].get_field_data('[1]') == '2'
+    assert wiretap.output_records[0].get_field_data('[2]') == '3'
 
 
 @sdc_min_version('3.8.0')
 def test_parse_multichar_delimited(sdc_builder, sdc_executor):
     """Validate parsing of delimited content via the Data Parser processor."""
-    pipeline = create_text_pipeline(sdc_builder, 'DELIMITED', 'abcd||efgh||ijkl',
+    pipeline, wiretap = create_text_pipeline(sdc_builder, 'DELIMITED', 'abcd||efgh||ijkl',
                                     delimiter_format_type='MULTI_CHARACTER',
                                     multi_character_field_delimiter='||', header_line='NO_HEADER')
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    outputs = snapshot['DataParser_01'].output
+    outputs = wiretap.output_records
     assert len(outputs) == 1
     output_record = outputs[0]
     assert output_record.get_field_data('[0]') == 'abcd'
@@ -118,42 +115,38 @@ def test_parse_multichar_delimited(sdc_builder, sdc_executor):
 @sdc_min_version('3.0.0.0')
 def test_parse_log(sdc_builder, sdc_executor):
     """Validate parsing of log content via the Data Parser processor."""
-    pipeline = create_text_pipeline(sdc_builder, 'LOG', '127.0.0.1 ss h [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326')
+    pipeline, wiretap = create_text_pipeline(sdc_builder, 'LOG', '127.0.0.1 ss h [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326')
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot['DataParser_01'].output) == 1
-    assert snapshot['DataParser_01'].output[0].get_field_data('/request') == '/apache_pb.gif'
-    assert snapshot['DataParser_01'].output[0].get_field_data('/clientip') == '127.0.0.1'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/request') == '/apache_pb.gif'
+    assert wiretap.output_records[0].get_field_data('/clientip') == '127.0.0.1'
 
 
 def test_parse_syslog(sdc_builder, sdc_executor):
     """Validate parsing of syslog content via the Data Parser processor."""
-    pipeline = create_text_pipeline(sdc_builder, 'SYSLOG', "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for lonvick on /dev/pts/")
+    pipeline, wiretap = create_text_pipeline(sdc_builder, 'SYSLOG', "<34>Oct 11 22:14:15 mymachine su: 'su root' failed for lonvick on /dev/pts/")
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot['DataParser_01'].output) == 1
-    assert snapshot['DataParser_01'].output[0].get_field_data('/severity') == 2
-    assert snapshot['DataParser_01'].output[0].get_field_data('/host') == 'mymachine'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/severity') == 2
+    assert wiretap.output_records[0].get_field_data('/host') == 'mymachine'
 
 
 @sdc_min_version('3.0.0.0')
 def test_parse_xml(sdc_builder, sdc_executor):
     """Validate parsing of xml content via the Data Parser processor."""
-    pipeline = create_text_pipeline(sdc_builder, 'XML', "<root><key>value</key></root>")
+    pipeline, wiretap = create_text_pipeline(sdc_builder, 'XML', "<root><key>value</key></root>")
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    sdc_executor.stop_pipeline(pipeline)
-
-    assert len(snapshot['DataParser_01'].output) == 1
-    key_field = get_xml_output_field(pipeline[0], snapshot['DataParser_01'].output[0].field, 'root')
+    assert len(wiretap.output_records) == 1
+    key_field = get_xml_output_field(pipeline[0], wiretap.output_records[0].field, 'root')
     assert key_field['key'][0]['value'] == 'value'
 
 
@@ -161,14 +154,13 @@ def test_parse_xml(sdc_builder, sdc_executor):
 def test_parse_xml_preserve_root_element(sdc_builder, sdc_executor):
     """Validate parsing of xml content via the Data Parser processor.
     Since 3.14.0 there is a new property 'preserve root element', set to True by default"""
-    pipeline = create_text_pipeline(sdc_builder, 'XML', "<root><key>value</key></root>", preserve_root_element=True)
+    pipeline, wiretap = create_text_pipeline(sdc_builder, 'XML', "<root><key>value</key></root>", preserve_root_element=True)
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot['DataParser_01'].output) == 1
-    assert snapshot['DataParser_01'].output[0].get_field_data('/root/key[0]/value') == 'value'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/root/key[0]/value') == 'value'
 
 
 # SDC-11018: Re-scale data when writing Decimal into Avro
@@ -185,6 +177,7 @@ def test_avro_decimal_incorrect_scale(sdc_builder, sdc_executor):
     source.data_format = 'JSON'
     source.raw_data = """{"a": "1.10"}
                          {"a": null}"""
+    source.stop_after_first_batch = True
 
     type_converter = builder.add_stage('Field Type Converter')
     type_converter.conversion_method = 'BY_FIELD'
@@ -219,17 +212,17 @@ def test_avro_decimal_incorrect_scale(sdc_builder, sdc_executor):
     parser.data_format = 'AVRO'
     parser.avro_schema_location = 'SOURCE'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> type_converter >> generator >> parser >> trash
+    source >> type_converter >> generator >> parser >> wiretap.destination
     pipeline = builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot[parser].output) == 2
-    assert snapshot[parser].output[0].get_field_data('/a') == Decimal('1.10000')
-    assert snapshot[parser].output[1].get_field_data('/a') == None
+    assert len(wiretap.output_records) == 2
+    assert wiretap.output_records[0].get_field_data('/a') == Decimal('1.10000')
+    assert wiretap.output_records[1].get_field_data('/a') == None
 
 
 # SDC-11022: Do not use avro union index when writing avro data
@@ -245,6 +238,7 @@ def test_avro_decimal_union_index_on_write(sdc_builder, sdc_executor):
     source.stop_after_first_batch = True
     source.data_format = 'JSON'
     source.raw_data = '{"a": "b"}'
+    source.stop_after_first_batch = True
 
     # Use clearly non-existing typeIndex
     expression = builder.add_stage('Expression Evaluator')
@@ -271,16 +265,16 @@ def test_avro_decimal_union_index_on_write(sdc_builder, sdc_executor):
     parser.data_format = 'AVRO'
     parser.avro_schema_location = 'SOURCE'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> expression >> generator >> parser >> trash
+    source >> expression >> generator >> parser >> wiretap.destination
     pipeline = builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot[parser].output) == 1
-    assert snapshot[parser].output[0].get_field_data('/a') == 'b'
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/a') == 'b'
 
 
 # SDC-11557: Publish field attributes for typed nulls when reading Avro
@@ -320,23 +314,23 @@ def test_avro_decimal_field_attributes_for_typed_null(sdc_builder, sdc_executor)
     parser.data_format = 'AVRO'
     parser.avro_schema_location = 'SOURCE'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> converter >> generator >> parser >> trash
+    source >> converter >> generator >> parser >> wiretap.destination
     pipeline = builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot[parser].output) == 2
-    assert snapshot[parser].output[0].get_field_data('/decimal') == Decimal("12.01")
-    assert snapshot[parser].output[1].get_field_data('/decimal') == None
+    assert len(wiretap.output_records) == 2
+    assert wiretap.output_records[0].get_field_data('/decimal') == Decimal("12.01")
+    assert wiretap.output_records[1].get_field_data('/decimal') == None
 
-    assert snapshot[parser].output[0].get_field_data('/decimal').attributes['precision'] == '4'
-    assert snapshot[parser].output[1].get_field_data('/decimal').attributes['precision'] == '4'
+    assert wiretap.output_records[0].get_field_data('/decimal').attributes['precision'] == '4'
+    assert wiretap.output_records[1].get_field_data('/decimal').attributes['precision'] == '4'
 
-    assert snapshot[parser].output[0].get_field_data('/decimal').attributes['scale'] == '2'
-    assert snapshot[parser].output[1].get_field_data('/decimal').attributes['scale'] == '2'
+    assert wiretap.output_records[0].get_field_data('/decimal').attributes['scale'] == '2'
+    assert wiretap.output_records[1].get_field_data('/decimal').attributes['scale'] == '2'
 
 
 # SDC-11869: Add ability to specify quote mode when generating CSV data
@@ -364,16 +358,16 @@ def test_delimited_quote_mode(sdc_builder, sdc_executor, quote_mode, expected):
     # Due to STF-833
     generator.target_field = '/target'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> generator >> trash
+    source >> generator >> wiretap.destination
     pipeline = builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert len(snapshot[generator].output) == 1
-    assert snapshot[generator].output[0].get_field_data('/target') == expected
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].get_field_data('/target') == expected
 
 
 @sdc_min_version('3.8.0')
@@ -389,16 +383,16 @@ def test_delimited_quoted_newline(sdc_builder, sdc_executor):
     source.multi_character_line_delimiter = 'xxx'
     source.raw_data = 'a||b||cxxx"dexxxf"||g||h'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> trash
+    source >> wiretap.destination
     pipeline = builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot_records = [record.field for record in snapshot.snapshot_batches[0][source.instance_name].output]
-    assert snapshot_records == [{"a": "dexxxf", "b": "g", "c": "h"}]
+    records = [record.field for record in wiretap.output_records]
+    assert records == [{"a": "dexxxf", "b": "g", "c": "h"}]
 
 
 def test_delimited_escape_multichar(sdc_builder, sdc_executor):
@@ -412,13 +406,13 @@ def test_delimited_escape_multichar(sdc_builder, sdc_executor):
     source.delimiter_format_type = 'MULTI_CHARACTER'
     source.raw_data = 'a||b||c\n"de\\||f"||g||h'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> trash
+    source >> wiretap.destination
     pipeline = builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot_records = [record.field for record in snapshot.snapshot_batches[0][source.instance_name].output]
-    assert snapshot_records == [{"a": "de||f", "b": "g", "c": "h"}]
+    records = [record.field for record in wiretap.output_records]
+    assert records == [{"a": "de||f", "b": "g", "c": "h"}]
