@@ -32,7 +32,7 @@ def test_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_exec
     not URI we decided to remove the schema part from it.
 
     Pipeline:
-              Dev Raw Data Source >> Local FS >= Trash
+              Dev Raw Data Source >> Local FS >= Wiretap
 
     When the pipeline stops we assert the filepath attribute of the event generate by LocalFS.
     """
@@ -53,9 +53,9 @@ def test_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_exec
     fs.delimiter_format = 'CUSTOM'
     fs.header_line = 'WITH_HEADER'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    data_source >> fs >= trash
+    data_source >> fs >= wiretap.destination
 
     pipeline = builder.build().configure_for_environment()
     sdc_executor.add_pipeline(pipeline)
@@ -64,16 +64,14 @@ def test_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_exec
         sdc_executor.execute_shell(f'mkdir -p {fs.directory_template}')
         sdc_executor.write_file(os.path.join(fs.directory_template, '_tmp_sdc_0'), 'HEADER\nDATA\n')
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         history = sdc_executor.get_pipeline_history(pipeline)
         pipeline_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        stage = snapshot[fs.instance_name]
-        stage_record_count = len(stage.event_records)
+        stage_record_count = len(wiretap.output_records)
 
-        assert stage_record_count == 1
-        assert pipeline_record_count == stage_record_count + 1
-        for event_record in stage.event_records:
+        assert stage_record_count == 2
+        assert pipeline_record_count == 3
+        for event_record in wiretap.output_records:
             assert event_record.get_field_data('/filepath').value.startswith(f'{fs.directory_template}/sdc_')
 
     finally:
@@ -114,9 +112,9 @@ def test_file_event_filepath_when_whole_file_mode_enabled(sdc_builder, sdc_execu
     fs.data_format = 'WHOLE_FILE'
     fs.file_type = 'WHOLE_FILE'
 
-    dst = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    src >> fs >= dst
+    src >> fs >= wiretap.destination
 
     pipeline = builder.build().configure_for_environment()
     sdc_executor.add_pipeline(pipeline)
@@ -128,16 +126,16 @@ def test_file_event_filepath_when_whole_file_mode_enabled(sdc_builder, sdc_execu
         sdc_executor.write_file(os.path.join(src.files_directory, 'input.txt'), 'HEADER\nVALUE\n')
         sdc_executor.write_file(os.path.join(fs.directory_template, '_tmp_sdc-output'), 'HEADER\nDATA\n')
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, batches=1).snapshot
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
         history = sdc_executor.get_pipeline_history(pipeline)
         pipeline_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        stage = snapshot[fs.instance_name]
-        stage_record_count = len(stage.event_records)
+        stage_record_count = len(wiretap.output_records)
 
         assert stage_record_count == 1
-        assert pipeline_record_count == stage_record_count + 1
-        for event_record in stage.event_records:
+        assert pipeline_record_count == 3
+        for event_record in wiretap.output_records:
             assert event_record.get_field_data('/targetFileInfo/path').value == f'{fs.directory_template}/sdc-output'
             assert event_record.get_field_data('/sourceFileInfo/file').value == f'{src.files_directory}/input.txt'
 
