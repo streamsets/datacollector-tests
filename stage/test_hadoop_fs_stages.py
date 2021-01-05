@@ -186,15 +186,15 @@ def test_hadoop_fs_destination_time_basis(sdc_builder, sdc_executor, cluster):
 @cluster('cdh', 'hdp')
 def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     """Write a simple file into a Hadoop FS folder with a randomly-generated name and confirm that the Hadoop FS origin
-    successfully reads it. Because cluster mode pipelines don't support snapshots, we do this verification using a
-    second standalone pipeline whose origin is an SDC RPC written to by the Hadoop FS pipeline. Specifically, this would
-    look like:
+    successfully reads it. Because cluster mode pipelines don't support connecting directly to wiretap, we do this
+    verification using a second standalone pipeline whose origin is an SDC RPC written to by the Hadoop FS pipeline.
+    Specifically, this would look like:
     Hadoop FS pipeline:
         hadoop_fs_origin >> sdc_rpc_destination
-    Snapshot pipeline:
-        sdc_rpc_origin >> trash
+    Wiretap pipeline:
+        sdc_rpc_origin >> wiretap
     """
-    hadoop_fs_folder = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+    hadoop_fs_folder = f'/tmp/out/{get_random_string(string.ascii_letters, 10)}'
 
     # Build the Hadoop FS pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -205,15 +205,14 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     hadoop_fs.input_paths.append(hadoop_fs_folder)
 
     sdc_rpc_destination = builder.add_stage('SDC RPC', type='destination')
-    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host,
-                                                                 SDC_RPC_LISTENING_PORT))
+    sdc_rpc_destination.sdc_rpc_connection.append(f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}')
     sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     hadoop_fs >> sdc_rpc_destination
     hadoop_fs_pipeline = builder.build().configure_for_environment(cluster)
     hadoop_fs_pipeline.configuration['executionMode'] = 'CLUSTER_BATCH'
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
@@ -224,10 +223,10 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     wiretap = builder.add_wiretap()
 
     sdc_rpc_origin >> wiretap.destination
-    snapshot_pipeline = builder.build()
+    wiretap_pipeline = builder.build()
 
     # Add both pipelines we just created to SDC and start writing files to Hadoop FS with the HDFS client.
-    sdc_executor.add_pipeline(hadoop_fs_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(hadoop_fs_pipeline, wiretap_pipeline)
 
     try:
         lines_in_file = ['hello', 'hi', 'how are you?']
@@ -236,12 +235,12 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         cluster.hdfs.client.makedirs(hadoop_fs_folder)
         cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, 'file.txt'), data='\n'.join(lines_in_file))
 
-        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
-        sdc_executor.start_pipeline(snapshot_pipeline)
+        logger.debug('Starting wiretap pipeline ...')
+        sdc_executor.start_pipeline(wiretap_pipeline)
         logger.debug('Starting Hadoop FS pipeline and waiting for it to finish ...')
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished()
-        sdc_executor.wait_for_pipeline_metric(snapshot_pipeline, 'input_record_count', 3, timeout_sec=300)
-        sdc_executor.stop_pipeline(snapshot_pipeline)
+        sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', 3, timeout_sec=300)
+        sdc_executor.stop_pipeline(wiretap_pipeline)
 
         actual = [record.field["text"] for record in wiretap.output_records]
         assert lines_in_file == actual
@@ -256,7 +255,7 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
     """Write a simple file into a Hadoop FS folder with a randomly-generated name and confirm that the Hadoop FS origin
     successfully reads it. Specifically, this would look like:
     Hadoop FS pipeline:
-        hadoop_fs_origin >> trash
+        hadoop_fs_origin >> wiretap
     """
     hadoop_fs_folder = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
 
@@ -267,9 +266,9 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
     hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
     hadoop_fs.set_attributes(data_format='WHOLE_FILE', files_directory=hadoop_fs_folder, file_name_pattern='*')
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    hadoop_fs >> trash
+    hadoop_fs >> wiretap.destination
     hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
     hadoop_fs_pipeline.configuration['shouldRetry'] = False
 
@@ -282,16 +281,15 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
         cluster.hdfs.client.makedirs(hadoop_fs_folder)
         cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, filename), data='\n'.join(lines_in_file))
 
-        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(hadoop_fs_pipeline, start_pipeline=True, wait=False)
+        logger.debug('Starting wiretap pipeline ...')
 
-        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        sdc_executor.start_pipeline(hadoop_fs_pipeline)
+        sdc_executor.wait_for_pipeline_metric(hadoop_fs_pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(hadoop_fs_pipeline, force=True)
 
-        lines_from_snapshot = [record.field['fileInfo']['file']
-                               for record in snapshot[hadoop_fs_pipeline[0].instance_name].output]
+        data_from_wiretap = [record.field['fileInfo']['file'] for record in wiretap.output_records]
 
-        assert lines_from_snapshot[0] == f"{hadoop_fs_folder}/{filename}"
+        assert data_from_wiretap[0] == f"{hadoop_fs_folder}/{filename}"
     finally:
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
 
@@ -399,9 +397,9 @@ def test_hadoop_fs_origin_standalone_subdirectories(sdc_builder, sdc_executor, c
     hadoop_fs.set_attributes(data_format='WHOLE_FILE', files_directory=hadoop_fs_root_folder,
                              file_name_pattern='*', read_order='TIMESTAMP', process_subdirectories=True)
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    hadoop_fs >> trash
+    hadoop_fs >> wiretap.destination
     hadoop_fs_pipeline = builder.build(title='Hadoop FS pipeline').configure_for_environment(cluster)
     hadoop_fs_pipeline.configuration['shouldRetry'] = False
 
@@ -420,18 +418,17 @@ def test_hadoop_fs_origin_standalone_subdirectories(sdc_builder, sdc_executor, c
         cluster.hdfs.client.makedirs(hadoop_fs_folder_subdir_2)
         cluster.hdfs.client.write(os.path.join(hadoop_fs_folder_subdir_2, filename), data='\n'.join(lines_in_file))
 
-        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(hadoop_fs_pipeline, batches=3,
-                                                                  start_pipeline=True, wait=False)
+        logger.debug('Starting wiretap pipeline...')
 
-        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        sdc_executor.start_pipeline(hadoop_fs_pipeline)
+        sdc_executor.wait_for_pipeline_metric(hadoop_fs_pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(hadoop_fs_pipeline, force=True)
 
         expected_filenames = [hadoop_fs_root_folder, hadoop_fs_folder_subdir_1, hadoop_fs_folder_subdir_2]
 
-        for i in range(0, 3):
-            batch = snapshot.snapshot_batches[i][hadoop_fs_pipeline[0].instance_name].output[0]
-            assert batch.field['fileInfo']['file'] == f'{expected_filenames[i]}/{filename}'
+        output_files = [str(file.field['fileInfo']['file']) for file in wiretap.output_records]
+
+        assert sorted(output_files) == sorted([f'{directory}/{filename}' for directory in expected_filenames])
     finally:
         logger.debug('Deleting folders and files')
         cluster.hdfs.client.delete(hadoop_fs_root_folder, recursive=True)
@@ -568,8 +565,6 @@ def test_hadoop_fs_origin_standalone_multi_thread(sdc_builder, sdc_executor, clu
         for i in range(hdfs_files_count):
             cluster.hdfs.client.write(os.path.join(hadoop_fs_folder, f'{i}{hadoop_fs_filename}'),
                                       data='\n'.join(file_lines))
-
-        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
 
         # We want to verify the amount of records
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished(timeout_sec=180)
@@ -810,7 +805,7 @@ def test_cdh_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_
     not URI we decided to remove the schema part from it.
 
     Pipeline:
-              Dev Raw Data Source >> Hadoop FS >= Trash
+              Dev Raw Data Source >> Hadoop FS >= wiretap
 
     When the pipeline stops we assert the filepath attribute of the event generate by Hadoop FS.
     """
@@ -835,23 +830,17 @@ def test_cdh_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_
                                  files_suffix='',
                                  max_records_in_file=1)
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        data_source >> hadoop_fs >= trash
+        data_source >> hadoop_fs >= wiretap.destination
 
         pipeline = builder.build().configure_for_environment(cluster)
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
-        history = sdc_executor.get_pipeline_history(pipeline)
-        pipeline_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        stage = snapshot[hadoop_fs.instance_name]
-        stage_record_count = len(stage.event_records)
 
-        assert stage_record_count == 2
-        assert pipeline_record_count == stage_record_count + 1
-        for event_record in stage.event_records:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert len(wiretap.output_records) == 2
+        for event_record in wiretap.output_records:
             assert event_record.get_field_data('/filepath').value.startswith(f'{hdfs_directory}/sdc_')
 
     finally:
@@ -902,24 +891,19 @@ def test_cdh_file_event_filepath_when_whole_file_mode_enabled(sdc_builder, sdc_e
                                  file_name_expression='-output',
                                  max_records_in_file=1)
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        src >> hadoop_fs >= trash
+        src >> hadoop_fs >= wiretap.destination
 
         pipeline = builder.build().configure_for_environment(cluster)
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True,
-                                                 batches=1).snapshot
-        sdc_executor.stop_pipeline(pipeline, force=True)
-        history = sdc_executor.get_pipeline_history(pipeline)
-        pipeline_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        stage = snapshot[hadoop_fs.instance_name]
-        stage_record_count = len(stage.event_records)
 
-        assert stage_record_count == 1
-        assert pipeline_record_count == stage_record_count + 1
-        for event_record in stage.event_records:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline, force=True)
+
+        assert len(wiretap.output_records) == 1
+        for event_record in wiretap.output_records:
             assert event_record.get_field_data('/targetFileInfo/path').value == f'{hdfs_directory}/sdc-output'
             assert event_record.get_field_data('/sourceFileInfo/file').value == f'{src.files_directory}/input.txt'
 
