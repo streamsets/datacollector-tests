@@ -19,7 +19,6 @@ import os
 from uuid import uuid4
 
 import pytest
-
 from streamsets.testframework.markers import cluster
 
 logger = logging.getLogger(__name__)
@@ -64,7 +63,8 @@ def test_hadoop_fs_strict_impersonation(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
         # Validate that the files were created with proper user name.
