@@ -61,24 +61,27 @@ def test_directory_origin(sdc_builder, sdc_executor):
                                  'fileRollMode': 'ALPHABETICAL',
                                  'fileFullPath': f'{tmp_directory}/*'
                              }])
-    trash_1 = pipeline_builder.add_stage('Trash')
-    trash_2 = pipeline_builder.add_stage('Trash')
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
 
-    file_tail >> trash_1
-    file_tail >> trash_2
+    file_tail >> wiretap_1.destination
+    file_tail >> wiretap_2.destination
     file_tail_pipeline = pipeline_builder.build('File Tail Origin pipeline')
     sdc_executor.add_pipeline(file_tail_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(file_tail_pipeline)
+    sdc_executor.wait_for_pipeline_metric(file_tail_pipeline, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(file_tail_pipeline)
 
     # assert all the data captured have the same raw_data
     # the snapshot output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
     # by checking a Record having a key called 'text'
-    for value in snapshot.snapshot_batches[0][file_tail.instance_name].output_lanes.values():
-        for record in value:
-            if 'text' in record.field:
-                assert raw_data == record.field['text'].value
+    for record in wiretap_1.output_records:
+        if 'text' in record.field:
+            assert raw_data == record.field['text'].value
+    for record in wiretap_2.output_records:
+        if 'text' in record.field:
+            assert raw_data == record.field['text'].value
 
 
 def test_file_tale_origin_stop_continue(sdc_builder, sdc_executor):
@@ -113,16 +116,17 @@ def test_file_tale_origin_stop_continue(sdc_builder, sdc_executor):
                                  'fileRollMode': 'ALPHABETICAL',
                                  'fileFullPath': f'{tmp_directory}/*'
                              }])
-    trash_1 = pipeline_builder.add_stage('Trash')
-    trash_2 = pipeline_builder.add_stage('Trash')
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
 
-    file_tail >> trash_1
-    file_tail >> trash_2
+    file_tail >> wiretap_1.destination
+    file_tail >> wiretap_2.destination
 
     file_tail_pipeline = pipeline_builder.build('File Tail Origin pipeline')
     sdc_executor.add_pipeline(file_tail_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(file_tail_pipeline)
+    sdc_executor.wait_for_pipeline_metric(file_tail_pipeline, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(file_tail_pipeline)
 
     # assert all the data captured have the same raw_data
@@ -131,11 +135,14 @@ def test_file_tale_origin_stop_continue(sdc_builder, sdc_executor):
 
     size_output = 0
 
-    for value in snapshot.snapshot_batches[0][file_tail.instance_name].output_lanes.values():
-        for record in value:
-            if 'text' in record.field:
-                assert 'Hello!' == record.field['text'].value
-                size_output += 1
+    for record in wiretap_1.output_records:
+        if 'text' in record.field:
+            assert 'Hello!' == record.field['text'].value
+            size_output += 1
+    for record in wiretap_2.output_records:
+        if 'text' in record.field:
+            assert 'Hello!' == record.field['text'].value
+            size_output += 1
 
     assert size_output == 10
 
@@ -153,16 +160,22 @@ def test_file_tale_origin_stop_continue(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(files_pipeline_2)
     sdc_executor.start_pipeline(files_pipeline_2).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
+    wiretap_1.reset()
+    wiretap_2.reset()
+    sdc_executor.start_pipeline(file_tail_pipeline)
+    sdc_executor.wait_for_pipeline_metric(file_tail_pipeline, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(file_tail_pipeline)
 
     size_output = 0
 
-    for value in snapshot.snapshot_batches[0][file_tail.instance_name].output_lanes.values():
-        for record in value:
-            if 'text' in record.field:
-                assert 'Bye!' == record.field['text'].value
-                size_output += 1
+    for record in wiretap_1.output_records:
+        if 'text' in record.field:
+            assert 'Bye!' == record.field['text'].value
+            size_output += 1
+    for record in wiretap_2.output_records:
+        if 'text' in record.field:
+            assert 'Bye!' == record.field['text'].value
+            size_output += 1
 
     assert size_output == 10
 
@@ -204,32 +217,34 @@ def test_directory_origin_with_finisher(sdc_builder, sdc_executor):
                                  'fileRollMode': 'ALPHABETICAL',
                                  'fileFullPath': f'{tmp_directory}/*'
                              }])
-    trash_1 = pipeline_builder.add_stage('Trash')
-    trash_2 = pipeline_builder.add_stage('Trash')
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
+    events_wiretap = pipeline_builder.add_wiretap()
 
     # The event checked is START
     finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'START'}"])
 
-    file_tail >> trash_1
-    file_tail >> trash_2
-    file_tail >= finisher
+    file_tail >> wiretap_1.destination
+    file_tail >> wiretap_2.destination
+    file_tail >= [finisher, events_wiretap.destination]
 
     file_tail_pipeline = pipeline_builder.build('File Tail Origin with Finisher')
     sdc_executor.add_pipeline(file_tail_pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(file_tail_pipeline, start_pipeline=True).snapshot
-    sdc_executor.get_pipeline_status(file_tail_pipeline).wait_for_status(status='FINISHED')
+    sdc_executor.start_pipeline(file_tail_pipeline).wait_for_finished()
 
     # assert all the data captured have the same raw_data
     # the snapshot output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
     # by checking a Record having a key called 'text'
-    for value in snapshot.snapshot_batches[0][file_tail.instance_name].output_lanes.values():
-        for record in value:
-            if 'text' in record.field:
-                assert 'Hello!' == record.field['text'].value
+    for record in wiretap_1.output_records:
+        if 'text' in record.field:
+            assert 'Hello!' == record.field['text'].value
+    for record in wiretap_2.output_records:
+        if 'text' in record.field:
+            assert 'Hello!' == record.field['text'].value
 
     # assert the event generated is start
-    assert len(snapshot[file_tail].event_records) == 1
-    assert snapshot[file_tail].event_records[0].get_field_data('/event') == 'START'
-    assert str(snapshot[file_tail].event_records[0].get_field_data('/fileName'))[0:20] == f'{tmp_directory}/sdc-'
+    assert len(events_wiretap.output_records) == 1
+    assert events_wiretap.output_records[0].get_field_data('/event') == 'START'
+    assert str(events_wiretap.output_records[0].get_field_data('/fileName'))[0:20] == f'{tmp_directory}/sdc-'
