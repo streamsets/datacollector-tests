@@ -1274,3 +1274,141 @@ def test_http_processor_response_JSON_empty(sdc_builder, sdc_executor, http_clie
 
     finally:
         http_mock.delete_mock()
+
+
+# SDC-16431:  Allow sending body with DELETE and other HTTP methods in HTTP components
+@http
+@sdc_min_version("3.11.0")
+@pytest.mark.parametrize('method', [
+    'GET',
+    'PUT',
+    'POST',
+    'DELETE',
+    'HEAD',
+    'PATCH'
+])
+def test_http_processor_with_body(sdc_builder, sdc_executor, method, http_client, keep_data):
+    expected_data = json.dumps({'A': 1})
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('Dev Raw Data Source')
+        origin.set_attributes(data_format='TEXT', raw_data='dummy')
+        origin.stop_after_first_batch = True
+
+        processor = builder.add_stage('HTTP Client', type='processor')
+        processor.set_attributes(data_format='JSON', http_method=method,
+                                 resource_url=mock_uri,
+                                 output_field='/result',
+                                 request_data="{'something': 'here'}")
+        wiretap = builder.add_wiretap()
+
+        origin >> processor >> wiretap.destination
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == 1
+
+        # The mock server won't return body on HEAD (rightfully so), but we can still send body to it though
+        if method != 'HEAD':
+            assert records[0].field['result'] == {'A': 1}
+    finally:
+        if not keep_data:
+            http_mock.delete_mock()
+
+
+# SDC-16431:  Allow sending body with DELETE and other HTTP methods in HTTP components
+@http
+@sdc_min_version("3.11.0")
+@pytest.mark.parametrize('method', [
+    'PUT',
+    'POST',
+    'DELETE',
+])
+def test_http_client_with_body(sdc_builder, sdc_executor, method, http_client, keep_data):
+    expected_data = json.dumps({'A': 1})
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('HTTP Client', type='origin')
+        origin.set_attributes(data_format='JSON', http_method=method,
+                              resource_url=mock_uri,
+                              mode='BATCH',
+                              request_body="{'something': 'here'}")
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == 1
+
+        assert records[0].field['A'] == 1
+    finally:
+        if not keep_data:
+            http_mock.delete_mock()
+
+
+# SDC-16431:  Allow sending body with DELETE and other HTTP methods in HTTP components
+@http
+@sdc_min_version("3.11.0")
+@pytest.mark.parametrize('method', [
+    'GET',
+    'PUT',
+    'POST',
+    'DELETE',
+    'HEAD',
+    'PATCH'
+])
+def test_http_destination_with_body(sdc_builder, sdc_executor, method, http_client, keep_data):
+    expected_data = json.dumps({'A': 1})
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('Dev Raw Data Source')
+        origin.set_attributes(data_format='JSON', raw_data='{"A": 1}')
+        origin.stop_after_first_batch = True
+
+        target = builder.add_stage('HTTP Client', type='destination')
+        target.set_attributes(data_format='JSON', http_method=method, resource_url=mock_uri)
+
+        origin >> target
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Check that the HTTP server got the expected data
+        request = http_mock.get_request(0)
+        assert request
+        assert request.method == method
+        assert request.url == f'/{mock_path}'
+
+        # The mock server won't persist body of GET and HEAD
+        if method != 'GET' and method != 'HEAD':
+            assert request.body
+            assert json.loads(request.body.decode("utf-8")) == {"A": 1}
+    finally:
+        if not keep_data:
+            http_mock.delete_mock()
