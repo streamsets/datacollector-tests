@@ -20,7 +20,6 @@ from streamsets.testframework.environments.cloudera import ClouderaManagerCluste
 from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 import datetime
-import time
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +69,7 @@ def test_object_names_topic(sdc_builder, sdc_executor, cluster, test_name, topic
     kafka_consumer.set_attributes(
         batch_wait_time_in_ms=20_000,
         data_format='TEXT',
+        consumer_group=get_random_string(),
         topic=topic_name
     )
 
