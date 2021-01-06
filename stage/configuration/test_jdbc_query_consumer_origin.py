@@ -256,8 +256,8 @@ def _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes=None):
                                         initial_offset='0',
                                         offset_column='id',
                                         **stage_attributes if stage_attributes else {})
-    trash = pipeline_builder.add_stage('Trash')
-    mysql_query_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    mysql_query_consumer >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
 
@@ -277,11 +277,12 @@ def _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes=None):
         connection.execute(table.insert(), ROWS_IN_DATABASE)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline)
 
         rows_from_snapshot = [record.field['name']
-                              for record in snapshot[pipeline.stages[0]].output]
+                              for record in wiretap.output_records]
         assert rows_from_snapshot == [row['name'] for row in ROWS_IN_DATABASE]
 
     finally:
