@@ -16,6 +16,7 @@ import json
 import http.client as httpclient
 import logging
 import string
+import time
 
 import pytest
 import sqlalchemy
@@ -134,6 +135,14 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, creden
             http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
             http_res.request('POST', '/', json.dumps(data), {'X-SDC-APPLICATION-ID': 'admin'})
             resp = http_res.getresponse()
+            tries = 0
+            # Waiting for the server to start
+            while resp.status != 200 and tries <= 5:
+                time.sleep(1)
+                resp = http_res.getresponse()
+                logger.info('HTTP response number of tries = %s, status = %s', tries, resp.status)
+                tries = tries + 1
+
             assert resp.status == 200
 
         start_command.wait_for_pipeline_batch_count(10)
