@@ -1099,15 +1099,15 @@ def test_resource_url(sdc_builder, sdc_executor, http_client):
         http_client_source = pipeline_builder.add_stage('HTTP Client', type='origin')
         http_client_source.resource_url = mock_uri
 
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
-        http_client_source >> trash
+        http_client_source >> wiretap.destination
 
         pipeline = pipeline_builder.build()
         sdc_executor.add_pipeline(pipeline)
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        record = snapshot[http_client_source].output[0]
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        record = wiretap.output_records[0]
         assert record.field == DATA
     finally:
         http_mock.delete_mock()

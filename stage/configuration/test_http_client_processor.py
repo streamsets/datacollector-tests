@@ -935,7 +935,7 @@ def test_multiple_values_behavior(sdc_builder, sdc_executor, stage_attributes, h
 
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data='{}')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data='{}', stop_after_first_batch = True)
     http_client_processor = builder.add_stage('HTTP Client', type='processor')
     # for POST/PATCH, we post 'raw_data' and expect 'expected_dict' as response data
     http_client_processor.set_attributes(
@@ -945,27 +945,25 @@ def test_multiple_values_behavior(sdc_builder, sdc_executor, stage_attributes, h
         http_method='GET',
         data_format='JSON'
     )
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    dev_raw_data_source >> http_client_processor >> trash
+    dev_raw_data_source >> http_client_processor >> wiretap.destination
     pipeline = builder.build(
         title=f'HTTP Lookup Processor Multiple Values Behavior {multiple_values_behavior} pipeline')
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        snapshot_records = snapshot[http_client_processor.instance_name].output
         if multiple_values_behavior == 'ALL_AS_LIST':
-            assert len(snapshot_records) == 1
-            assert list(snapshot_records[0].field.values())[0] == records
+            assert len(wiretap.output_records) == 1
+            assert list(wiretap.output_records[0].field.values())[0] == records
         elif multiple_values_behavior == 'FIRST_ONLY':
-            assert len(snapshot_records) == 1
-            assert list(snapshot_records[0].field.values())[0] == records[0]
+            assert len(wiretap.output_records) == 1
+            assert list(wiretap.output_records[0].field.values())[0] == records[0]
         else:
-            assert len(snapshot_records) == 3
-            assert [list(record.field.values())[0] for record in snapshot_records] == records
+            assert len(wiretap.output_records) == 3
+            assert [list(record.field.values())[0] for record in wiretap.output_records] == records
 
     finally:
         http_mock.delete_mock()
@@ -1170,23 +1168,24 @@ def test_resource_url(sdc_builder, sdc_executor, http_client):
         mock_uri = f'{http_mock.pretend_url}/{mock_path}'
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
-                                                                                               raw_data='ok')
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT',raw_data='ok',stop_after_first_batch=True)
+
         http_client = pipeline_builder.add_stage('HTTP Client',
                                                  type='processor').set_attributes(resource_url=mock_uri,
                                                                                   output_field=f'/{OUTPUT_FIELD}')
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
-        dev_raw_data_source >> http_client >> trash
+        dev_raw_data_source >> http_client >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        record = snapshot[http_client].output[0]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        record = wiretap.output_records[0]
         assert record.field[OUTPUT_FIELD] == DATA
     finally:
         http_mock.delete_mock()
-        sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
