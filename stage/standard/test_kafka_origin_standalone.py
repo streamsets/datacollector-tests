@@ -248,6 +248,7 @@ def test_multiple_batch(sdc_builder, sdc_executor, cluster):
         batch_wait_time_in_ms=20_000,
         data_format='TEXT',
         topic=topic,
+        consumer_group=get_random_string(),
         max_batch_size_in_records=50
     )
 

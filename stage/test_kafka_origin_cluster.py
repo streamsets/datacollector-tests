@@ -804,6 +804,7 @@ def get_kafka_consumer_stage(sdc_version, pipeline_builder, cluster):
                                                 library=kafka_cluster_stage_lib)
     kafka_consumer.set_attributes(data_format='TEXT',
                                   batch_wait_time_in_ms=20000,
+                                  consumer_group=get_random_string(),
                                   max_batch_size_in_records=10,
                                   rate_limit_per_partition_in_kafka_messages=10,
                                   topic=get_random_string(string.ascii_letters, 10),
