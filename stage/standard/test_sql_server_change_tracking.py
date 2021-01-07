@@ -397,10 +397,12 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
         assert len(records) == 4
 
         assert records[0].header.values['sdc.event.type'] == 'table-finished'
-        assert records[0].field['table'] == table_b
-
         assert records[1].header.values['sdc.event.type'] == 'table-finished'
-        assert records[1].field['table'] == table_a
+        table_set = set()
+        table_set.add(records[0].field['table'])
+        table_set.add(records[1].field['table'])
+        assert table_a in table_set
+        assert table_b in table_set
 
         assert records[2].header.values['sdc.event.type'] == 'schema-finished'
         assert table_a in records[2].field['tables']
