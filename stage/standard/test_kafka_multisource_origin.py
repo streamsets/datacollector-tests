@@ -134,6 +134,7 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
     """
     Test that we can start our pipeline multiple times without reading any duplicated record neither missing them.
     """
+    records_per_iteration = 100
 
     if auto_offset_reset == 'TIMESTAMP' and any(
             stage_lib in cluster.sdc_stage_libs for stage_lib in ['streamsets-datacollector-apache-kafka_0_9-lib',
@@ -152,7 +153,6 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
     kafka_consumer = _get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, [topic])
     kafka_consumer.set_attributes(
         batch_wait_time_in_ms=batch_wait_time,
-        max_batch_size_in_records=1,
         auto_offset_reset=auto_offset_reset
     )
     if auto_offset_reset == 'TIMESTAMP':
@@ -164,50 +164,37 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
     kafka_consumer >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
-
     sdc_executor.add_pipeline(pipeline)
 
     producer = cluster.kafka.producer()
-
     try:
-        total_data = []
-        for _ in range(1000):
-            actual_data = get_random_string()
-            total_data.append(actual_data)
-            producer.send(topic, actual_data.encode())
-        producer.flush()
-        sdc_executor.start_pipeline(pipeline)
-
-        if auto_offset_reset == 'LATEST':
-            assert len(wiretap.output_records) == 0
+        # Let's try 5 start/stop cycles
+        for iteration in range(5):
             total_data = []
-            for _ in range(1000):
+            for _ in range(records_per_iteration):
                 actual_data = get_random_string()
                 total_data.append(actual_data)
                 producer.send(topic, actual_data.encode())
             producer.flush()
+            sdc_executor.start_pipeline(pipeline)
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 5, timeout_sec=60)
-        sdc_executor.stop_pipeline(pipeline)
-        first_iteration_records = [record.field['text'] for record in wiretap.output_records]
+            if auto_offset_reset == 'LATEST' and iteration == 0:
+                assert len(wiretap.output_records) == 0
+                total_data = []
+                for _ in range(records_per_iteration):
+                    actual_data = get_random_string()
+                    total_data.append(actual_data)
+                    producer.send(topic, actual_data.encode())
+                producer.flush()
 
-        assert len(first_iteration_records) != 0
-        assert len(first_iteration_records) < 1000
-        assert all(element in total_data for element in first_iteration_records)
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_iteration, timeout_sec=60)
+            sdc_executor.stop_pipeline(pipeline)
 
-        wiretap.reset()
+            first_iteration_records = [record.field['text'] for record in wiretap.output_records]
+            assert len(first_iteration_records) == records_per_iteration
+            assert all(element in total_data for element in first_iteration_records)
 
-        sdc_executor.start_pipeline(pipeline)
-
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1000 - len(first_iteration_records),
-                                              timeout_sec=300)
-
-        second_iteration_records = [record.field['text'] for record in wiretap.output_records]
-
-        assert len(second_iteration_records) != 0
-        assert len(second_iteration_records) + len(first_iteration_records) == len(total_data)
-        assert all(element in (second_iteration_records + first_iteration_records) for element in total_data)
-        assert all(element in total_data for element in (second_iteration_records + first_iteration_records))
+            wiretap.reset()
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
