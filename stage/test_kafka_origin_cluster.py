@@ -900,7 +900,7 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_e
         yarn_job_failed = True if history['status'] == 'CONNECT_ERROR' else False
         # Connect error must be explicitly acknowledge by pressing the stop button
         if history['status'] == 'CONNECT_ERROR':
-            sdc_executor.sstop_pipeline(kafka_consumer_pipeline)
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
     logger.info("Waiting on first record available on the wiretap pipeline")
     # High timeout since cluster pipelines are slow and can take even 60+ second to boot up. On secured clusters in
