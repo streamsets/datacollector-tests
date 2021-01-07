@@ -14,15 +14,17 @@ def test_condition(sdc_builder, sdc_executor):
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=json.dumps(DATA))
+        dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(DATA), stop_after_first_batch=True)
         stream_selector = pipeline_builder.add_stage('Stream Selector')
         dev_identity_1 = pipeline_builder.add_stage('Dev Identity')
         dev_identity_2 = pipeline_builder.add_stage('Dev Identity')
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap_1 = pipeline_builder.add_wiretap()
+        wiretap_2 = pipeline_builder.add_wiretap()
 
         dev_raw_data_source >> stream_selector
-        stream_selector >> dev_identity_1 >> trash
-        stream_selector >> dev_identity_2 >> trash
+        stream_selector >> dev_identity_1 >> wiretap_1.destination
+        stream_selector >> dev_identity_2 >> wiretap_2.destination
 
         # Stream Selector conditions depend on the output lanes, so we set them after connecting the stages.
         stream_selector.condition = [{'outputLane': stream_selector.output_lanes[0],
@@ -32,14 +34,16 @@ def test_condition(sdc_builder, sdc_executor):
 
         pipeline = pipeline_builder.build()
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        condition_1_record = snapshot[dev_identity_1].output[0]
-        condition_2_record = snapshot[dev_identity_2].output[0]
+        condition_1_record = wiretap_1.output_records[0]
+        condition_2_record = wiretap_2.output_records[0]
         assert condition_1_record.field == EXPECTED_CONDITION_1_DATA
         assert condition_2_record.field == EXPECTED_CONDITION_2_DATA
     finally:
-        sdc_executor.stop_pipeline(pipeline)
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        if status == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @stub
