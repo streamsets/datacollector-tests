@@ -18,6 +18,7 @@ import json
 import logging
 import random
 import string
+import time
 
 import avro
 import pytest
@@ -880,8 +881,22 @@ def verify_kafka_origin_results(kafka_consumer_pipeline, wiretap_pipeline, sdc_e
 
     logger.info("Starting wiretap Pipeline first")
     sdc_executor.start_pipeline(wiretap_pipeline)
-    logger.info("Starting Kafka Consumer pipeline")
-    sdc_executor.start_pipeline(kafka_consumer_pipeline)
+    # Starting the pipeline isn't actually enough, we can get into "RUNNING" state (which in cluster mode mean 'submitted'
+    # but the job never starting either because the pool is full or because of some failure. Thus we will attempt to
+    # start the pipeline 3 times before finally 'giving in'. It's sort of a hack - it seems to be happening on our test
+    # environment once in ~20-30 cases. Deeply looking inside, it does seem that YARN is simply unhappy and will reject
+    # the job (e.g. it's a cluster, not SDC that is the problem).
+    yarn_job_failed = True
+    repetition = 0
+    while yarn_job_failed and repetition < 3:
+        repetition = repetition + 1
+        logger.info(f"Starting Kafka Consumer pipeline for the {repetition} time")
+        sdc_executor.start_pipeline(kafka_consumer_pipeline)
+        logger.info(f"Sleeping few seconds to get cluster time to 'settle down'")
+        time.sleep(5)
+        history = sdc_executor.get_pipeline_history(kafka_consumer_pipeline)._data[0]
+        logger.info(f"Last pipeline status is {history}")
+        yarn_job_failed = True if history['status'] == 'CONNECT_ERROR' else False
 
     logger.info("Waiting on first record available on the wiretap pipeline")
     # High timeout since cluster pipelines are slow and can take even 60+ second to boot up. On secured clusters in
