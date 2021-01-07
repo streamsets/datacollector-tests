@@ -73,7 +73,7 @@ def test_hbase_destination_validate_no_config_issues(sdc_builder, sdc_executor, 
         cluster.hbase.client.create_table(name=random_table_name, families={'cf1': {}})
 
         # Validate pipeline by running preview.
-        preview = sdc_executor.run_pipeline_preview(pipeline).preview
+        preview = sdc_executor.run_pipeline_preview(pipeline, timouet=120_000).preview
         assert preview is not None
         logger.debug('preview is not None')
         assert preview.issues.issues_count == 0
