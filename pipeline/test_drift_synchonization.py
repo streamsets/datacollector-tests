@@ -79,8 +79,8 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
     jdbc_query_consumer = pipeline_builder.add_stage('JDBC Query Consumer')
     jdbc_query_consumer.set_attributes(incremental_mode=False, sql_query=f'SELECT * FROM {table_name};')
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
-    expression_evaluator.set_attributes(header_expressions=[{'attributeToSet': 'dt',
-                                                             'headerAttributeExpression': "${record:value('/dt')}"}])
+    expression_evaluator.set_attributes(header_attribute_expressions=[{'attributeToSet': 'dt',
+                                                                       'headerAttributeExpression': "${record:value('/dt')}"}])
     field_remover = pipeline_builder.add_stage('Field Remover')
     field_remover.set_attributes(fields=['/dt'])
     hive_metadata = pipeline_builder.add_stage('Hive Metadata')
@@ -94,6 +94,7 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
     mapreduce = pipeline_builder.add_stage('MapReduce', type='executor')
     mapreduce.set_attributes(job_type='AVRO_PARQUET',
                              output_directory="${file:parentPath(file:parentPath(record:value('/filepath')))}")
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
 
     jdbc_query_consumer >= pipeline_finisher_executor
@@ -101,6 +102,8 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
     hive_metadata >> hadoop_fs
     hive_metadata >> hive_metastore
     hadoop_fs >= mapreduce
+    mapreduce >= wiretap.destination
+
     pipeline = pipeline_builder.build(title='Hive drift test').configure_for_environment(cluster, database)
     sdc_executor.add_pipeline(pipeline)
 
@@ -112,17 +115,18 @@ def test_query_with_parquet(sdc_builder, sdc_executor, cluster, database):
         connection = database.engine.connect()
         connection.execute(table.insert(), rows_in_database)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # assert events (MapReduce) generated
-        assert len(snapshot[mapreduce.instance_name].event_records) == len(rows_in_database)
+        assert len(wiretap.output_records) == len(rows_in_database)
         # make sure MapReduce job is done and is successful
-        for event in snapshot[mapreduce.instance_name].event_records:
+        for event in wiretap.output_records:
             job_id = event.field['job-id'].value
             assert cluster.yarn.wait_for_job_to_end(job_id) == 'SUCCEEDED'
-        # assert data
-        hive_cursor.execute(f'RELOAD `{table_name}`')
-        hive_cursor.execute(f'SELECT * from `{table_name}')
+
+        # verify inserted data
+        hive_cursor.execute(f'RELOAD {_get_qualified_table_name(None, table_name)}')
+        hive_cursor.execute(f'SELECT * from {_get_qualified_table_name(None, table_name)}')
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         raw_values = [list(row.values()) for row in rows_in_database]
         assert sorted(hive_values) == sorted(raw_values)
@@ -445,7 +449,7 @@ def test_partition_locations(sdc_builder, sdc_executor, cluster):
 
     Pipeline configuration:
         dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
-        hive_metadata >> hadoop_fs
+        hive_metadata >> [hadoop_fs, wiretap]
         hive_metadata >> hive_metastore
 
     """
@@ -504,10 +508,12 @@ def test_partition_locations(sdc_builder, sdc_executor, cluster):
     # Hive Metastore
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
+    wiretap = pipeline_builder.add_wiretap()
+
     # Build pipeline
     dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
     hive_metadata >> hadoop_fs
-    hive_metadata >> hive_metastore
+    hive_metadata >> [hive_metastore, wiretap.destination]
 
     pipeline = pipeline_builder.build(title='Hive drift - Test Partition Locations').configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
@@ -518,17 +524,13 @@ def test_partition_locations(sdc_builder, sdc_executor, cluster):
     hive_cursor.execute(f'USE {database}')
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
-        all_metadata = snapshot[hive_metadata.instance_name].output_lanes[hive_metadata.output_lanes[1]]
-        partition_metadata = [rec for rec in all_metadata if rec.field['type'] == 'PARTITION']
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        partition_metadata = [rec for rec in wiretap.output_records if rec.field['type'] == 'PARTITION']
 
         # Query the partition locations to the Hive database and compare them against the location generated by Hive
         # Metadata. Also, we are using the default location and therefore 'customLocation' must be always False.
         for raw, rec in zip(raw_data, partition_metadata):
-            hive_cursor.execute("SHOW TABLE EXTENDED LIKE '{}' PARTITION ({}='{}', {}='{}', {}='{}')"
-                                .format(table_name, part1_name, raw['part1'], part2_name, raw['part2'],
-                                        part3_name, raw['part3']))
+            hive_cursor.execute(f"SHOW TABLE EXTENDED LIKE '{table_name}' PARTITION ({part1_name}='{raw['part1']}', {part2_name}='{raw['part2']}', {part3_name}='{raw['part3']}')")
 
             real_location = [row[0] for row in hive_cursor.fetchall() if row[0].startswith('location:')][0]
             assert 'customLocation' in rec.field and rec.field['customLocation'] == False
@@ -554,7 +556,7 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supp
        or error records. The pipeline looks like:
 
         dev_data_generator >> expression_evaluator >> groovy_evaluator >> hive_metadata
-        hive_metadata >> hadoop_fs
+        hive_metadata >> [hadoop_fs, wiretap.destination]
         hive_metadata >> hive_metastore
         dev_data_generator >= pipeline_finisher
     """
@@ -563,7 +565,7 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supp
 
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
-        and Version(sdc_builder.version) < Version('3.8.1')):
+            and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -653,9 +655,10 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supp
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    wiretap = pipeline_builder.add_wiretap()
 
     dev_data_generator >> expression_evaluator >> groovy_evaluator >> hive_metadata
-    hive_metadata >> hadoop_fs
+    hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
     dev_data_generator >= pipeline_finisher
 
@@ -664,33 +667,28 @@ def test_sdc_types(sdc_builder, sdc_executor, cluster, sdc_type, hive_type, supp
     hive_cursor = cluster.hive.client.cursor()
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        stage = snapshot[hive_metadata.instance_name]
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        list_of_record_output_from_hive_metastore = stage.output_lanes[hive_metadata.output_lanes[0]]
         if not supported:
-            assert len(stage.error_records) == 1
-            assert len(list_of_record_output_from_hive_metastore) == 0
+            assert len(wiretap.error_records) == 1
+            assert len(wiretap.output_records) == 0
         else:
-            assert len(stage.error_records) == 0
-            assert len(list_of_record_output_from_hive_metastore) == 1
+            assert len(wiretap.error_records) == 0
+            assert len(wiretap.output_records) == 1
 
             column_and_types_from_hive = _get_table_columns_and_type(hive_cursor, None, table_name)
             assert column_and_types_from_hive['custom'].upper() == hive_type
 
-            record_output_from_hive_metastore = list_of_record_output_from_hive_metastore[0]
-
-            hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
-            hive_cursor.execute('SELECT * from {0}'.format(_get_qualified_table_name(None, table_name)))
+            hive_cursor.execute(f'RELOAD {_get_qualified_table_name(None, table_name)}')
+            hive_cursor.execute(f'SELECT * from {_get_qualified_table_name(None, table_name)}')
             hive_values = [list(row) for row in hive_cursor.fetchall()]
             assert len(hive_values) == 1
 
             hive_values = hive_values[0]
-            custom_value = record_output_from_hive_metastore.field['custom'].value
+            custom_value = wiretap.output_records[0].field['custom'].value
             # hive client returns the binary as string
             custom_value = custom_value.decode() if hive_type == 'BINARY' else custom_value
-            expected_row_values = [record_output_from_hive_metastore.field['id'], custom_value]
+            expected_row_values = [wiretap.output_records[0].field['id'], custom_value]
             assert hive_values == expected_row_values
     finally:
         logger.info('Dropping table %s in Hive...', table_name)
@@ -857,13 +855,13 @@ def test_multiplexing(sdc_builder, sdc_executor, cluster):
 def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluster):
     """Validate special characters for partition value . The pipeline looks like:
 
-        dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
-        hive_metadata >> hadoop_fs
-        hive_metadata >> hive_metastore
+    dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
+    hive_metadata >> [hadoop_fs, wiretap.destination]
+    hive_metadata >> hive_metastore
     """
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
-        and Version(sdc_builder.version) < Version('3.8.1')):
+            and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -914,8 +912,10 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
+    wiretap = pipeline_builder.add_wiretap()
+
     dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
-    hive_metadata >> hadoop_fs
+    hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
 
     pipeline = (pipeline_builder.build(title='Hive drift test - Partition Characters')
@@ -923,15 +923,13 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        stage = snapshot[hive_metadata.instance_name]
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        error_records = stage.error_records
+        error_records = wiretap.error_records
         assert len(unsupported_partition_values) == len(error_records)
 
         for error_record in error_records:
-            assert error_record.header['values']['part'] in unsupported_partition_values
+            assert error_record.field['part'] in unsupported_partition_values
 
         logger.info('Validating Supported Partition Characters for Table %s in Hive...', table_name)
         hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
@@ -954,13 +952,13 @@ def test_special_characters_in_table_and_columns(sdc_builder, sdc_executor, clus
                                                  table_or_column, special_character):
     """Validate special characters for table and columns. The pipeline looks like:
 
-        dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
-        hive_metadata >> hadoop_fs
-        hive_metadata >> hive_metastore
+    dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
+    hive_metadata >> [hadoop_fs, wiretap.destination]
+    hive_metadata >> hive_metastore
     """
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
-        and Version(sdc_builder.version) < Version('3.8.1')):
+            and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
     # https://docs.cloudera.com/cdp/latest/data-migration/topics/cdp-data-migration-dbtable.html
     if isinstance(cluster, ClouderaManagerCluster) and cluster.version.startswith('cdh7') and special_character == '.':
@@ -1009,8 +1007,10 @@ def test_special_characters_in_table_and_columns(sdc_builder, sdc_executor, clus
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
+    wiretap = pipeline_builder.add_wiretap()
+
     dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
-    hive_metadata >> hadoop_fs
+    hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
 
     pipeline = (pipeline_builder.build(title='Hive drift test - Table/Column Special Characters')
@@ -1018,10 +1018,8 @@ def test_special_characters_in_table_and_columns(sdc_builder, sdc_executor, clus
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        stage = snapshot[hive_metadata.instance_name]
-        error_records = stage.error_records
-        assert 1 == len(error_records)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert 1 == len(wiretap.error_records)
         # TODO: TLKT-41 - Add support for reading reserved headers from RecordHeader to assert error code
     finally:
         logger.info('Dropping table %s in Hive...', table_name)
@@ -1190,9 +1188,9 @@ def test_hdfs_schema_serialization(sdc_builder, sdc_executor, cluster, location)
 def test_decimal_values(sdc_builder, sdc_executor, cluster, keep_data):
     """Validate different decimal values. The pipeline looks like:
 
-        dev_raw_data_source >> field_type_converter >> hive_metadata
-        hive_metadata >> hadoop_fs
-        hive_metadata >> hive_metastore
+    dev_raw_data_source >> field_type_converter >> hive_metadata
+    hive_metadata >> [hadoop_fs, wiretap.destination]
+    hive_metadata >> hive_metastore
     """
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
@@ -1239,8 +1237,10 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster, keep_data):
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
+    wiretap = pipeline_builder.add_wiretap()
+
     dev_raw_data_source >> field_type_converter >> hive_metadata
-    hive_metadata >> hadoop_fs
+    hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
 
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
@@ -1250,9 +1250,7 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster, keep_data):
                             ' STORED AS AVRO LOCATION "/tmp/{1}"').format(_get_qualified_table_name(None, table_name), table_name)
     hive_cursor.execute(create_table_command)
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        stage = snapshot[hive_metadata.instance_name]
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         logger.info('Validating table %s in Hive...', _get_qualified_table_name(None, table_name))
         hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
@@ -1260,7 +1258,7 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster, keep_data):
         hive_values = [list(row) for row in hive_cursor.fetchall()]
         assert hive_values == [[Decimal(str(v)) if k == 'number' else v for k, v in row.items()]
                                for row in valid_rows]
-        error_values = [[fld for k, fld in error_record.field.items()] for error_record in stage.error_records]
+        error_values = [[fld for k, fld in error_record.field.items()] for error_record in wiretap.error_records]
         assert error_values == [[Decimal(str(v)) if k == 'number' else v for k, v in row.items()]
                                 for row in invalid_rows]
     finally:
@@ -1343,13 +1341,13 @@ def test_partial_input(sdc_builder, sdc_executor, cluster):
 def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
     """Validate Column Drift in inputs. The pipeline looks like:
 
-        dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
-        hive_metadata >> hadoop_fs
-        hive_metadata >> hive_metastore
+    dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
+    hive_metadata >> [hadoop_fs, wiretap.destination]
+    hive_metadata >> hive_metastore
     """
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
-        and Version(sdc_builder.version) < Version('3.8.1')):
+            and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     table_name_suffix = get_random_string(string.ascii_lowercase, 20)
@@ -1419,8 +1417,10 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
+    wiretap = pipeline_builder.add_wiretap()
+
     dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
-    hive_metadata >> hadoop_fs
+    hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
 
     pipeline = pipeline_builder.build(title='Hive drift test - Drift Test').configure_for_environment(cluster)
@@ -1428,10 +1428,8 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
 
     hive_cursor = cluster.hive.client.cursor()
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        stage = snapshot[hive_metadata.instance_name]
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
-        assert len(stage.error_records) == 1  # column_type_change
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert len(wiretap.error_records) == 1  # column_type_change
         for table_name in table_to_raw_data.keys():
             logger.info('Validating table %s in Hive...', _get_qualified_table_name(None, table_name))
             hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
@@ -1449,8 +1447,8 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
                                    key=itemgetter(0))
             assert hive_values == expected_data
 
-        error_values = [[fld for k, fld in error_record.field.items()] for error_record in stage.error_records]
-        assert error_values == [[v for k, v in row.items() if k != 'table']
+        error_values = [[fld for k, fld in error_record.field.items()] for error_record in wiretap.error_records]
+        assert error_values == [[v for k, v in row.items()]
                                 for table_invalid_rows in table_to_invalid_rows.values()
                                 for row in table_invalid_rows]
     finally:
@@ -1468,13 +1466,13 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
 def test_unsupported_table_data_formats(sdc_builder, sdc_executor, cluster, data_format):
     """Validate Unsupported Data Formats. The pipeline looks like:
 
-        dev_raw_data_source >> hive_metadata
-        hive_metadata >> hadoop_fs
-        hive_metadata >> hive_metastore
+    dev_raw_data_source >> hive_metadata
+    hive_metadata >> [hadoop_fs, wiretap.destination]
+    hive_metadata >> hive_metastore
     """
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
-        and Version(sdc_builder.version) < Version('3.8.1')):
+            and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -1504,9 +1502,10 @@ def test_unsupported_table_data_formats(sdc_builder, sdc_executor, cluster, data
                              use_roll_attribute=True)
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
+    wiretap = pipeline_builder.add_wiretap()
 
     dev_raw_data_source >> hive_metadata
-    hive_metadata >> hadoop_fs
+    hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
 
     pipeline = (pipeline_builder.build(title='Hive drift test - Unsupported Table Data Format Test')
@@ -1514,14 +1513,11 @@ def test_unsupported_table_data_formats(sdc_builder, sdc_executor, cluster, data
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
     try:
-        hive_cursor.execute('CREATE  TABLE `{}` (id int, value string) partitioned by'
-                            ' (dt String) ROW FORMAT DELIMITED FIELDS TERMINATED BY \',\''
-                            ' STORED AS TEXTFILE '.format(table_name))
+        hive_cursor.execute(
+            f'CREATE TABLE `{table_name}` (id int, value string) partitioned by (dt String) ROW FORMAT DELIMITED FIELDS TERMINATED BY \',\' STORED AS TEXTFILE')
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        stage = snapshot[hive_metadata.instance_name]
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
-        assert len(stage.error_records) == 1
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert len(wiretap.error_records) == 1
 
         logger.info('Validating table %s in Hive...', _get_qualified_table_name(None, table_name))
         hive_cursor.execute('RELOAD {0}'.format(_get_qualified_table_name(None, table_name)))
@@ -1813,13 +1809,14 @@ def test_native_parquet_timestamps(sdc_builder, sdc_executor, cluster):
 def test_events(sdc_builder, sdc_executor, cluster):
     """Validate Events from hive_metadata. The pipeline looks like:
 
-        dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
-        hive_metadata >> hadoop_fs
-        hive_metadata >> hive_metastore
+    dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
+    hive_metadata >> hadoop_fs
+    hive_metadata >> hive_metastore
+    hive_metastore >= wiretap.destination
     """
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
-        and Version(sdc_builder.version) < Version('3.8.1')):
+            and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -1865,9 +1862,12 @@ def test_events(sdc_builder, sdc_executor, cluster):
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
+    wiretap = pipeline_builder.add_wiretap()
+
     dev_raw_data_source >> expression_evaluator >> field_remover >> hive_metadata
     hive_metadata >> hadoop_fs
     hive_metadata >> hive_metastore
+    hive_metastore >= wiretap.destination
 
     pipeline = (pipeline_builder.build(title='Hive drift test - Events Test')
                 .configure_for_environment(cluster))
@@ -1888,12 +1888,10 @@ def test_events(sdc_builder, sdc_executor, cluster):
                                   ('new-partition', dict(table=_get_qualified_table_name('default', table_name),
                                                          partition=OrderedDict(part='part3')))]
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        stage = snapshot[hive_metastore.instance_name]
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
-        assert len(stage.event_records) == 6
-        for event_idx in range(len(stage.event_records)):
-            event_record = stage.event_records[event_idx]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert len(wiretap.output_records) == 6
+        for event_idx in range(len(wiretap.output_records)):
+            event_record = wiretap.output_records[event_idx]
             event_type, expected_event_values = expected_event_type_values[event_idx]
             assert event_type == event_record.header['values']['sdc.event.type']
             assert expected_event_values == event_record.field
@@ -1916,11 +1914,11 @@ def test_events(sdc_builder, sdc_executor, cluster):
 def test_hive_query_executor(sdc_builder, sdc_executor, cluster, stop_on_query_failure):
     """Validate Hive Query Executor. The pipeline looks like:
 
-        dev_raw_data_source >> hive_query_executor
+    dev_raw_data_source >> hive_query_executor >= wiretap.destination
     """
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
-        and Version(sdc_builder.version) < Version('3.8.1')):
+            and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
     raw_data = [dict(name='multiple_queries_all_success',
@@ -1944,8 +1942,9 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster, stop_on_query_f
                                        '${record:value("/query2")}',
                                        '${record:value("/query3")}']
     hive_query_executor.stop_on_query_failure = stop_on_query_failure
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> hive_query_executor
+    dev_raw_data_source >> hive_query_executor >= wiretap.destination
 
     pipeline = pipeline_builder.build(title='Hive Query Executor Test') .configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
@@ -1964,14 +1963,13 @@ def test_hive_query_executor(sdc_builder, sdc_executor, cluster, stop_on_query_f
                                             ('successful-query', dict(query='select 21')),
                                             ('failed-query', dict([('query', 'select 22 from invalid_table'),
                                                                   ('unexecuted-queries', ['select 23'])]))]
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    stage = snapshot[hive_query_executor.instance_name]
-    assert len(stage.event_records) == len(event_type_expected_query_values)
-    for event_idx in range(len(stage.event_records)):
-        event_record = stage.event_records[event_idx]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert len(wiretap.output_records) == len(event_type_expected_query_values)
+    for event_idx in range(len(wiretap.output_records)):
+        event_record = wiretap.output_records[event_idx]
         expected_event_type, expected_event_values = event_type_expected_query_values[event_idx]
         assert expected_event_type == event_record.header['values']["sdc.event.type"]
-        assert expected_event_values == stage.event_records[event_idx].field
+        assert expected_event_values == wiretap.output_records[event_idx].field
 
 
 @sdc_min_version('3.0.0.0')
@@ -1985,9 +1983,8 @@ def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cl
         so they are counted twice.
         This behavior is fixed as a part of SDC-13898
 
-        The pipeline looks like:
         dev_raw_data_source >> hive_metadata
-        hive_metadata >> hadoop_fs
+        hive_metadata >> [hadoop_fs, wiretap.destination]
         hive_metadata >> hive_metastore
     """
     # based on SDC-13915
@@ -2024,9 +2021,10 @@ def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cl
                              use_roll_attribute=True)
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
+    wiretap = pipeline_builder.add_wiretap()
 
     dev_raw_data_source >> hive_metadata
-    hive_metadata >> hadoop_fs
+    hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
 
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
@@ -2035,15 +2033,11 @@ def test_hive_avro_schema_contains_only_columninfo(sdc_builder, sdc_executor, cl
     hive_cursor = cluster.hive.client.cursor()
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_status(status='FINISHED')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='FINISHED')
+        assert len(wiretap.output_records) == 1
 
-        all_records = snapshot[hive_metadata.instance_name].output_lanes[hive_metadata.output_lanes[0]]
-        assert len(all_records) == 1
-
-        avro_schema = json.loads(all_records[0].header['values']['avroSchema'])
+        avro_schema = json.loads(wiretap.output_records[0].header['values']['avroSchema'])
         column_list = [field['name'] for field in avro_schema['fields']]
 
         assert id and username in column_list and partition_name not in column_list
@@ -2149,7 +2143,7 @@ def _get_table_location(hive_cursor, db, table_name):
 
 
 def _get_table_columns_and_type(hive_cursor, db, table_name):
-    hive_cursor.execute('DESC {0}'.format(_get_qualified_table_name(db, table_name)))
+    hive_cursor.execute(f'DESC {_get_qualified_table_name(db, table_name)}')
     return OrderedDict({col_name: col_type for col_name, col_type, comment in hive_cursor.fetchall()})
 
 
