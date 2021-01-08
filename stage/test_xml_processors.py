@@ -25,7 +25,7 @@ def test_xml_parser(sdc_builder, sdc_executor):
     """Test XML parser processor. XML in this test is simple.
        The pipeline would look like:
 
-           dev_raw_data_source >> xml_parser >> trash
+           dev_raw_data_source >> xml_parser >> wiretap
     """
     raw_data = """<?xml version="1.0" encoding="UTF-8"?>
                   <root>
@@ -42,36 +42,36 @@ def test_xml_parser(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     # Note that since the delimiter text '</dummy>' does not exist in input XML, the output of this stage is whole XML.
     dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, custom_delimiter='</dummy>',
-                                       use_custom_delimiter=True)
+                                       use_custom_delimiter=True,
+                                       stop_after_first_batch=True)
     xml_parser = pipeline_builder.add_stage('XML Parser', type='processor')
     xml_parser.set_attributes(field_to_parse='/text', ignore_control_characters=True, target_field='/text')
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> xml_parser >> trash
+    dev_raw_data_source >> xml_parser >> wiretap.destination
     pipeline = pipeline_builder.build('XML parser pipeline')
+
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    # Gather snapshot data in a list for verification.
-    item_list = snapshot[xml_parser].output[0].field['text']['msg']
-    rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
+    # Gather wiretap data in a list for verification.
+    item_list = wiretap.output_records[0].field['text']['msg']
+    rows_from_records = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
                           for item in item_list]
 
-    # Parse input xml data to verify results from snapshot.
+    # Parse input xml data to verify results from wiretap.
     root = ElementTree.fromstring(raw_data)
     expected_data = [{msg.find('time').text: msg.find('request').text}
                      for msg in root.iter('msg')]
 
-    assert rows_from_snapshot == expected_data
+    assert rows_from_records == expected_data
 
 
 def test_xml_parser_namespace_xpath(sdc_builder, sdc_executor):
     """Test XML parser processor. XML in this test contains namesapces.
     The pipeline would look like:
 
-        dev_raw_data_source >> xml_parser >> trash
+        dev_raw_data_source >> xml_parser >> wiretap
     """
     raw_data = """<?xml version="1.0" encoding="UTF-8"?>
                   <root>
@@ -101,7 +101,8 @@ def test_xml_parser_namespace_xpath(sdc_builder, sdc_executor):
     dev_raw_data_source.set_attributes(data_format='TEXT',
                                        raw_data=raw_data,
                                        custom_delimiter='</dummy>',
-                                       use_custom_delimiter=True)
+                                       use_custom_delimiter=True,
+                                       stop_after_first_batch=True)
 
     xml_parser = pipeline_builder.add_stage('XML Parser', type='processor')
     # Specify xpath in delimiter to generate multiple records from the XML document.
@@ -112,33 +113,32 @@ def test_xml_parser_namespace_xpath(sdc_builder, sdc_executor):
                               delimiter_element='/root/a:data/msg',
                               multiple_values_behavior='ALL_AS_LIST',
                               namespaces=[{'key': 'a', 'value': 'http://www.companyA.com'}])
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> xml_parser >> trash
+    dev_raw_data_source >> xml_parser >> wiretap.destination
     pipeline = pipeline_builder.build('XML parser namespace pipeline')
+
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    # Gather snapshot data as a list for verification.
-    item_list = snapshot[xml_parser].output[0].field['text']
-    rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
+    # Gather wiretap data as a list for verification.
+    item_list = wiretap.output_records[0].field['text']
+    rows_from_records = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
                           for item in item_list]
 
-    # Parse input xml data to verify results from snapshot using xpath for search.
+    # Parse input xml data to verify results from wiretap using xpath for search.
     root = ElementTree.fromstring(raw_data)
     expected_data = [{msg.find('time').text: msg.find('request').text}
                      for msg in root.findall('.//msg')]
 
-    assert rows_from_snapshot == expected_data
+    assert rows_from_records == expected_data
 
 
 def test_xml_flattener(sdc_builder, sdc_executor):
     """Test XML flattener processor.
     The pipeline would look like:
 
-        dev_raw_data_source >> xml_flattener >> trash
+        dev_raw_data_source >> xml_flattener >> wiretap
     """
     raw_data = """<contacts>
                       <contact>
@@ -158,23 +158,23 @@ def test_xml_flattener(sdc_builder, sdc_executor):
     dev_raw_data_source.set_attributes(data_format='TEXT',
                                        raw_data=raw_data,
                                        custom_delimiter='</dummy>',
-                                       use_custom_delimiter=True)
+                                       use_custom_delimiter=True,
+                                       stop_after_first_batch=True)
     # Specify a record delimiter to generate multiple records from the XML document.
     xml_flattener = pipeline_builder.add_stage('XML Flattener', type='processor')
     xml_flattener.set_attributes(field_to_flatten='/text',
                                  record_delimiter='contact',
                                  keep_original_fields=False)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> xml_flattener >> trash
+    dev_raw_data_source >> xml_flattener >> wiretap.destination
     pipeline = pipeline_builder.build('XML flattener pipeline')
+
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    # Gather snapshot data as a list for verification.
-    items = [record.field for record in snapshot[xml_flattener].output]
+    # Gather wiretap data as a list for verification.
+    items = [record.field for record in wiretap.output_records]
 
     expected_data = [{'contact.name#type': 'maiden',
                       'contact.name': 'NAME1',
