@@ -18,8 +18,8 @@ import string
 
 import pytest
 from streamsets.sdk.exceptions import ValidationError
-from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.markers import solr, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -136,7 +136,7 @@ def test_solr_required_fields(sdc_builder, sdc_executor, solr, map_fields_automa
     produce a record error (when "Missing Fields" is "To Error"). This must be done irrespective of other stage
     parameters (e.g. "Ignore Optional Fields" or "Map Fields Automatically").
 
-    Pipeline: dev_raw_data_source >> solr_target
+    Pipeline: dev_raw_data_source >> [solr_target, wiretap.destination]
 
     """
     # Prepare data for 2 documents. We include all the optional fields declared in the Solr schema to avoid an error
@@ -152,7 +152,8 @@ def test_solr_required_fields(sdc_builder, sdc_executor, solr, map_fields_automa
     # Dev raw data source.
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
-                                       raw_data=''.join(json.dumps(d) for d in raw_data))
+                                       raw_data=''.join(json.dumps(d) for d in raw_data),
+                                       stop_after_first_batch=True)
 
     if map_fields_automatically:
         field_mapping = []  # Not used.
@@ -173,14 +174,15 @@ def test_solr_required_fields(sdc_builder, sdc_executor, solr, map_fields_automa
                                ignore_optional_fields=ignore_optional_fields,
                                missing_fields='TO_ERROR')
 
+    wiretap = builder.add_wiretap()
+
     # Build pipeline.
-    dev_raw_data_source >> solr_target
+    dev_raw_data_source >> [solr_target, wiretap.destination]
     pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(solr)
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Test that the first record was indexed.
         res = solr.client.search(f'id:{id1}')
@@ -188,13 +190,12 @@ def test_solr_required_fields(sdc_builder, sdc_executor, solr, map_fields_automa
         assert res.docs[0]['title'] == [title1]
 
         # Solr stage must produce a SOLR_06 or SOLR_07 error for the second record.
-        stage = snapshot[solr_target.instance_name]
-        assert len(stage.error_records) == 1
-        assert stage.error_records[0].field['title'] == title2
-        assert stage.error_records[0].header['errorCode'] == 'SOLR_07' if map_fields_automatically else 'SOLR_06'
+        assert len(wiretap.error_records) == 1
+        assert wiretap.error_records[0].field['title'] == title2
+        assert wiretap.error_records[0].header['errorCode'] == 'SOLR_07' if map_fields_automatically else 'SOLR_06'
 
         # Check also that missing fields are listed in the error message.
-        assert 'id' in stage.error_records[0].header['errorMessage']
+        assert 'id' in wiretap.error_records[0].header['errorMessage']
 
     finally:
         # Cleanup documents created by the test.
@@ -210,7 +211,7 @@ def test_solr_optional_fields(sdc_builder, sdc_executor, solr, map_fields_automa
     and send to error (when "Missing Fields" is "To Error") those records with missing optional fields. When the ignore
     option is enabled, records are sent to Solr irrespective of having or not missing optional fields.
 
-    Pipeline: dev_raw_data_source >> solr_target
+    Pipeline: dev_raw_data_source >> [solr_target, wiretap.destination]
 
     """
     id1 = f'stf_test_id_{get_random_string(string.ascii_letters)}'
@@ -224,7 +225,8 @@ def test_solr_optional_fields(sdc_builder, sdc_executor, solr, map_fields_automa
     # Dev raw data source.
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
-                                       raw_data=''.join(json.dumps(d) for d in raw_data))
+                                       raw_data=''.join(json.dumps(d) for d in raw_data),
+                                       stop_after_first_batch=True)
 
     if map_fields_automatically:
         field_mapping = []  # Not used.
@@ -245,14 +247,15 @@ def test_solr_optional_fields(sdc_builder, sdc_executor, solr, map_fields_automa
                                ignore_optional_fields=ignore_optional_fields,
                                missing_fields='TO_ERROR')
 
+    wiretap = builder.add_wiretap()
+
     # Build pipeline.
-    dev_raw_data_source >> solr_target
+    dev_raw_data_source >> [solr_target, wiretap.destination]
     pipeline = builder.build(title='Solr Target pipeline').configure_for_environment(solr)
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Test that the first record was indexed.
         res = solr.client.search(f'id:{id1}')
@@ -269,15 +272,14 @@ def test_solr_optional_fields(sdc_builder, sdc_executor, solr, map_fields_automa
             assert '_root_' not in res.docs[0]
         else:
             # Otherwise, Solr stage must produce a SOLR_06 or SOLR_8 error for that record.
-            stage = snapshot[solr_target.instance_name]
-            assert len(stage.error_records) == 1
-            assert stage.error_records[0].field['id'] == id2
-            assert stage.error_records[0].header['errorCode'] == 'SOLR_08' if map_fields_automatically else 'SOLR_06'
+            assert len(wiretap.error_records) == 1
+            assert wiretap.error_records[0].field['id'] == id2
+            assert wiretap.error_records[0].header['errorCode'] == 'SOLR_08' if map_fields_automatically else 'SOLR_06'
 
             # Check also that missing fields are listed in the error message.
-            assert 'title' in stage.error_records[0].header['errorMessage']
-            assert '_version_' in stage.error_records[0].header['errorMessage']
-            assert '_text_' in stage.error_records[0].header['errorMessage']
+            assert 'title' in wiretap.error_records[0].header['errorMessage']
+            assert '_version_' in wiretap.error_records[0].header['errorMessage']
+            assert '_text_' in wiretap.error_records[0].header['errorMessage']
 
     finally:
         # Cleanup documents created by the test.
