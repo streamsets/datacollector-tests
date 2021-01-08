@@ -47,7 +47,7 @@ def test_jms_consumer_origin(sdc_builder, sdc_executor, jms):
     and confirm that JMS origin reads them.
 
     The pipeline looks like:
-        jms_consumer >> trash
+        jms_consumer >> wiretap
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -61,9 +61,9 @@ def test_jms_consumer_origin(sdc_builder, sdc_executor, jms):
                                 jndi_connection_factory=JNDI_CONNECTION_FACTORY,
                                 password=DEFAULT_PASSWORD,
                                 username=DEFAULT_USERNAME)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_builder.add_error_stage('Discard')
-    jms_consumer >> trash
+    jms_consumer >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(jms)
     sdc_executor.add_pipeline(pipeline)
 
@@ -78,12 +78,13 @@ def test_jms_consumer_origin(sdc_builder, sdc_executor, jms):
             connection.send(destination_name, message_data, persistent='false')
 
         # Verify the messages are received correctly.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
-        lines_from_snapshot = [record.field['text'].value
-                               for record in snapshot[pipeline[0].instance_name].output]
+        lines_from_records = [record.field['text'].value
+                               for record in wiretap.output_records]
 
-        assert lines_from_snapshot == [message_data] * 10
+        assert lines_from_records == [message_data] * 10
 
     finally:
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
@@ -116,9 +117,9 @@ def test_jms_consumer_origin_durable_topic_sub(sdc_builder, sdc_executor, jms):
                                 durable_subscription=True,
                                 durable_subscription_name='sub' + destination_name)
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_builder.add_error_stage('Discard')
-    jms_consumer >> trash
+    jms_consumer >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(jms)
     sdc_executor.add_pipeline(pipeline)
 
@@ -140,12 +141,13 @@ def test_jms_consumer_origin_durable_topic_sub(sdc_builder, sdc_executor, jms):
             connection.send('/topic/' + destination_name, message_data, persistent='false')
 
         # Verify the messages are received correctly.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
-        lines_from_snapshot = [record.value['value']['text']['value']
-                               for record in snapshot[pipeline[0].instance_name].output]
+        lines_from_records = [record.value['value']['text']['value']
+                               for record in wiretap.output_records]
 
-        assert lines_from_snapshot == [message_data] * 10
+        assert lines_from_records == [message_data] * 10
 
     finally:
         connection.disconnect()
