@@ -191,11 +191,9 @@ def test_wait_for_spark_app_id(sdc_builder, sdc_executor, cluster):
 
     The pipelines would
     look like:
+        dev_raw_data_source >> local_fs >= [pipeline_finisher_executor, events_wiretap.destination]
 
-        dev_raw_data_source >> local_fs >= pipeline_finisher_executor
-
-        dev_raw_data_source >> record_deduplicator >> spark_executor
-                               record_deduplicator >> trash
+        dev_raw_data_source >> spark_executor >= wiretap.destination
     """
     # STF-1156: STF Does not properly configure Spark Executor for Secured Cluster
     if cluster.hdfs.is_kerberized:
@@ -217,23 +215,23 @@ def test_wait_for_spark_app_id(sdc_builder, sdc_executor, cluster):
                             files_prefix='sdc-${sdc:id()}', files_suffix=python_suffix, max_records_in_file=1)
     # we use the finisher so as local_fs can generate event with file_path being generated
     pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
+    events_wiretap = builder.add_wiretap()
 
-    dev_raw_data_source >> local_fs >= pipeline_finisher_executor
+    dev_raw_data_source >> local_fs >= [pipeline_finisher_executor, events_wiretap.destination]
 
     pipeline = builder.build(title='To File pipeline').configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
 
     # run the pipeline and capture the file path
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    file_path = snapshot[local_fs.instance_name].event_records[0].field['filepath'].value
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    file_path = events_wiretap.output_records[0].field['filepath'].value
 
     # build the 2nd pipeline - spark executor
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
-                                                                                  raw_data='dummy')
-    record_deduplicator = builder.add_stage('Record Deduplicator')
-    trash = builder.add_stage('Trash')
-    trash2 = builder.add_stage('Trash')
+                                                                                  raw_data='dummy',
+                                                                                  stop_after_first_batch=True)
+
     spark_executor = builder.add_stage(name=SPARK_EXECUTOR_STAGE_NAME)
     spark_executor.set_attributes(minimum_number_of_worker_nodes=1,
                                   maximum_number_of_worker_nodes=1,
@@ -245,17 +243,16 @@ def test_wait_for_spark_app_id(sdc_builder, sdc_executor, cluster):
                                   language='PYTHON',
                                   spark_app_submission_time_in_s=submit_timeout_secs)
 
-    dev_raw_data_source >> record_deduplicator >> spark_executor >= trash2
-    record_deduplicator >> trash
+    wiretap = builder.add_wiretap()
+    dev_raw_data_source >> spark_executor >= wiretap.destination
 
     pipeline = builder.build(title='Spark executor pipeline').configure_for_environment(cluster)
     sdc_executor.add_pipeline(pipeline)
-    snapshot2 = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert 'default user (sdc)' == snapshot2[spark_executor.instance_name].event_records[0].field['submitter'].value
-    assert snapshot2[spark_executor.instance_name].event_records[0].field['timestamp'].value
-    assert snapshot2[spark_executor.instance_name].event_records[0].field['app-id'].value
+    assert 'default user (sdc)' == wiretap.output_records[0].field['submitter'].value
+    assert wiretap.output_records[0].field['timestamp'].value
+    assert wiretap.output_records[0].field['app-id'].value
 
     # assert Spark executor has triggered the YARN job
     assert cluster.yarn.wait_for_app_to_register(application_name)
