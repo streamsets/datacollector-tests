@@ -27,51 +27,6 @@ SPARK_EXECUTOR_STAGE_NAME = 'com_streamsets_datacollector_pipeline_executor_spar
 
 
 @cluster('cdh')
-def test_hive_query_executor(sdc_builder, sdc_executor, cluster):
-    """Test Hive query executor stage. This is acheived by using a deduplicator which assures us that there is
-    only one successful ingest. The pipeline would look like:
-
-        dev_raw_data_source >> record_deduplicator >> hive_query
-                                                   >> trash
-    """
-    hive_table_name = get_random_string(string.ascii_letters, 10)
-    hive_cursor = cluster.hive.client.cursor()
-    sql_queries = ["CREATE TABLE ${record:value('/text')} (id int, name string)"]
-
-    builder = sdc_builder.get_pipeline_builder()
-
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
-                                                                                  raw_data=hive_table_name)
-    record_deduplicator = builder.add_stage('Record Deduplicator')
-    trash = builder.add_stage('Trash')
-    hive_query = builder.add_stage('Hive Query', type='executor').set_attributes(sql_queries=sql_queries)
-
-    dev_raw_data_source >> record_deduplicator >> hive_query
-    record_deduplicator >> trash
-
-    pipeline = builder.build(title='Hive query executor pipeline').configure_for_environment(cluster)
-    sdc_executor.add_pipeline(pipeline)
-
-    try:
-        # assert successful query execution of the pipeline
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-        assert (snapshot[hive_query.instance_name].event_records[0].header['values']['sdc.event.type'] ==
-                'successful-query')
-
-        # assert Hive table creation
-        assert hive_cursor.table_exists(hive_table_name)
-
-        # Re-running the same query to create Hive table should fail the query. So assert the failure.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-        assert snapshot[hive_query.instance_name].event_records[0].header['values']['sdc.event.type'] == 'failed-query'
-    finally:
-        # drop the Hive table
-        hive_cursor.execute(f'DROP TABLE `{hive_table_name}`')
-
-
-@cluster('cdh')
 def test_spark_executor(sdc_builder, sdc_executor, cluster):
     """Test Spark executor stage. This is acheived by using 2 pipelines. The 1st pipeline would generate the
     application resource file (Python in this case) which will be used by the 2nd pipeline for spark-submit. Spark
