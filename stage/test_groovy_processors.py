@@ -38,7 +38,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     attribute. Finally in destroy script, we collate all the records for its new attribute and Groovy assert its value.
     The pipeline would look like:
 
-        dev_raw_data_source >> groovy_evaluator >> trash
+        dev_raw_data_source >> groovy_evaluator >> wiretap
     """
     raw_company_1 = dict(name='StreamSets', floors=3)
     raw_company_2 = dict(name='Example Inc.', floors=1)
@@ -48,7 +48,8 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
     groovy_evaluator = pipeline_builder.add_stage('Groovy Evaluator', type='processor')
     # in the init script we create a 'Building' template object which can be cloned per each pipeline record processing
     init_script = """
@@ -100,21 +101,18 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     """
     groovy_evaluator.set_attributes(destroy_script=destroy_script, enable_invokedynamic_compiler_option=True,
                                     init_script=init_script, record_processing_mode='BATCH', script=script)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> groovy_evaluator >> trash
+    dev_raw_data_source >> groovy_evaluator >> wiretap.destination
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    output_records = snapshot[groovy_evaluator.instance_name].output  # is a list of output records
     # search for a record whose 'name' is raw_company_1['name'] and assert new attribute ('officeSpace') is created
     # with expected boolean value (where 'floors' > 2)
-    record_1 = next(record for record in output_records if record.field['name'] == raw_company_1['name'])
+    record_1 = next(record for record in wiretap.output_records if record.field['name'] == raw_company_1['name'])
     assert record_1.field['officeSpace'] == (raw_company_1['floors'] > 2)
-    record_2 = next(record for record in output_records if record.field['name'] == raw_company_2['name'])
+    record_2 = next(record for record in wiretap.output_records if record.field['name'] == raw_company_2['name'])
     assert record_2.field['officeSpace'] == (raw_company_2['floors'] > 2)
 
 
@@ -124,7 +122,7 @@ def test_delete_header_attribute(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
-    origin.set_attributes(data_format='TEXT', raw_data="BLA BLA")
+    origin.set_attributes(data_format='TEXT', raw_data="BLA BLA", stop_after_first_batch=True)
 
     expression = builder.add_stage('Expression Evaluator')
     expression.header_attribute_expressions = [
@@ -141,20 +139,16 @@ def test_delete_header_attribute(sdc_builder, sdc_executor):
         }
     """
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> expression >> groovy >> trash
+    origin >> expression >> groovy >> wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-
-    records = snapshot[groovy].output
-
-    assert len(records) == 1
-    assert 'remove' not in records[0].header
+    assert len(wiretap.output_records) == 1
+    assert 'remove' not in wiretap.output_records[0].header
 
 
 # SDC-11546: Expose the underlying Data Collector Record in Scripting processors
@@ -164,8 +158,7 @@ def test_expose_sdc_record(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
-    origin.set_attributes(data_format='TEXT', raw_data="BLA BLA")
-    origin.stop_after_first_batch = True
+    origin.set_attributes(data_format='TEXT', raw_data="BLA BLA", stop_after_first_batch=True)
 
     expression = builder.add_stage('Expression Evaluator')
     expression.field_attribute_expressions = [
@@ -182,20 +175,17 @@ def test_expose_sdc_record(sdc_builder, sdc_executor):
         }
     """
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> expression >> groovy >> trash
+    origin >> expression >> groovy >> wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
-    records = snapshot[groovy].output
-
-    assert len(records) == 1
+    assert len(wiretap.output_records) == 1
     # STF-798: RecordHeader is inconsistent in STF and SDC
-    assert 'is-here' == records[0].header['values']['attr']
+    assert 'is-here' == wiretap.output_records[0].header['values']['attr']
 
 
 # SDC-11555: Provide ability to use direct SDC record in scripting processors
@@ -221,20 +211,17 @@ def test_sdc_record(sdc_builder, sdc_executor):
         }
     """
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> groovy >> trash
+    origin >> groovy >> wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
-    records = snapshot[groovy].output
-
-    assert len(records) == 1
-    assert 'new-value' == records[0].field['new']
-    assert 'attr-value' == records[0].get_field_data('/old').attributes['attr']
+    assert len(wiretap.output_records) == 1
+    assert 'new-value' == wiretap.output_records[0].field['new']
+    assert 'attr-value' == wiretap.output_records[0].get_field_data('/old').attributes['attr']
 
 
 def test_event_creation(sdc_builder, sdc_executor):
@@ -255,19 +242,15 @@ event.value['value'] = "secret"
 sdcFunctions.toEvent(event)
 """
 
-    # TLKT-248: Add ability to directly read events from snapshots
-    identity = builder.add_stage('Dev Identity')
-    event_trash = builder.add_stage('Trash')
+    records_wiretap = builder.add_wiretap()
+    events_wiretap = builder.add_wiretap()
 
-    trash = builder.add_stage('Trash')
-
-    origin >> groovy >> trash
-    groovy >= identity
-    identity >> event_trash
+    origin >> groovy >> records_wiretap.destination
+    groovy >= events_wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert len(snapshot[identity].output) == 1
-    assert snapshot[identity].output[0].get_field_data('/value') == 'secret'
+    assert len(events_wiretap.output_records) == 1
+    assert events_wiretap.output_records[0].get_field_data('/value') == 'secret'
