@@ -35,7 +35,7 @@ def sdc_common_hook():
 def test_cron_scheduler_origin(sdc_builder, sdc_executor):
     """Test Cron Scheduler Origin. The pipeline would look like:
 
-        cron_scheduler_source >> trash
+        cron_scheduler_source >> wiretap
 
     With Cron Expression "0/2 * * 1/1 * ? *", Cron Scheduler Origin should generate record with timestamp(DateTime)
     filed every two seconds.
@@ -43,37 +43,38 @@ def test_cron_scheduler_origin(sdc_builder, sdc_executor):
     Also, testing multiple pipelines with Cron Scheduler origin works without any issue.
     """
 
-    pipeline1 = _create_cron_pipeline(sdc_builder, 'Cron Scheduler Sample Pipeline1')
+    pipeline1, wiretap1 = _create_cron_pipeline(sdc_builder, 'Cron Scheduler Sample Pipeline1')
     sdc_executor.add_pipeline(pipeline1)
     sdc_executor.validate_pipeline(pipeline1)
 
-    pipeline2 = _create_cron_pipeline(sdc_builder, 'Cron Scheduler Sample Pipeline2')
+    pipeline2, wiretap2 = _create_cron_pipeline(sdc_builder, 'Cron Scheduler Sample Pipeline2')
     sdc_executor.add_pipeline(pipeline2)
     sdc_executor.validate_pipeline(pipeline2)
 
-    snapshot1 = sdc_executor.capture_snapshot(pipeline1, start_pipeline=True).snapshot
-    snapshot2 = sdc_executor.capture_snapshot(pipeline2, start_pipeline=True).snapshot
-
+    sdc_executor.start_pipeline(pipeline1)
+    sdc_executor.wait_for_pipeline_metric(pipeline1, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(pipeline1)
+
+    sdc_executor.start_pipeline(pipeline2)
+    sdc_executor.wait_for_pipeline_metric(pipeline2, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(pipeline2)
 
-    _validate_cron_scheduler_output(snapshot1, pipeline1.origin_stage.instance_name)
-    _validate_cron_scheduler_output(snapshot2, pipeline2.origin_stage.instance_name)
+    _validate_cron_scheduler_output(wiretap1)
+    _validate_cron_scheduler_output(wiretap2)
 
 
 def _create_cron_pipeline(sdc_builder, title):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     cron_scheduler_source = pipeline_builder.add_stage('Cron Scheduler')
     cron_scheduler_source.cron_schedule = '0/2 * * 1/1 * ? *'
-    trash = pipeline_builder.add_stage('Trash')
-    cron_scheduler_source >> trash
-    return pipeline_builder.build(title)
+    wiretap = pipeline_builder.add_wiretap()
+    cron_scheduler_source >> wiretap.destination
+    return pipeline_builder.build(title), wiretap
 
 
-def _validate_cron_scheduler_output(snapshot, instance_name):
+def _validate_cron_scheduler_output(wiretap):
     # Assert Cron Scheduler generated record output
-    cron_scheduler_source_output = snapshot[instance_name].output
-    timestamp_field = cron_scheduler_source_output[0].field['timestamp']
+    timestamp_field = wiretap.output_records[0].field['timestamp']
     assert timestamp_field.type == 'DATETIME'
 
 
@@ -98,22 +99,21 @@ def test_control_hub_api_processor(sdc_builder, sdc_executor):
     control_hub_api_processor.control_hub_user_name = "user"
     control_hub_api_processor.password = "password"
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> control_hub_api_processor >> trash
+    dev_raw_data_source >> control_hub_api_processor >> wiretap.destination
 
     pipeline = pipeline_builder.build('Control Hub API Processor Sample Pipeline')
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.validate_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # Assert Cron Scheduler generated record output
-    control_hub_api_processor_snapshot = snapshot[control_hub_api_processor.instance_name]
-    assert len(control_hub_api_processor_snapshot.output) == 1
-    assert len(control_hub_api_processor_snapshot.error_records) == 0
-    assert control_hub_api_processor_snapshot.output[0].field['alive'].value == True
+    assert len(wiretap.output_records) == 1
+    assert len(wiretap.error_records) == 0
+    assert wiretap.output_records[0].field['alive'].value == True
 
 
 @sdc_min_version('3.11.0')
@@ -136,21 +136,20 @@ def test_control_hub_api_processor_invalid_credentials(sdc_builder, sdc_executor
     control_hub_api_processor.control_hub_user_name = "invalid user"
     control_hub_api_processor.password = "invalid password"
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> control_hub_api_processor >> trash
+    dev_raw_data_source >> control_hub_api_processor >> wiretap.destination
 
     pipeline = pipeline_builder.build('Control Hub API Processor Sample Pipeline')
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.validate_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # Assert Cron Scheduler generated record output
-    control_hub_api_processor_snapshot = snapshot[control_hub_api_processor.instance_name]
-    assert len(control_hub_api_processor_snapshot.output) == 0
-    assert len(control_hub_api_processor_snapshot.error_records) == 1
+    assert len(wiretap.output_records) == 0
+    assert len(wiretap.error_records) == 1
 
 
 @sdc_min_version('3.16.0')
@@ -158,6 +157,7 @@ def test_start_pipeline_processor(sdc_builder, sdc_executor):
     """Test Start Pipeline Origin/Processor. The pipeline would look like:
 
         start_pipeline1 >> start_pipeline2 >> pipeline_finisher
+        start_pipeline >> wiretap
 
     Chain pipeline execution using start pipeline orchestrator stages. start_pipeline1 origin starts and waits
     till pipeline1 completes execution and then start pipeline2.
@@ -204,34 +204,36 @@ def test_start_pipeline_processor(sdc_builder, sdc_executor):
         }
     ]
 
+    wiretap1 = pipeline_builder.add_wiretap()
+    wiretap2 = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
 
-    start_pipeline1 >> start_pipeline2 >> pipeline_finisher
+    start_pipeline1 >> [wiretap1.destination, start_pipeline2]
+    start_pipeline2 >> [wiretap2.destination, pipeline_finisher]
+
     pipeline = pipeline_builder.build('Chain Pipeline Execution Sample')
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.validate_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # Assert start_pipeline1 record output
-    start_pipeline1_output = snapshot[start_pipeline1.instance_name].output
-    assert len(start_pipeline1_output) == 1
-    _validate_start_pipeline_output(start_pipeline1_output[0].field['orchestratorTasks'],
+    assert len(wiretap1.output_records) == 1
+    _validate_start_pipeline_output(wiretap1.output_records[0].field['orchestratorTasks'],
                                     'task1',
                                     pipeline1,
                                     True,
                                     metrics_output_generated)
 
     # Assert start_pipeline2 record output - start_pipeline2 output should contain output of both pipelines
-    start_pipeline2_output = snapshot[start_pipeline2.instance_name].output
-    assert len(start_pipeline2_output) == 1
-    _validate_start_pipeline_output(start_pipeline2_output[0].field['orchestratorTasks'],
+    assert len(wiretap2.output_records) == 1
+    _validate_start_pipeline_output(wiretap2.output_records[0].field['orchestratorTasks'],
                                     'task1',
                                     pipeline1,
                                     True,
                                     metrics_output_generated)
-    _validate_start_pipeline_output(start_pipeline2_output[0].field['orchestratorTasks'],
+    _validate_start_pipeline_output(wiretap2.output_records[0].field['orchestratorTasks'],
                                     'task2',
                                     pipeline2,
                                     True,
@@ -287,32 +289,34 @@ def test_wait_for_completion_processor(sdc_builder, sdc_executor):
     ]
 
     wait_for_pipeline_completion = pipeline_builder.add_stage(wait_for_completion_stage_label)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap1 = pipeline_builder.add_wiretap()
+    wiretap2 = pipeline_builder.add_wiretap()
+    wiretap3 = pipeline_builder.add_wiretap()
 
     dev_raw_data_source1 >> [start_pipeline1, start_pipeline2]
-    start_pipeline1 >> wait_for_pipeline_completion
-    start_pipeline2 >> wait_for_pipeline_completion
-    wait_for_pipeline_completion >> trash
+    start_pipeline1 >> [wait_for_pipeline_completion, wiretap1.destination]
+    start_pipeline2 >> [wait_for_pipeline_completion, wiretap2.destination]
+    wait_for_pipeline_completion >> wiretap3.destination
 
     pipeline = pipeline_builder.build('Chain Pipeline Execution Sample2')
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.validate_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # Assert start_pipeline1 record output
-    start_pipeline1_output = snapshot[start_pipeline1.instance_name].output
+    start_pipeline1_output = wiretap1.output_records
     assert len(start_pipeline1_output) == 1
     _validate_start_pipeline_output(start_pipeline1_output[0].field['orchestratorTasks'], 'task1', pipeline1, False)
 
     # Assert start_pipeline2 record output
-    start_pipeline2_output = snapshot[start_pipeline2.instance_name].output
+    start_pipeline2_output = wiretap2.output_records
     assert len(start_pipeline2_output) == 1
     _validate_start_pipeline_output(start_pipeline2_output[0].field['orchestratorTasks'], 'task2', pipeline2, False)
 
     # Assert wait_for_pipeline_completion record output
-    wait_for_pipeline_completion_output = snapshot[wait_for_pipeline_completion.instance_name].output
+    wait_for_pipeline_completion_output = wiretap3.output_records
     assert len(wait_for_pipeline_completion_output) == 1
     _validate_start_pipeline_output(wait_for_pipeline_completion_output[0].field['orchestratorTasks'], 'task1', pipeline1, True)
     _validate_start_pipeline_output(wait_for_pipeline_completion_output[0].field['orchestratorTasks'], 'task2', pipeline2, True)
