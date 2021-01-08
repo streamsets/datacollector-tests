@@ -80,7 +80,7 @@ def _insert(connection, table, insert_rows=INSERT_ROWS, create_txn=False):
     if create_txn:
         txn.commit()
 
-    # Prepare expected data to compare for verification against snapshot data.
+    # Prepare expected data to compare for verification against wiretap data.
     operations_data = []
     for row in insert_rows:
         operations_data.append(OperationsData(KIND_FOR_INSERT,
@@ -102,7 +102,7 @@ def _update(connection, table, update_rows=UPDATE_ROWS):
         txn.rollback()
         raise
 
-    # Prepare expected data to compare for verification against snapshot data.
+    # Prepare expected data to compare for verification against wiretap data.
     operations_data = []
     for row in update_rows:
         operations_data.append(OperationsData(KIND_FOR_UPDATE,
@@ -124,7 +124,7 @@ def _delete(connection, table, delete_rows=DELETE_ROWS):
         txn.rollback()
         raise
 
-    # Prepare expected data to compare for verification against snapshot data.
+    # Prepare expected data to compare for verification against wiretap data.
     operations_data = []
     for row in delete_rows:
         operations_data.append(OperationsData(KIND_FOR_DELETE,
@@ -383,7 +383,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     With this, the origin processes all changes that occur after pipeline is started.
 
     The pipeline looks like:
-        postgres_cdc_client >> trash
+        postgres_cdc_client >> wiretap
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
@@ -397,8 +397,8 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
                                        max_batch_size_in_records=1,
                                        poll_interval=POLL_INTERVAL,
                                        replication_slot=replication_slot_name)
-    trash = pipeline_builder.add_stage('Trash')
-    postgres_cdc_client >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -406,7 +406,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     try:
         # Database operations done after pipeline start will be captured by CDC.
         # Hence start the pipeline but do not wait for the capture to be finished.
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        sdc_executor.start_pipeline(pipeline)
 
         # Create table and then perform insert, update and delete operations.
         table = _create_table_in_database(table_name, database)
@@ -415,11 +415,12 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
         expected_operations_data += _update(connection=connection, table=table)
         expected_operations_data += _delete(connection=connection, table=table)
 
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
-        # Verify snapshot data is received in exact order as expected.
+    # Verify wiretap data is received in exact order as expected.
         operation_index = 0
-        for record in snapshot[postgres_cdc_client.instance_name].output:
+        for record in wiretap.output_records:
             # No need to worry about DDL related CDC records. e.g. table creation etc.
             if record.get_field_data('/change'):
                 # Since we performed each operation (insert, update and delete) on 3 rows,
@@ -439,7 +440,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
                     operation_index += 1
 
     finally:
-        if pipeline:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
@@ -457,7 +458,7 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder, sdc_executor, database):
     batch is generated with only a few records because of hitting the max poll attempts.
 
     Pipeline:
-        postgres_cdc_client >> trash
+        postgres_cdc_client >> wiretap
 
     """
     if not database.is_cdc_enabled:
@@ -472,8 +473,8 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder, sdc_executor, database):
                                        max_batch_size_in_records=100,
                                        poll_interval=POLL_INTERVAL,
                                        replication_slot=replication_slot_name)
-    trash = pipeline_builder.add_stage('Trash')
-    postgres_cdc_client >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -481,17 +482,19 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder, sdc_executor, database):
     try:
         # Database operations done after pipeline start will be captured by CDC.
         # Hence start the pipeline but do not wait for the capture to be finished.
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        sdc_executor.start_pipeline(pipeline)
 
         # Create table, perform a few insertions, and then wait for the pipeline a period of time enough to hit the
         # max poll attempts (max poll attempts == POLL_INTERVAL * 100).
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
         expected_operations_data = _insert(connection=connection, table=table)
-        snapshot = snapshot_command.wait_for_finished(120).snapshot
 
-        # Verify snapshot data is received in exact order as expected.
-        for record in snapshot[postgres_cdc_client.instance_name].output:
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Verify wiretap data is received in exact order as expected.
+        for record in wiretap.output_records:
             # No need to worry about DDL related CDC records. e.g. table creation etc.
             if record.get_field_data('/change'):
                 # Check that the CDC record change contains a list of 3 insertions.
@@ -503,7 +506,7 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder, sdc_executor, database):
                     assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
 
     finally:
-        if pipeline:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
@@ -523,7 +526,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
         4. Should see updates for "table_allow" only
 
         The pipeline looks like:
-        postgres_cdc_client >> trash
+        postgres_cdc_client >> wiretap
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
@@ -541,8 +544,8 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
                                        tables=[{'schema': 'public',
                                                 'excludePattern': table_name_deny,
                                                 'table': table_name_allow}])
-    trash = pipeline_builder.add_stage('Trash')
-    postgres_cdc_client >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -554,7 +557,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
         table_deny = _create_table_in_database(table_name_deny, database)
 
         # Database operations done after pipeline start will be captured by CDC.
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        sdc_executor.start_pipeline(pipeline)
 
         # Create table and then perform insert, update and delete operations.
         connection = database.engine.connect()
@@ -567,17 +570,16 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
         expected_operations_data += _update(connection=connection, table=table_allow)
         expected_operations_data += _delete(connection=connection, table=table_allow)
 
-        snapshot = snapshot_command.wait_for_finished().snapshot
-        records_in_snapshot = [record for batch in snapshot.snapshot_batches
-                               for record in batch[postgres_cdc_client.instance_name].output]
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
-        # Verify snapshot data lenght * 3 - three inserts/updates/deletes per record - is equal
-        # to snapshot length
-        assert len(expected_operations_data) == len(records_in_snapshot) * 3
+        # Verify output_records data lenght * 3 - three inserts/updates/deletes per record - is equal
+        # to wiretap length
+        assert len(expected_operations_data) == len(wiretap.output_records) * 3
 
-        # Verify snapshot data is received in exact order as expected.
+        # Verify wiretap data is received in exact order as expected.
         operation_index = 0
-        for record in records_in_snapshot:
+        for record in wiretap.output_records:
             # No need to worry about DDL related CDC records. e.g. table creation etc.
             if record.get_field_data('/change'):
                 # Since we performed each operation (insert, update and delete) on 3 rows,
@@ -597,7 +599,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
                     operation_index += 1
 
     finally:
-        if pipeline:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table_allow is not None:
@@ -635,8 +637,8 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
                                        max_batch_size_in_records=1,
                                        poll_interval=POLL_INTERVAL,
                                        replication_slot=replication_slot)
-    trash = pipeline_builder.add_stage('Trash')
-    postgres_cdc_client >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -644,7 +646,7 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
     try:
         # Database operations done after pipeline start will be captured by CDC.
         # Hence start the pipeline but do not wait for the capture to be finished.
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        sdc_executor.start_pipeline(pipeline)
 
         # Create table and then perform some operations to simulate activity
         table = _create_table_in_database(table_name, database)
@@ -652,8 +654,6 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
         expected_operations_data = _insert(connection=connection, table=table)
         expected_operations_data += _update(connection=connection, table=table)
         expected_operations_data += _delete(connection=connection, table=table)
-
-        snapshot = snapshot_command.wait_for_finished().snapshot
 
         # Timeout is set as without SDC-11252, pipeline will get stuck in 'STOPPING' state forever
         sdc_executor.stop_pipeline(pipeline=pipeline).wait_for_stopped(timeout_sec=60)
@@ -836,8 +836,8 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
                                                 'excludePattern': '',
                                                 'table': table_name[i]} for i in range(3)
                                                ])
-    trash = pipeline_builder.add_stage('Trash')
-    postgres_cdc_client >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -848,8 +848,7 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
 
         # Database operations done after pipeline start will be captured by CDC.
         # Hence start the pipeline but do not wait for the capture to be finished.
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False, batch_size=1,
-                                                         batches=9)
+        sdc_executor.start_pipeline(pipeline)
 
         connection = database.engine.connect()
         expected_operations_data = []
@@ -863,17 +862,15 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
         _update(connection=connection, table=table[3])
         _delete(connection=connection, table=table[3])
 
-        snapshot = snapshot_command.wait_for_finished().snapshot
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 9)
+        sdc_executor.stop_pipeline(pipeline)
 
-        # Verify snapshot data is received in exact order as expected.
+        # Verify record data is received in exact order as expected.
         operation_index = 0
 
-        records_in_snapshot = [record for batch in snapshot.snapshot_batches
-                               for record in batch[postgres_cdc_client.instance_name].output]
-
-        # Each snapshot record includes 3 records
-        assert len(records_in_snapshot) * 3 == len(expected_operations_data)
-        for record in records_in_snapshot:
+        # Each record record includes 3 records
+        assert len(wiretap.output_records) * 3 == len(expected_operations_data)
+        for record in wiretap.output_records:
 
             if record.get_field_data('/change'):
                 # Since we performed each operation (insert, update and delete) on 3 rows,
@@ -895,7 +892,7 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
                     operation_index += 1
 
     finally:
-        if pipeline:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         for t in table:
