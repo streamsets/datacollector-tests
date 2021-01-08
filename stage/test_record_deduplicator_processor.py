@@ -37,35 +37,35 @@ def test_record_deduplicator_all_fields(sdc_builder, sdc_executor):
     /name and /rank fields.
     Pipeline looks like:
 
-        dev_raw_data_source >> record_deduplicator >> trash_1
-                                                   >> trash_2
+        dev_raw_data_source >> record_deduplicator >> wiretap_1
+                                                   >> wiretap_2
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        json_content='ARRAY_OBJECTS',
-                                       raw_data=json.dumps(RECORD_DEDUPLICATIOR_RAW_DATA))
+                                       raw_data=json.dumps(RECORD_DEDUPLICATIOR_RAW_DATA),
+                                       stop_after_first_batch=True)
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
-    trash_1 = pipeline_builder.add_stage('Trash')
-    trash_2 = pipeline_builder.add_stage('Trash')
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> record_deduplicator >> trash_1
-    record_deduplicator >> trash_2
+    dev_raw_data_source >> record_deduplicator >> wiretap_1.destination
+    record_deduplicator >> wiretap_2.destination
 
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     expected_unique_data = RECORD_DEDUPLICATOR_DATA + RECORD_DEDUPLICATIOR_DATA_EXTRA_RIKER
-    unique_data = snapshot[record_deduplicator].output_lanes[record_deduplicator.output_lanes[0]]
+    unique_data = wiretap_1.output_records
     assert len(expected_unique_data) == len(unique_data)
     unique_data = [{key: value for key, value in record.field.items()} for record in unique_data]
     assert expected_unique_data == unique_data
 
     expected_duplicate_data = RECORD_DEDUPLICATIOR_DATA_EXTRA_WESLEY
-    duplicate_data = snapshot[record_deduplicator].output_lanes[record_deduplicator.output_lanes[1]]
+    duplicate_data = wiretap_2.output_records
     assert len(expected_duplicate_data) == len(duplicate_data)
     duplicate_data = [{key: value for key, value in record.field.items()} for record in duplicate_data]
     assert expected_duplicate_data == duplicate_data
@@ -78,37 +78,37 @@ def test_record_deduplicator_single_field(sdc_builder, sdc_executor):
     and 'Geordie LaForge' records are not considered duplicates because only their /rank field is the same.
     Pipeline looks like:
 
-        dev_raw_data_source >> record_deduplicator >> trash_1
-                                                   >> trash_2
+        dev_raw_data_source >> record_deduplicator >> wiretap_1
+                                                   >> wiretap_2
     """
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        json_content='ARRAY_OBJECTS',
-                                       raw_data=json.dumps(RECORD_DEDUPLICATIOR_RAW_DATA))
+                                       raw_data=json.dumps(RECORD_DEDUPLICATIOR_RAW_DATA),
+                                       stop_after_first_batch=True)
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     record_deduplicator.set_attributes(compare='SPECIFIED_FIELDS',
                                        fields_to_compare=['/name'])
-    trash_1 = pipeline_builder.add_stage('Trash')
-    trash_2 = pipeline_builder.add_stage('Trash')
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> record_deduplicator >> trash_1
-    record_deduplicator >> trash_2
+    dev_raw_data_source >> record_deduplicator >> wiretap_1.destination
+    record_deduplicator >> wiretap_2.destination
 
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     expected_unique_data = RECORD_DEDUPLICATOR_DATA
-    unique_data = snapshot[record_deduplicator].output_lanes[record_deduplicator.output_lanes[0]]
+    unique_data = wiretap_1.output_records
     assert len(expected_unique_data) == len(unique_data)
     unique_data = [{key: value for key, value in record.field.items()} for record in unique_data]
     assert expected_unique_data == unique_data
 
     expected_duplicate_data = RECORD_DEDUPLICATIOR_DATA_EXTRA_RIKER + RECORD_DEDUPLICATIOR_DATA_EXTRA_WESLEY
-    duplicate_data = snapshot[record_deduplicator].output_lanes[record_deduplicator.output_lanes[1]]
+    duplicate_data = wiretap_2.output_records
     assert len(expected_duplicate_data) == len(duplicate_data)
     duplicate_data = [{key: value for key, value in record.field.items()} for record in duplicate_data]
     assert expected_duplicate_data == duplicate_data
