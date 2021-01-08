@@ -29,9 +29,9 @@ logger.setLevel(logging.DEBUG)
 @redis
 def test_redis_origin(sdc_builder, sdc_executor, redis):
     """Test for Redis origin stage. We do so by starting the pipeline first which ensures the required Redis channel
-    is created and then we publish data to snapshot. The pipeline looks like:
+    is created and then we publish data to wiretap. The pipeline looks like:
 
-        redis_consumer >> trash
+        redis_consumer >> wiretap
     """
     raw_dict = dict(name='Jane Smith', zip_code=27023)
     raw_data = json.dumps(raw_dict)
@@ -41,12 +41,12 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
     builder = sdc_builder.get_pipeline_builder()
     redis_consumer = builder.add_stage('Redis Consumer', type='origin')
     # have the Redis consumer read data out of channel based on glob patterns
-    # set max_batch_size_in_records to 10 to let capture_snapshot's start_pipeline=False capture the 2nd batch
+    # set max_batch_size_in_records to 10 to let it send 2 batches of 10 records each
     redis_consumer.set_attributes(data_format='JSON', max_batch_size_in_records=10,
                                   pattern=[f'*{pattern_1}*', f'{pattern_2}?'])
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    redis_consumer >> trash
+    redis_consumer >> wiretap.destination
     pipeline = builder.build(title='Redis Consumer pipeline').configure_for_environment(redis)
     sdc_executor.add_pipeline(pipeline)
 
@@ -55,28 +55,30 @@ def test_redis_origin(sdc_builder, sdc_executor, redis):
         sdc_executor.start_pipeline(pipeline)
 
         # case when we have valid pattern for *
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
         key_1 = f'extra{pattern_1}extra'
         for _ in range(20):  # 20 records will make 2 batches (each of 10)
             assert redis.client.publish(key_1, raw_data) == 1  # 1 indicates pipeline consumer received the raw_data
-        snapshot = snapshot_command.wait_for_finished().snapshot
-        assert redis_consumer.max_batch_size_in_records == len(snapshot[redis_consumer.instance_name].output)
-        for record in snapshot[redis_consumer.instance_name].output:
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 2)
+        assert 20 == len(wiretap.output_records)    # 20 records are received in 2 batches
+        for record in wiretap.output_records:
             assert record.field['name'].value == raw_dict['name']
             assert record.field['zip_code'].value == raw_dict['zip_code']
 
+        wiretap.reset()     # needed to discard the previous 20 records
+
         # case when we have valid pattern for ?
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=False, wait=False)
         key_2 = f'{pattern_2}X'
         for _ in range(20):  # 20 records will make 2 batches (each of 10)
             assert redis.client.publish(key_2, raw_data) == 1  # 1 indicates pipeline consumer received the raw_data
-        snapshot = snapshot_command.wait_for_finished().snapshot
-        assert redis_consumer.max_batch_size_in_records == len(snapshot[redis_consumer.instance_name].output)
-        for record in snapshot[redis_consumer.instance_name].output:
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 2)
+        assert 20 == len(wiretap.output_records)    # 20 records are received in 2 batches
+        for record in wiretap.output_records:
             assert record.field['name'].value == raw_dict['name']
             assert record.field['zip_code'].value == raw_dict['zip_code']
 
-        # Case when we have an invalid pattern. No data is expected and hence no snapshot can be taken to compare.
+        wiretap.reset()     # needed to discard the previous 20 records
+
+        # Case when we have an invalid pattern. No data is expected and hence no records can be taken to compare.
         key_3 = f'{pattern_2}XX'
         for _ in range(20):
             assert redis.client.publish(key_3, raw_data) == 0  # 0 clients received the raw_data
@@ -134,26 +136,25 @@ def test_redis_lookup_processor(sdc_builder, sdc_executor, redis):
 
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     redis_lookup_processor = builder.add_stage('Redis Lookup Processor')
     redis_lookup_processor.set_attributes(enable_local_caching=True,
                                           eviction_policy_type='EXPIRE_AFTER_ACCESS', mode='BATCH',
                                           lookup_parameters=[{'dataType': 'LIST',
                                                               'keyExpr': "${record:value('/city')}",
                                                               'outputFieldPath': f'/{record_output_field}'}])
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    dev_raw_data_source >> redis_lookup_processor >> trash
+    dev_raw_data_source >> redis_lookup_processor >> wiretap.destination
     pipeline = builder.build(title='Redis Lookup Processor pipeline').configure_for_environment(redis)
     sdc_executor.add_pipeline(pipeline)
 
     try:
         # input data into Redis which should be looked by our processor
         redis.client.lpush(redis_key, redis_data)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        record = snapshot[redis_lookup_processor.instance_name].output[0].field
+        record = wiretap.output_records[0].field
         expected_value = str(record[record_output_field][0])
         assert redis_data == expected_value
     finally:
