@@ -49,7 +49,8 @@ def test_jython_evaluator(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
     jython_evaluator = pipeline_builder.add_stage('Jython Evaluator', type='processor')
     # in the init script we create a 'Building' template object which can be cloned per each pipeline record processing
     init_script = """
@@ -93,21 +94,19 @@ def test_jython_evaluator(sdc_builder, sdc_executor):
                                     init_script=textwrap.dedent(init_script),
                                     record_processing_mode='BATCH',
                                     script=textwrap.dedent(script))
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> jython_evaluator >> trash
+    dev_raw_data_source >> jython_evaluator >> wiretap.destination
     pipeline = pipeline_builder.build('Jython Evaluator pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    output_records = snapshot[jython_evaluator.instance_name].output  # is a list of output records
     # search for a record whose 'name' is raw_company_1['name'] and assert new attribute ('office_space') is created
     # with expected boolean value (where 'floors' > 2)
-    record_1 = next(record for record in output_records if record.field['name'] == raw_company_1['name'])
+    record_1 = next(record for record in wiretap.output_records if record.field['name'] == raw_company_1['name'])
     assert record_1.field['office_space'] == (raw_company_1['floors'] > 2)
-    record_2 = next(record for record in output_records if record.field['name'] == raw_company_2['name'])
+    record_2 = next(record for record in wiretap.output_records if record.field['name'] == raw_company_2['name'])
     assert record_2.field['office_space'] == (raw_company_2['floors'] > 2)
 
 
@@ -118,7 +117,7 @@ def test_sdc_record(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
-    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}', stop_after_first_batch=True)
     origin.stop_after_first_batch = True
 
     jython = builder.add_stage('Jython Evaluator', type='processor')
@@ -133,20 +132,18 @@ for record in records:
   output.write(record)
 """
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> jython >> trash
+    origin >> jython >> wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    records = snapshot[jython].output
-
-    assert len(records) == 1
-    assert 'new-value' == records[0].field['new']
-    assert 'attr-value' == records[0].get_field_data('/old').attributes['attr']
+    assert len(wiretap.output_records) == 1
+    assert 'new-value' == wiretap.output_records[0].field['new']
+    assert 'attr-value' == wiretap.output_records[0].get_field_data('/old').attributes['attr']
 
 
 def test_event_creation(sdc_builder, sdc_executor):
@@ -154,7 +151,7 @@ def test_event_creation(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
-    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
+    origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}', stop_after_first_batch=True)
     origin.stop_after_first_batch = True
 
     jython = builder.add_stage('Jython Evaluator', type='processor')
@@ -167,19 +164,16 @@ event.value['value'] = "secret"
 sdcFunctions.toEvent(event)
 """
 
-    # TLKT-248: Add ability to directly read events from snapshots
-    identity = builder.add_stage('Dev Identity')
-    event_trash = builder.add_stage('Trash')
+    records_wiretap = builder.add_wiretap()
+    events_wiretap = builder.add_wiretap()
 
-    trash = builder.add_stage('Trash')
-
-    origin >> jython >> trash
-    jython >= identity
-    identity >> event_trash
+    origin >> jython >> records_wiretap.destination
+    jython >= events_wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert len(snapshot[identity].output) == 1
-    assert snapshot[identity].output[0].get_field_data('/value') == 'secret'
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(events_wiretap.output_records) == 1
+    assert events_wiretap.output_records[0].get_field_data('/value') == 'secret'
