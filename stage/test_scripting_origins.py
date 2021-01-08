@@ -39,14 +39,14 @@ def test_scripting_origin_default_script(sdc_builder, sdc_executor, stage_name):
     pb = sdc_builder.get_pipeline_builder()
     origin = pb.add_stage(stage_name, type='origin')
     origin.set_attributes(batch_size=7)
-    trash = pb.add_stage('Trash')
+    wiretap = pb.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
 
     pipeline = pb.build()
     sdc_executor.add_pipeline(pipeline)
-    snapshot1 = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
     sdc_executor.stop_pipeline(pipeline)
-    records = snapshot1[origin.instance_name].output
-    assert len(records) == 7
-    assert records[6].field == ':7'
+    records = [record.field for record in wiretap.output_records]
+    assert records == [f':{i+1}' for i in range(len(wiretap.output_records))]
