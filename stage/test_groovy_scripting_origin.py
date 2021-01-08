@@ -30,7 +30,7 @@ def test_send_events(sdc_builder, sdc_executor):
     """Test event generation from a groovy script. It uses a script that generates 10 events and then checks they
     are correctly sent to the event stream.
 
-    Pipeline: groovy >> trash
+    Pipeline: groovy >> wiretap
 
     """
 
@@ -56,25 +56,23 @@ def test_send_events(sdc_builder, sdc_executor):
                           user_script=script,
                           batch_size=batch_size)
 
-    trash1 = builder.add_stage('Trash')
-    trash2 = builder.add_stage('Trash')
+    records_wiretap = builder.add_wiretap()
+    events_wiretap = builder.add_wiretap()
 
-    groovy >> trash1
-    groovy >= trash2
+    groovy >> records_wiretap.destination
+    groovy >= events_wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # Verify that the stage produced 10 events with values 'event0', ..., 'event9'. This is the expected
     # output in accordance to the script defined.
     expected_output = [f'event{i}' for i in range(batch_size)]
-    actual_output = [e.field.value for e in snapshot[groovy.instance_name].event_records]
+    actual_output = [e.field.value for e in events_wiretap.output_records]
     assert sorted(actual_output) == expected_output
-    assert len(snapshot[groovy.instance_name].output) == 0
-    assert len(snapshot[groovy.instance_name].error_records) == 0
+    assert len(records_wiretap.output_records) == 0
+    assert len(events_wiretap.error_records) == 0
 
 
 @sdc_min_version('3.10.0')
@@ -82,7 +80,7 @@ def test_send_error_records(sdc_builder, sdc_executor):
     """Test error records generation from a groovy script. It uses a script that generates 10 error records and
     then checks they are correctly sent to the error stream.
 
-    Pipeline: groovy >> trash
+    Pipeline: groovy >> wiretap
 
     """
 
@@ -108,22 +106,23 @@ def test_send_error_records(sdc_builder, sdc_executor):
                           user_script=script,
                           batch_size=batch_size)
 
-    trash = builder.add_stage('Trash')
-    groovy >> trash
+    records_wiretap = builder.add_wiretap()
+    events_wiretap = builder.add_wiretap()
+
+    groovy >> records_wiretap.destination
+    groovy >= events_wiretap.destination
 
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # Verify that the stage produced 10 error records with values 'error0', ..., 'error9'. This is the
     # expected output in accordance to the script defined.
     expected_output = [f'error{i}' for i in range(batch_size)]
-    actual_output = [e.field.value for e in snapshot[groovy.instance_name].error_records]
+    actual_output = [e.field.value for e in events_wiretap.error_records]
     assert sorted(actual_output) == expected_output
-    assert len(snapshot[groovy.instance_name].output) == 0
-    assert len(snapshot[groovy.instance_name].event_records) == 0
+    assert len(records_wiretap.output_records) == 0
+    assert len(events_wiretap.output_records) == 0
 
 
 def _get_scripting_api_version(sdc_version):
@@ -175,7 +174,7 @@ while (hasNext) {
             // in accordance with delivery guarantee
             cur_batch.process(entityName, offset.toString())
             cur_batch = sdc.createBatch()
-            if (sdc.isStopped()) {
+            if (sdc.isStopped() || offset >= sdc.batchSize) {
                 hasNext = false
             }
         }
@@ -223,7 +222,7 @@ while (hasNext) {
             // in accordance with delivery guarantee
             cur_batch.process(entityName, offset.toString())
             cur_batch = sdc.createBatch();
-            if (sdc.isStopped()) {
+            if (sdc.isStopped() || offset >= sdc.batchSize) {
                 hasNext = false;
             }
         }
