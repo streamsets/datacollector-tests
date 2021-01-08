@@ -33,7 +33,7 @@ def test_sdcrpc_with_buffering_origin_target(sdc_builder, sdc_executor):
     like:
 
         SDC RPC with buffering origin pipeline:
-            sdc_rpc_origin >> trash
+            sdc_rpc_origin >> wiretap
 
         SDC RPC target pipeline:
             dev_raw_data_source >> sdc_rpc_destination
@@ -46,22 +46,25 @@ def test_sdcrpc_with_buffering_origin_target(sdc_builder, sdc_executor):
     builder = sdc_builder.get_pipeline_builder()
 
     sdc_rpc_origin = builder.add_stage('Dev SDC RPC with Buffering')
-    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
-    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_id
+    sdc_rpc_origin.set_attributes(sdc_rpc_listening_port=SDC_RPC_LISTENING_PORT,
+                                  sdc_rpc_id=sdc_rpc_id)
 
-    sdc_rpc_origin >> (builder.add_stage(label='Trash'))
+    wiretap = builder.add_wiretap()
+    sdc_rpc_origin >> wiretap.destination
     rpc_origin_pipeline = builder.build('SDC RPC origin pipeline')
 
     # Build the SDC RPC target pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.data_format = 'TEXT'
-    dev_raw_data_source.raw_data = raw_str
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=raw_str,
+                                       stop_after_first_batch=True)
 
+    sdc_rpc_connection = [f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}']
     sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_LISTENING_PORT))
-    sdc_rpc_destination.sdc_rpc_id = sdc_rpc_id
+    sdc_rpc_destination.set_attributes(sdc_rpc_connection=sdc_rpc_connection,
+                                       sdc_rpc_id=sdc_rpc_id)
 
     dev_raw_data_source >> sdc_rpc_destination
     rpc_target_pipeline = builder.build('SDC RPC target pipeline')
@@ -70,11 +73,11 @@ def test_sdcrpc_with_buffering_origin_target(sdc_builder, sdc_executor):
 
     # Run pipelines and assert data.
     sdc_executor.start_pipeline(rpc_origin_pipeline)
-    sdc_executor.start_pipeline(rpc_target_pipeline).wait_for_pipeline_output_records_count(1)
-    snapshot = sdc_executor.capture_snapshot(rpc_origin_pipeline).snapshot
-    snapshot_data = snapshot[sdc_rpc_origin.instance_name].output[0].field['text'].value
+    sdc_executor.start_pipeline(rpc_target_pipeline).wait_for_finished()
 
-    assert raw_str == snapshot_data
-
-    sdc_executor.stop_pipeline(rpc_target_pipeline)
+    sdc_executor.wait_for_pipeline_metric(rpc_origin_pipeline, 'data_batch_count', 1)
     sdc_executor.stop_pipeline(rpc_origin_pipeline)
+
+    records_data = wiretap.output_records[0].field['text'].value
+    assert raw_str == records_data
+
