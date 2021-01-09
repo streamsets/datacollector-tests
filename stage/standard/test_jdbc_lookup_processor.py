@@ -267,7 +267,7 @@ DATA_TYPES_POSTGRESQL = [
      '["2010-01-01 19:30:00+00","2010-01-01 20:30:00+00")'),
     ("daterange", "'[2010-01-01, 2010-01-02)'", 'STRING', '[2010-01-01,2010-01-02)'),
 ]
-@sdc_min_version('3.0.0.0')
+@sdc_min_version('3.21.0')
 @database('postgresql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_POSTGRESQL, ids=[i[0] for i in DATA_TYPES_POSTGRESQL])
 def test_data_types_postgresql(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
