@@ -110,7 +110,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, elasticsearch, incremental)
         if incremental:
             sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(max_batch_size * batches)
         else:
-            sdc_executor.start_pipeline(pipeline).wait_for_finished
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         records = wiretap.output_records
 

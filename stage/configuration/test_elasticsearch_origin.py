@@ -342,7 +342,6 @@ def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch
     sdc_executor.add_pipeline(pipeline)
 
     if stage_attributes['error_code'] is None:
-
         elasticsearch.client.create_document(index=index, id=doc_id, body={"number": 1})
 
         try:
@@ -369,9 +368,16 @@ def test_security_username_and_password(sdc_builder, sdc_executor, elasticsearch
 
 @elasticsearch
 @pytest.mark.parametrize('stage_attributes', [
-    {'password': 'changeme', 'filename': 'keystore.jks', 'error_code': None},
-    {'password': None, 'filename': 'keystore.jks', 'error_code': 'ELASTICSEARCH_12'},
-    {'password': 'changeme', 'filename': 'empty.jks', 'error_code': 'ELASTICSEARCH_12'}
+    {'password': None, 'filename': 'keystore.jks', 'error_code': ['ELASTICSEARCH_12', 'ELASTICSEARCH_12']},
+    {'password': 'changeme', 'filename': 'empty.jks', 'error_code': ['ELASTICSEARCH_12', 'ELASTICSEARCH_12']},
+    # This configuration is correct and no error should happen.
+    # But we do not have an Elasticsearch environment with SSL/TLS enabled
+    # As a result the server will ignore the requested HTTPs protocol
+    # and will respond as if we requested the HTTP protocol.
+    # In this case SDC raises an error since we expect an SSL/TLS response from the server.
+    # The test case is here because we have this issue https://issues.streamsets.com/browse/STF-1374
+    # When completed error_code should be set to None
+    {'password': 'changeme', 'filename': 'keystore.jks', 'error_code': [None, 'ELASTICSEARCH_43']}
 ])
 def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, elasticsearch):
     """
@@ -384,6 +390,7 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
     If the file is an invalid or the password doesn't match we expect an appropriate error to happen.
     """
 
+    error_code_mode = 1 if Version(sdc_executor.version) >= Version('3.21.0') else 0
     keystore_filename = get_random_string()
     files_directory = os.path.join('/tmp', get_random_string())
     keystore_file_path = f'{files_directory}/{keystore_filename}'
@@ -405,6 +412,8 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
         origin = builder.add_stage('Elasticsearch', type='origin')
         origin.index = get_random_string(string.ascii_lowercase)
         origin.query = '{"query": {"match_all": {}}}'
+        if Version(sdc_builder.version) >= Version('3.21.0'):
+            origin.enable_ssl = True
         origin.ssl_truststore_path = keystore_file_path
         origin.ssl_truststore_password = get_random_string() if stage_attributes['password'] is None else stage_attributes['password']
 
@@ -416,7 +425,7 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
 
         sdc_executor.add_pipeline(pipeline)
 
-        if stage_attributes['error_code'] is None:
+        if stage_attributes['error_code'][error_code_mode] is None:
             doc_id = get_random_string(string.ascii_lowercase)
 
             elasticsearch.client.create_document(index=origin.index, id=doc_id, body={"number": 1})
@@ -440,7 +449,7 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
 
             assert e.value.issues['issueCount'] == 1
             assert e.value.issues['stageIssues'][origin.instance_name][0]['message'].find(
-                stage_attributes['error_code']) != -1
+                stage_attributes['error_code'][error_code_mode]) != -1
 
     finally:
         sdc_executor.execute_shell(f'rm -frv {files_directory}')
@@ -450,14 +459,22 @@ def test_ssl_truststore_password(sdc_builder, sdc_executor, stage_attributes, el
 @pytest.mark.parametrize('stage_attributes', [
     # valid_file_path is True - use a path to a real file
     # valid_file_path is False - use a path to an not existing file
-    # valid_file_path is None - use an empty string for the path
+    # valid_file_path is None - use an empty string for the path, this will be resolved to a working folder,
+    # which is eventually an invalid trust store file path
 
-    {'valid_file_path': True, 'password': 'changeme', 'error_codes': None},
-    {'valid_file_path': False, 'password': 'changeme', 'error_codes': ['ELASTICSEARCH_11']},
-    {'valid_file_path': None, 'password': 'changeme', 'error_codes': None},
-    {'valid_file_path': True, 'password': '', 'error_codes': ['ELASTICSEARCH_10']},
-    {'valid_file_path': False, 'password': '', 'error_codes': ['ELASTICSEARCH_10', 'ELASTICSEARCH_11']},
-    {'valid_file_path': None, 'password': '', 'error_codes': None},
+    {'valid_file_path': False, 'password': 'changeme', 'error_codes': [['ELASTICSEARCH_11'], ['ELASTICSEARCH_11'], ['ELASTICSEARCH_11']]},
+    {'valid_file_path': None, 'password': 'changeme', 'error_codes': [None, None, ['ELASTICSEARCH_12']]},
+    {'valid_file_path': True, 'password': '', 'error_codes': [['ELASTICSEARCH_10'], ['ELASTICSEARCH_10'], ['ELASTICSEARCH_10']]},
+    {'valid_file_path': False, 'password': '', 'error_codes': [['ELASTICSEARCH_10', 'ELASTICSEARCH_11'], ['ELASTICSEARCH_10', 'ELASTICSEARCH_11'], ['ELASTICSEARCH_10', 'ELASTICSEARCH_11']]},
+    {'valid_file_path': None, 'password': '', 'error_codes': [None, None, ['ELASTICSEARCH_10']]},
+    # This configuration is correct and no error should happen.
+    # But we do not have an Elasticsearch environment with SSL/TLS enabled
+    # As a result the server will ignore the requested HTTPs protocol
+    # and will respond as if we requested the HTTP protocol.
+    # In this case SDC raises an error since we expect an SSL/TLS response from the server.
+    # The test case is here because we have this issue https://issues.streamsets.com/browse/STF-1374
+    # When completed error_codes should be set to None
+    {'valid_file_path': True, 'password': 'changeme', 'error_codes': [None, ['ELASTICSEARCH_43'], ['ELASTICSEARCH_43']]},
 ])
 def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasticsearch):
     """
@@ -471,6 +488,8 @@ def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasti
     Otherwise an appropriate error should happen.
     """
 
+    error_codes_mode = 0 if Version(sdc_executor.version) < Version('3.21.0') \
+        else (1 if Version(sdc_builder.version) < Version('3.21.0') else 2)
     keystore_filename = get_random_string()
     files_directory = os.path.join('/tmp', get_random_string())
     keystore_file_path = f'{files_directory}/{keystore_filename}'
@@ -496,6 +515,8 @@ def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasti
         origin.ssl_truststore_path = '' if stage_attributes['valid_file_path'] is None \
             else (keystore_file_path if stage_attributes['valid_file_path'] else get_random_string())
         origin.ssl_truststore_password = stage_attributes['password']
+        if Version(sdc_builder.version) >= Version('3.21.0'):
+            origin.enable_ssl = True
 
         wiretap = builder.add_wiretap()
 
@@ -505,13 +526,13 @@ def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasti
 
         sdc_executor.add_pipeline(pipeline)
 
-        if not stage_attributes['error_codes'] is None:
+        if not stage_attributes['error_codes'][error_codes_mode] is None:
             with pytest.raises(ValidationError) as e:
                 sdc_executor.validate_pipeline(pipeline)
 
-            assert e.value.issues['issueCount'] == len(stage_attributes['error_codes'])
-            for i in range(0, len(stage_attributes['error_codes'])):
-                assert e.value.issues['stageIssues'][origin.instance_name][i]['message'].find(stage_attributes['error_codes'][i]) != -1
+            assert e.value.issues['issueCount'] == len(stage_attributes['error_codes'][error_codes_mode])
+            for i in range(0, len(stage_attributes['error_codes'][error_codes_mode])):
+                assert e.value.issues['stageIssues'][origin.instance_name][i]['message'].find(stage_attributes['error_codes'][error_codes_mode][i]) != -1
 
         else:
             doc_id = get_random_string(string.ascii_lowercase)
