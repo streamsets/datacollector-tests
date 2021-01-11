@@ -25,7 +25,7 @@ import pytest
 from avro.datafile import DataFileWriter
 from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
-from streamsets.testframework.markers import cluster
+from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -227,6 +227,7 @@ def test_kafka_origin_json_array_cluster(sdc_builder, sdc_executor, cluster, por
 
 
 @cluster('cdh')
+@sdc_min_version('3.14.0')
 def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple XML messages into Kafka and confirm that Kafka successfully reads them.
 
@@ -276,6 +277,7 @@ def test_kafka_xml_record_cluster(sdc_builder, sdc_executor, cluster, port):
 
 
 @cluster('cdh')
+@sdc_min_version('3.14.0')
 def test_kafka_xml_record_delimiter_element_cluster(sdc_builder, sdc_executor, cluster, port):
     """Write simple XML messages into Kafka and confirm that Kafka successfully reads them.
 
