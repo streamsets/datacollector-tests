@@ -1233,7 +1233,7 @@ def test_decimal_values(sdc_builder, sdc_executor, cluster, keep_data):
                              directory_in_header=True,
                              use_roll_attribute=True)
     if isinstance(cluster, ClouderaManagerCluster) and cluster.version.startswith('cdh7'):
-        hadoop_fs.impersonation_user = "root"
+        hadoop_fs.impersonation_user = "sdctest"
 
     hive_metastore = pipeline_builder.add_stage('Hive Metastore', type='destination')
 
