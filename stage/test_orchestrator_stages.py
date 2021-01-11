@@ -16,6 +16,7 @@ import logging
 import pytest
 import uuid
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import Version
 
@@ -26,7 +27,10 @@ logger.setLevel(logging.DEBUG)
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
-        data_collector.add_stage_lib('streamsets-datacollector-orchestrator-lib')
+        # Add the orchestrator library, but only for version 3.11.0 and higher, on older versions the test itself
+        # will be properly skipped due to sdc_min_version annotation.
+        if Version(data_collector.version) >= Version("3.11.0"):
+            data_collector.add_stage_lib('streamsets-datacollector-orchestrator-lib')
 
     return hook
 
