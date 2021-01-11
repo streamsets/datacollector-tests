@@ -33,7 +33,8 @@ AZURE_IOT_EVENT_HUB_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_eventhubs
 
 @azure('eventhub')
 @sdc_min_version('2.7.1.0')
-def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
+@pytest.mark.parametrize('use_websockets', [True, False])
+def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure, use_websockets):
     """Test for Azure IoT/Event Hub consumer origin stage. We do so by publishing data to a test event hub Azure client
     and having a pipeline which reads that data using Azure IoT/Event Hub consumer origin stage. Data is then asserted
     for what is published at Azure client and what we read in the pipeline snapshot. The pipeline looks like:
@@ -46,9 +47,14 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure):
 
     builder = sdc_builder.get_pipeline_builder()
 
+    if use_websockets and Version(sdc_builder.version) < Version("3.21.0"):
+        pytest.skip('AMQP over WebSockets for Azure Event Hub Consumer not available for sdc_version {sdc_builder.version}.')
+
     azure_iot_event_hub_consumer = builder.add_stage(name=AZURE_IOT_EVENT_HUB_STAGE_NAME)
     azure_iot_event_hub_consumer.set_attributes(container_name=container_name, data_format='JSON',
                                                 event_hub_name=event_hub_name)
+    if use_websockets:
+        azure_iot_event_hub_consumer.set_attributes(use_amqp_over_websockets=True)
     trash = builder.add_stage('Trash')
 
     azure_iot_event_hub_consumer >> trash
@@ -153,7 +159,8 @@ def test_azure_event_hub_consumer_resume_offset(sdc_builder, sdc_executor, azure
 @azure('eventhub')
 @sdc_min_version('2.7.1.0')
 @pytest.mark.parametrize('destination_data_format', ['JSON', 'XML'])
-def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_data_format):
+@pytest.mark.parametrize('use_websockets', [True, False])
+def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_data_format, use_websockets):
     """Test for Azure Event Hub producer destination stage. We do so by using two pipelines. The 1st, Event Hub
     producer pipeline which publishes data which is captured by 2nd, Event Hub consumer. We then assert data at
     the 2nd pipeline by doing a snapshot and comparing it to what was ingested at the 1st pipeline. We use a
@@ -171,6 +178,9 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_
     # Support for XML data format for Azure Event Hub producer is only available for SDC_VERSION >= 3.12
     if destination_data_format == 'XML' and Version(sdc_builder.version) < Version("3.12.0"):
         pytest.skip('XML data format for Azure Event Hub Producer not available for sdc_version {sdc_builder.version}.')
+
+    if use_websockets and Version(sdc_builder.version) < Version("3.21.0"):
+        pytest.skip('AMQP over WebSockets for Azure Event Hub Producer not available for sdc_version {sdc_builder.version}.')
 
     if destination_data_format == 'XML':
         # XML Data conversion requires having a root element
@@ -203,6 +213,9 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_
                                                 json_content='ARRAY_OBJECTS')
     elif destination_data_format == 'XML':
         azure_event_hub_producer.set_attributes(data_format='XML', event_hub_name=event_hub_name)
+
+    if use_websockets:
+        azure_event_hub_producer.set_attributes(use_amqp_over_websockets=True)
 
     dev_raw_data_source >> record_deduplicator >> azure_event_hub_producer
     record_deduplicator >> producer_trash
