@@ -36,7 +36,7 @@ def sdc_common_hook():
 @sdc_min_version('3.5.0')
 def test_field_decrypt(sdc_builder, sdc_executor, aws):
     """Basic test to verify Encrypt and Decrypt Fields processor can decrypt a field.
-    An encrypted field is sent and after pipeline is run, verification of decryption is done using snapshot.
+    An encrypted field is sent and after pipeline is run, verification of decryption is done using wiretap.
 
     ciphertext is a byte array, but raw data source provides no way to specify a byte array.
     Hence a base64 encoded string of the ciphertext is used.
@@ -47,7 +47,7 @@ def test_field_decrypt(sdc_builder, sdc_executor, aws):
     (https://streamsets.com/documentation/datacollector/latest/help/datacollector/UserGuide/Processors/Base64Decoder.html#concept_ujj_spy_kv)
 
     The pipeline looks like:
-        dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> trash
+        dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> wiretap
     """
     expected_plaintext = MESSAGE_TEXT.encode()
 
@@ -74,15 +74,14 @@ def test_field_decrypt(sdc_builder, sdc_executor, aws):
                                  frame_size=4096,
                                  mode='DECRYPT')
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> trash
+    dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> wiretap.destination
     pipeline = pipeline_builder.build('Field Decryption Pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-
-    actual_value = snapshot[field_decrypt.instance_name].output[0].get_field_data('/message')
+    actual_value = wiretap.output_records[0].get_field_data('/message')
     assert actual_value == expected_plaintext
 
 
@@ -90,10 +89,10 @@ def test_field_decrypt(sdc_builder, sdc_executor, aws):
 @sdc_min_version('3.5.0')
 def test_field_encrypt(sdc_builder, sdc_executor, aws):
     """Baic test to verify Encrypt and Decrypt Fields processor can encrypt.
-    Verify by decrypting the field received from pipeline snapshot.
+    Verify by decrypting the field received from pipeline wiretap.
 
     The pipeline looks like:
-        dev_raw_data_source >> field_encrypt >> trash
+        dev_raw_data_source >> field_encrypt >> wiretap
     """
     expected_plaintext = MESSAGE_TEXT.encode()
     raw_data = json.dumps(dict(message=MESSAGE_TEXT))
@@ -108,14 +107,14 @@ def test_field_encrypt(sdc_builder, sdc_executor, aws):
                                  fields=['/message'],
                                  frame_size=4096,
                                  mode='ENCRYPT')
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_encrypt >> trash
+    dev_raw_data_source >> field_encrypt >> wiretap.destination
     pipeline = pipeline_builder.build('Field Encryption Pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    ciphertext_encoded = snapshot[field_encrypt.instance_name].output[0].get_field_data('/message')
+    ciphertext_encoded = wiretap.output_records[0].get_field_data('/message')
 
     # Decrypt received value using aws_encryption_sdk for verification purpose.
     actual_value, _ = aws.decrypt(ciphertext_encoded.value)
@@ -129,7 +128,7 @@ def test_field_encrypt_el(sdc_builder, sdc_executor):
     is encoded using an EL
 
     The pipeline looks like:
-        dev_raw_data_source >> field_encrypt >> field_decrypt >> trash
+        dev_raw_data_source >> field_encrypt >> field_decrypt >> wiretap
     """
 
     expected_plaintext = MESSAGE_TEXT
@@ -157,13 +156,13 @@ def test_field_encrypt_el(sdc_builder, sdc_executor):
                                  frame_size=4096,
                                  mode='DECRYPT',
                                  fields=['/message'])
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_encrypt >> field_decrypt >> trash
+    dev_raw_data_source >> field_encrypt >> field_decrypt >> wiretap.destination
     pipeline = pipeline_builder.build('Field Encryption Pipeline Base64 EL')
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    decrypted_value = snapshot[field_decrypt.instance_name].output[0].get_field_data('/message')
+    decrypted_value = wiretap.output_records[0].get_field_data('/message')
 
     assert decrypted_value == expected_plaintext
