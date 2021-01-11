@@ -197,6 +197,7 @@ def test_missing_lookup_behavior(sdc_builder, sdc_executor, stage_attributes):
 @cluster('cdh')
 @pytest.mark.parametrize('stage_attributes', [{'multiple_values_behavior': 'SPLIT_INTO_MULTIPLE_RECORDS'},
                                               {'multiple_values_behavior': 'FIRST_ONLY'}])
+@sdc_min_version('3.20.0')
 def test_multiple_values_behavior(sdc_builder, sdc_executor, stage_attributes, cluster):
     """
     We will test here that if there are many records in a DB, the first value will be taken
