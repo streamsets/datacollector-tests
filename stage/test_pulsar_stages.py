@@ -327,7 +327,7 @@ def test_pulsar_origin_standalone_json(sdc_builder, sdc_executor, pulsar):
 
 
 @pulsar
-@sdc_min_version('3.5.0')
+@sdc_min_version('3.14.0')
 def test_pulsar_origin_standalone_xml(sdc_builder, sdc_executor, pulsar):
     """
     Write simple XML messages into pulsar and confirm that pulsar successfully reads them.
