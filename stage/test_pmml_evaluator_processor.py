@@ -34,6 +34,7 @@ def sdc_common_hook(args):
         if len(stage_lib_version) == 0:
             pytest.skip('Tensorflow processor tests only run if --custom-stage-lib contains pmml')
         data_collector.add_stage_lib(CustomLib('streamsets-datacollector-pmml-lib', stage_lib_version[0]))
+
     return hook
 
 
@@ -75,8 +76,9 @@ def test_tensorflow_evaluator(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=raw_data,
+                                                                                           stop_after_first_batch=True)
 
     pmml_evaluator = pipeline_builder.add_stage('PMML Evaluator')
     pmml_input_configs = [{"pmmlFieldName": "Petal.Length", "fieldName": "/petalLength"},
@@ -91,20 +93,16 @@ def test_tensorflow_evaluator(sdc_builder, sdc_executor):
                                   output_field='/output',
                                   saved_model_file_path=PMML_IRIS_MODEL_PATH)
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> pmml_evaluator >> trash
+    dev_raw_data_source >> pmml_evaluator >> wiretap.destination
     pipeline = pipeline_builder.build('PMML evaluator for IRIS Model')
     sdc_executor.add_pipeline(pipeline)
 
-    sdc_executor.validate_pipeline(pipeline)
-
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # Assert PMML Model evaluation Output
-    pmml_output = snapshot[pmml_evaluator.instance_name].output
-    output_field = pmml_output[0].field['output']
+    output_field = wiretap.output_records[0].field['output']
     predicted_species_item = output_field['Predicted_Species']
     assert predicted_species_item.type == 'STRING'
     assert predicted_species_item == 'virginica'
