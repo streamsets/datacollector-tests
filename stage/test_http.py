@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 #
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='function')
 def http_server_pipeline(sdc_builder, sdc_executor):
     """HTTP Server pipeline fixture."""
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -79,9 +79,12 @@ def http_server_pipeline(sdc_builder, sdc_executor):
                                      }
                                   """
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap_http_server = pipeline_builder.add_wiretap()
+    wiretap_javscript_evaluator = pipeline_builder.add_wiretap()
 
-    http_server >> javascript_evaluator >> trash
+    http_server >> [javascript_evaluator, wiretap_http_server.destination]
+    javascript_evaluator >> wiretap_javscript_evaluator.destination
+
     pipeline = pipeline_builder.build()
     pipeline.add_parameters(HTTP_PORT='8000',
                             APPLICATION_ID='test',
@@ -91,18 +94,18 @@ def http_server_pipeline(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(pipeline)
 
     # Yield a namedtuple so that we can access instance names of the stages within the test.
-    yield namedtuple('Pipeline', ['pipeline', 'http_server', 'javascript_evaluator'])(pipeline,
-                                                                                      http_server,
-                                                                                      javascript_evaluator)
+    yield namedtuple('Pipeline', ['pipeline', 'wiretap_http_server',
+                                  'wiretap_javscript_evaluator'])(pipeline,
+                                                                  wiretap_http_server,
+                                                                  wiretap_javscript_evaluator)
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='function')
 def http_client_pipeline(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.raw_data = '${RAW_DATA}'
-    dev_raw_data_source.data_format = 'JSON'
+    dev_raw_data_source.set_attributes(raw_data = '${RAW_DATA}', data_format = 'JSON', stop_after_first_batch = True)
 
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
 
@@ -111,7 +114,11 @@ def http_client_pipeline(sdc_builder, sdc_executor):
     http_client.headers = [{'key': 'X-SDC-APPLICATION-ID', 'value': '${APPLICATION_ID}'}]
     http_client.one_request_per_batch = True
 
-    dev_raw_data_source >> expression_evaluator >> http_client
+    wiretap_data_source = pipeline_builder.add_wiretap()
+    wiretap_expression_evaluator = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> [wiretap_data_source.destination, expression_evaluator]
+    expression_evaluator >> [http_client, wiretap_expression_evaluator.destination]
     pipeline = pipeline_builder.build()
     pipeline.add_parameters(RAW_DATA='{"f1": "abc"}{"f1": "xyz"}',
                             RESOURCE_URL='http://localhost:8000',
@@ -120,16 +127,14 @@ def http_client_pipeline(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(pipeline)
 
     yield namedtuple('Pipeline', ['pipeline',
-                                  'dev_raw_data_source',
-                                  'expression_evaluator',
-                                  'http_client'])(pipeline,
-                                                  dev_raw_data_source,
-                                                  expression_evaluator,
-                                                  http_client)
+                                  'wiretap_data_source',
+                                  'wiretap_expression_evaluator'])(pipeline,
+                                                  wiretap_data_source,
+                                                  wiretap_expression_evaluator)
 
 
 @http
-def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
+def test_http(sdc_executor, http_server_pipeline,  http_client_pipeline):
     # Start HTTP Server pipeline.
     server_runtime_parameters = {'HTTP_PORT': 9999,
                                  'APPLICATION_ID': 'HTTP_APPLICATION_ID',
@@ -141,35 +146,31 @@ def test_http(sdc_executor, http_server_pipeline, http_client_pipeline):
     attributes = pipeline_status.get('attributes')
     assert attributes.get('RUNTIME_PARAMETERS').get('APPLICATION_ID') == 'HTTP_APPLICATION_ID'
 
-    # Start and capture snapshot for HTTP Client pipeline.
+    # Start HTTP Client pipeline.
     client_runtime_parameters = {'RAW_DATA': '{"f1": "abc"}{"f1": "xyz"}',
                                  'RESOURCE_URL': 'http://localhost:9999',
                                  'APPLICATION_ID': 'HTTP_APPLICATION_ID'}
 
-    snapshot = sdc_executor.capture_snapshot(http_client_pipeline.pipeline, start_pipeline=True,
-                                             runtime_parameters=client_runtime_parameters).snapshot
-    origin_data = snapshot[http_client_pipeline.dev_raw_data_source.instance_name]
-    processor_data = snapshot[http_client_pipeline.expression_evaluator.instance_name]
-    assert len(origin_data.output) == 2
-    assert len(processor_data.output) == 2
-    assert origin_data.output[0].field['f1'] == 'abc'
-    assert origin_data.output[1].field['f1'] == 'xyz'
+    sdc_executor.start_pipeline(http_client_pipeline.pipeline, client_runtime_parameters).wait_for_finished()
+    origin_data = http_client_pipeline.wiretap_data_source.output_records
+    processor_data = http_client_pipeline.wiretap_expression_evaluator.output_records
+    assert len(origin_data) == 2
+    assert len(processor_data) == 2
+    assert origin_data[0].field['f1'] == 'abc'
+    assert origin_data[1].field['f1'] == 'xyz'
 
-    # Capture snapshot for HTTP Server pipeline.
-    snapshot = sdc_executor.capture_snapshot(http_server_pipeline.pipeline).snapshot
-    origin_data = snapshot[http_server_pipeline.http_server.instance_name]
-    processor_data = snapshot[http_server_pipeline.javascript_evaluator.instance_name]
-    assert len(origin_data.output) == 2
-    assert len(processor_data.output) == 2
-    assert origin_data.output[0].field['f1'] == 'abc'
-    assert origin_data.output[1].field['f1'] == 'xyz'
-    assert processor_data.output[0].field['f1'] == 'abc'
-    assert processor_data.output[0].field['javscriptField'] == 5000
-    assert processor_data.output[1].field['f1'] == 'xyz'
-    assert processor_data.output[1].field['javscriptField'] == 5000
+    origin_data = http_server_pipeline.wiretap_http_server.output_records
+    processor_data = http_server_pipeline.wiretap_javscript_evaluator.output_records
+    assert len(origin_data) == 2
+    assert len(processor_data) == 2
+    assert origin_data[0].field['f1'] == 'abc'
+    assert origin_data[1].field['f1'] == 'xyz'
+    assert processor_data[0].field['f1'] == 'abc'
+    assert processor_data[0].field['javscriptField'] == 5000
+    assert processor_data[1].field['f1'] == 'xyz'
+    assert processor_data[1].field['javscriptField'] == 5000
 
     # Stop the pipelines.
-    sdc_executor.stop_pipeline(http_client_pipeline.pipeline)
     sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
 
 
@@ -179,21 +180,17 @@ def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
     client_runtime_parameters = {'RAW_DATA': '{"f1": "abc"}{"f1": "xyz"}',
                                  'RESOURCE_URL': 'http://localhost:9999',
                                  'APPLICATION_ID': 'HTTP_APPLICATION_ID'}
-    snapshot = sdc_executor.capture_snapshot(http_client_pipeline.pipeline, start_pipeline=True,
-                                             runtime_parameters=client_runtime_parameters).snapshot
-    origin_data = snapshot[http_client_pipeline.dev_raw_data_source.instance_name]
-    processor_data = snapshot[http_client_pipeline.expression_evaluator.instance_name]
-    assert len(origin_data.output) == 2
-    assert len(processor_data.output) == 2
-    assert origin_data.output[0].field['f1'] == 'abc'
-    assert origin_data.output[1].field['f1'] == 'xyz'
+    sdc_executor.start_pipeline(http_client_pipeline.pipeline, client_runtime_parameters).wait_for_finished()
+
+    origin_data = http_client_pipeline.wiretap_data_source.output_records
+    processor_data = http_client_pipeline.wiretap_expression_evaluator.output_records
+    assert len(origin_data) == 2
+    assert len(processor_data) == 2
+    assert origin_data[0].field['f1'] == 'abc'
+    assert origin_data[1].field['f1'] == 'xyz'
 
     # Since resource URL is invalid, all the records should go to error in target stage.
-    target_data = snapshot[http_client_pipeline.http_client.instance_name]
-    assert len(target_data.error_records) == 2
-
-    # Stop the pipeline.
-    sdc_executor.stop_pipeline(http_client_pipeline.pipeline)
+    assert len(http_client_pipeline.wiretap_expression_evaluator.error_records) == 2
 
 
 @http
@@ -202,7 +199,7 @@ def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client)
     """Test HTTP Lookup Processor for HTTP GET method and split the obtained result
     in different records:
 
-        dev_raw_data_source >> http_client_processor >> trash
+        dev_raw_data_source >> http_client_processor >> wiretap
     """
     #The data returned by the HTTP mock server
     dataArr = [{'A':i,'C':i+1,'G':i+2,'T':i+3} for i in range(10)]
@@ -218,29 +215,28 @@ def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client)
 
         builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy',
+                                           stop_after_first_batch=True)
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
         http_client_processor.set_attributes(data_format='JSON', http_method='GET',
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}',
                                              multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS')
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        dev_raw_data_source >> http_client_processor >> trash
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
         pipeline = builder.build(title='HTTP Lookup GET Processor Split Multiple Records pipeline')
         sdc_executor.add_pipeline(pipeline)
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # ensure HTTP GET result has 10 different records
-        assert len(snapshot[http_client_processor.instance_name].output) == 10
+        assert len(wiretap.output_records) == 10
         # check each
         for x in range(10):
-            assert snapshot[http_client_processor.instance_name].output[x].field[record_output_field]['A'] == x
-            assert snapshot[http_client_processor.instance_name].output[x].field[record_output_field]['C'] == x+1
-            assert snapshot[http_client_processor.instance_name].output[x].field[record_output_field]['G'] == x+2
-            assert snapshot[http_client_processor.instance_name].output[x].field[record_output_field]['T'] == x+3
+            assert wiretap.output_records[x].field[record_output_field]['A'] == x
+            assert wiretap.output_records[x].field[record_output_field]['C'] == x+1
+            assert wiretap.output_records[x].field[record_output_field]['G'] == x+2
+            assert wiretap.output_records[x].field[record_output_field]['T'] == x+3
 
     finally:
         http_mock.delete_mock()
@@ -252,7 +248,7 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
     """Test HTTP Lookup Processor for HTTP GET method and split the obtained result
     in different elements of the same list stored in just one record:
 
-        dev_raw_data_source >> http_client_processor >> trash
+        dev_raw_data_source >> http_client_processor >> wiretap
     """
     #The data returned by the HTTP mock server
     dataArr = [{'A':i,'C':i+1,'G':i+2,'T':i+3} for i in range(10)]
@@ -268,33 +264,34 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
 
         builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy',
+                                           stop_after_first_batch=True)
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
         http_client_processor.set_attributes(data_format='JSON', http_method='GET',
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}',
                                              multiple_values_behavior='ALL_AS_LIST')
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        dev_raw_data_source >> http_client_processor >> trash
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
         pipeline = builder.build(title='HTTP Lookup GET Processor All As List pipeline')
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-
-        # ensure HTTP GET result has 1 record (The list containing the 10 elements)
-        assert len(snapshot[http_client_processor.instance_name].output) == 1
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert len(wiretap.output_records) == 1
         # check each element of the list
         for x in range(10):
-            assert snapshot[http_client_processor.instance_name].output[0].field[record_output_field][x]['A'] == x+0
-            assert snapshot[http_client_processor.instance_name].output[0].field[record_output_field][x]['C'] == x+1
-            assert snapshot[http_client_processor.instance_name].output[0].field[record_output_field][x]['G'] == x+2
-            assert snapshot[http_client_processor.instance_name].output[0].field[record_output_field][x]['T'] == x+3
+            assert wiretap.output_records[0].field[record_output_field][x]['A'] == x+0
+            assert wiretap.output_records[0].field[record_output_field][x]['C'] == x+1
+            assert wiretap.output_records[0].field[record_output_field][x]['G'] == x+2
+            assert wiretap.output_records[0].field[record_output_field][x]['T'] == x+3
 
     finally:
-        http_mock.delete_mock()
-
+        try:
+            logger.info("Deleting http mock")
+            http_mock.delete_mock()
+        except:
+            logger.info("Deleting http mock failed")
 
 @http
 @sdc_min_version("3.17.0")
@@ -305,7 +302,7 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
     exception should be risen that shows the stage error.
 
     We use the pipeline:
-    dev_raw_data_source >> http_client_processor >> trash
+    dev_raw_data_source >> http_client_processor >> wiretap
 
     """
     mock_path = get_random_string(string.ascii_letters, 10)
@@ -344,7 +341,7 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
         sdc_executor.add_pipeline(pipeline)
 
         with pytest.raises(sdc_api.RunError) as exception_info:
-            sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            sdc_executor.start_pipeline(pipeline)
 
         assert 'HTTP_14 - ' in f'{exception_info.value}'
     finally:
@@ -361,7 +358,7 @@ def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, 
     should be one error record containing the right error code.
 
     We use the pipeline:
-         dev_raw_data_source >> http_client_processor >> trash
+         dev_raw_data_source >> http_client_processor >> wiretap
 """
     mock_path = get_random_string(string.ascii_letters, 10)
     fake_mock_path = get_random_string(string.ascii_letters, 10)
@@ -393,13 +390,13 @@ def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, 
                 'action':'ERROR_RECORD'
             },
         ]
-        trash = builder.add_stage('Trash')
-        dev_raw_data_source >> http_client_processor >> trash
+        wiretap = builder.add_wiretap()
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
         pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions')
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        assert len(snapshot[http_client_processor.instance_name].error_records) == 1
-        assert snapshot[http_client_processor.instance_name].error_records[0].field['text'].value == raw_data
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert len(wiretap.error_records) == 1
+        assert wiretap.error_records[0].field['text'].value == raw_data
 
     finally:
         logger.info("Deleting http mock")
@@ -415,7 +412,7 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
         one record containing the "Error Response Body Field" with the error message from the mock server.
 
         We use the pipeline:
-             dev_raw_data_source >> http_client_processor >> trash
+             dev_raw_data_source >> http_client_processor >> wiretap
     """
     mock_path = get_random_string(string.ascii_letters, 10)
     fake_mock_path = get_random_string(string.ascii_letters, 10)
@@ -443,13 +440,13 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
                                              output_field=f'/{record_output_field}')
         http_client_processor.records_for_remaining_statuses = True
         http_client_processor.error_response_body_field = 'errorField'
-        trash = builder.add_stage('Trash')
-        dev_raw_data_source >> http_client_processor >> trash
+        wiretap = builder.add_wiretap()
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
         pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions')
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        assert len(snapshot[http_client_processor.instance_name].output) == 1
-        assert snapshot[http_client_processor.instance_name].output[0].field['result']['errorField'].value == 'No matching preset response'
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['result']['errorField'].value == 'No matching preset response'
     finally:
         logger.info("Deleting http mock")
         http_mock.delete_mock()
@@ -510,7 +507,7 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
         sdc_executor.add_pipeline(pipeline)
 
         with pytest.raises(sdc_api.RunError) as exception_info:
-            sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            sdc_executor.start_pipeline(pipeline)
         assert 'HTTP_67 - ' in f'{exception_info.value}'
 
     finally:
@@ -591,20 +588,10 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
         pipeline_title = f'HTTP Lookup Processor pipeline Response Actions with Pagination {rand_pipeline_name}'
         pipeline = builder.build(title=pipeline_title)
         sdc_executor.add_pipeline(pipeline)
-
-        sdc_executor.start_pipeline(pipeline, wait=False).wait_for_status(status='RUN_ERROR', ignore_errors=False)
-        snapshots = sdc_executor.get_snapshots(pipeline)
-
-        assert len(snapshots)==1
-        log_line = next(
-            (
-                line for line in reversed(sdc_executor.get_logs()._data)
-                if 'HTTP_19 - ' in line.get('message') and pipeline_title in line.get('s-entity')
-            ),
-            None
-        )
-        assert log_line is not None
-
+        try:
+            sdc_executor.start_pipeline(pipeline, wait=False)
+        except Exception as e:
+            assert 'HTTP_19 - ' in str(e)
     finally:
         logger.info("Deleting http mock")
         http_mock.delete_mock()
@@ -621,7 +608,7 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
     sending a request to a pre-defined HTTP server endpoint
     (testPostJsonEndpoint) and getting expected data. The pipeline looks like:
 
-        dev_raw_data_source >> http_client_processor >> trash
+        dev_raw_data_source >> http_client_processor >> wiretap
     """
     raw_dict = dict(city='San Francisco')
     raw_data = json.dumps(raw_dict)
@@ -650,7 +637,7 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
 
         builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
         # for POST/PATCH, we post 'raw_data' and expect 'expected_dict' as response data
         http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
@@ -658,18 +645,16 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
                                              http_method=method, request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}')
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        dev_raw_data_source >> http_client_processor >> trash
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
         pipeline = builder.build(title=f'HTTP Lookup {method} Processor pipeline')
         sdc_executor.add_pipeline(pipeline)
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # ensure HTTP POST/PATCH result is only stored to one record and assert the data
-        assert len(snapshot[http_client_processor.instance_name].output) == 1
-        record = snapshot[http_client_processor.instance_name].output[0].field
+        assert len(wiretap.output_records) == 1
+        record = wiretap.output_records[0].field
         if expected_data:
             assert record[record_output_field]['latitude'] == expected_dict['latitude']
             assert record[record_output_field]['longitude'] == expected_dict['longitude']
@@ -708,7 +693,7 @@ def test_http_destination(sdc_builder, sdc_executor, http_client, method, reques
 
         builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
         http_client_destination = builder.add_stage('HTTP Client', type='destination')
         # for POST/PATCH, we post 'raw_data' and expect 'expected_dict' as response data
         http_client_destination.set_attributes(data_format='JSON',
@@ -720,9 +705,7 @@ def test_http_destination(sdc_builder, sdc_executor, http_client, method, reques
         dev_raw_data_source >> http_client_destination
         pipeline = builder.build(title=f'HTTP {method} Destination pipeline')
         sdc_executor.add_pipeline(pipeline)
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Check that the HTTP server got the expected data
         r = http_mock.get_request(0)
@@ -863,20 +846,21 @@ def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, s
                                 file_type='TEXT',
                                 files_prefix='example',
                                 files_suffix='txt')
+        wiretap = builder.add_wiretap()
 
-        http_source >> localfs
+        http_source >> [localfs, wiretap.destination]
 
         pipeline = builder.build(title='HTTP Client Origin Keep All Fields not repeating records when writing LocalFS')
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        # Check the output on the snapshot
-        for value in snapshot.snapshot_batches[0][http_source.instance_name].output_lanes.values():
-            assert len(value) == 3
-            for i in range(3):
-                assert value[i].field['metadata']=='Example'
-                assert value[i].field['data']['id']==i
-                assert value[i].field['data']['name']==dataArr['data'][i]['name']
+        # Check the output on the wiretap
+        records = wiretap.output_records
+        assert len(records) == 3
+        for i in range(3):
+            assert records[i].field['metadata']=='Example'
+            assert records[i].field['data']['id']==i
+            assert records[i].field['data']['name']==dataArr['data'][i]['name']
 
         logger.info("Creating the second pipeline")
 
@@ -891,17 +875,19 @@ def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, s
                              json_content='MULTIPLE_OBJECTS',
                              batch_size_in_recs=10)
 
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap_second = pipeline_builder.add_wiretap()
 
-        directory >> trash
+        directory >> wiretap_second.destination
 
         pipeline_directory = pipeline_builder.build(title='HTTP Client Origin Keep All Fields not repeating records when writing LocalFS'
                                        ' (Read the file)')
         sdc_executor.add_pipeline(pipeline_directory)
-        snapshot = sdc_executor.capture_snapshot(pipeline_directory, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline_directory)
+        sdc_executor.wait_for_pipeline_metric(pipeline_directory, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline_directory)
-        records = snapshot.snapshot_batches[0][directory.instance_name].output
-        assert len(value) == 3
+
+        records = wiretap.output_records
+        assert len(records) == 3
         for i in range(3):
             assert records[i].field['metadata']=='Example'
             assert records[i].field['data']['id']==i
@@ -982,17 +968,16 @@ def test_http_client_propagate_all_records(sdc_builder, sdc_executor, http_clien
                                    mode='POLLING',
                                    records_for_remaining_statuses=True
                                    )
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        http_source >> trash
+        http_source >> wiretap.destination
         pipeline = builder.build(title='HTTP Client Origin propagates 404 record')
         sdc_executor.add_pipeline(pipeline)
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # ensure HTTP GET result has 1 records
-        assert len(snapshot[http_source.instance_name].output) == 1
-        assert snapshot[http_source.instance_name].output[0].header.values['HTTP-Status']=='404'
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].header.values['HTTP-Status']=='404'
 
     finally:
         http_mock.delete_mock()
@@ -1020,21 +1005,21 @@ def test_http_client_http_status_on_header(sdc_builder, sdc_executor, http_clien
                                    mode='POLLING',
                                    records_for_remaining_statuses=True
                                    )
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        http_source >> trash
+        http_source >> wiretap.destination
         pipeline = builder.build(title='HTTP Client Origin HTTP-Status on header')
         sdc_executor.add_pipeline(pipeline)
-
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
         # ensure HTTP GET result has at least 1 record
-        num_of_els = len(snapshot[http_source.instance_name].output)
+        num_of_els = len(wiretap.output_records)
         assert num_of_els > 0
         # it has the HTTP-Status on header
         for x in range(num_of_els):
-            assert 'HTTP-Status' in snapshot[http_source.instance_name].output[x].header.values
+            assert 'HTTP-Status' in wiretap.output_records[x].header.values
 
     finally:
         http_mock.delete_mock()
@@ -1212,7 +1197,7 @@ def test_http_processor_response_JSON_empty(sdc_builder, sdc_executor, http_clie
     Test when the http processor stage has as a response an empty JSON.
 
     We use the pipeline:
-    dev_raw_data_source >> http_client_processor >> trash
+    dev_raw_data_source >> http_client_processor >> wiretap
 
     Test for SDC-15335.
     """
@@ -1245,30 +1230,26 @@ def test_http_processor_response_JSON_empty(sdc_builder, sdc_executor, http_clie
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}',
                                              missing_values_behavior=miss_val_bh)
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        dev_raw_data_source >> http_client_processor >> trash
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
         pipeline = builder.build(title=f'HTTP Lookup Processor pipeline {miss_val_bh}')
         sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        snapshot_cmd = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=1,
-                                                     batch_size=1)
-        snapshot = snapshot_cmd.wait_for_finished().snapshot
-
-        # ensure HTTP POST result produce 0 records and status STOPPED
+        # ensure HTTP POST result produce 0 records
         if miss_val_bh == 'SEND_TO_ERROR':
-            stage = snapshot[http_client_processor.instance_name]
-            logger.info('Error record %s ...', stage.error_records)
-            assert 1 == len(stage.error_records)
-            assert len(stage.output) == 0
-            assert 'HTTP_68' == stage.error_records[0].header['errorCode']
+            assert 1 == len(wiretap.error_records)
+            assert len(wiretap.output_records) == 0
+            assert 'HTTP_68' == wiretap.error_records[0].header['errorCode']
 
         else:
-            assert len(snapshot[http_client_processor.instance_name].output) == 1
-            stage = snapshot[http_client_processor.instance_name]
-            assert len(stage.output) == 1
-            assert stage.output[0].field['text'].value == '{"city": "San Francisco"}'
+            # ensure HTTP POST result produce 1 record
+            assert 0 == len(wiretap.error_records)
+            assert len(wiretap.output_records) == 1
+            assert wiretap.output_records[0].field['text'].value == '{"city": "San Francisco"}'
 
+        # ensure status is finished
         status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         assert 'FINISHED' == status
 
