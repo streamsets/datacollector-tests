@@ -24,11 +24,14 @@ logger.setLevel(logging.DEBUG)
 
 MLEAP_AIRBNB_MODEL_PATH = '/resources/resources/mleap_airbnb_model/airbnb.model.rf'
 
+
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-mleap-lib')
+
     return hook
+
 
 @sdc_min_version('3.5.0')
 def test_mleap_evaluator(sdc_builder, sdc_executor):
@@ -39,7 +42,6 @@ def test_mleap_evaluator(sdc_builder, sdc_executor):
     With given raw_data below, MLeap Evaluator processor evaluate each record using the
     sample MLeap Airbnb Price Prediction Model.
     """
-    name_separator = '.'
     raw_data = """
         {
             "security_deposit": 50.0,
@@ -60,8 +62,9 @@ def test_mleap_evaluator(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=raw_data,
+                                                                                           stop_after_first_batch=True)
 
     mleap_evaluator = pipeline_builder.add_stage('MLeap Evaluator')
     mleap_input_configs = [
@@ -125,17 +128,16 @@ def test_mleap_evaluator(sdc_builder, sdc_executor):
         output_field='/output'
     )
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> mleap_evaluator >> trash
+    dev_raw_data_source >> mleap_evaluator >> wiretap.destination
     pipeline = pipeline_builder.build('MLeap Airbnb Price Prediction Model Pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # assert MLeap Model evaluation Output
-    tensorflow_output = snapshot[mleap_evaluator.instance_name].output
+    tensorflow_output = wiretap.output_records
     assert isinstance(tensorflow_output[0].field['output'], OrderedDict)
     output_field_value = tensorflow_output[0].field['output']['price_prediction'].value
     assert output_field_value == 218.2767196535019
