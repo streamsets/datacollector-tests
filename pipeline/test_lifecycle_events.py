@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import logging
-
 import pytest
+
+from collections import namedtuple
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
@@ -79,11 +80,12 @@ def successful_receiver_pipeline(sdc_builder):
     origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
     origin.sdc_rpc_id = SDC_RPC_ID
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    origin >> trash
+    origin >> wiretap.destination
 
-    yield builder.build('Succeeding Lifecycle Receiver')
+    pipeline = builder.build('Succeeding Lifecycle Receiver')
+    yield namedtuple('Pipeline', ['pipeline', 'wiretap'])(pipeline, wiretap)
 
 
 @pytest.fixture(scope='function')
@@ -115,27 +117,26 @@ def test_start_event(generator_trash_builder, successful_receiver_pipeline, sdc_
 
     start_event_pipeline = generator_trash_builder.build('Start Event')
 
-    sdc_executor.add_pipeline(start_event_pipeline, successful_receiver_pipeline)
+    sdc_executor.add_pipeline(start_event_pipeline, successful_receiver_pipeline.pipeline)
 
     try:
         # Since there will be exactly one event generated we need to make sure that:
-        # * We catch the first batch on receiver side otherwise we miss the event
+        # * Wiretap output records has one record
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
-        # * We block on the snapshot after generating pipeline started otherwise the snapshot won't return
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True,
-                                                         wait=False)
+
+        sdc_executor.start_pipeline(successful_receiver_pipeline.pipeline)
         sdc_executor.start_pipeline(start_event_pipeline)
 
         # And validate that the event arrived to the receiver pipeline
-        snapshot = snapshot_command.wait_for_finished().snapshot
-        record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
-
+        sdc_executor.wait_for_pipeline_metric(successful_receiver_pipeline.pipeline, 'input_record_count', 1)
+        assert len(successful_receiver_pipeline.wiretap.output_records) == 1
+        record = successful_receiver_pipeline.wiretap.output_records[0]
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-start'
         assert record.field['user'].value == 'admin'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline.pipeline)
         sdc_executor.stop_pipeline(start_event_pipeline)
 
 
@@ -148,25 +149,23 @@ def test_start_event_with_job_info(generator_trash_builder, successful_receiver_
 
     start_event_pipeline = generator_trash_builder.build('Start Event')
     start_event_pipeline.add_parameters(JOB_ID='stfJobId', JOB_NAME='stfJobName')
-    sdc_executor.add_pipeline(start_event_pipeline, successful_receiver_pipeline)
+    sdc_executor.add_pipeline(start_event_pipeline, successful_receiver_pipeline.pipeline)
 
     try:
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline,
-                                                         start_pipeline=True,
-                                                         wait=False)
+        sdc_executor.start_pipeline(successful_receiver_pipeline.pipeline, wait=False)
         sdc_executor.start_pipeline(start_event_pipeline)
 
         # And validate that the event arrived to the receiver pipeline
-        snapshot = snapshot_command.wait_for_finished().snapshot
-        record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
-
+        sdc_executor.wait_for_pipeline_metric(successful_receiver_pipeline.pipeline, 'input_record_count', 1)
+        assert  len(successful_receiver_pipeline.wiretap.output_records) == 1
+        record = successful_receiver_pipeline.wiretap.output_records[0]
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-start'
         assert record.field['user'].value == 'admin'
         assert record.field['jobId'].value == 'stfJobId'
         assert record.field['jobName'].value == 'stfJobName'
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline.pipeline)
         sdc_executor.stop_pipeline(start_event_pipeline)
 
 @sdc_min_version('2.7.0.0')
@@ -178,29 +177,27 @@ def test_stop_event_user_action(generator_trash_builder, successful_receiver_pip
 
     stop_event_pipeline = generator_trash_builder.build('Stop Event - User Action')
 
-    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline)
+    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline.pipeline)
 
     try:
         # Since there will be exactly one event generated we need to make sure that:
-        # * We catch the first batch on receiver side otherwise we miss the event
+        # * Wiretap output records has one record
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
-        # * We block on the snapshot after generating pipeline started otherwise the snapshot won't return
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True,
-                                                         wait=False)
+        sdc_executor.start_pipeline(successful_receiver_pipeline.pipeline, wait=False)
         sdc_executor.start_pipeline(stop_event_pipeline)
         sdc_executor.stop_pipeline(stop_event_pipeline)
 
         # And validate that the event arrived to the receiver pipeline
-        snapshot = snapshot_command.wait_for_finished().snapshot
-
-        record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
+        sdc_executor.wait_for_pipeline_metric(successful_receiver_pipeline.pipeline, 'input_record_count', 1)
+        assert  len(successful_receiver_pipeline.wiretap.output_records) == 1
+        record = successful_receiver_pipeline.wiretap.output_records[0]
 
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
         assert record.field['reason'].value == 'USER_ACTION'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline.pipeline)
 
 
 @sdc_min_version('3.17.0')
@@ -212,19 +209,17 @@ def test_stop_event_with_job_info(generator_trash_builder, successful_receiver_p
 
     stop_event_pipeline = generator_trash_builder.build('Stop Event - Job Info')
     stop_event_pipeline.add_parameters(JOB_ID='stfJobId', JOB_NAME='stfJobName')
-    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline)
+    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline.pipeline)
 
     try:
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline,
-                                                         start_pipeline=True,
-                                                         wait=False)
+        sdc_executor.start_pipeline(successful_receiver_pipeline.pipeline, wait=False)
         sdc_executor.start_pipeline(stop_event_pipeline)
         sdc_executor.stop_pipeline(stop_event_pipeline)
 
-        # And validate that the event arrived to the receiver pipeline
-        snapshot = snapshot_command.wait_for_finished().snapshot
-
-        record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
+        #Validate that the event arrived to the receiver pipeline
+        sdc_executor.wait_for_pipeline_metric(successful_receiver_pipeline.pipeline, 'input_record_count', 1)
+        assert  len(successful_receiver_pipeline.wiretap.output_records) == 1
+        record = successful_receiver_pipeline.wiretap.output_records[0]
 
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
@@ -232,7 +227,7 @@ def test_stop_event_with_job_info(generator_trash_builder, successful_receiver_p
         assert record.field['jobId'].value == 'stfJobId'
         assert record.field['jobName'].value == 'stfJobName'
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline.pipeline)
 
 
 @sdc_min_version('2.7.0.0')
@@ -244,28 +239,26 @@ def test_stop_event_finished(generator_finisher_builder, successful_receiver_pip
 
     stop_event_pipeline = generator_finisher_builder.build('Stop Event - Finished')
 
-    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline)
+    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline.pipeline)
 
     try:
         # Since there will be exactly one event generated we need to make sure that:
-        # * We catch the first batch on receiver side otherwise we miss the event
+        # * Wiretap output records has one record
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
-        # * We block on the snapshot after generating pipeline started otherwise the snapshot won't return
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True,
-                                                         wait=False)
+        sdc_executor.start_pipeline(successful_receiver_pipeline.pipeline, wait=False)
         sdc_executor.start_pipeline(stop_event_pipeline)
 
-        # And validate that the event arrived to the receiver pipeline
-        snapshot = snapshot_command.wait_for_finished().snapshot
-
-        record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
+        #Validate that the event arrived to the receiver pipeline
+        sdc_executor.wait_for_pipeline_metric(successful_receiver_pipeline.pipeline, 'input_record_count', 1)
+        assert  len(successful_receiver_pipeline.wiretap.output_records) == 1
+        record = successful_receiver_pipeline.wiretap.output_records[0]
 
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
         assert record.field['reason'].value == 'FINISHED'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline.pipeline)
 
 
 @sdc_min_version('2.7.0.0')
@@ -278,28 +271,26 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
     stop_event_pipeline = generator_failure_builder.build('Stop Event - Failure')
     stop_event_pipeline.configuration['shouldRetry'] = False
 
-    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline)
+    sdc_executor.add_pipeline(stop_event_pipeline, successful_receiver_pipeline.pipeline)
 
     try:
         # Since there will be exactly one event generated we need to make sure that:
-        # * We catch the first batch on receiver side otherwise we miss the event
+        # * Wiretap output records has one record
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
-        # * We block on the snapshot after generating pipeline started otherwise the snapshot won't return
-        snapshot_command = sdc_executor.capture_snapshot(successful_receiver_pipeline, start_pipeline=True,
-                                                         wait=False)
+        sdc_executor.start_pipeline(successful_receiver_pipeline.pipeline, wait=False)
         sdc_executor.start_pipeline(stop_event_pipeline)
 
-        # And validate that the event arrived to the receiver pipeline
-        snapshot = snapshot_command.wait_for_finished().snapshot
-
-        record = snapshot[successful_receiver_pipeline.origin_stage].output[0]
+        #Validate that the event arrived to the receiver pipeline
+        sdc_executor.wait_for_pipeline_metric(successful_receiver_pipeline.pipeline, 'input_record_count', 1)
+        assert  len(successful_receiver_pipeline.wiretap.output_records) == 1
+        record = successful_receiver_pipeline.wiretap.output_records[0]
 
         assert record is not None
         assert record.header['values']['sdc.event.type'] == 'pipeline-stop'
         assert record.field['reason'].value == 'FAILURE'
 
     finally:
-        sdc_executor.stop_pipeline(successful_receiver_pipeline)
+        sdc_executor.stop_pipeline(successful_receiver_pipeline.pipeline)
 
 
 @sdc_min_version('2.7.0.0')
