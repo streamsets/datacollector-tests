@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import logging
 import string
 
 import pytest
@@ -23,6 +24,8 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+AZURE_IOT_EVENT_HUB_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_eventhubs_EventHubConsumerDSource'
+
 
 @azure('eventhub')
 @sdc_min_version('2.7.1.0')
@@ -31,7 +34,7 @@ logger = logging.getLogger(__name__)
 def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_data_format, use_websockets):
     """Test for Azure Event Hub producer destination stage. We do so by using two pipelines. The 1st, Event Hub
     producer pipeline which publishes data which is captured by 2nd, Event Hub consumer. We then assert data at
-    the 2nd pipeline by doing a snapshot and comparing it to what was ingested at the 1st pipeline. We use a
+    the 2nd pipeline by writing to wiretap and comparing it to what was ingested at the 1st pipeline. We use a
     record deduplicator processor in between dev raw data source origin and Event Hub producer destination in order
     to determine exactly what has been ingested. The pipelines looks like:
 
@@ -96,13 +99,13 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_
     builder = sdc_builder.get_pipeline_builder()
     azure_iot_event_hub_consumer = builder.add_stage(name=AZURE_IOT_EVENT_HUB_STAGE_NAME)
 
-    # Setting the Consumer Pipeline' data format as Text, so that the XML Header line can be verfied
+    # Setting the Consumer Pipeline' data format as Text, so that the XML Header line can be verified
     consumer_data_format = 'TEXT' if destination_data_format == 'XML' else 'JSON'
     azure_iot_event_hub_consumer.set_attributes(container_name=container_name, data_format=consumer_data_format,
                                                 event_hub_name=event_hub_name)
-    consumer_trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    azure_iot_event_hub_consumer >> consumer_trash
+    azure_iot_event_hub_consumer >> wiretap.destination
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
@@ -117,13 +120,13 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_
 
         # publish events and read through the consumer pipeline to assert
         sdc_executor.start_pipeline(producer_dest_pipeline)
-        snapshot = sdc_executor.capture_snapshot(consumer_origin_pipeline, start_pipeline=True,
-                                                 timeout_sec=120).snapshot
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', 1, timeout_sec=120)
 
         sdc_executor.stop_pipeline(producer_dest_pipeline)
         sdc_executor.stop_pipeline(consumer_origin_pipeline, wait=False)
 
-        result_records = snapshot[azure_iot_event_hub_consumer.instance_name].output
+        result_records = wiretap.output_records
         if destination_data_format == 'JSON':
             assert len(result_records) == 1
             assert result_records[0].field == raw_list
