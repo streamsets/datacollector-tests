@@ -14,6 +14,7 @@
 
 
 import logging
+
 import pytest
 from streamsets.testframework.markers import sdc_min_version
 
@@ -22,11 +23,14 @@ logger.setLevel(logging.DEBUG)
 
 DATABRICKS_ML_STRING_MODEL_PATH = '/resources/resources/databricks_ml_model/20news_pipeline'
 
+
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-databricks-ml_2-lib')
+
     return hook
+
 
 @sdc_min_version('3.5.0')
 def test_databricks_ml_evaluator_string_model(sdc_builder, sdc_executor):
@@ -46,8 +50,9 @@ def test_databricks_ml_evaluator_string_model(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=raw_data,
+                                                                                           stop_after_first_batch=True)
 
     databricks_ml_evaluator = pipeline_builder.add_stage('Databricks ML Evaluator')
 
@@ -56,17 +61,16 @@ def test_databricks_ml_evaluator_string_model(sdc_builder, sdc_executor):
                                            output_field='/output',
                                            saved_model_path=DATABRICKS_ML_STRING_MODEL_PATH)
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> databricks_ml_evaluator >> trash
+    dev_raw_data_source >> databricks_ml_evaluator >> wiretap.destination
     pipeline = pipeline_builder.build('Databricks ML String Input')
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     # assert Databricks ML Model evaluation Output
-    ml_output = snapshot[databricks_ml_evaluator.instance_name].output
+    ml_output = wiretap.output_records
     output_field = ml_output[0].field['output']
     assert isinstance(output_field, dict)
     assert isinstance(output_field['prediction'].value, float)
