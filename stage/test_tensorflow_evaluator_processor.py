@@ -14,6 +14,7 @@
 
 
 import logging
+
 import pytest
 from streamsets.testframework.markers import sdc_min_version
 
@@ -22,11 +23,14 @@ logger.setLevel(logging.DEBUG)
 
 TENSOR_FLOW_IRIS_MODEL_PATH = '/resources/resources/tensorflow_iris_model'
 
+
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-tensorflow-lib')
+
     return hook
+
 
 @sdc_min_version('3.5.0')
 def test_tensorflow_evaluator(sdc_builder, sdc_executor):
@@ -37,7 +41,6 @@ def test_tensorflow_evaluator(sdc_builder, sdc_executor):
     With given raw_data below, TensorFlow Evaluator processor evaluate each record using the
     sample Iris classification model.
     """
-    name_separator = '.'
     raw_data = """
         {
           "petalLength": 6.4,
@@ -67,8 +70,9 @@ def test_tensorflow_evaluator(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                           raw_data=raw_data,
+                                                                                           stop_after_first_batch=True)
 
     field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter_configs = [
@@ -149,20 +153,17 @@ def test_tensorflow_evaluator(sdc_builder, sdc_executor):
         output_configs=tensorflow_output_configs
     )
 
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
 
-    dev_raw_data_source >> field_type_converter_fields >> tensorflow_evaluator >> trash
+    dev_raw_data_source >> field_type_converter_fields >> tensorflow_evaluator >> wiretap.destination
     pipeline = pipeline_builder.build('TensorFlow IRIS JSON Example Pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    sdc_executor.validate_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
+    assert len(wiretap.output_records) == 4
 
-    # assert TensorFlow Model evaluation Output
-    tensorflow_output = snapshot[tensorflow_evaluator.instance_name].output
-    output_field = tensorflow_output[0].field['output']
+    output_field = wiretap.output_records[0].field['output']
     assert isinstance(output_field, dict)
     assert isinstance(output_field['dnn/head/predictions/ExpandDims_0'], list)
     assert isinstance(output_field['dnn/head/predictions/ExpandDims_0'][0].value, int)
