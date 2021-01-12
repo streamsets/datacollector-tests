@@ -48,5 +48,6 @@ def test_scripting_origin_default_script(sdc_builder, sdc_executor, stage_name):
     sdc_executor.start_pipeline(pipeline)
     sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
     sdc_executor.stop_pipeline(pipeline)
-    records = [record.field for record in wiretap.output_records]
-    assert records == [f':{i+1}' for i in range(len(wiretap.output_records))]
+    records = [int(str(record.field)[1:]) for record in wiretap.output_records]
+    records.sort()
+    assert records == [i+1 for i in range(len(wiretap.output_records))]
