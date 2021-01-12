@@ -25,51 +25,6 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope='module')
-def sdc_common_hook():
-    def hook(data_collector):
-        data_collector.sdc_properties['stage.conf_com.streamsets.pipeline.stage.executor'
-                                      '.shell.impersonation_mode'] = 'current_user'
-
-    return hook
-
-
-def test_shell_executor_impersonation(sdc_builder, sdc_executor):
-    """Test proper impersonation on the Shell executor side. This is a dual pipeline test to test the executor
-    side effect."""
-    # Build a pipeline writing the name of the user executing shell commands to a random file under /tmp.
-    # The Dev Raw Data Source is basically a noop origin and we use a Pipeline Finisher Executor to stop after 1 batch.
-    filepath = f'/tmp/{get_random_string()}'
-
-    builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON', raw_data='{}')
-    shell = builder.add_stage('Shell').set_attributes(script=f'echo `whoami` > {filepath}')
-    pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
-    dev_raw_data_source >> [shell, pipeline_finisher_executor]
-
-    shell_pipeline = builder.build()
-    sdc_executor.add_pipeline(shell_pipeline)
-    sdc_executor.start_pipeline(shell_pipeline).wait_for_finished()
-
-    # Build a separate pipeline to read the file written and check, using wiretap, that the "correct" username
-    # is in the file.
-    builder = sdc_builder.get_pipeline_builder()
-    file_to_tail = [dict(fileRollMode='REVERSE_COUNTER', patternForToken='.*', fileFullPath=f'{filepath}')]
-    file_tail = builder.add_stage('File Tail').set_attributes(data_format='TEXT', file_to_tail=file_to_tail)
-    wiretap_1 = builder.add_wiretap()
-    wiretap_2 = builder.add_wiretap()
-    pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
-    file_tail >> [wiretap_1.destination, pipeline_finisher_executor]
-    file_tail >> wiretap_2.destination
-
-    file_tail_pipeline = builder.build()
-    sdc_executor.add_pipeline(file_tail_pipeline)
-    sdc_executor.start_pipeline(file_tail_pipeline).wait_for_finished()
-
-    records = [record.field for record in wiretap_1.output_records]
-    assert records == [{'text': sdc_executor.username}]
-
-
 def test_stream_selector_processor(sdc_builder, sdc_executor):
     """Smoke test for the Stream Selector processor.
 
