@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A module to test various SDC stages of Azure."""
-
-import json
 import logging
 import os
 import string
 
 import pytest
-
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -28,7 +24,6 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 HDP_LIBRARY_NAME = 'streamsets-datacollector-hdp_2_6-lib'
-SDC_RPC_PORT = 20000 # Specify a port for SDC RPC stages to use.
 
 
 @pytest.fixture(scope='module')
@@ -42,14 +37,11 @@ def sdc_common_hook():
 @azure('wasb')
 @sdc_min_version('3.2.0.0')
 def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
-    """Test for Hadoop FS standalone origin using Azure Storage Blob. Since the origin is multithreaded, we use
-    SDC RPC destination and origin wiring to snapshot capture the single batch and assert. The pipeline looks like:
+    """Test for Hadoop FS standalone origin using Azure Storage Blob. The pipeline looks like:
 
     Hadoop FS Standalone pipeline:
-        hadoop_fs_standalone >> sdc_rpc_destination
+        hadoop_fs_standalone >> wiretap
                              >= pipeline_finished_executor
-    Snapshot pipeline:
-        sdc_rpc_origin >> trash
     """
     no_of_records = 20
     no_of_threads = 10
@@ -59,7 +51,8 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
     # Build Hadoop FS Standalone origin pipeline
     builder = sdc_builder.get_pipeline_builder()
     hadoop_fs_standalone = builder.add_stage('Hadoop FS Standalone', type='origin', library=HDP_LIBRARY_NAME)
-    hadoop_fs_standalone.set_attributes(batch_wait_time_in_secs=5, data_format='JSON',
+    hadoop_fs_standalone.set_attributes(batch_wait_time_in_secs=5,
+                                        data_format='TEXT',
                                         files_directory=files_dir_path,
                                         file_name_pattern='*',
                                         file_name_pattern_mode='GLOB',
@@ -72,55 +65,31 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    sdc_rpc_destination = builder.add_stage('SDC RPC', type='destination')
-    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_PORT))
-    sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
+    wiretap = builder.add_wiretap()
 
+    hadoop_fs_standalone >> wiretap.destination
     hadoop_fs_standalone >= pipeline_finished_executor
-    hadoop_fs_standalone >> sdc_rpc_destination
     hadoop_fs_pipeline = builder.build(title='Azure WASB for Hadoop FS origin').configure_for_environment(azure)
 
-    # Build the Snapshot pipeline
-    builder = sdc_builder.get_pipeline_builder()
-
-    sdc_rpc_origin = builder.add_stage('SDC RPC', type='origin')
-    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_PORT
-    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
-
-    trash = builder.add_stage('Trash')
-
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Snapshot pipeline')
-
-    sdc_executor.add_pipeline(hadoop_fs_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(hadoop_fs_pipeline)
 
     try:
         blob_service = azure.storage.account.create_block_blob_service()
         container_name = azure.storage.wasb_container
 
         logger.info('Creating blob data under %s container with path as %s', container_name, files_dir_path)
-        data = [f'{{"message": "hello {i}"}}' for i in range(no_of_records)]
-        blob_paths = ['{}/{}'.format(files_dir_name, get_random_string(string.ascii_letters, 10))
-                      for _ in range(no_of_records)]
+        data = [f'{{message: hello {i}}}' for i in range(no_of_records)]
+        blob_paths = [f'{files_dir_name}/{get_random_string()}' for _ in range(no_of_records)]
+
         for idx, blob_path in enumerate(blob_paths):
             logger.debug('Creating blob data at %s', blob_path)
             blob_service.create_blob_from_text(container_name, blob_path, data[idx])
 
-        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True,
-                                                                  wait=False, batches=no_of_records, batch_size=1) # batches won't work till SDC-8765 is fixed
         logger.debug('Starting Hadoop FS Standalone pipeline and waiting for it to finish ...')
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished()
 
-        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        records_from_snapshot = [record.field for record in snapshot[sdc_rpc_origin.instance_name].output]
-
-        sdc_executor.stop_pipeline(snapshot_pipeline, force=True)
-
-        history = sdc_executor.get_pipeline_history(snapshot_pipeline)
-        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == no_of_records
-        data_json = [json.loads(d) for d in data]
-        assert all([record in data_json for record in records_from_snapshot]) #TODO checks only subsets of data till SDC-8765 is fixed
+        assert len(wiretap.output_records) == no_of_records
+        assert sorted(data) == sorted([str(record.field['text']) for record in wiretap.output_records])
     finally:
         logger.info('Deleting blob data under %s container with path as %s', container_name, files_dir_path)
         for blob_path in blob_paths:
