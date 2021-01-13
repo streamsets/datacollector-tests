@@ -175,19 +175,19 @@ def test_custom_log_format(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
 @ftp
 @sdc_min_version('3.9.0')
-@pytest.mark.parametrize('stage_attributes', [{'data_format': 'AVRO'},
-                                              {'data_format': 'DELIMITED'},
-                                              {'data_format': 'EXCEL'},
+@pytest.mark.parametrize('stage_attributes', [{'data_format': 'DELIMITED'},
                                               {'data_format': 'JSON'},
-                                              {'data_format': 'LOG'},
-                                              {'data_format': 'PROTOBUF'},
-                                              {'data_format': 'SDC_JSON'},
                                               {'data_format': 'TEXT'},
-                                              {'data_format': 'WHOLE_FILE'},
-                                              {'data_format': 'XML'}])
+                                              {'data_format': 'WHOLE_FILE'}
+                                              # {'data_format': 'AVRO'},
+                                              # {'data_format': 'EXCEL'},
+                                              # {'data_format': 'PROTOBUF'},
+                                              # {'data_format': 'SDC_JSON'},
+                                              # {'data_format': 'LOG'},
+                                              # {'data_format': 'XML'}
+                                              ])
 def test_data_format(sdc_builder, sdc_executor, stage_attributes, ftp):
     DATA = [{'Alex': 'Developer'}, {'Xavi': 'Developer'}]
     ftp_file_name = get_random_string()
@@ -198,14 +198,15 @@ def test_data_format(sdc_builder, sdc_executor, stage_attributes, ftp):
         sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client',
                                                           type='origin').set_attributes(file_name_pattern=ftp_file_name,
                                                                                         **stage_attributes)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
-        sftp_ftp_ftps_client >> trash
+        sftp_ftp_ftps_client >> wiretap.destination
         pipeline = pipeline_builder.build().configure_for_environment(ftp)
         sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        records = [record.field for record in wiretap.output_records]
         if sftp_ftp_ftps_client.data_format == 'JSON':
             assert records == DATA if sftp_ftp_ftps_client.json_content == 'ARRAY_OBJECTS' else [DATA]
 
@@ -344,14 +345,14 @@ def test_file_name_pattern_mode(sdc_builder, sdc_executor, stage_attributes, sft
         file_name_pattern = f'{prefix}*.txt' if stage_attributes['file_name_pattern_mode'] == 'GLOB' else f'{prefix}_[A-Za-z]+.txt'
         sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
         sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name_pattern, **stage_attributes)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+        sftp_ftp_ftps_client >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build().configure_for_environment(sftp)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         assert records == [DATA]
     finally:
         if not keep_data:
@@ -526,14 +527,14 @@ def test_grok_pattern_definition(sdc_builder, sdc_executor, stage_attributes, gr
                                             grok_pattern='%{MYCUSTOMLOG}',
                                             grok_pattern_definition=grok_pattern_definition,
                                             **stage_attributes)
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
         pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
-        sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+        sftp_ftp_ftps_client >> [wiretap.destination, pipeline_finisher]
         pipeline = builder.build().configure_for_environment(sftp)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         assert records == [EXPECTED_OUTPUT]
 
     finally:
@@ -576,14 +577,14 @@ def test_header_line(sdc_builder, sdc_executor, stage_attributes, sftp, keep_dat
         builder = sdc_builder.get_pipeline_builder()
         sftp_ftp_ftps_client = builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
         sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name, **stage_attributes)
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
         pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
-        sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+        sftp_ftp_ftps_client >> [wiretap.destination, pipeline_finisher]
         pipeline = builder.build().configure_for_environment(sftp)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         if stage_attributes['header_line'] == 'IGNORE_HEADER':
             assert records == EXPECTED_IGNORE_HEADER_OUTPUT
         elif stage_attributes['header_line'] == 'NO_HEADER':
@@ -656,14 +657,14 @@ def test_include_custom_delimiter(sdc_builder, sdc_executor, stage_attributes, s
         sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name,
                                             custom_delimiter=CUSTOM_DELIMITER,
                                             **stage_attributes)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+        sftp_ftp_ftps_client >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build().configure_for_environment(sftp)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         assert records == EXPECTED_OUTPUT
     finally:
         if not keep_data:
@@ -775,14 +776,14 @@ def test_max_line_length(sdc_builder, sdc_executor, stage_attributes, sftp, max_
         sftp_ftp_ftps_client.set_attributes(field_path_to_regex_group_mapping=LOG_FIELD_MAPPING,
                                             log_format=LOG_FORMAT,
                                             regular_expression=REGULAR_EXPRESSION)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+    sftp_ftp_ftps_client >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(sftp)
     sdc_executor.add_pipeline(pipeline)
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         if stage_attributes['data_format'] == 'TEXT':
             texts = [record['text'] for record in records]
             assert texts == [CONTENT[:max_line_length]]
@@ -818,15 +819,15 @@ def test_max_object_length_in_chars(sdc_builder, sdc_executor, stage_attributes,
     pipeline_builder = sdc_builder.get_pipeline_builder()
     sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
     sftp_ftp_ftps_client.set_attributes(file_name_pattern=file_name, max_object_length_in_chars=100, **stage_attributes)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+    sftp_ftp_ftps_client >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(sftp)
 
     sdc_executor.add_pipeline(pipeline)
     try:
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
 
         assert records == EXPECTED_OUTPUT
     finally:
@@ -1148,9 +1149,9 @@ def test_resource_url(sdc_builder, sdc_executor, sftp, resource_url_is_correct, 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     sftp_ftp_ftps_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
     sftp_ftp_ftps_client.file_name_pattern = file_name
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    sftp_ftp_ftps_client >> [trash, pipeline_finisher]
+    sftp_ftp_ftps_client >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build().configure_for_environment(sftp)
     if not resource_url_is_correct:
         sftp_ftp_ftps_client.resource_url = 'somecrazyurlthatwillnotwork'
@@ -1158,8 +1159,8 @@ def test_resource_url(sdc_builder, sdc_executor, sftp, resource_url_is_correct, 
     try:
         sdc_executor.add_pipeline(pipeline)
         if resource_url_is_correct:
-            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-            records = [record.field for record in snapshot[sftp_ftp_ftps_client].output]
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            records = [record.field for record in wiretap.output_records]
             assert records == [DATA]
         else:
             with pytest.raises(StartError):
@@ -1283,15 +1284,15 @@ def test_use_custom_delimiter(sdc_builder, sdc_executor, stage_attributes, sftp,
     pipeline_builder = sdc_builder.get_pipeline_builder()
     sftp_ftp_client = pipeline_builder.add_stage('SFTP/FTP/FTPS Client', type='origin')
     sftp_ftp_client.set_attributes(file_name_pattern=sftp_file_name, custom_delimiter=';', **stage_attributes)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    sftp_ftp_client >> [trash, pipeline_finisher]
+    sftp_ftp_client >> [wiretap.destination, pipeline_finisher]
     sftp_ftp_client_pipeline = pipeline_builder.build().configure_for_environment(sftp)
     sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[sftp_ftp_client.instance_name].output]
+        sdc_executor.start_pipeline(sftp_ftp_client_pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         if stage_attributes['use_custom_delimiter']:
             assert records == [{'text': EXPECTED_OUTPUT[0]}, {'text': EXPECTED_OUTPUT[1]}]
         else:
@@ -1339,24 +1340,25 @@ def test_file_processing_delay(sdc_builder, sdc_executor, sftp):
     sftp_ftp_client.file_name_pattern = sftp_file_name
     sftp_ftp_client.data_format = 'TEXT'
     sftp_ftp_client.file_processing_delay = 15000  # Files will be processed after 15 seconds have passed
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    sftp_ftp_client >> trash
+    sftp_ftp_client >> wiretap.destination
     sftp_ftp_client_pipeline = builder.build('SFTP Origin Pipeline').configure_for_environment(sftp)
     sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
 
     # On first run nothing should be read - file delay is in place
-    snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(sftp_ftp_client_pipeline)
     sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
-    assert len(snapshot[sftp_ftp_client].output) == 0
+    assert len(wiretap.output_records) == 0
 
     # Allow time for the file delay to pass and restart the pipeline, check both files are read in order
     time.sleep(16)
-    snapshot = sdc_executor.capture_snapshot(sftp_ftp_client_pipeline, start_pipeline=True).snapshot
+    sdc_executor.start_pipeline(sftp_ftp_client_pipeline)
+    sdc_executor.wait_for_pipeline_metric(sftp_ftp_client_pipeline, 'input_record_count', 1)
     sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
 
-    assert len(snapshot[sftp_ftp_client].output) == 1
-    assert snapshot[sftp_ftp_client].output[0].field['text'] == raw_text_data
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].field['text'] == raw_text_data
 
     # Delete the test SFTP origin file we created
     transport, client = sftp.client
