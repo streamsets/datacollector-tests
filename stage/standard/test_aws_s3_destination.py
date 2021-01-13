@@ -27,7 +27,7 @@ S3_SANDBOX_PREFIX = 'sandbox'
 # Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html
 S3_BUCKET_NAMES = [
     # For 3 characters we use 1a1 because we have being hitting system buckets and making the test flaky
-    ('minsize', '1a1'),
+    ('minsize', '1c1'),
     ('maxsize', get_random_string(string.ascii_lowercase, 63)),
     ('lowercase', get_random_string(string.ascii_lowercase)),
     ('hypen', get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
@@ -135,8 +135,13 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucke
     finally:
         try:
             aws.delete_s3_data(s3_bucket, s3_key)
+        except Exception as e:
+            logger.error(f"Can't remove files from bucket {s3_bucket}: {e}")
         finally:
-            client.delete_bucket(Bucket=s3_bucket)
+            try:
+                client.delete_bucket(Bucket=s3_bucket)
+            except Exception as e:
+                logger.error(f"Can't delete buckeet: {e}")
 
 
 @aws('s3')
