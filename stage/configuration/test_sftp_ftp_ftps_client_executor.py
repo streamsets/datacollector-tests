@@ -276,12 +276,13 @@ def _create_producer_consumer_pipeline(sdc_builder, local_tmp_directory, file_na
     destination_stage.set_attributes(file_name_expression=file_name)
 
     executor_stage = builder.add_stage(name=REMOTE_EXECUTOR_STAGE)
+    wiretap = builder.add_wiretap()
 
-    directory >> destination_stage >= executor_stage
+    directory >> destination_stage >= [executor_stage, wiretap.destination]
     directory >= pipeline_finished_executor
 
     test_executor_pipeline = builder.build('Local FS - Remote Target - Remote Executor -- Consumer Pipeline')
-    return local_fs_pipeline, test_executor_pipeline
+    return local_fs_pipeline, test_executor_pipeline, wiretap
 
 
 def _execute_producer_pipeline(sdc_executor, local_fs_pipeline):
@@ -311,9 +312,9 @@ def _test_delete_file(sdc_builder, sdc_executor, client, chroot_dir):
     file_name = get_random_string(string.ascii_letters, 10)
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
 
-    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
-                                                                              tmp_directory,
-                                                                              file_name)
+    local_fs_pipeline, executor_pipeline, wiretap_stage = _create_producer_consumer_pipeline(sdc_builder,
+                                                                                             tmp_directory,
+                                                                                             file_name)
 
     sdc_executor.add_pipeline(local_fs_pipeline)
     _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
@@ -352,9 +353,9 @@ def _test_move_file(sdc_builder, sdc_executor, client, chroot_dir):
     file_name = get_random_string(string.ascii_letters, 10)
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
 
-    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
-                                                                              tmp_directory,
-                                                                              file_name)
+    local_fs_pipeline, executor_pipeline, wiretap_stage = _create_producer_consumer_pipeline(sdc_builder,
+                                                                                             tmp_directory,
+                                                                                             file_name)
 
     sdc_executor.add_pipeline(local_fs_pipeline)
     _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
@@ -402,9 +403,9 @@ def _test_move_overwrite_if_file_already_exists(sdc_builder, sdc_executor, clien
     file_name = get_random_string(string.ascii_letters, 10)
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
 
-    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
-                                                                              tmp_directory,
-                                                                              file_name)
+    local_fs_pipeline, executor_pipeline, wiretap_stage = _create_producer_consumer_pipeline(sdc_builder,
+                                                                                             tmp_directory,
+                                                                                             file_name)
 
     sdc_executor.add_pipeline(local_fs_pipeline)
     _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
@@ -461,9 +462,9 @@ def _test_move_send_to_error_if_file_already_exists(sdc_builder, sdc_executor, c
     file_name = get_random_string(string.ascii_letters, 10)
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
 
-    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
-                                                                              tmp_directory,
-                                                                              file_name)
+    local_fs_pipeline, executor_pipeline, wiretap_stage = _create_producer_consumer_pipeline(sdc_builder,
+                                                                                             tmp_directory,
+                                                                                             file_name)
 
     sdc_executor.add_pipeline(local_fs_pipeline)
     _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
@@ -483,7 +484,7 @@ def _test_move_send_to_error_if_file_already_exists(sdc_builder, sdc_executor, c
         client.mkdir(new_location)
         client.put_string(os.path.join(new_location, file_name), EXISTING_FILE_DATA)
 
-        snapshot = sdc_executor.capture_snapshot(executor_pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(executor_pipeline)
         sdc_executor.get_pipeline_status(executor_pipeline).wait_for_status('FINISHED')
 
         logger.info("Checking if file %s is STILL present on the remote server at path: %s ...",
@@ -497,8 +498,9 @@ def _test_move_send_to_error_if_file_already_exists(sdc_builder, sdc_executor, c
         assert client.get_string(os.path.join(new_location, file_name)) == EXISTING_FILE_DATA
 
         logger.info("Checking for 'file already exists' error code in executor stage's error records")
+
         assert 'REMOTE_LOCATION_EXECUTOR_04' in [record.header['errorCode']
-                                                 for record in snapshot[executor_stage].error_records]
+                                                 for record in wiretap_stage.error_records]
     finally:
         client.rm(os.path.join(chroot_dir, file_name))
         client.rm(os.path.join(new_location, file_name))
@@ -522,9 +524,9 @@ def _test_file_specified_by_file_path_not_present(sdc_builder, sdc_executor, cli
     nonexistent_file_name = get_random_string(string.ascii_letters, 10)
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
 
-    local_fs_pipeline, executor_pipeline = _create_producer_consumer_pipeline(sdc_builder,
-                                                                              tmp_directory,
-                                                                              file_name)
+    local_fs_pipeline, executor_pipeline, wiretap_stage = _create_producer_consumer_pipeline(sdc_builder,
+                                                                                             tmp_directory,
+                                                                                             file_name)
 
     sdc_executor.add_pipeline(local_fs_pipeline)
     _execute_producer_pipeline(sdc_executor, local_fs_pipeline)
@@ -536,10 +538,10 @@ def _test_file_specified_by_file_path_not_present(sdc_builder, sdc_executor, cli
     sdc_executor.add_pipeline(executor_pipeline)
 
     try:
-        snapshot = sdc_executor.capture_snapshot(executor_pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(executor_pipeline)
 
         logger.info("Checking for 'file not present' error code in executor stage's error records")
         assert 'REMOTE_LOCATION_EXECUTOR_02' in [record.header['errorCode']
-                                                 for record in snapshot[executor_stage].error_records]
+                                                 for record in wiretap_stage.error_records]
     finally:
         client.rm(os.path.join(chroot_dir, file_name))  # This file is remaining from when destination stage copied it
