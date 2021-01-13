@@ -249,3 +249,51 @@ def test_google_storage_small_batch_size(sdc_builder, sdc_executor, gcp):
 
     finally:
         created_bucket.delete(force=True)
+
+@gcp
+@sdc_min_version('3.22.0')
+def test_google_storage_no_more_data(sdc_builder, sdc_executor, gcp):
+    """
+    SDC-15932
+    Create bucket with no data to Google cloud storage and then check if
+    Google Storage Origin sends no-more-data event with no records sent.
+
+    The pipeline looks like:
+        google_cloud_storage_origin >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT')
+
+    pipeline_finisher_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher_executor.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'])
+
+    wiretap = pipeline_builder.add_wiretap()
+    events_wiretap = pipeline_builder.add_wiretap()
+
+    google_cloud_storage >> wiretap.destination
+    google_cloud_storage >= [pipeline_finisher_executor, events_wiretap.destination]
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = storage_client.create_bucket(bucket_name)
+    try:
+        logger.info('Starting GCS Origin with no data ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert 0 == len(wiretap.output_records)
+        event_record = events_wiretap.output_records[0]
+        event_type = event_record.header.values['sdc.event.type']
+        assert event_type == 'no-more-data', 'Received %s as event type (expected no-more-data)' % event_type
+    finally:
+        created_bucket.delete(force=True)
