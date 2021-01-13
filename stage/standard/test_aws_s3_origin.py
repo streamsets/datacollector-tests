@@ -138,9 +138,7 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucke
             sdc_executor.stop_pipeline(s3_origin_pipeline)
         # Clean up S3.
         try:
-            delete_keys = {'Objects': [{'Key': k['Key']}
-                                       for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-            client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+            aws.delete_s3_data(s3_bucket, s3_key)
         finally:
             client.delete_bucket(Bucket=s3_bucket)
 
@@ -195,9 +193,7 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(s3_origin_pipeline)
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @aws('s3')
@@ -254,9 +250,7 @@ def test_dataflow_events_new_file(sdc_builder, sdc_executor, aws):
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(s3_origin_pipeline)
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @aws('s3')
@@ -373,10 +367,7 @@ def test_resume_offset(sdc_builder, sdc_executor, aws):
 
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 @aws('s3')
@@ -428,7 +419,4 @@ def test_multiple_batch(sdc_builder, sdc_executor, aws):
 
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)

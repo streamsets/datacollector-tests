@@ -165,10 +165,7 @@ def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
         assert len(wiretap.output_records) == 1
         assert [record.field['text'] for record in wiretap.output_records][0] == random_string
     finally:
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
         if anonymous:
             logger.info(f'Deleting bucket {s3_bucket}')
             aws.s3.delete_bucket(Bucket=s3_bucket)
@@ -381,9 +378,7 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
             assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
     finally:
         try:
-            delete_keys = {'Objects': [{'Key': k['Key']}
-                                       for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-            client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+            aws.delete_s3_data(s3_bucket, s3_key)
         finally:
             if anonymous:
                 logger.info(f'Deleting bucket {s3_bucket}')

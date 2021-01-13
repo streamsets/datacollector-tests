@@ -128,9 +128,7 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, anonymou
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, s3_exec_pipeline)
         restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @aws('s3')
@@ -257,9 +255,7 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
 
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, s3_exec_pipeline)
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @aws('s3')

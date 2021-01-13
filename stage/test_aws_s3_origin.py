@@ -114,10 +114,7 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
         assert 3 * s3_obj_count == total_record_count  # 3 iterations of 10 elements each
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 @aws('s3')
@@ -469,9 +466,7 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
         assert output_records_values == data
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 # SDC-11176 S3 Origin is only sending one no-more-data event, it should send one if there is some refill of data
@@ -551,9 +546,7 @@ if (state['record-count'] >= 2):
             sdc_executor.stop_pipeline(s3_origin_pipeline)
 
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @aws('s3')
@@ -614,10 +607,7 @@ def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
         assert output_records == total_data
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 # SDC-11163: Amazon S3 origin never removes POLL_OFFSET key on upgrade
@@ -686,10 +676,7 @@ def test_offset_upgrade(sdc_builder, sdc_executor, aws):
         assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 2
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 # SDC-11410: S3 Origin reads excel files
@@ -763,9 +750,7 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
                 assert output_records[row_res][str(col_res)] == f'TAB({row_res}, {col_res})'
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @aws('s3')
@@ -847,9 +832,7 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
         assert len(output_records) == 50 * 2 == len(total_data)
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @aws('s3')
@@ -921,10 +904,7 @@ def test_s3_origin_timestamp_last_file_offset(sdc_builder, sdc_executor, aws, re
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 @aws('s3')
@@ -987,10 +967,7 @@ def test_s3_restart_with_file_offset(sdc_builder, sdc_executor, aws, read_order)
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 # SDC-11925: Allow specifying subset of sheets to import when reading Excel files
@@ -1055,9 +1032,7 @@ def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheet
 
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 # SDC-11926: Add ability to skip cells that have no associated header when reading from Excel
@@ -1120,9 +1095,7 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
 
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 # SDC-11924: Better handling of various error header states in Excel parser
@@ -1180,9 +1153,7 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
 
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 # SDC-14931: Excel parsing can throw DATA_PARSER_02 - Parser error: 'java.util.NoSuchElementException'
@@ -1242,9 +1213,7 @@ def test_s3_excel_last_sheet_empty(sdc_builder, sdc_executor, aws):
         assert history.latest.metrics._data['meters']['stage.AmazonS3_01.stageErrors.meter']['count'] == 0
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 
 @aws('s3')
@@ -1326,10 +1295,7 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
 
         assert 'no-more-data' == events_wiretap.output_records[0].header.values['sdc.event.type']
     finally:
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 @aws('s3')
@@ -1441,12 +1407,7 @@ def test_s3_single_file_in_directory_no_wildcards(sdc_builder, sdc_executor, aws
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name,
-                                                          Prefix=f'{s3_common_prefix}{s3_file_name}')[
-                                       'Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, f'{s3_common_prefix}{s3_file_name}')
 
 
 @aws('s3')
@@ -1517,10 +1478,7 @@ def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_execut
                 sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
         finally:
             # Clean up S3.
-            delete_keys = {'Objects': [{'Key': k['Key']}
-                                       for k in
-                                       client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-            client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+            aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 @aws('s3')
@@ -1591,11 +1549,7 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
-                                       'Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 @aws('s3')
@@ -1648,11 +1602,7 @@ def test_s3_whole_file_empty_directory(sdc_builder, sdc_executor, aws):
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(s3_origin_pipeline, force=True)
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
-                                       'Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 @aws('s3')
@@ -1713,12 +1663,7 @@ def test_s3_stop_resume_file_not_found(sdc_builder, sdc_executor, aws):
         assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
 
     finally:
-        if client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] > 0:
-            delete_keys = {'Objects': [{'Key': k['Key']}
-                                       for k in
-                                       client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
-                                           'Contents']]}
-            client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
         # If no files have been processed we need to stop the pipeline, otherwise it will be finished
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
@@ -1765,11 +1710,7 @@ def test_s3_continue_processing_after_file_error(sdc_builder, sdc_executor, aws)
         assert records[1].field['id'] == 2
     finally:
         # Clean up S3.
-        delete_keys = {'Objects': [{'Key': k['Key']}
-                                   for k in
-                                   client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
-                                       'Contents']]}
-        client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
 
 @aws('s3')
@@ -1836,12 +1777,7 @@ def test_s3_archive_idle_resume(sdc_builder, sdc_executor, aws):
 
     finally:
         # delete all the objects created in s3_key
-        if client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] > 0:
-            delete_keys = {'Objects': [{'Key': k['Key']}
-                                       for k in
-                                       client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
-                                           'Contents']]}
-            client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
         # If no files have been processed we need to stop the pipeline, otherwise it will be finished
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
@@ -1905,12 +1841,7 @@ def test_s3_archive_JSON(sdc_builder, sdc_executor, aws):
 
     finally:
         # delete all the objects created in s3_key
-        if client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] > 0:
-            delete_keys = {'Objects': [{'Key': k['Key']}
-                                       for k in
-                                       client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)[
-                                           'Contents']]}
-            client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
         # Finish de pipeline
         if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
@@ -1960,7 +1891,4 @@ def test_whole_file_with_empty_files(sdc_builder, sdc_executor, aws, keep_data):
     finally:
         if not keep_data:
             # Clean up S3.
-            delete_keys = {'Objects': [{'Key': k['Key']}
-                                       for k in
-                                       client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['Contents']]}
-            client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+            aws.delete_s3_data(aws.s3_bucket_name, s3_key)
