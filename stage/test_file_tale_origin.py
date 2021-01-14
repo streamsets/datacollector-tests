@@ -74,7 +74,7 @@ def test_directory_origin(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(file_tail_pipeline)
 
     # assert all the data captured have the same raw_data
-    # the snapshot output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
+    # the wiretap output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
     # by checking a Record having a key called 'text'
     for record in wiretap_1.output_records:
         if 'text' in record.field:
@@ -130,7 +130,7 @@ def test_file_tale_origin_stop_continue(sdc_builder, sdc_executor):
     sdc_executor.stop_pipeline(file_tail_pipeline)
 
     # assert all the data captured have the same raw_data
-    # the snapshot output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
+    # the wiretap output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
     # by checking a Record having a key called 'text'
 
     size_output = 0
@@ -235,7 +235,7 @@ def test_directory_origin_with_finisher(sdc_builder, sdc_executor):
     sdc_executor.start_pipeline(file_tail_pipeline).wait_for_finished()
 
     # assert all the data captured have the same raw_data
-    # the snapshot output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
+    # the wiretap output has a dict of {key: Record(s), key: EventRecord} Iterate and assert only Record(s)
     # by checking a Record having a key called 'text'
     for record in wiretap_1.output_records:
         if 'text' in record.field:

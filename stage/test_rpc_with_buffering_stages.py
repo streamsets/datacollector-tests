@@ -29,7 +29,7 @@ SDC_RPC_LISTENING_PORT = 20000
 def test_sdcrpc_with_buffering_origin_target(sdc_builder, sdc_executor):
     """This test will test SDC RPC with buffering origin and SDC RPC target. The way we do that is to create 2 pipelines - one which creates
     RPC listener (SDC RPC with buffering origin pipeline) and another which writes to RPC (SDC RPC target pipeline). We then assert
-    what we ingest at RPC target pipeline to what we find at snapshot of RPC origin pipeline. The pipelines would look
+    what we ingest at RPC target pipeline to what we find at wiretap of RPC origin pipeline. The pipelines would look
     like:
 
         SDC RPC with buffering origin pipeline:

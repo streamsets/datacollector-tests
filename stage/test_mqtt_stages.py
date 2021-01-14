@@ -56,8 +56,7 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # with QOS=2 (default), exactly one message should be received per published message
-        # so we should have no trouble getting as many messages as output records from the
-        # snapshot
+        # so we should have no trouble getting as many messages as output records
         pipeline_msgs = mqtt_broker.get_messages(data_topic)
         for msg in pipeline_msgs:
             assert msg.payload.decode().rstrip() == raw_str

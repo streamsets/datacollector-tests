@@ -281,9 +281,7 @@ def _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes=None):
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline)
 
-        rows_from_snapshot = [record.field['name']
-                              for record in wiretap.output_records]
-        assert rows_from_snapshot == [row['name'] for row in ROWS_IN_DATABASE]
+        assert [row['name'] for row in ROWS_IN_DATABASE] == [record.field['name'] for record in wiretap.output_records]
 
     finally:
         _clean_up(database, table, table_name)

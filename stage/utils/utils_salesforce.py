@@ -24,7 +24,6 @@ from zipfile import ZipFile
 
 from streamsets.testframework.utils import get_random_string
 
-
 CONTACT = 'Contact'
 CDC = 'CDC'
 PUSH_TOPIC = 'PUSH_TOPIC'
@@ -176,19 +175,18 @@ def _verify_wiretap_data(wiretap, expected_data, sort=True):
     source_ids = {record.header['sourceId'] for record in wiretap.output_records}
     assert len(source_ids) == len(wiretap.output_records)
 
-    rows_from_snapshot = [record.field
-                          for record in wiretap.output_records]
+    rows_from_wiretap = [record.field for record in wiretap.output_records]
 
-    data_from_snapshot = [{field: record[field] for field in record if field not in ['Id', 'SystemModstamp']}
-                          for record in rows_from_snapshot]
+    data_from_wiretap = [{field: record[field] for field in record if field not in ['Id', 'SystemModstamp']}
+                         for record in rows_from_wiretap]
 
-    if data_from_snapshot and sort:
-        data_from_snapshot = sorted(data_from_snapshot,
-                                    key=lambda k: k[
-                                        'FirstName' if 'FirstName' in data_from_snapshot[0] else 'surName'].value)
+    if data_from_wiretap and sort:
+        data_from_wiretap = sorted(data_from_wiretap,
+                                   key=lambda k: k[
+                                       'FirstName' if 'FirstName' in data_from_wiretap[0] else 'surName'].value)
 
-    if data_from_snapshot:
-        assert data_from_snapshot == expected_data
+    if data_from_wiretap:
+        assert data_from_wiretap == expected_data
 
 
 def _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expected_data, salesforce, data_to_insert, sort=True):
@@ -292,7 +290,6 @@ def find_dataset_include_timestamp(client, name):
 
 
 def verify_cdc_wiretap(wiretap, inserted_data):
-    # CDC returns more than just the record fields, so verify_snapshot isn't so useful
     assert len(wiretap.output_records) == 1
     assert wiretap.output_records[0].header.values['salesforce.cdc.recordIds']
     assert wiretap.output_records[0].field['Email'] == inserted_data['Email']

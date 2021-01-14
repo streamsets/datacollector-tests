@@ -163,7 +163,7 @@ def policy_read_builder(sdc_builder):
 def test_error_record_policy_original_record(policy_write_builder, policy_read_builder, sdc_executor):
     """ Validate ORIGINAL_RECORD error policy.
 
-    The error record viewed in the snapshot pipeline should be as it was seen by the origin - without
+    The error record viewed in the wiretap pipeline should be as it was seen by the origin - without
     any changes to the record that happened inside the pipeline.
 
     Two pipeline setup - one pipeline with origin and mutating evaluator that sends all records
@@ -194,7 +194,7 @@ def test_error_record_policy_original_record(policy_write_builder, policy_read_b
 
 def test_error_record_policy_stage_record(policy_write_builder, policy_read_builder, sdc_executor):
     """ Validate STAGE_RECORD error policy.
-    The error record viewed in the snapshot pipeline should be as it was seen by the stage that sent
+    The error record viewed in the wiretap pipeline should be as it was seen by the stage that sent
     it to error stream - including all changes done to that record inside the pipeline.
 
     Two pipeline setup - one pipeline with origin and mutating evaluator that sends all records

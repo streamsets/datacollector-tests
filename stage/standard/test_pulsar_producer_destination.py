@@ -23,8 +23,6 @@ import json
 
 logger = logging.getLogger(__name__)
 
-SNAPSHOT_TIMEOUT_SEC = 120
-
 # Topics are URLs so we have to respect URL specs
 TOPIC_NAMES = [
     ('lowercase', get_random_string(string.ascii_lowercase)),

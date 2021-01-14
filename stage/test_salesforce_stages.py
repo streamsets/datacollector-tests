@@ -380,11 +380,8 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 0)
         sdc_executor.stop_pipeline(pipeline)
 
-        rows_from_snapshot = [record.value['value']
-                              for record in wiretap.output_records]
 
-        assert len(rows_from_snapshot) == 0
-
+        assert len([record.value['value'] for record in wiretap.output_records]) == 0
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)
 

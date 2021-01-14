@@ -22,7 +22,7 @@ from streamsets.testframework.sdc import DataCollector
 from streamsets.testframework.utils import parse_multi_versions, parse_version_git_hash, wait_for_condition
 
 # Skip all tests in this module if --sdc-version < 3.1.0.0
-pytestmark = sdc_min_version('3.1.0.0-SNAPSHOT')
+pytestmark = sdc_min_version('3.1.0.0')
 
 logger = logging.getLogger(__name__)
 

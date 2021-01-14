@@ -144,7 +144,7 @@ def test_sftp_origin_whole_file_to_s3_no_read_permission(sdc_builder, sdc_execut
     sftp_to_trash_pipeline = builder.build().configure_for_environment(sftp)
     sdc_executor.add_pipeline(sftp_to_trash_pipeline)
     try:
-        # Wait to capture snapshot till 5 batches
+        # Wait to 2 batches are processed
         start_command = sdc_executor.start_pipeline(sftp_to_trash_pipeline)
         start_command.wait_for_pipeline_batch_count(2)
 
