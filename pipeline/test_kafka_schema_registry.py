@@ -22,19 +22,18 @@
 # * Two different Kafka origins (Single Threaded, Multi Threaded)
 # * Three different schema locations on generation side (header, inline, registry)
 
+import base64
+import io
 import logging
 import string
 
 import avro
-import base64
-import io
+import confluent_kafka.avro
 import pytest
 from avro.io import DatumReader, BinaryDecoder
+from confluent_kafka.avro import AvroProducer
 from streamsets.testframework.markers import cluster, confluent, sdc_min_version
 from streamsets.testframework.utils import get_random_string
-
-import confluent_kafka.avro
-from confluent_kafka.avro import AvroProducer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -265,14 +264,14 @@ def test_kafka_consumer_key_capture_modes(sdc_builder, sdc_executor, cluster, co
     We will first publish an Avro message (with separate key and value schema) to Kafka, then try to read it from a
     pipeline, and ensure the key is captured correctly as per configuration.
     """
-    if ('streamsets-datacollector-apache-kafka_0_9-lib' in cluster.sdc_stage_libs):
+    if 'streamsets-datacollector-apache-kafka_0_9-lib' in cluster.sdc_stage_libs:
         pytest.skip('Test only designed to run on Kafka version >= 0.10.0')
 
     broker_url = cluster.kafka.brokers[0].replace("kafka://", "")
 
     avro_producer = AvroProducer({
-      'bootstrap.servers': broker_url,
-      'schema.registry.url': confluent._registry_urls[0]
+        'bootstrap.servers': broker_url,
+        'schema.registry.url': confluent._registry_urls[0]
     })
 
     value_schema_str = """
@@ -291,7 +290,7 @@ def test_kafka_consumer_key_capture_modes(sdc_builder, sdc_executor, cluster, co
        ]
     }
     """
-    
+
     key_schema_str = """
     {
        "namespace": "",
@@ -359,7 +358,8 @@ def test_kafka_consumer_key_capture_modes(sdc_builder, sdc_executor, cluster, co
     assert len(output) == 1
     record = output[0]
 
-    verify_kafka_avro_messages(record, key_capture_mode, key_capture_field, key_capture_attribute, key_schema, key, value)
+    verify_kafka_avro_messages(record, key_capture_mode, key_capture_field, key_capture_attribute, key_schema, key,
+                               value)
 
 
 @pytest.mark.parametrize('key_capture_mode', ['RECORD_HEADER'])
@@ -372,7 +372,7 @@ def test_kafka_producer_key_capture(sdc_builder, sdc_executor, cluster, confluen
 
     We will have 2 pipelines:
     1. kafka_consumer >> kafka_producer
-    2. kafka_consumer >> trash
+    2. kafka_consumer >> wiretap
 
     In the first pipeline, we will first publish an Avro message (with separate key and value schema) to Kafka,
     then read it and ensure that the key is captured correctly as per configuration and then write the key and value
@@ -447,14 +447,14 @@ def test_kafka_producer_key_capture(sdc_builder, sdc_executor, cluster, confluen
 
     kafka_consumer1 = builder1.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
     kafka_consumer1.set_attributes(topic=topic,
-                                  data_format='AVRO',
-                                  avro_schema_location='REGISTRY',
-                                  lookup_schema_by='AUTO',
-                                  key_deserializer='CONFLUENT',
-                                  value_deserializer='CONFLUENT',
-                                  key_capture_mode=key_capture_mode,
-                                  key_capture_header_attribute=key_capture_attribute,
-                                  kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
+                                   data_format='AVRO',
+                                   avro_schema_location='REGISTRY',
+                                   lookup_schema_by='AUTO',
+                                   key_deserializer='CONFLUENT',
+                                   value_deserializer='CONFLUENT',
+                                   key_capture_mode=key_capture_mode,
+                                   key_capture_header_attribute=key_capture_attribute,
+                                   kafka_configuration=[{'key': 'auto.offset.reset', 'value': 'earliest'}])
 
     topic_producer = get_random_string(string.ascii_letters, 10)
     kafka_producer = builder1.add_stage('Kafka Producer', library=cluster.kafka.standalone_stage_lib)
@@ -472,7 +472,7 @@ def test_kafka_producer_key_capture(sdc_builder, sdc_executor, cluster, confluen
 
     pipeline1 = builder1.build().configure_for_environment(cluster, confluent)
     sdc_executor.add_pipeline(pipeline1)
-    snapshot_command1 = sdc_executor.capture_snapshot(pipeline1, start_pipeline=True)
+    sdc_executor.start_pipeline(pipeline1)
     sdc_executor.stop_pipeline(pipeline1)
 
     # Build another pipeline to read the avro that was written into the topic(topic_producer)
@@ -510,31 +510,31 @@ def test_kafka_producer_key_capture(sdc_builder, sdc_executor, cluster, confluen
     verify_kafka_avro_messages(record, key_capture_mode, None, key_capture_attribute, key_schema, key, value)
 
 
-def verify_kafka_avro_messages(record, key_capture_mode, key_capture_field, key_capture_attribute, key_schema, message_keys, message_values):
-
-    for key,value in message_values.items():
-      assert record.get_field_data(f'/{key}').value == value
+def verify_kafka_avro_messages(record, key_capture_mode, key_capture_field, key_capture_attribute, key_schema,
+                               message_keys, message_values):
+    for key, value in message_values.items():
+        assert record.get_field_data(f'/{key}').value == value
 
     # validate message key fields/attribute based on configuration
-    if (key_capture_mode in ['RECORD_FIELD', 'RECORD_HEADER_AND_FIELD']):
-      # the message key should have been captured into the configured field
-      for key,value in message_keys.items():
-        assert record.get_field_data(f"{key_capture_field}/{key}").value == value
+    if key_capture_mode in ['RECORD_FIELD', 'RECORD_HEADER_AND_FIELD']:
+        # the message key should have been captured into the configured field
+        for key, value in message_keys.items():
+            assert record.get_field_data(f"{key_capture_field}/{key}").value == value
 
-    if (key_capture_mode in ['RECORD_HEADER', 'RECORD_HEADER_AND_FIELD']):
-      # get the base64 encoded Avro message key
-      encoded = record.header['values'][key_capture_attribute]
-      # decode into bytes
-      key_bytes = base64.standard_b64decode(encoded)
-      # create an Avro binary decoder based on those bytes
-      decoder = BinaryDecoder(io.BytesIO(key_bytes))
-      # parse the key schema out of the record header
-      decoded_key_schema = confluent_kafka.avro.loads(record.header['values']['avroKeySchema'])
-      # ensure the parsed key schema matches the one we actually produced, earlier
-      assert decoded_key_schema == key_schema
-      # create a DatumReader to read a full Avro record (the key)
-      reader = DatumReader(decoded_key_schema)
-      decoded_avro_key = reader.read(decoder)
-      # assert the values from the Avro record match what's expected
-      for key,value in message_keys.items():
-        assert decoded_avro_key[key] == value
+    if key_capture_mode in ['RECORD_HEADER', 'RECORD_HEADER_AND_FIELD']:
+        # get the base64 encoded Avro message key
+        encoded = record.header['values'][key_capture_attribute]
+        # decode into bytes
+        key_bytes = base64.standard_b64decode(encoded)
+        # create an Avro binary decoder based on those bytes
+        decoder = BinaryDecoder(io.BytesIO(key_bytes))
+        # parse the key schema out of the record header
+        decoded_key_schema = confluent_kafka.avro.loads(record.header['values']['avroKeySchema'])
+        # ensure the parsed key schema matches the one we actually produced, earlier
+        assert decoded_key_schema == key_schema
+        # create a DatumReader to read a full Avro record (the key)
+        reader = DatumReader(decoded_key_schema)
+        decoded_avro_key = reader.read(decoder)
+        # assert the values from the Avro record match what's expected
+        for key, value in message_keys.items():
+            assert decoded_avro_key[key] == value
