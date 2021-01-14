@@ -1,6 +1,19 @@
+# Copyright 2021 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import json
 import logging
-import string
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
@@ -312,16 +325,19 @@ def test_json_content(sdc_builder, sdc_executor, redis, stage_attributes, keep_d
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     redis_consumer = pipeline_builder.add_stage('Redis Consumer').set_attributes(pattern=[key], **stage_attributes)
-    trash = pipeline_builder.add_stage('Trash')
-    redis_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    redis_consumer >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(redis)
 
     sdc_executor.add_pipeline(pipeline)
     try:
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        sdc_executor.start_pipeline(pipeline)
         redis.client.publish(key, data)
-        output_records = [record.field for record in snapshot_command.wait_for_finished().snapshot[redis_consumer].output]
-        assert output_records == SAMPLE_DATA
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert SAMPLE_DATA == [record.field for record in wiretap.output_records]
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
@@ -471,26 +487,26 @@ def test_pattern(sdc_builder, sdc_executor, redis, correct_pattern, keep_data):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     redis_consumer = pipeline_builder.add_stage('Redis Consumer').set_attributes(data_format='JSON', pattern=[key])
-    trash = pipeline_builder.add_stage('Trash')
-    redis_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    redis_consumer >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(redis)
     if not correct_pattern:
         redis_consumer.pattern = ['Invalid pattern']
 
     sdc_executor.add_pipeline(pipeline)
     try:
-        snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+        sdc_executor.start_pipeline(pipeline)
         # redis.Redis.publish returns the number of subscribers a message was delivered to.
         assert redis.client.publish(key, data) == (1 if correct_pattern else 0)
         if correct_pattern:
-            output_records = [record.field
-                              for record in snapshot_command.wait_for_finished().snapshot[redis_consumer].output]
-            assert output_records == [SAMPLE_DATA]
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+            assert [SAMPLE_DATA] == [record.field for record in wiretap.output_records]
         else:
             # If the pattern is incorrect, we'd expect the data batch count to grow while the output record count
             # stays at 0.
-            sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 5)
+
             assert sdc_executor.get_pipeline_metrics(pipeline).pipeline.output_record_count == 0
+            assert len(wiretap.output_records) == 0
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
@@ -633,8 +649,8 @@ def test_uri(sdc_builder, sdc_executor, redis, correct_uri, keep_data):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     redis_consumer = pipeline_builder.add_stage('Redis Consumer').set_attributes(data_format='JSON', pattern=[key])
-    trash = pipeline_builder.add_stage('Trash')
-    redis_consumer >> trash
+    wiretap = pipeline_builder.add_wiretap()
+    redis_consumer >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(redis)
     if not correct_uri:
         redis_consumer.uri = 'Invalid URI'
@@ -645,11 +661,13 @@ def test_uri(sdc_builder, sdc_executor, redis, correct_uri, keep_data):
             with pytest.raises(StartError):
                 sdc_executor.start_pipeline(pipeline)
         else:
-            snapshot_command = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False)
+            sdc_executor.start_pipeline(pipeline)
             redis.client.publish(key, data)
-            output_records = [record.field
-                              for record in snapshot_command.wait_for_finished().snapshot[redis_consumer].output]
-            assert output_records == [SAMPLE_DATA]
+
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+            sdc_executor.stop_pipeline(pipeline)
+
+            assert [SAMPLE_DATA] == [record.field for record in wiretap.output_records]
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
