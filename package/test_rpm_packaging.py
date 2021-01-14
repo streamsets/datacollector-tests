@@ -26,7 +26,7 @@ SDC_LIBS_FOLDER = '/opt/streamsets-datacollector/streamsets-libs'
 pytestmark = [rpmpackaging]
 
 
-def test_rpm_related_directories(sdc_builder):
+def test_rpm_related_directories(sdc_builder, sdc_executor):
     """Tests if expected folders for RPM are created with expected groups and owners.
     Test uses Jython Evaluator processor. This avoids the need to have SSH access to SDC instances.
     The dev_raw_data_cource contains records with expected folders.
@@ -34,7 +34,7 @@ def test_rpm_related_directories(sdc_builder):
     accordingly results are added as new attributes in record. These are later used for verification.
 
     The pipeline would look like:
-        dev_raw_data_source >> jython_evaluator >> trash
+        dev_raw_data_source >> jython_evaluator >> wiretap
     """
     # Generate data for folder names
     expected_records = [dict(dir_name='/etc/sdc', group='root', owner='root'),
@@ -44,12 +44,13 @@ def test_rpm_related_directories(sdc_builder):
                         dict(dir_name=SDC_LIBS_FOLDER, group='root', owner='root')]
     raw_data = json.dumps([{'dir_name': rec['dir_name']} for rec in expected_records])
 
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        json_content='ARRAY_OBJECTS',
-                                       raw_data=raw_data)
-    jython_evaluator = pipeline_builder.add_stage('Jython Evaluator', type='processor')
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    jython_evaluator = builder.add_stage('Jython Evaluator', type='processor')
     # In the script for every record processing, check if folder exists and
     # if exists, get its owner and group; and create record attributes for group and owner with respective values
     script = """
@@ -71,21 +72,20 @@ def test_rpm_related_directories(sdc_builder):
     # textwrap.dedent helps to strip leading whitespaces for valid Python indentation
     jython_evaluator.set_attributes(record_processing_mode='BATCH',
                                     script=textwrap.dedent(script))
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    dev_raw_data_source >> jython_evaluator >> trash
-    pipeline = pipeline_builder.build('Folders check pipeline')
-    sdc_builder.add_pipeline(pipeline)
+    dev_raw_data_source >> jython_evaluator >> wiretap.destination
 
-    snapshot = sdc_builder.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_builder.stop_pipeline(pipeline)
+    pipeline = builder.build('Folders check pipeline')
+    sdc_executor.add_pipeline(pipeline)
 
-    output_records = snapshot[jython_evaluator.instance_name].output  # is a list of output records
-    actual_records = [record.field for record in output_records]
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    actual_records = [record.field for record in wiretap.output_records]
     assert expected_records == actual_records
 
 
-def test_default_stagelibs_exist(sdc_builder):
+def test_default_stagelibs_exist(sdc_builder, sdc_executor):
     """When SDC is installed, certain stage libs are installed be default.
     This test verifies if expected default stage libs are present.
     Test uses Jython Evaluator processor. This avoids the need to have SSH access to SDC instances.
@@ -94,7 +94,7 @@ def test_default_stagelibs_exist(sdc_builder):
     accordingly record is added to output if stage lib exists. These are later used for verification.
 
     The pipeline would look like:
-        dev_raw_data_source >> jython_evaluator >> trash
+        dev_raw_data_source >> jython_evaluator >> wiretap
     """
     stage_lib_names = ['streamsets-datacollector-basic-lib',
                        'streamsets-datacollector-dev-lib',
@@ -102,12 +102,13 @@ def test_default_stagelibs_exist(sdc_builder):
                        'streamsets-datacollector-windows-lib']
     expected_records = [{'stage_lib_name': f'{SDC_LIBS_FOLDER}/{item}'} for item in stage_lib_names]
 
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        json_content='ARRAY_OBJECTS',
-                                       raw_data=json.dumps(expected_records))
-    jython_evaluator = pipeline_builder.add_stage('Jython Evaluator', type='processor')
+                                       raw_data=json.dumps(expected_records),
+                                       stop_after_first_batch=True)
+    jython_evaluator = builder.add_stage('Jython Evaluator', type='processor')
     # In the script for every record processing, check if stage lib specified in record exists and
     # if yes, add the record to output.
     script = """
@@ -123,15 +124,13 @@ def test_default_stagelibs_exist(sdc_builder):
     # textwrap.dedent helps to strip leading whitespaces for valid Python indentation
     jython_evaluator.set_attributes(record_processing_mode='BATCH',
                                     script=textwrap.dedent(script))
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    dev_raw_data_source >> jython_evaluator >> trash
-    pipeline = pipeline_builder.build('Stage libs check pipeline')
-    sdc_builder.add_pipeline(pipeline)
+    dev_raw_data_source >> jython_evaluator >> wiretap.destination
+    pipeline = builder.build('Stage libs check pipeline')
+    sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_builder.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_builder.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    output_records = snapshot[jython_evaluator.instance_name].output  # is a list of output records
-    actual_records = [record.field for record in output_records]
+    actual_records = [record.field for record in wiretap.output_records]
     assert expected_records == actual_records
