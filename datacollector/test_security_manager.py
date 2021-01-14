@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import logging
-import pytest
 
+import pytest
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
@@ -103,18 +103,16 @@ for record in records:
   output.write(record)
     """
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    source >> jython >> trash
+    source >> jython >> wiretap.destination
 
     pipeline = builder.build(f'Reading ldap-login.conf')
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
 
-    # Generate snapshot
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    assert len(snapshot[jython].output) == 1
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert len(wiretap.output_records) == 1
 
     # There should be field lines that is an array of 2+ entries (each row)
-    record = snapshot[jython].output[0]
-    assert len(record.field['lines']) > 2
+    assert len(wiretap.output_records[0].field['lines']) > 2
