@@ -38,7 +38,7 @@ def test_basic_nifi_http_server(sdc_builder, sdc_executor, nifi, data_format, ex
      4) Finish SDC pipeline and verify data received by wiretap is same as sent by NiFi pipeline.
 
      The pipeline looks like:
-        nifi_http_server >> trash
+        nifi_http_server >> wiretap.destination
     """
 
     # Build and start SDC pipeline.
@@ -46,6 +46,7 @@ def test_basic_nifi_http_server(sdc_builder, sdc_executor, nifi, data_format, ex
     nifi_http_server = pipeline_builder.add_stage('NiFi HTTP Server')
     nifi_http_server.data_format = data_format
     wiretap = pipeline_builder.add_wiretap()
+
     nifi_http_server >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(nifi)
     sdc_executor.add_pipeline(pipeline)
@@ -58,12 +59,14 @@ def test_basic_nifi_http_server(sdc_builder, sdc_executor, nifi, data_format, ex
         process_group, template = nifi.upload_template_and_start_process_group(DATA_FORMAT_TEMPLATES_MAP[data_format],
                                                                                sdc_executor.hostname,
                                                                                sdc_executor.docker_network)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_output))
 
         # Stop SDC and NiFi pipelines.
         nifi.stop_process_group(process_group)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert expected_output == [record.field['text'].value for record in wiretap.output_records]
+        for element in expected_output:
+            assert element in [record.field['text'].value for record in wiretap.output_records]
     finally:
         if template:
             nifi.delete_template(template, DATA_FORMAT_TEMPLATES_MAP[data_format])
