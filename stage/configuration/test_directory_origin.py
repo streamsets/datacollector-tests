@@ -1,17 +1,17 @@
+# Copyright 2021 StreamSets Inc.
 #
-# -*- stage: com_streamsets_pipeline_stage_origin_spooldir_SpoolDirDSource -*-
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# -*- start test template -*-
-#     pipeline_builder = sdc_builder.get_pipeline_builder()
-#     directory = pipeline_builder.add_stage('Directory')
-#     directory.set_attributes({stage_attributes})
-#     trash = pipeline_builder.add_stage('Trash')
-#     directory >> trash
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-#     pipeline = pipeline_builder.build()
-#     sdc_executor.add_pipeline(pipeline)
-# -*- end test template -*-
-#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import json
 import logging
 import math
