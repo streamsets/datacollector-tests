@@ -262,15 +262,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
     finally:
         try:
-            if number_of_records > 0:
-                # Clean up S3.
-                if number_of_records > 1:
-                    delete_keys = {'Objects': [{'Key': k['Key']}
-                                               for k in
-                                               client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']]}
-                else:
-                    delete_keys = {'Objects': [{'Key' : f'{s3_key}/0'}]}
-                client.delete_objects(Bucket=s3_bucket, Delete=delete_keys)
+            aws.delete_s3_data(s3_bucket, s3_key)
         finally:
             if anonymous:
                 logger.info(f'Deleting bucket {s3_bucket}')
