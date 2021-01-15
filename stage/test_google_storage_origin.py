@@ -52,7 +52,7 @@ def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
     pipeline = pipeline_builder.build().configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
 
-    created_bucket = storage_client.create_bucket(bucket_name)
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
     try:
         data = [get_random_string(ascii_letters, 100) for _ in range(10)]
         blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test.txt')
@@ -68,7 +68,8 @@ def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
         assert len(data) == len(rows_from_wiretap)
         assert rows_from_wiretap == data
     finally:
-        created_bucket.delete(force=True)
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
 
 
 @gcp
@@ -100,7 +101,7 @@ def test_google_storage_origin_idle_start(sdc_builder, sdc_executor, gcp):
     pipeline = pipeline_builder.build().configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
 
-    created_bucket = storage_client.create_bucket(bucket_name)
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
     try:
         logger.info('Starting GCS Origin pipeline...')
         start_command = sdc_executor.start_pipeline(pipeline)
@@ -123,7 +124,8 @@ def test_google_storage_origin_idle_start(sdc_builder, sdc_executor, gcp):
         else:
             pytest.fail('Pipeline stopped before data was produced in the bucket.')
     finally:
-        created_bucket.delete(force=True)
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
 
 
 @gcp
@@ -156,7 +158,7 @@ def test_google_storage_origin_stop_resume(sdc_builder, sdc_executor, gcp):
     pipeline = pipeline_builder.build().configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
 
-    created_bucket = storage_client.create_bucket(bucket_name)
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
     try:
         data = [get_random_string(ascii_letters, length=100) for _ in range(10)]
         blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test-1.txt')
@@ -188,7 +190,8 @@ def test_google_storage_origin_stop_resume(sdc_builder, sdc_executor, gcp):
         assert len(data) == len(rows_from_wiretap)
         assert rows_from_wiretap == data
     finally:
-        created_bucket.delete(force=True)
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
 
 
 @gcp
@@ -231,7 +234,7 @@ def test_google_storage_small_batch_size(sdc_builder, sdc_executor, gcp):
     pipeline = pipeline_builder.build(title='Google Cloud Storage').configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
 
-    created_bucket = storage_client.create_bucket(bucket_name)
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
     try:
         blob = created_bucket.blob('gcs-test/' + gcp_file_name)
         blob.upload_from_filename('resources/gcp/' + gcp_file_name)
@@ -248,7 +251,9 @@ def test_google_storage_small_batch_size(sdc_builder, sdc_executor, gcp):
         assert len(error_records) == 0
 
     finally:
-        created_bucket.delete(force=True)
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
+
 
 @gcp
 @sdc_min_version('3.22.0')
@@ -286,7 +291,7 @@ def test_google_storage_no_more_data(sdc_builder, sdc_executor, gcp):
     pipeline = pipeline_builder.build().configure_for_environment(gcp)
     sdc_executor.add_pipeline(pipeline)
 
-    created_bucket = storage_client.create_bucket(bucket_name)
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
     try:
         logger.info('Starting GCS Origin with no data ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -296,4 +301,5 @@ def test_google_storage_no_more_data(sdc_builder, sdc_executor, gcp):
         event_type = event_record.header.values['sdc.event.type']
         assert event_type == 'no-more-data', 'Received %s as event type (expected no-more-data)' % event_type
     finally:
-        created_bucket.delete(force=True)
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)

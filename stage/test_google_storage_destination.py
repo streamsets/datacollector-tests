@@ -60,7 +60,7 @@ def test_google_storage_destination(sdc_builder, sdc_executor, gcp):
 
     sdc_executor.add_pipeline(pipeline)
 
-    created_bucket = storage_client.create_bucket(bucket_name)
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
     try:
         logger.info('Starting GCS Destination pipeline and waiting for it to produce records'
                     ' and transition to finished...')
@@ -76,7 +76,8 @@ def test_google_storage_destination(sdc_builder, sdc_executor, gcp):
         lines = [line for line in contents.split('\n') if len(line) > 0]
         assert lines == data
     finally:
-        created_bucket.delete(force=True)
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
 
 
 @gcp
@@ -103,7 +104,7 @@ def test_google_storage_error(sdc_builder, sdc_executor, gcp):
     sdc_executor.add_pipeline(pipeline)
 
     storage_client = gcp.storage_client
-    created_bucket = storage_client.create_bucket(bucket_name)
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
@@ -118,7 +119,8 @@ def test_google_storage_error(sdc_builder, sdc_executor, gcp):
 
         assert sdc_json['value']['value']['text']['value'] == 'Hello!'
     finally:
-        created_bucket.delete(force=True)
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
 
 
 @gcp
