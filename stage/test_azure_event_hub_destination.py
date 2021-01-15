@@ -133,11 +133,17 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_
         elif destination_data_format == 'XML':
             assert [record.field['text'] for record in result_records] == EXPECTED_XML_OUTPUT
     finally:
-        logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
-        eh_service_bus.delete_event_hub(event_hub_name)
+        try:
+            logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
+            eh_service_bus.delete_event_hub(event_hub_name)
+        except Exception as err:
+            logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
-        logger.debug('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
-        azure.storage.delete_blob_container(container_name)
+        try:
+            logger.debug('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
+            azure.storage.delete_blob_container(container_name)
+        except Exception as err:
+            logger.error('Failure deleting container %s. Reason found: %s', container_name, err)
 
 
 @azure('iot')

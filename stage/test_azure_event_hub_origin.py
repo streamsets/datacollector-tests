@@ -81,14 +81,23 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure, use_websocke
         results = [{key: value for key, value in record.items()} for record in wiretap.output_records[0].field]
         assert results == send_records
     finally:
-        if sdc_executor.get_pipeline_status(consumer_origin_pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        try:
+            if sdc_executor.get_pipeline_status(consumer_origin_pipeline).response.json().get('status') == 'RUNNING':
+                sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        except Exception as err:
+            logger.error('Could not stop pipeline. Reason found: %s', err)
 
-        logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
-        eh_service_bus.delete_event_hub(event_hub_name)
+        try:
+            logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
+            eh_service_bus.delete_event_hub(event_hub_name)
+        except Exception as err:
+            logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
-        logger.info('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
-        azure.storage.delete_blob_container(container_name)
+        try:
+            logger.info('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
+            azure.storage.delete_blob_container(container_name)
+        except Exception as err:
+            logger.error('Failure deleting container %s. Reason found: %s', container_name, err)
 
 
 @azure('eventhub')
@@ -153,14 +162,23 @@ def test_azure_event_hub_consumer_resume_offset(sdc_builder, sdc_executor, azure
         results = [{key: value for key, value in record.items()} for record in result_record]
         assert results == send_records2
     finally:
-        if sdc_executor.get_pipeline_status(consumer_origin_pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        try:
+            if sdc_executor.get_pipeline_status(consumer_origin_pipeline).response.json().get('status') == 'RUNNING':
+                sdc_executor.stop_pipeline(consumer_origin_pipeline)
+        except Exception as err:
+            logger.error('Could not stop pipeline. Reason found: %s', err)
 
-        logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
-        eh_service_bus.delete_event_hub(event_hub_name)
+        try:
+            logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
+            eh_service_bus.delete_event_hub(event_hub_name)
+        except Exception as err:
+            logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
-        logger.info('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
-        azure.storage.delete_blob_container(container_name)
+        try:
+            logger.info('Deleting container %s on storage account %s', container_name, azure.storage.account_name)
+            azure.storage.delete_blob_container(container_name)
+        except Exception as err:
+            logger.error('Failure deleting container %s. Reason found: %s', container_name, err)
 
 
 @azure('eventhub')
