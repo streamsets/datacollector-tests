@@ -20,20 +20,20 @@ from streamsets.testframework.markers import aws
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 # Sandbox prefix for S3 bucket
 S3_SANDBOX_PREFIX = 'sandbox'
 
 # Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html
 S3_BUCKET_NAMES = [
-    # For 3 characters we use 1a1 because we have being hitting system buckets and making the test flaky
-    ('minsize', '1c1'),
-    ('maxsize', get_random_string(string.ascii_lowercase, 63)),
-    ('lowercase', get_random_string(string.ascii_lowercase)),
-    ('hypen', get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
-    ('period', get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
-    ('digits', get_random_string(string.digits)),
-    ('hexadecimal', get_random_string(string.hexdigits).lower())
+    ('minsize', lambda: get_random_string(string.ascii_lowercase, 3)),
+    ('maxsize', lambda: get_random_string(string.ascii_lowercase, 63)),
+    ('lowercase', lambda: get_random_string(string.ascii_lowercase)),
+    ('hypen', lambda: get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
+    ('period', lambda: get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
+    ('digits', lambda: get_random_string(string.digits)),
+    ('hexadecimal', lambda: get_random_string(string.hexdigits).lower())
 ]
 
 # Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
@@ -77,11 +77,41 @@ S3_PATHS = [
 
 
 @aws('s3')
-@pytest.mark.parametrize('test_name, s3_bucket', S3_BUCKET_NAMES, ids=[i[0] for i in S3_BUCKET_NAMES])
-def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucket):
+@pytest.mark.parametrize('test_name, bucket_generator', S3_BUCKET_NAMES, ids=[i[0] for i in S3_BUCKET_NAMES])
+def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_generator):
     """
     Verify that we can respect all the documented buckets names possible
     """
+    client = aws.s3
+    retry = 0
+    s3_bucket = None
+    # Since S3 buckets are globally unique, doing our usual randomization doesn't work well - we always have a chance
+    # to create bucket that already exists. That is why we have a retry logic - we try to generate several bucket names
+    # and see which one we manage to "claim".
+    while s3_bucket is None and retry < 10:
+        retry = retry + 1
+        s3_bucket = bucket_generator()
+        logger.info(f"Retry {retry} with bucket name '{s3_bucket}'")
+
+        try:
+            client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+            client.put_bucket_tagging(
+                Bucket=s3_bucket,
+                Tagging={
+                    'TagSet': [
+                        {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                        {'Key': 'managed-by', 'Value': 'ep'},
+                        {'Key': 'dept', 'Value': 'eng'},
+                    ]
+                }
+            )
+        except Exception as e:
+            s3_bucket = None
+            logger.error(f"Can't use bucket name '{s3_bucket}': {e}")
+
+    # We might not be able to find suitable bucket in max retries in which case we will simply die
+    assert s3_bucket is not None
+
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
 
     data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
@@ -110,20 +140,7 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, s3_bucke
 
     sdc_executor.add_pipeline(s3_origin_pipeline)
 
-    client = aws.s3
     try:
-        client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
-        client.put_bucket_tagging(
-            Bucket=s3_bucket,
-            Tagging={
-                'TagSet': [
-                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
-                    {'Key': 'managed-by', 'Value': 'ep'},
-                    {'Key': 'dept', 'Value': 'eng'},
-                ]
-            }
-        )
-
         # Insert objects into S3.
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
