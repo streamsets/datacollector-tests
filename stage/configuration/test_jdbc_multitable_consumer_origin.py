@@ -121,6 +121,7 @@ def test_jdbc_multitable_consumer_origin_configuration_create_header_attributes(
         delete_table([table], database)
 
 
+@database
 @pytest.mark.parametrize('quote_character', ['BACKTICK', 'DOUBLE_QUOTES', 'NONE', 'SQUARE_BRACKETS'])
 def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_builder, sdc_executor, quote_character, database):
     builder = sdc_builder.get_pipeline_builder()
