@@ -52,8 +52,13 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure, use_websocke
     azure_iot_event_hub_consumer = builder.add_stage(name=AZURE_IOT_EVENT_HUB_STAGE_NAME).set_attributes(
         container_name=container_name,
         data_format='JSON',
-        event_hub_name=event_hub_name,
-        use_amqp_over_websockets=use_websockets)
+        event_hub_name=event_hub_name)
+
+    # We already have proper skip logic above based on version and this new
+    # argument. We can however set it only on the right version and hence doing it
+    # conditionally.
+    if use_websockets:
+        azure_iot_event_hub_consumer.use_amqp_over_websockets = use_websockets
 
     wiretap = builder.add_wiretap()
 
