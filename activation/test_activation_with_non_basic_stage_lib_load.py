@@ -15,11 +15,10 @@
 # This module loads a non-basic stage lib jms in SDC while starting and runs pipelines for tests.
 
 import logging
-import pytest
-import requests
 from string import ascii_letters
 
-
+import pytest
+import requests
 from streamsets.testframework.markers import jms, sdc_activation, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -53,7 +52,7 @@ def test_with_non_basic_stage_loaded(sdc_executor, activate_sdc, jms):
         _test_basic_stage(sdc_executor)
         _test_jms_consumer_origin(sdc_executor, jms)
     else:
-        expected = ("403 Client Error: Forbidden for url:")
+        expected = "403 Client Error: Forbidden for url:"
         with pytest.raises(requests.exceptions.HTTPError, match=expected):
             # Note here: the following is expected to produce 403 even though it is a basic stage.
             # Reason is : STF loaded jms stage lib while starting and so now it needs registration and activation
@@ -68,16 +67,18 @@ def _test_basic_stage(sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.data_format = 'JSON'
     dev_raw_data_source.raw_data = '{"emp_id" :"123456"}'
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> trash
+    dev_raw_data_source.stop_after_first_batch = True
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> wiretap.destination
+
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-    snap_data = snapshot[pipeline.origin_stage.instance_name]
-    assert len(snap_data.output) == 1
-    assert snap_data.output[0].field['emp_id'].value == '123456'
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].field['emp_id'].value == '123456'
 
 
 def _test_jms_consumer_origin(sdc_executor, jms):
@@ -100,9 +101,9 @@ def _test_jms_consumer_origin(sdc_executor, jms):
                                 jndi_connection_factory=JNDI_CONNECTION_FACTORY,
                                 password=DEFAULT_PASSWORD,
                                 username=DEFAULT_USERNAME)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     pipeline_builder.add_error_stage('Discard')
-    jms_consumer >> trash
+    jms_consumer >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(jms)
     sdc_executor.add_pipeline(pipeline)
 
@@ -117,12 +118,11 @@ def _test_jms_consumer_origin(sdc_executor, jms):
             connection.send(destination_name, message_data, persistent='false')
 
         # Verify the messages are received correctly.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
         sdc_executor.stop_pipeline(pipeline)
-        lines_from_snapshot = [record.field['text'].value
-                               for record in snapshot[pipeline[0].instance_name].output]
 
-        assert lines_from_snapshot == [message_data] * 10
+        assert [record.field['text'].value for record in wiretap.output_records] == [message_data] * 10
 
     finally:
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
