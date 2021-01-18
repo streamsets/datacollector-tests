@@ -15,8 +15,8 @@
 # This module starts SDC with only default stage libs like basic and runs pipelines for tests.
 
 import logging
-import pytest
 
+import pytest
 from streamsets.testframework.markers import sdc_activation, sdc_min_version
 
 from .utils.utils_activation import ACTIVATION_SUPPORT_SDC_MIN_VERSION, register_and_activate_sdc
@@ -45,13 +45,15 @@ def _test_basic_stage(sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.data_format = 'JSON'
     dev_raw_data_source.raw_data = '{"emp_id" :"123456"}'
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> trash
+    dev_raw_data_source.stop_after_first_batch = True
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> wiretap.destination
+
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-    snap_data = snapshot[pipeline.origin_stage.instance_name]
-    assert len(snap_data.output) == 1
-    assert snap_data.output[0].field['emp_id'].value == '123456'
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].field['emp_id'].value == '123456'
