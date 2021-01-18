@@ -158,6 +158,9 @@ def test_s3_origin_multithreaded_text_data_format(sdc_builder, sdc_executor, aws
 @sdc_min_version('3.16.0')
 def test_s3_origin_anonymous(sdc_builder, sdc_executor, aws):
     """Tests accessing a public object where we can list bucket contents. """
+    if aws.authentication_method != 'WITH_CREDENTIALS':
+        pytest.skip('Anonymous tests should only be executed when credential authentication is used')
+
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
                    DEFAULT_NUMBER_OF_RECORDS, anonymous=True)
 
@@ -166,6 +169,9 @@ def test_s3_origin_anonymous(sdc_builder, sdc_executor, aws):
 @sdc_min_version('3.16.0')
 def test_s3_origin_anonymous_no_list(sdc_builder, sdc_executor, aws):
     """Tests accessing a public object where we cannot list bucket contents. """
+    if aws.authentication_method != 'WITH_CREDENTIALS':
+        pytest.skip('Anonymous tests should only be executed when credential authentication is used')
+
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, DEFAULT_DATA_FORMAT, SINGLETHREADED,
                    1, anonymous=True, allow_list=False)
 
