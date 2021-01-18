@@ -16,11 +16,11 @@
 
 import json
 import logging
-import pytest
-import requests
 import string
 import time
 
+import pytest
+import requests
 from streamsets.testframework.markers import cluster, sdc_activation, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -56,7 +56,7 @@ def test_sdc_parcel_activation_hadoop_fs_destination(sdc_executor, activate_sdc,
         _test_basic_stage(sdc_executor)
         _test_hadoop_fs_destination(sdc_executor, cluster)
     else:
-        expected = ("403 Client Error: Forbidden for url:")
+        expected = "403 Client Error: Forbidden for url:"
         with pytest.raises(requests.exceptions.HTTPError, match=expected):
             # Note here: the following is expected to produce 403 even though it is a basic stage.
             # Reason is : SDC Parcel contains all stage libs and so now it needs registration and activation
@@ -71,16 +71,18 @@ def _test_basic_stage(sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.data_format = 'JSON'
     dev_raw_data_source.raw_data = '{"emp_id" :"123456"}'
-    trash = pipeline_builder.add_stage('Trash')
-    dev_raw_data_source >> trash
+    dev_raw_data_source.stop_after_first_batch = True
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> wiretap.destination
+
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    sdc_executor.stop_pipeline(pipeline)
-    snap_data = snapshot[pipeline.origin_stage.instance_name]
-    assert len(snap_data.output) == 1
-    assert snap_data.output[0].field['emp_id'].value == '123456'
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert wiretap.output_records[0].field['emp_id'].value == '123456'
 
 
 def _test_hadoop_fs_destination(sdc_executor, cluster):
