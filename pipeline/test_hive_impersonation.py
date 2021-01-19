@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import json
-import string
 import logging
+import string
 from datetime import datetime
 
 import pytest
@@ -45,34 +45,32 @@ def impersonation_check(sdc_executor):
 def hive_check(cluster, sdc_builder):
     # based on SDC-13915
     if (isinstance(cluster, AmbariCluster) and Version(cluster.version) == Version('3.1')
-        and Version(sdc_builder.version) < Version('3.8.1')):
+            and Version(sdc_builder.version) < Version('3.8.1')):
         pytest.skip('Hive stages not available on HDP 3.1.0.0 for SDC versions before 3.8.1')
 
 
 @cluster('cdh', 'hdp')
 def test_hive_query_executor_impersonation(sdc_builder, sdc_executor, cluster):
     """Test Hive query executor stage for current user impersonation.
-    This is acheived by using a deduplicator which assures us that there is
-    only one successful ingest. The pipeline would look like:
+    The pipeline would look like:
 
-        dev_raw_data_source >> record_deduplicator >> hive_query
-                                                   >> trash
+        dev_raw_data_source >> hive_query >= wiretap
     """
     hive_table_name = get_random_string(string.ascii_letters, 10)
     hive_cursor = cluster.hive.client.cursor()
-    sql_queries = ["CREATE EXTERNAL TABLE ${record:value('/text')} (id int, name string) LOCATION '/tmp/${record:value('/text')}'"]
+    sql_queries = [
+        "CREATE EXTERNAL TABLE ${record:value('/text')} (id int, name string) LOCATION '/tmp/${record:value('/text')}'"]
 
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
-                                                                                  raw_data=hive_table_name)
-    record_deduplicator = builder.add_stage('Record Deduplicator')
-    trash = builder.add_stage('Trash')
+                                                                                  raw_data=hive_table_name,
+                                                                                  stop_after_first_batch=True)
+    wiretap = builder.add_wiretap()
 
     hive_query = builder.add_stage('Hive Query', type='executor').set_attributes(sql_queries=sql_queries)
 
-    dev_raw_data_source >> record_deduplicator >> hive_query
-    record_deduplicator >> trash
+    dev_raw_data_source >> hive_query >= wiretap.destination
 
     pipeline = builder.build(title='Hive query executor pipeline').configure_for_environment(cluster)
     # HDP Clusterdock inserts Hive username to the JDBC URL which is specifically incompatible with this test
@@ -82,11 +80,10 @@ def test_hive_query_executor_impersonation(sdc_builder, sdc_executor, cluster):
 
     try:
         # assert successful query execution of the pipeline
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
         hive_cursor.execute(f'DESCRIBE FORMATTED {hive_table_name}')
-        table_owner = [row[1].strip() for row in hive_cursor.fetchall() if row[0].strip()=='Owner:']
-        assert (snapshot[hive_query.instance_name].event_records[0].header['values']['sdc.event.type'] ==
+        table_owner = [row[1].strip() for row in hive_cursor.fetchall() if row[0].strip() == 'Owner:']
+        assert (wiretap.output_records[0].header['values']['sdc.event.type'] ==
                 'successful-query')
 
         # assert Hive table creation
