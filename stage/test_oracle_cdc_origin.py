@@ -33,7 +33,7 @@ SQL_PARSER_STAGE_NAME = 'com_streamsets_pipeline_stage_processor_parser_sql_SqlP
 
 PRIMARY_KEY = 'ID'
 OTHER_COLUMN = 'NAME'
-BATCH_SIZE = 10  # Max limit imposed by SDC for snapshots
+BATCH_SIZE = 10  # Max limit imposed
 Operations = namedtuple('Operations', ['rows', 'cdc_op_types', 'sdc_op_types', 'change_count'])
 
 
@@ -66,7 +66,7 @@ def create_logminer_dictionary(database):
 @database('oracle')
 def test_decimal_attributes(sdc_builder, sdc_executor, database):
     """Validates that Field attributes for decimal types will get properly generated
-    Runs oracle_cdc_client >> trash
+    Runs oracle_cdc_client >> wiretap.destination
     """
     db_engine = database.engine
     pipeline = None
@@ -88,7 +88,7 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database):
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=True,
                                                           src_table_name=src_table_name)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
         lines = [
             f"INSERT INTO {src_table_name} VALUES (1, 10.2)",
@@ -105,15 +105,14 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database):
         # So we wait until the time here is past the time at which all data was written out to the DB (current time)
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        oracle_cdc_client >> trash
+        oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC: Decimal Attributes').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
         # assert all the data captured have the same raw_data
-        output_records = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
-        assert len(output_records) == 1
-        attributes = output_records[0].get_field_attributes(f'/{OTHER_COLUMN}')
+        assert len(wiretap.output_records) == 1
+        attributes = wiretap.output_records[0].get_field_attributes(f'/{OTHER_COLUMN}')
         assert '20' == attributes['precision']
         assert '2' == attributes['scale']
 
@@ -137,8 +136,8 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
     DATETIME type and equal to those stored in the database.
 
     Pipeline: depending on the `parse_sql` value,
-      True)  oracle_cdc_client >> trash
-      False) oracle_cdc_client >> sql_parser >> trash
+      True)  oracle_cdc_client >> wiretap.destination
+      False) oracle_cdc_client >> sql_parser >> wiretap.destination
 
     """
     # Create table in database.
@@ -161,20 +160,16 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
                                                       buffer_locally=True,
                                                       src_table_name=table_name)
     oracle_cdc_client.parse_sql_query = parse_sql
-
+    wiretap = pipeline_builder.add_wiretap()
     if parse_sql:
-        trash = pipeline_builder.add_stage('Trash')
-        oracle_cdc_client >> trash
-        instance_name = oracle_cdc_client.instance_name
+        oracle_cdc_client >> wiretap.destination
     else:
         sql_parser = pipeline_builder.add_stage(name=SQL_PARSER_STAGE_NAME)
         sql_parser.set_attributes(sql_field='/sql',
                                   target_field='/',
                                   resolve_schema_from_db=True,
                                   db_time_zone='UTC')
-        trash = pipeline_builder.add_stage('Trash')
-        oracle_cdc_client >> sql_parser >> trash
-        instance_name = sql_parser.instance_name
+        oracle_cdc_client >> sql_parser >> wiretap.destination
 
     pipeline = pipeline_builder.build('Oracle CDC: Date conversion').configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -202,11 +197,11 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
         # So we wait until the time here is past the time at which all data was written out to the DB (current time).
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(2)
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         # Assert all the data captured have the same raw_data.
-        records = sorted(snapshot.snapshot_batches[0][instance_name].output,
+        records = sorted(wiretap.output_records,
                          key=lambda rec: rec.field['ID'].value)
 
         assert len(records) == 2
@@ -238,7 +233,7 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
 def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
     """Basic test that reads inserts/updates/deletes to an Oracle table,
     and validates that they are read in the same order.
-    Runs oracle_cdc_client >> trash
+    Runs oracle_cdc_client >> wiretap
     """
     db_engine = database.engine
     pipeline = None
@@ -295,7 +290,7 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
 
         logger.info('Expected number of records is %s.', change_count)
 
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
         # Why do we need to wait?
         # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
@@ -303,20 +298,20 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
         # So we wait until the time here is past the time at which all data was written out to the DB (current time)
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        oracle_cdc_client >> trash
+        oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(change_count)
 
         row_index = 0
         op_index = 0
         # assert all the data captured have the same raw_data
-        for record in snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output:
+        for record in wiretap.output_records:
             assert row_index == int(record.field['ID'].value)
             assert rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
-            assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
+            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
             op_index += 1
 
@@ -337,7 +332,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
     """Basic test that reads inserts first via preview and then run and preview again returning records
         Perform update/deletes and see run correctly picks up from where it left off and do a preview
         again to see preview still returns the inserts, updates and deletes all
-        Runs oracle_cdc_client >> trash
+        Runs oracle_cdc_client >> wiretap
     """
     db_engine = database.engine
     table = None
@@ -360,8 +355,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
                                                           src_table_name=src_table_name,
                                                           initial_change='SCN',
                                                           start_scn=start_scn)
-        trash = pipeline_builder.add_stage('Trash')
-        oracle_cdc_client >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
@@ -387,27 +382,23 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         for record in preview_records:
             assert row_index == int(record.field['ID'].value)
             assert rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
-            assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
+            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
             op_index += 1
         assert op_index == change_count
 
-        # Run pipeline and capture snapshot, we should see 3 inserts
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=240,
-                                                 batches=len(rows), batch_size=1).snapshot
-        snapshot_records = [record
-                            for batch in snapshot.snapshot_batches
-                            for record in batch[oracle_cdc_client.instance_name].output]
+        # Run pipeline and capture the output, we should see 3 inserts
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows))
 
         row_index = 0
         op_index = 0
         # assert all the data captured have the same raw_data
-        for record in snapshot_records:
+        for record in wiretap.output_records:
             assert row_index == int(record.field['ID'].value)
             assert rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
-            assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
+            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
             op_index += 1
         assert op_index == change_count
@@ -427,8 +418,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         for record in preview_records:
             assert row_index == int(record.field['ID'].value)
             assert rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header['values']['sdc.operation.type']) == sdc_op_types[op_index]
-            assert record.header['values']['oracle.cdc.operation'] == cdc_op_types[op_index]
+            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
+            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
             op_index += 1
         assert op_index == change_count
@@ -472,28 +463,26 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         for record in preview_records:
             assert row_index == int(record.field['ID'].value)
             assert merged_rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header['values']['sdc.operation.type']) == merged_sdc_op_types[op_index]
-            assert record.header['values']['oracle.cdc.operation'] == merged_cdc_op_types[op_index]
+            assert int(record.header.values['sdc.operation.type']) == merged_sdc_op_types[op_index]
+            assert record.header.values['oracle.cdc.operation'] == merged_cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
             op_index += 1
 
         assert op_index == merged_change_count
 
-        # If we run the pipeline and capture snapshot, we should see only the updates and deletes
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=240,
-                                                 batches=len(new_rows), batch_size=1).snapshot
-        snapshot_records = [record
-                            for batch in snapshot.snapshot_batches
-                            for record in batch[oracle_cdc_client.instance_name].output]
+        wiretap.reset()
+
+        # If we run the pipeline and capture the output, we should see only the updates and deletes
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(new_rows))
 
         row_index = 0
         op_index = 0
         # assert all the data captured have the same raw_data
-        for record in snapshot_records:
+        for record in wiretap.output_records:
             assert row_index == int(record.field['ID'].value)
             assert new_rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header['values']['sdc.operation.type']) == new_sdc_op_types[op_index]
-            assert record.header['values']['oracle.cdc.operation'] == new_cdc_op_types[op_index]
+            assert int(record.header.values['sdc.operation.type']) == new_sdc_op_types[op_index]
+            assert record.header.values['oracle.cdc.operation'] == new_cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
             op_index += 1
 
@@ -518,8 +507,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         for record in preview_records:
             assert row_index == int(record.field['ID'].value)
             assert merged_rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header['values']['sdc.operation.type']) == merged_sdc_op_types[op_index]
-            assert record.header['values']['oracle.cdc.operation'] == merged_cdc_op_types[op_index]
+            assert int(record.header.values['sdc.operation.type']) == merged_sdc_op_types[op_index]
+            assert record.header.values['oracle.cdc.operation'] == merged_cdc_op_types[op_index]
             row_index = (row_index + 1) % 3
             op_index += 1
 
@@ -592,7 +581,7 @@ def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder, sdc_
 def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
     """Basic test that tests for SDC-8340. This test ensures that Strings with value 'NULL'/'null' is treated correctly,
     and null is not returned.
-    Runs oracle_cdc_client >> trash
+    Runs oracle_cdc_client >> wiretap
     """
     db_engine = database.engine
     pipeline = None
@@ -660,7 +649,7 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
             txn.rollback()
             raise
 
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
         # Why do we need to wait?
         # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
@@ -668,14 +657,15 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
         # So we wait until the time here is past the time at which all data was written out to the DB (current time)
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        oracle_cdc_client >> trash
+        oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows))
+
 
         # assert all the data captured have the same raw_data
-        output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        output = wiretap.output_records
         for i, record in enumerate(output):
             # In update records, values with NULLs in the row are not returned
             if 'ID' in record.field:
@@ -704,7 +694,7 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database):
     This test creates several SQL insertions longer than 4000 bytes and checks Oracle CDC correctly generates
     the corresponding records, with no data loss.
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
 
     """
     table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
@@ -738,20 +728,16 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database):
                                                    initial_change='SCN',
                                                    start_scn=start_scn,
                                                    parse_sql_query=True)
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True,
-                                                 timeout_sec=240, batches=len(input_data),
-                                                 batch_size=1).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(input_data))
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         # Check there is no data loss.
-        sdc_records = [record.field
-                       for batch in snapshot.snapshot_batches
-                       for record in batch[oracle_cdc.instance_name].output]
+        sdc_records = [record.field for record in wiretap.output_records]
         assert sdc_records == input_data
 
     finally:
@@ -767,13 +753,13 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
     - Wait for 1 second so timestamp of next transaction is different
     - Start a 2nd transaction, insert data and commit
     - Start pipeline
-    - Get snapshot, make sure the 2nd txn's data is read
+    - Get the output, make sure the 2nd txn's data is read
     - Stop pipeline
     - Commit transaction 1
-    - Start pipeline, get snapshot
+    - Start pipeline, get the output
     - Must contain all data from transaction 1
-    (Pre-8359, this would fail when buffer_locally=true with 2nd snapshot timing out, since no data is read)
-    Runs oracle_cdc_client >> trash
+    (Pre-8359, this would fail when buffer_locally=true with 2nd pipeline run timing out, since no data is read)
+    Runs oracle_cdc_client >> wiretap
     """
 
     db_engine = database.engine
@@ -814,8 +800,7 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         rows_c1 = [{'ID': 200, 'NAME': 'TEST_SHORT_TXN'} for _ in range(0, 10)]
         connection.execute(table.insert(), rows_c1)
 
-        # Start pipeline, get snapshot
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
 
         # Why do we need to wait?
         # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
@@ -823,11 +808,11 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         # So we wait until the time here is past the time at which all data was written out to the DB (current time)
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        oracle_cdc_client >> trash
+        oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=300).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows_c1))
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
         def compare_output(output_records, rows):
@@ -837,18 +822,20 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
                 assert output_record.field['NAME'] == rows[i]['NAME']
 
         # assert all the data captured have the same as rows_c1
-        output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        output = wiretap.output_records
         compare_output(output, rows_c1)
 
         # Now commit the older transaction, which has overlapped over the second one
         long_txn.commit()
 
+        wiretap.reset()
+
         # Pre-3.1.0.0, this times out
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=300).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows_c2))
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         # assert all the data captured have the same raw_data
-        output = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        output = wiretap.output_records
         compare_output(output, rows_c2)
 
     finally:
@@ -941,7 +928,7 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
 def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
     """Test that writes some data, then creates a save point, writes some more data and then rolls back to savepoint,
     and validates that only the data that is before the save point and after the rollback is read
-    Runs oracle_cdc_client >> trash
+    Runs oracle_cdc_client >> wiretap
     """
     db_engine = database.engine
     pipeline = None
@@ -973,7 +960,7 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
                                                           src_table_name=src_table_pattern)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         lines = [
             f"INSERT INTO {src_table_name} VALUES (1, 'MORDOR')",
             f"INSERT INTO {src_table_name} VALUES (2, 'GONDOR')",
@@ -999,29 +986,30 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
         # So we wait until the time here is past the time at which all data was written out to the DB (current time)
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        oracle_cdc_client >> trash
+        oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).wait_for_finished(120).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(5)
+
         # assert all the data captured have the same raw_data
-        output_records = snapshot.snapshot_batches[0][oracle_cdc_client.instance_name].output
+        output_records = wiretap.output_records
         assert len(output_records) == 5
         assert output_records[0].field[PRIMARY_KEY] == 1
         assert output_records[0].field[OTHER_COLUMN] == 'MORDOR'
-        assert output_records[0].header['values']['sdc.operation.type'] == '1'
+        assert output_records[0].header.values['sdc.operation.type'] == '1'
         assert output_records[1].field[PRIMARY_KEY] == 2
         assert output_records[1].field[OTHER_COLUMN] == 'GONDOR'
-        assert output_records[1].header['values']['sdc.operation.type'] == '1'
+        assert output_records[1].header.values['sdc.operation.type'] == '1'
         assert output_records[2].field[PRIMARY_KEY] == 1
         assert output_records[2].field[OTHER_COLUMN] == 'MINAS MORGUL'
-        assert output_records[2].header['values']['sdc.operation.type'] == '3'
+        assert output_records[2].header.values['sdc.operation.type'] == '3'
         assert output_records[3].field[PRIMARY_KEY] == 2
         assert output_records[3].field[OTHER_COLUMN] == 'HOBBITON'
-        assert output_records[3].header['values']['sdc.operation.type'] == '3'
+        assert output_records[3].header.values['sdc.operation.type'] == '3'
         assert output_records[4].field[PRIMARY_KEY] == 3
         assert output_records[4].field[OTHER_COLUMN] == 'GONDOR'
-        assert output_records[4].header['values']['sdc.operation.type'] == '1'
+        assert output_records[4].header.values['sdc.operation.type'] == '1'
 
     finally:
         if pipeline is not None:
@@ -1060,7 +1048,7 @@ def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database,
     More info about the supported Oracle data types:
     - https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
 
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -1085,20 +1073,18 @@ def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database,
                                                    src_table_name=table_name,
                                                    unsupported_field_type='SEND_TO_PIPELINE',
                                                    add_unsupported_fields_to_records=True)
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        # Capture snapshot and check the record is correctly generated.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, wait=True,
-                                                 timeout_sec=120).snapshot
+        # Capture the output and check the record is correctly generated.
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(expected_output))
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         actual_output = [record.field
-                         for batch in snapshot.snapshot_batches
-                         for record in batch[oracle_cdc.instance_name].output]
+                         for record in wiretap.output_records]
         assert actual_output == expected_output
 
     finally:
@@ -1118,14 +1104,10 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, ac
     expected to appear in the output stream and the table2 record only must appear in the error stream when
     'TO_ERROR' is the configured action.
 
-    NOTE: table2 insertion is required by our test framework to capture the snapshot. With only the table1
-    insertion, the snapshot would end up with a timeout error, as it seems the capture_snapshot() method does
-    not consider error records in its internal counter.
-
     More info about the supported Oracle data types:
     - https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
 
     """
     connection = database.engine.connect()
@@ -1164,23 +1146,19 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, ac
                                                    src_table_name=f'{base_name}%',
                                                    unsupported_field_type=action,
                                                    add_unsupported_fields_to_records=True)
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        # Capture snapshot and check Oracle CDC output.
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, wait=True,
-                                                 timeout_sec=120).snapshot
+        # Capture and check the output.
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(expected_output))
+
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
-        actual_output = [record.field
-                         for batch in snapshot.snapshot_batches
-                         for record in batch[oracle_cdc.instance_name].output]
-        actual_error_output = [record.field
-                               for batch in snapshot.snapshot_batches
-                               for record in batch[oracle_cdc.instance_name].error_records]
+        actual_output = [record.field for record in wiretap.output_records]
+        actual_error_output = [record.field for record in wiretap.error_records]
         assert actual_output == expected_output
         assert actual_error_output == expected_error_output
 
@@ -1486,12 +1464,11 @@ def test_event_startup(sdc_builder, sdc_executor, database):
                                                buffer_locally=True,
                                                src_table_name=table_name)
         trash = builder.add_stage('Trash')
-        # TLKT-248: Add ability to directly read events from snapshots
         identity = builder.add_stage('Dev Identity')
-        event_trash = builder.add_stage('Trash')
+        event_wiretap = builder.add_wiretap()
         origin >> trash
         origin >= identity
-        identity >> event_trash
+        identity >> event_wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
@@ -1501,13 +1478,11 @@ def test_event_startup(sdc_builder, sdc_executor, database):
         connection.execute(f"INSERT INTO {table_name} VALUES(1)")
         txn.commit()
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True,
-                                                 timeout_sec=360).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
-        assert len(snapshot[identity].output) == 1
-        assert snapshot[identity].output[0].header['values']['sdc.event.type'] == 'STARTUP'
+        assert len(event_wiretap.output_records) == 1
+        assert event_wiretap.output_records[0].header.values['sdc.event.type'] == 'STARTUP'
 
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
@@ -1525,7 +1500,8 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
     according to the configuration. The Oracle CDC output (records and events) is examined to validate this
     behavior.
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
+              oracle_cdc >= wiretap
 
     """
     table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
@@ -1575,26 +1551,26 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
                                                    tables=[table_config],
                                                    initial_change='SCN',
                                                    start_scn=start_scn)
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
+        wiretap_evts = builder.add_wiretap()
+        oracle_cdc >= wiretap_evts.destination
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline and check only cities data is consumed by Oracle CDC origin.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=240,
-                                                 batches=len(sports_data2), batch_size=1).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(sports_data2))
         sdc_executor.stop_pipeline(pipeline, force=True)
 
         sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
-                       for batch in snapshot.snapshot_batches
-                       for record in batch[oracle_cdc.instance_name].output]
+                       for record in wiretap.output_records]
+
         assert sdc_records == sports_data2
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],
                        event.field)
-                      for batch in snapshot.snapshot_batches
-                      for event in batch[oracle_cdc.instance_name].event_records]
+                      for event in wiretap_evts.output_records]
         assert sdc_events == expected_events
 
     finally:
@@ -1610,7 +1586,8 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
     Besides to validate the origin consumes the records inserted in the new table, the test also validates the
     corresponding DDL events are also created (CREATE and TRUNCATE events).
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
+              oracle_cdc >= wiretap
 
     """
     table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
@@ -1642,14 +1619,15 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
                                                    src_table_name=table_pattern,
                                                    initial_change='LATEST',
                                                    dictionary_source='DICT_FROM_REDO_LOGS')
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
+        wiretap_evts = builder.add_wiretap()
+        oracle_cdc >= wiretap_evts.destination
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline, create table and populate
-        snapshot_cmd = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False,
-                                                     batches=len(sports_data1 + sports_data2), batch_size=1)
+        status = sdc_executor.start_pipeline(pipeline)
 
         connection.execute(f'CREATE TABLE {sports_table} (ID NUMBER PRIMARY KEY, '
                            'PLAYER VARCHAR2(50), SPORT VARCHAR2(50))')
@@ -1660,19 +1638,17 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
         for id, name, sport in sports_data2:
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
 
-        snapshot = snapshot_cmd.wait_for_finished(timeout_sec=240).snapshot
+        status.wait_for_pipeline_output_records_count(len(sports_data1+sports_data2))
         sdc_executor.stop_pipeline(pipeline, force=True)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],
                        event.field)
-                      for batch in snapshot.snapshot_batches
-                      for event in batch[oracle_cdc.instance_name].event_records]
+                      for event in wiretap_evts.output_records]
         assert sdc_events == expected_events
 
         sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
-                       for batch in snapshot.snapshot_batches
-                       for record in batch[oracle_cdc.instance_name].output]
+                       for record in wiretap.output_records]
         assert sdc_records == sports_data1 + sports_data2
 
     finally:
@@ -1694,7 +1670,8 @@ def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
     generated for them. To do so, we create two tables, insert records and drop one of them; then check that
     only the remaining table generated CDC records and events.
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
+              oracle_cdc >= wiretap
 
     """
     table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
@@ -1741,26 +1718,25 @@ def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
                                                    initial_change='SCN',
                                                    start_scn=start_scn,
                                                    dictionary_source='DICT_FROM_REDO_LOGS')
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
+        wiretap_evts = builder.add_wiretap()
+        oracle_cdc >= wiretap_evts.destination
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline, create table and populate
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=240,
-                                                 batches=len(sports_data), batch_size=1).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(sports_data))
         sdc_executor.stop_pipeline(pipeline, force=True)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],
                        event.field)
-                      for batch in snapshot.snapshot_batches
-                      for event in batch[oracle_cdc.instance_name].event_records]
+                      for event in wiretap_evts.output_records]
         assert sdc_events == expected_events
 
         sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
-                       for batch in snapshot.snapshot_batches
-                       for record in batch[oracle_cdc.instance_name].output]
+                       for record in wiretap.output_records]
         assert sdc_records == sports_data
 
     finally:
@@ -1779,7 +1755,7 @@ def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
       transaction T2, and consequently checks that the consumed data correspond to T2+T3.
     - When initial_change is 'LATEST', the expected outcome is to read only data from T3.
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
 
     """
     table_name = f'STF_{get_random_string(string.ascii_lowercase)}'
@@ -1826,24 +1802,21 @@ def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
                                                    src_table_name=table_name,
                                                    batch_size=1,
                                                    **test_options)
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline and commit a third transaction after that.
-        snapshot_cmd = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True, wait=False,
-                                                     batches=len(expected_data), batch_size=1)
+        status = sdc_executor.start_pipeline(pipeline)
         txn3 = connection.begin()
         for i in txn3_data:
             connection.execute(f'INSERT INTO {table_name} VALUES({i})')
         txn3.commit()
 
         # Check the data consumed by the pipeline is the expected one.
-        snapshot = snapshot_cmd.wait_for_finished(timeout_sec=120).snapshot
-        sdc_records = [snapshot.snapshot_batches[i][oracle_cdc.instance_name].output[0]
-                       for i in range(len(snapshot))]
-        consumed_data = [rec.field['ID'].value for rec in sdc_records]
+        status.wait_for_pipeline_output_records_count(len(expected_data))
+        consumed_data = [rec.field['ID'].value for rec in wiretap.output_records]
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         assert sorted(consumed_data) == expected_data
 
@@ -1861,7 +1834,7 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
     dictionary, and check that the Oracle CDC is able to use the fresh dictionary to recover the data inserted
     in the database before the pipeline is started.
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
 
     """
     table_name = f'STF_{get_random_string(string.ascii_lowercase)}'
@@ -1901,18 +1874,15 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
             oracle_cdc_params['duration_of_directory_extraction'] = '${2 * MINUTES}'
 
         oracle_cdc = _get_oracle_cdc_client_origin(**oracle_cdc_params)
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline and check the data consumed by the pipeline is the expected one.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, timeout_sec=120,
-                                                 batches=len(input_data), batch_size=1).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(input_data))
         sdc_executor.stop_pipeline(pipeline, force=True)
-        sdc_records = [snapshot.snapshot_batches[i][oracle_cdc.instance_name].output[0]
-                       for i in range(len(snapshot))]
-        consumed_data = [rec.field['ID'].value for rec in sdc_records]
+        consumed_data = [rec.field['ID'].value for rec in wiretap.output_records]
         assert sorted(consumed_data) == input_data
 
     finally:
@@ -1933,7 +1903,7 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
     which are separated in time by more than the configured LogMiner session window, and configure Oracle CDC
     to consume both transactions.
 
-    Pipeline: oracle_cdc >> trash
+    Pipeline: oracle_cdc >> wiretap
 
     """
     table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
@@ -1975,18 +1945,15 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
                                                    dictionary_source=dictionary_source,
                                                    maximum_transaction_length=session_window_secs - 1,
                                                    logminer_session_window=session_window_secs)
-        trash = builder.add_stage('Trash')
-        oracle_cdc >> trash
+        wiretap = builder.add_wiretap()
+        oracle_cdc >> wiretap.destination
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline, populate table with data 1 and wait for the pipeline to consume it.
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=True, timeout_sec=240,
-                                                 batches=len(txn1_data + txn2_data), batch_size=1).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(txn1_data) + len(txn2_data))
         sdc_executor.stop_pipeline(pipeline, force=True)
-        consumed_data = [record.field['ID'].value
-                         for batch in snapshot.snapshot_batches
-                         for record in batch[oracle_cdc.instance_name].output]
+        consumed_data = [record.field['ID'].value for record in wiretap.output_records]
         assert sorted(consumed_data) == txn1_data + txn2_data
 
     finally:
