@@ -15,6 +15,7 @@
 import logging
 import math
 import string
+import time
 
 import pytest
 import sqlalchemy
@@ -66,7 +67,7 @@ def test_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment,
         We insert two different records for each data type. One with the data value and another one
         with a NULL value.
         We use a pipeline:
-            SAP HANA Query Consumer >> Trash
+            SAP HANA Query Consumer >> wiretap
         Both outputs (the value and the null) must have the correct data type.
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -92,20 +93,21 @@ def test_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment,
         origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
         origin.incremental_mode = False
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
 
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         assert record.field['DATA_COLUMN'].type == expected_type
         assert null_record.field['DATA_COLUMN'].type == expected_type
@@ -124,7 +126,7 @@ def test_consumer_offset_resume(sdc_builder, sdc_executor, database):
     Ensure that the Query consumer can resume where it ended and stop the pipeline when it reads all the data.
 
     We use a pipeline:
-        SAP HANA Query Consumer >> Trash
+        SAP HANA Query Consumer >> wiretap
         SAP HANA Query Consumer >> Finisher
 
     The test run the pipeline three times. Each time, before it runs the pipeline it inserts one row to the database
@@ -149,10 +151,11 @@ def test_consumer_offset_resume(sdc_builder, sdc_executor, database):
     origin.initial_offset = '0'
     origin.offset_column = 'ID'
 
-    trash = pipeline_builder.add_stage('Trash')
-    origin >> trash
+    wiretap = pipeline_builder.add_wiretap()
 
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+
+    origin >> wiretap.destination
     origin >= finisher
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
@@ -164,12 +167,14 @@ def test_consumer_offset_resume(sdc_builder, sdc_executor, database):
         connection = database.engine.connect()
 
         for i in range(len(ROWS_IN_DATABASE)):
+            wiretap.reset()
             # Insert one row to the database
             connection.execute(table.insert(), [ROWS_IN_DATABASE[i]])
 
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
-            assert len(snapshot[origin].output) == 1
-            assert snapshot[origin].output[0].get_field_data('/ID') == i + 1
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+            assert len(wiretap.output_records) == 1
+            assert wiretap.output_records[0].get_field_data('/ID') == i + 1
 
             sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
     finally:
@@ -186,11 +191,10 @@ def test_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batc
     We test the stage with different batch sizes, since the logic is different depending on the whole table
     fit in a batch or not (see e.g. SDC-14882 for an issue with the second case).
 
-    Pipeline:  sap_hana_consumer >> trash
+    Pipeline:  sap_hana_consumer >> wiretap
                sap_hana_consumer >= finisher
 
     """
-
     num_records = 8
     input_data = [{'ID': i, 'NAME': get_random_string()} for i in range(1, num_records + 1)]
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -202,10 +206,10 @@ def test_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batc
     origin.set_attributes(incremental_mode=False,
                           sql_query=sql_query,
                           max_batch_size_in_records=batch_size)
-    trash = pipeline_builder.add_stage('Trash')
+    wiretap = pipeline_builder.add_wiretap()
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
 
-    origin >> trash
+    origin >> wiretap.destination
     origin >= finisher
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -223,16 +227,11 @@ def test_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batc
 
         # Run the pipeline and check the stage consumed all the expected records. Repeat several times to
         # ensure non-incremental mode works as expected after restarting the pipeline.
-        for _i in range(3):
-            snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                     start_pipeline=True,
-                                                     batches=math.ceil(num_records / batch_size),
-                                                     batch_size=batch_size).snapshot
-            sdc_records = [record.field
-                           for batch in snapshot.snapshot_batches
-                           for record in batch[origin.instance_name].output]
-            assert sdc_records == input_data
-            sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        for _ in range(3):
+            wiretap.reset()
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert len(input_data) == len(wiretap.output_records)
+            assert input_data == [record.field for record in wiretap.output_records]
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -289,7 +288,7 @@ def test_empty_result_set(sdc_builder, sdc_executor, database):
     """
         Tests the output records is 0 if the table is empty
         We will use a pipeline:
-            SAP HANA Query Consumer >> Trash
+            SAP HANA Query Consumer >> Wiretap
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -307,18 +306,19 @@ def test_empty_result_set(sdc_builder, sdc_executor, database):
         origin.incremental_mode = True
         origin.offset_column = "P_ID"
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
 
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        time.sleep(10)  # We let the pipeline run for few seconds to be sure that we are just not going to fast
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 0
+        assert len(wiretap.output_records) == 0
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -334,9 +334,7 @@ def test_consumer_incremental_mode(sdc_builder, sdc_executor, database, batch_si
     We test the stage with different batch sizes, since the logic is different depending on the whole table
     fit in a batch or not (see e.g. SDC-14882 for an issue with the second case).
 
-    Pipeline:  sap_hana_consumer >> trash
-               sap_hana_consumer >= finisher
-
+    Pipeline:  sap_hana_consumer >> wiretap
     """
 
     num_records = 8
@@ -352,11 +350,9 @@ def test_consumer_incremental_mode(sdc_builder, sdc_executor, database, batch_si
                           sql_query=sql_query,
                           offset_column='ID',
                           max_batch_size_in_records=batch_size)
-    trash = pipeline_builder.add_stage('Trash')
-    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+    wiretap = pipeline_builder.add_wiretap()
 
-    origin >> trash
-    origin >= finisher
+    origin >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
@@ -373,44 +369,31 @@ def test_consumer_incremental_mode(sdc_builder, sdc_executor, database, batch_si
 
         # Run the pipeline and check the stage consumed all the expected records. Repeat several times to
         # ensure non-incremental mode works as expected after restarting the pipeline.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(input_data))
+        sdc_executor.stop_pipeline(pipeline)
+        sdc_records = [record.field for record in wiretap.output_records]
+        assert input_data == sdc_records
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True,
-                                                 batches=math.ceil(num_records / batch_size),
-                                                 batch_size=batch_size).snapshot
-        sdc_records = [record.field
-                       for batch in snapshot.snapshot_batches
-                       for record in batch[origin.instance_name].output]
-        assert sdc_records == input_data
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
+        # Run a second time should output 0 new records
+        wiretap.reset()
+        sdc_executor.start_pipeline(pipeline)
+        time.sleep(10)  # We let the pipeline run for few seconds to be sure that we are just not going to fast
+        sdc_executor.stop_pipeline(pipeline)
 
-        #Run a second time should output 0 new records
-
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True,
-                                                 ).snapshot
-        sdc_records = [record.field
-                       for batch in snapshot.snapshot_batches
-                       for record in batch[origin.instance_name].output]
+        sdc_records = [record.field for record in wiretap.output_records]
         assert len(sdc_records) == 0
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
 
-        #Insert a new data and run again. Check the records output are the ones
-        # we inserted this last time.
-
+        # Insert a new data and run again. Check the records output are the ones we inserted this last time.
         input_data_again = [{'ID': i, 'NAME': get_random_string()} for i in range(9, (num_records*2) + 1)]
         connection.execute(table.insert(), input_data_again)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline,
-                                                 start_pipeline=True,
-                                                 batches=math.ceil(num_records / batch_size),
-                                                 batch_size=batch_size).snapshot
-        sdc_records = [record.field
-                       for batch in snapshot.snapshot_batches
-                       for record in batch[origin.instance_name].output]
-        assert sdc_records == input_data_again
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('FINISHED')
-
+        wiretap.reset()
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(input_data_again))
+        sdc_executor.stop_pipeline(pipeline)
+        sdc_records = [record.field for record in wiretap.output_records]
+        assert input_data_again == sdc_records
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
@@ -477,21 +460,22 @@ def test_jdbc_decimal_headers(sdc_builder, sdc_executor, database):
         origin.incremental_mode = True
         origin.offset_column = "P_ID"
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
 
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 1
-        assert 1.5 == snapshot[origin].output[0].field['DEC']
-        assert snapshot[origin].output[0].header.values['jdbc.DEC.scale'] == '1'
-        assert snapshot[origin].output[0].header.values['jdbc.DEC.precision'] == '2'
+        assert len(wiretap.output_records) == 1
+        assert 1.5 == wiretap.output_records[0].field['DEC']
+        assert wiretap.output_records[0].header.values['jdbc.DEC.scale'] == '1'
+        assert wiretap.output_records[0].header.values['jdbc.DEC.precision'] == '2'
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -532,24 +516,25 @@ def test_lineage_events(sdc_builder, sdc_executor, database):
         origin.incremental_mode = True
         origin.offset_column = "P_ID"
 
-        trash = builder.add_stage('Trash')
+        records_wiretap = builder.add_wiretap()
+        events_wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> records_wiretap.destination
+        origin >= events_wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
 
         sdc_executor.add_pipeline(pipeline)
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 4
-        assert len(snapshot[origin].event_records) == 1
-        assert snapshot[origin].event_records[0].header['values']['sdc.event.type'] == 'jdbc-query-success'
-        assert snapshot[origin].event_records[0].field['rows'] == 4
-        assert 'query' in snapshot[origin].event_records[0].field
-
-
+        assert len(records_wiretap.output_records) == 4
+        assert len(events_wiretap.output_records) == 1
+        assert events_wiretap.output_records[0].header['values']['sdc.event.type'] == 'jdbc-query-success'
+        assert events_wiretap.output_records[0].field['rows'] == 4
+        assert 'query' in events_wiretap.output_records[0].field
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
@@ -557,11 +542,7 @@ def test_lineage_events(sdc_builder, sdc_executor, database):
 
 @sdc_min_version('3.17.0')
 @sap_hana
-@pytest.mark.parametrize('query_end', [
-    ("WHERE T.P_ID > ${OFFSET} LIMIT 10"),
-    (""),
-    ("ORDER BY P_ID ASC LIMIT 10"),
-])
+@pytest.mark.parametrize('query_end', ["WHERE T.P_ID > ${OFFSET} LIMIT 10", "", "ORDER BY P_ID ASC LIMIT 10"])
 def test_missing_clause(sdc_builder, sdc_executor, database, query_end):
     """
         Tests the validation raises an error when the query does not contain
@@ -626,18 +607,19 @@ def test_multiline_query(sdc_builder, sdc_executor, database):
         origin.incremental_mode = True
         origin.offset_column = "P_ID"
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 1
-        assert snapshot[origin].output[0].field['DATA_COLUMN'] == 1
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['DATA_COLUMN'] == 1
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
@@ -645,10 +627,7 @@ def test_multiline_query(sdc_builder, sdc_executor, database):
 
 @sdc_min_version('3.17.0')
 @sap_hana
-@pytest.mark.parametrize('offset_column,expected_error', [
-    ('T.P_ID','JDBC_32 -'),
-    ('NONEXISTINGCOLUMN','JDBC_29 -')
-])
+@pytest.mark.parametrize('offset_column,expected_error', [('T.P_ID', 'JDBC_32 -'), ('NONEXISTINGCOLUMN', 'JDBC_29 -')])
 def test_invalid_offset_column(sdc_builder, sdc_executor, database, offset_column, expected_error):
     """
         Tests the validation raises an error when the query does not contain
@@ -694,10 +673,7 @@ def test_invalid_offset_column(sdc_builder, sdc_executor, database, offset_colum
 @sdc_min_version('3.17.0')
 @sap_hana
 def test_qualified_offset_column_in_query(sdc_builder, sdc_executor, database):
-    """
-        Qualified offset column on the query string but not on the offset column
-        config.
-    """
+    """Qualified offset column on the query string but not on the offset column config. """
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     connection = database.engine.connect()
@@ -716,18 +692,19 @@ def test_qualified_offset_column_in_query(sdc_builder, sdc_executor, database):
         origin.incremental_mode = True
         origin.offset_column = "P_ID"
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 1
-        assert snapshot[origin].output[0].field['DATA_COLUMN'] == 1
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['DATA_COLUMN'] == 1
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -763,18 +740,19 @@ def test_stored_procedure(sdc_builder, sdc_executor, database):
         origin.incremental_mode = False
         origin.offset_column = "P_ID"
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 1
-        assert snapshot[origin].output[0].field['DATA_COLUMN'] == 1
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['DATA_COLUMN'] == 1
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -811,18 +789,19 @@ def test_timestamp_as_string(sdc_builder, sdc_executor, database):
         origin.offset_column = "P_ID"
         origin.convert_timestamp_to_string = True
 
-        trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
 
-        origin >> trash
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(snapshot[origin].output) == 1
-        assert snapshot[origin].output[0].field['DATA_COLUMN'] == '2004-05-23 14:25:10.0'
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field['DATA_COLUMN'] == '2004-05-23 14:25:10.0'
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
