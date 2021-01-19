@@ -776,7 +776,7 @@ def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
 
         account_ids = get_ids(client.bulk.Account.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
-        logger.info('Starting pipeline and snapshot')
+        logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with a count field
@@ -1131,7 +1131,7 @@ def test_salesforce_origin_document(sdc_builder, sdc_executor, salesforce):
         ret = client.Document.create(TEST_DATA['DATA_TO_INSERT'])
         inserted_id = ret['id']
 
-        logger.info('Starting pipeline and snapshot')
+        logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with Id and Body fields
@@ -1431,7 +1431,6 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         logger.info('Creating first record using Salesforce client...')
         contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
 
-        logger.info('Taking snapshot')
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
 
         # CDC returns more than just the record fields, so verify_snapshot isn't so useful
@@ -1464,7 +1463,6 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         # Give the pipeline time to connect to the Streaming API
         time.sleep(10)
 
-        logger.info('Taking another snapshot')
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
 
         assert len(wiretap.output_records) == 1
@@ -1822,7 +1820,6 @@ def test_salesforce_datetime_in_history(sdc_builder, sdc_executor, salesforce, a
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
-        logger.info('Starting pipeline and snapshot')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # There should be a single row with Id and NewValue fields. For SOAP API, NewValue should be a DATETIME, for

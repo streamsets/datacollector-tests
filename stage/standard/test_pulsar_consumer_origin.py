@@ -16,12 +16,10 @@ import logging
 import string
 
 import pytest
-from streamsets.testframework.markers import pulsar, sdc_min_version
+from streamsets.testframework.markers import pulsar
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-
-SNAPSHOT_TIMEOUT_SEC = 120
 
 # Topics are URLs so we have to respect URL specs
 TOPIC_NAMES = [
