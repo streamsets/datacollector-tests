@@ -35,11 +35,12 @@ SDC_RPC_LISTENING_PORT = 20000
 @sdc_min_version('3.0.0.0')
 def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
     """Insert, update, delete a handful of records in the MapR-DB json table using a pipeline.
-    After that create another pipeline with CDC Consumer and verify with snapshot that MapR DB CDC
-    consumer gets the correct data.
+    After that create another pipeline with CDC Consumer and verify that MapR DB CDC
+    consumer gets the correct data. Also we do tht with the non-CDC consumer to verify also that it works properly
 
     dev_raw_data_source >> expression evaluator >> field_remover >> mapr_db_json
-    mapr_db_cdc_consumer >> trash
+    mapr_db_cdc_consumer >> wiretap
+    mapr_db_json >> wiretap
     """
     if not cluster.version[len('mapr'):].startswith('6'):
         pytest.skip('MapR CDC test only runs against cluster with MapR version 6.')
@@ -97,16 +98,16 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
                                         topic_list=[dict(key=f'{stream_name}:{topic_name}',
                                                          value=f'{table_path}')])
 
-    trash = pipeline_builder.add_stage('Trash')
-    mapr_db_cdc_consumer >> trash
+    wiretap_cdc = pipeline_builder.add_wiretap()
+    mapr_db_cdc_consumer >> wiretap_cdc.destination
     cdc_pipeline = pipeline_builder.build('MapR DB CDC Consumer').configure_for_environment(cluster)
 
     # Build the MapR DB JSON Consumer pipeline.
     pipeline_builder = sdc_builder.get_pipeline_builder()
     mapr_db_json_origin = pipeline_builder.add_stage('MapR DB JSON Origin')
     mapr_db_json_origin.set_attributes(table_name=table_path)
-    trash = pipeline_builder.add_stage('Trash')
-    mapr_db_json_origin >> trash
+    wiretap_json = pipeline_builder.add_wiretap()
+    mapr_db_json_origin >> wiretap_json.destination
     json_db_origin_pipeline = pipeline_builder.build('MapR Json DB Origin').configure_for_environment(cluster)
 
     try:
@@ -133,23 +134,22 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
         sdc_executor.add_pipeline(json_db_destination_pipeline, cdc_pipeline, json_db_origin_pipeline)
         sdc_executor.start_pipeline(json_db_destination_pipeline)
 
-        cdc_pipeline_command = sdc_executor.capture_snapshot(cdc_pipeline, start_pipeline=True, wait=False)
-        json_origin_pipeline_command = sdc_executor.capture_snapshot(json_db_origin_pipeline, start_pipeline=True,
-                                                                     wait=False)
+        sdc_executor.start_pipeline(cdc_pipeline)
+        sdc_executor.start_pipeline(json_db_origin_pipeline)
 
-        # Verify with a snapshot.
-        cdc_snapshot = cdc_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        json_snapshot = json_origin_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
+        sdc_executor.wait_for_pipeline_metric(cdc_pipeline, 'input_record_count', len(test_data))
+        sdc_executor.wait_for_pipeline_metric(json_db_origin_pipeline, 'input_record_count', len(test_data))
+
         sdc_executor.stop_pipeline(cdc_pipeline)
         sdc_executor.stop_pipeline(json_db_origin_pipeline)
 
-        actual_cdc = [record.field for record in cdc_snapshot[mapr_db_cdc_consumer].output]
+        actual_cdc = [record.field for record in wiretap_cdc.output_records]
         for record in test_data:
             # In the pipeline, Field Remover stage removed field 'operation' and so it will not be present in actual.
             # Remove it from test_data, for verification with assert.
             record.pop('operation')
 
-        actual_json = [record.field for record in json_snapshot[mapr_db_json_origin].output]
+        actual_json = [record.field for record in wiretap_json.output_records]
 
         assert actual_cdc == test_data
         assert actual_json == final_data
@@ -225,16 +225,18 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
 @cluster('mapr')
 def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
     """Write a simple file into a MapR FS folder with a randomly-generated name and confirm that the MapR FS origin
-    successfully reads it. Because cluster mode pipelines don't support snapshots, we do this verification using a
+    successfully reads it. Because cluster mode pipelines don't support writing to wiretap, we do this verification using a
     second standalone pipeline whose origin is an SDC RPC written to by the MapR FS pipeline. Specifically, this would
     look like:
 
     MapR FS pipeline:
         mapr_fs_origin >> sdc_rpc_destination
 
-    Snapshot pipeline:
-        sdc_rpc_origin >> trash
+    Wiretap pipeline:
+        sdc_rpc_origin >> wiretap
     """
+    lines_in_file = ['hello', 'hi', 'how are you?']
+
     mapr_fs_folder = os.path.join(os.sep, get_random_string(string.ascii_letters, 10))
 
     # Build the MapR FS pipeline.
@@ -246,71 +248,61 @@ def test_mapr_fs_origin(sdc_builder, sdc_executor, cluster):
     mapr_fs_origin.input_paths.append(mapr_fs_folder)
 
     sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host,
-                                                                 SDC_RPC_LISTENING_PORT))
+    sdc_rpc_destination.sdc_rpc_connection.append(f'{sdc_executor.server_host}:{SDC_RPC_LISTENING_PORT}')
     sdc_rpc_destination.sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     mapr_fs_origin >> sdc_rpc_destination
     mapr_fs_pipeline = builder.build(title='MapR FS pipeline').configure_for_environment(cluster)
     mapr_fs_pipeline.configuration['executionMode'] = 'CLUSTER_BATCH'
 
-    # Build the Snapshot pipeline.
+    # Build the wiretap pipeline.
     builder = sdc_builder.get_pipeline_builder()
     builder.add_error_stage('Discard')
 
     sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
     sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
     sdc_rpc_origin.sdc_rpc_id = sdc_rpc_destination.sdc_rpc_id
-    # Since YARN jobs take a while to get going, set RPC origin batch wait time to 5 min. to avoid
-    # getting an empty batch in the snapshot.
+    # Since YARN jobs take a while to get going, set RPC origin batch wait time to 5 min.
     sdc_rpc_origin.batch_wait_time_in_secs = 300
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    sdc_rpc_origin >> trash
-    snapshot_pipeline = builder.build(title='Snapshot pipeline')
+    sdc_rpc_origin >> wiretap.destination
+    wiretap_pipeline = builder.build()
 
     # Add both pipelines we just created to SDC and start writing files to MapR FS with the HDFS client.
-    sdc_executor.add_pipeline(mapr_fs_pipeline, snapshot_pipeline)
+    sdc_executor.add_pipeline(mapr_fs_pipeline, wiretap_pipeline)
 
     try:
-        lines_in_file = ['hello', 'hi', 'how are you?']
-
         logger.debug('Writing file %s/file.txt to MapR FS ...', mapr_fs_folder)
         cluster.mapr_fs.client.makedirs(mapr_fs_folder)
         cluster.mapr_fs.client.write(os.path.join(mapr_fs_folder, 'file.txt'), data='\n'.join(lines_in_file))
 
-        # So here's where we do the clever stuff. We use SDC's capture snapshot endpoint to start and begin
-        # capturing a snapshot from the snapshot pipeline. We do this, however, without using the synchronous
-        # wait_for_finished function. That way, we can switch over and start the MapR FS pipeline. Once that one
-        # completes, we can go back and do an assert on the snapshot pipeline's snapshot.
-        logger.debug('Starting snapshot pipeline and capturing snapshot ...')
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(snapshot_pipeline, start_pipeline=True,
-                                                                  wait=False)
+        logger.debug('Starting wiretap pipeline ...')
+        sdc_executor.start_pipeline(wiretap_pipeline)
 
         logger.debug('Starting MapR FS pipeline and waiting for it to finish ...')
         sdc_executor.start_pipeline(mapr_fs_pipeline).wait_for_finished()
 
-        snapshot = snapshot_pipeline_command.wait_for_finished().snapshot
-        lines_from_snapshot = [record.field['text'].value
-                               for record in snapshot[snapshot_pipeline[0].instance_name].output]
+        sdc_executor.wait_for_pipeline_metric(wiretap_pipeline, 'input_record_count', len(lines_in_file),
+                                              timeout_sec=600)
 
-        assert lines_from_snapshot == lines_in_file
+        assert lines_in_file == [record.field['text'].value for record in wiretap.output_records]
     finally:
         cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
         # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
-        sdc_executor.stop_pipeline(pipeline=snapshot_pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=wiretap_pipeline, force=True)
 
 
 @cluster('mapr')
 def test_mapr_fs_standalone_origin(sdc_builder, sdc_executor, cluster):
     """Write a simple file into a MapR FS folder with a randomly-generated name and confirm that the MapR FS origin
-    successfully reads it. Because cluster mode pipelines don't support snapshots, we do this verification using a
-    second standalone pipeline whose origin is an SDC RPC written to by the MapR FS pipeline. Specifically, this would
-    look like:
+    successfully reads it.
+
+    Specifically, this would look like:
 
     MapR FS pipeline:
-        mapr_fs_standalone_origin >> trash
+        mapr_fs_standalone_origin >> wiretap
     """
     mapr_fs_folder = os.path.join(os.sep, get_random_string(string.ascii_letters, 10))
 
@@ -323,15 +315,15 @@ def test_mapr_fs_standalone_origin(sdc_builder, sdc_executor, cluster):
     mapr_fs_standalone_origin.files_directory = mapr_fs_folder
     mapr_fs_standalone_origin.file_name_pattern = '*'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
     pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
-    mapr_fs_standalone_origin >> trash
+    mapr_fs_standalone_origin >> wiretap.destination
     mapr_fs_standalone_origin >= pipeline_finished_executor
 
-    mapr_fs_pipeline = builder.build(title='MapR FS Standalone Snapshot pipeline')
+    mapr_fs_pipeline = builder.build(title='MapR FS Standalone pipeline')
     sdc_executor.add_pipeline(mapr_fs_pipeline)
 
     try:
@@ -343,20 +335,12 @@ def test_mapr_fs_standalone_origin(sdc_builder, sdc_executor, cluster):
 
         # Start Pipeline.
         logger.debug('Starting MapR FS pipeline and waiting for it to finish ...')
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(mapr_fs_pipeline, start_pipeline=True,
-                                                                  wait=False)
+        sdc_executor.start_pipeline(mapr_fs_pipeline).wait_for_finished()
 
-        logger.debug('Finish the snapshot and verify')
-        snapshot_command = snapshot_pipeline_command.wait_for_finished()
-        snapshot = snapshot_command.snapshot
-
-        # Verify snapshot data.
-        record_field = [record.field['text'] for record in snapshot[mapr_fs_pipeline[0].instance_name].output]
-        assert lines_in_file == record_field
+        assert lines_in_file == [record.field['text'] for record in wiretap.output_records]
 
     finally:
         cluster.mapr_fs.client.delete(mapr_fs_folder, recursive=True)
-        # Force stop the pipeline to avoid hanging until the SDC RPC stage's max batch wait time is reached.
 
 
 @cluster('mapr')
@@ -431,7 +415,7 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
         dev_raw_data_source >> mapr_streams_producer
 
     MapR Streams consumer pipeline:
-        mapr_streams_consumer >> trash
+        mapr_streams_consumer >> wiretap
     """
     if cluster.mep_version != '6.0':
         pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
@@ -468,9 +452,9 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     mapr_streams_consumer.topic = stream_topic_name
     mapr_streams_consumer.data_format = 'TEXT'
 
-    trash = builder.add_stage('Trash')
+    wiretap = builder.add_wiretap()
 
-    mapr_streams_consumer >> trash
+    mapr_streams_consumer >> wiretap.destination
     consumer_pipeline = builder.build('MapR Streams consumer pipeline - standalone').configure_for_environment(cluster)
     consumer_pipeline.rate_limit = 1
 
@@ -478,23 +462,23 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
 
     # Run pipelines and assert the data flow. To do that, the sequence of steps is as follows:
     # 1. Start MapR Stream producer and make sure to wait till some batches generate
-    # 2. Start MapR Stream consumer via capture snapshot feature to make sure data flow can be captured
-    # 3. Capture snapshot on the MapR Stream consumer
-    # 4. Compare and assert snapshot result to the data injected at the producer
+    # 2. Start MapR Stream consumer via wiretap utility to make sure data flow can be captured
+    # 3. Compare and assert wiretap result to the data injected at the producer
     try:
         sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_batch_count(5)
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, start_pipeline=True,
-                                                                  wait=False)
-        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        snapshot_data = snapshot[consumer_pipeline[0].instance_name].output[0].field['text'].value
-        assert dev_raw_data_source.raw_data == snapshot_data
-    finally:
+
+        sdc_executor.start_pipeline(consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(consumer_pipeline)
+
+        assert dev_raw_data_source.raw_data == wiretap.output_records[0].field['text'].value
+    finally:
         sdc_executor.stop_pipeline(producer_pipeline)
 
 
 def _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, cluster, with_timestamp):
-    """Utility method to run the multitopic streams test so we can version-guard the 'with timestamp' option
+    """
+    Utility method to run the multitopic streams test so we can version-guard the 'with timestamp' option
     """
     # MapR Stream name has to be pre-created in MapR cluster. Clusterdock MapR image has this already.
     stream_name = '/sample-stream'
@@ -521,8 +505,8 @@ def _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, 
                                          number_of_threads=10)
     if with_timestamp:
         mapr_streams_consumer.set_attributes(include_timestamps=True)
-    trash = builder.add_stage('Trash')
-    mapr_streams_consumer >> trash
+    wiretap = builder.add_wiretap()
+    mapr_streams_consumer >> wiretap.destination
     consumer_pipeline = builder.build('MapR Multitopic Consumer Pipeline').configure_for_environment(cluster)
     consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
     consumer_pipeline.configuration['shouldRetry'] = False
@@ -531,40 +515,40 @@ def _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, 
 
     # Run pipelines and assert the data flow. To do that, the sequence of steps is as follows:
     # 1. Start MapR Stream producer and make sure to wait till some batches generate
-    # 2. Start MapR Stream consumer via capture snapshot feature to make sure data flow can be captured
-    # 3. Capture snapshot on the MapR Stream consumer
-    # 4. Compare and assert snapshot result to the data injected at the producer
-    try:
-        sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_batch_count(wait_batches)
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, start_pipeline=True,
-                                                                  wait=False)
-        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        snapshot_data = [record.field['text'].value for record in
-                         snapshot[consumer_pipeline[0].instance_name].output]
-        sdc_executor.stop_pipeline(producer_pipeline)
-        assert len(snapshot_data) > 0
-        assert all(record == stream_producer_values[0] for record in snapshot_data)
-        if with_timestamp:
-            record_header = [record.header for record in snapshot[consumer_pipeline[0].instance_name].output]
-            for element in record_header:
-                assert 'timestamp' in element['values']
-                assert 'timestampType' in element['values']
+    # 2. Start MapR Stream consumer via wiretap utility to make sure data flow can be captured
+    # 3. Compare and assert wiretap result to the data injected at the producer
+    sdc_executor.start_pipeline(producer_pipeline).wait_for_pipeline_batch_count(wait_batches)
+    sdc_executor.start_pipeline(consumer_pipeline)
+    sdc_executor.wait_for_pipeline_metric(consumer_pipeline, 'input_record_count', 1)
+    sdc_executor.stop_pipeline(consumer_pipeline)
 
-        sdc_executor.start_pipeline(producer_pipeline_2).wait_for_pipeline_batch_count(wait_batches)
-        snapshot_pipeline_command = sdc_executor.capture_snapshot(consumer_pipeline, wait=False)
-        snapshot = snapshot_pipeline_command.wait_for_finished(timeout_sec=120).snapshot
-        snapshot_data = [record.field['text'].value for record in
-                         snapshot[consumer_pipeline[0].instance_name].output]
-        sdc_executor.stop_pipeline(producer_pipeline_2)
-        assert len(snapshot_data) > 0
-        assert all(record == stream_producer_values[1] for record in snapshot_data)
-        if with_timestamp:
-            record_header = [record.header for record in snapshot[consumer_pipeline[0].instance_name].output]
-            for element in record_header:
-                assert 'timestamp' in element['values']
-                assert 'timestampType' in element['values']
-    finally:
-        sdc_executor.stop_pipeline(consumer_pipeline)
+    wiretap_data = [record.field['text'].value for record in wiretap.output_records]
+    sdc_executor.stop_pipeline(producer_pipeline)
+    assert len(wiretap_data) > 0
+    assert stream_producer_values[0] == wiretap_data[0]
+    if with_timestamp:
+        record_header = [record.header for record in wiretap.output_records]
+        for element in record_header:
+            assert 'timestamp' in element['values']
+            assert 'timestampType' in element['values']
+
+    wiretap.reset()
+
+    sdc_executor.start_pipeline(producer_pipeline_2).wait_for_pipeline_batch_count(wait_batches)
+
+    sdc_executor.start_pipeline(consumer_pipeline)
+    sdc_executor.wait_for_pipeline_metric(consumer_pipeline, 'input_record_count', 1)
+    sdc_executor.stop_pipeline(consumer_pipeline)
+
+    wiretap_data = [record.field['text'].value for record in wiretap.output_records]
+    sdc_executor.stop_pipeline(producer_pipeline_2)
+    assert len(wiretap_data) > 0
+    assert stream_producer_values[1] == wiretap_data[0]
+    if with_timestamp:
+        record_header = [record.header for record in wiretap.output_records]
+        for element in record_header:
+            assert 'timestamp' in element['values']
+            assert 'timestampType' in element['values']
 
 
 @cluster('mapr')
@@ -578,7 +562,7 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
         dev_raw_data_source >> mapr_streams_producer
 
     MapR Streams consumer pipeline:
-        mapr_streams_consumer >> trash
+        mapr_streams_consumer >> wiretap
     """
     if cluster.mep_version != '6.0':
         pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
@@ -596,7 +580,7 @@ def test_mapr_standalone_multitopic_streams_with_timestamp(sdc_builder, sdc_exec
         dev_raw_data_source >> mapr_streams_producer
 
     MapR Streams consumer pipeline:
-        mapr_streams_consumer >> trash
+        mapr_streams_consumer >> wiretap
     """
     if cluster.mep_version != '6.0':
         pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
