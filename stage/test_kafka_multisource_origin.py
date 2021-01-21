@@ -551,6 +551,35 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
     assert len(error_records) == 0
 
 
+@cluster('cdh', 'kafka')
+def test_kafka_origin_json_array_error(sdc_builder, sdc_executor, cluster):
+    """SDC-15723: Improve behavior on JSON type missconfiguration. When user configures JSON
+     parser to parse "Array" but the data aren't array"""
+
+    message = '(not_a_valid_json)'
+    expected_error_message = 'KAFKA_37 - Cannot parse record from message : Cannot parse JSON from record'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster)
+    kafka_multitopic_consumer.set_attributes(data_format='JSON',
+                                             json_content='ARRAY_OBJECTS')
+    wiretap = pipeline_builder.add_wiretap()
+    kafka_multitopic_consumer >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    producer = cluster.kafka.producer()
+    producer.send(kafka_multitopic_consumer.topic_list[0], message.encode())
+    producer.flush()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+    sdc_executor.stop_pipeline(pipeline)
+    error_message = wiretap.error_records[0].header['errorMessage'].split("'")
+    received_error = error_message[0] + error_message[2]
+    assert expected_error_message == received_error
+
+
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list=None):
     """Create and return a Kafka origin stage depending on execution mode for the pipeline."""
     cluster_version = cluster.version[3:]

@@ -183,6 +183,38 @@ def test_kafka_origin_json(sdc_builder, sdc_executor, data_type, cluster):
 
 
 @cluster('cdh', 'kafka')
+def test_kafka_origin_json_array_error(sdc_builder, sdc_executor, cluster):
+    """SDC-15723: Improve behavior on JSON type missconfiguration. When user configures JSON
+     parser to parse "Array" but the data aren't array"""
+
+    message = '(not_a_valid_json)'
+    expected_error_message = 'KAFKA_37 - Cannot parse record from message : Cannot parse JSON from record'
+
+    topic = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(data_format='JSON',
+                                  json_content='ARRAY_OBJECTS',
+                                  topic=topic)
+    wiretap = pipeline_builder.add_wiretap()
+    kafka_consumer >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    producer = cluster.kafka.producer()
+    producer.send(topic, message.encode())
+    producer.flush()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+    sdc_executor.stop_pipeline(pipeline)
+    error_message = wiretap.error_records[0].header['errorMessage'].split("'")
+    received_error = error_message[0] + error_message[2]
+    assert expected_error_message == received_error
+
+
+@cluster('cdh', 'kafka')
 def test_kafka_origin_xml_record(sdc_builder, sdc_executor, cluster):
     """Kafka Consumer parses XML data."""
     MESSAGE = textwrap.dedent("""\
