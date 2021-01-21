@@ -407,8 +407,10 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
             for val in input_values:
                 connection.execute(f"INSERT INTO {table_name} VALUES ({val})")
 
-            sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(
-                records_per_iteration, timeout_sec=3600)
+            sdc_executor.start_pipeline(pipeline)
+            sdc_executor.wait_for_pipeline_metric(
+                pipeline, 'input_record_count', records_per_iteration ,timeout_sec=3600)
+
             sdc_executor.stop_pipeline(pipeline, force=True)
 
             output_values = [rec.field['ID'].value for rec in wiretap.output_records]
