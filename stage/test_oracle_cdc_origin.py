@@ -26,6 +26,7 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
+
 logger = logging.getLogger(__name__)
 
 # SQL Parser processor was renamed in SDC-10697, so we need to reference it by name.
@@ -1815,7 +1816,7 @@ def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
         txn3.commit()
 
         # Check the data consumed by the pipeline is the expected one.
-        status.wait_for_pipeline_output_records_count(len(expected_data))
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_data))
         consumed_data = [rec.field['ID'].value for rec in wiretap.output_records]
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         assert sorted(consumed_data) == expected_data
@@ -1951,7 +1952,8 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline, populate table with data 1 and wait for the pipeline to consume it.
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(txn1_data) + len(txn2_data))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(txn1_data+txn2_data), timeout_sec=380)
         sdc_executor.stop_pipeline(pipeline, force=True)
         consumed_data = [record.field['ID'].value for record in wiretap.output_records]
         assert sorted(consumed_data) == txn1_data + txn2_data
