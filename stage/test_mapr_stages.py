@@ -137,8 +137,8 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
         sdc_executor.start_pipeline(cdc_pipeline)
         sdc_executor.start_pipeline(json_db_origin_pipeline)
 
-        sdc_executor.wait_for_pipeline_metric(cdc_pipeline, 'input_record_count', len(test_data))
-        sdc_executor.wait_for_pipeline_metric(json_db_origin_pipeline, 'input_record_count', len(test_data))
+        sdc_executor.wait_for_pipeline_metric(cdc_pipeline, 'input_record_count', 1, timeout_sec=300)
+        sdc_executor.wait_for_pipeline_metric(json_db_origin_pipeline, 'input_record_count', 1, timeout_sec=300)
 
         sdc_executor.stop_pipeline(cdc_pipeline)
         sdc_executor.stop_pipeline(json_db_origin_pipeline)
@@ -525,7 +525,7 @@ def _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, 
     wiretap_data = [record.field['text'].value for record in wiretap.output_records]
     sdc_executor.stop_pipeline(producer_pipeline)
     assert len(wiretap_data) > 0
-    assert stream_producer_values[0] == wiretap_data[0]
+    assert stream_producer_values[0] in wiretap_data
     if with_timestamp:
         record_header = [record.header for record in wiretap.output_records]
         for element in record_header:
@@ -543,7 +543,7 @@ def _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, 
     wiretap_data = [record.field['text'].value for record in wiretap.output_records]
     sdc_executor.stop_pipeline(producer_pipeline_2)
     assert len(wiretap_data) > 0
-    assert stream_producer_values[1] == wiretap_data[0]
+    assert stream_producer_values[1] in wiretap_data
     if with_timestamp:
         record_header = [record.header for record in wiretap.output_records]
         for element in record_header:
