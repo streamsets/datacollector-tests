@@ -183,7 +183,7 @@ def test_hadoop_fs_destination_time_basis(sdc_builder, sdc_executor, cluster):
 
 
 @aster_authentication
-@cluster('cdh', 'hdp')
+@cluster('cdh')
 def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
     """Write a simple file into a Hadoop FS folder with a randomly-generated name and confirm that the Hadoop FS origin
     successfully reads it. Because cluster mode pipelines don't support connecting directly to wiretap, we do this
