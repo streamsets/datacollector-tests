@@ -230,8 +230,11 @@ def test_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batc
         for _ in range(3):
             wiretap.reset()
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
-            assert len(input_data) == len(wiretap.output_records)
-            assert input_data == [record.field for record in wiretap.output_records]
+            records = wiretap.output_records
+            records.sort(key=_sortRecordsById)
+
+            assert len(input_data) == len(records)
+            assert input_data == [record.field for record in records]
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -392,7 +395,9 @@ def test_consumer_incremental_mode(sdc_builder, sdc_executor, database, batch_si
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(input_data_again))
         sdc_executor.stop_pipeline(pipeline)
-        sdc_records = [record.field for record in wiretap.output_records]
+        records = wiretap.output_records
+        records.sort(key=_sortRecordsById)
+        sdc_records = [record.field for record in records]
         assert input_data_again == sdc_records
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -806,3 +811,6 @@ def test_timestamp_as_string(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
+
+def _sortRecordsById(r):
+    return r.field['ID'].value
