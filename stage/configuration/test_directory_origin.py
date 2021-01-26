@@ -72,25 +72,24 @@ def test_directory_origin_configuration_allow_extra_columns(sdc_builder, sdc_exe
                                  header_line=header_line,
                                  files_directory=FILES_DIRECTORY,
                                  file_name_pattern=file_name)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[directory].output]
-        error_records = [error_record.field['columns'] for error_record in snapshot[directory].error_records]
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
+        records = [record.field for record in wiretap.output_records]
+        error_records = [error_record.field['columns'] for error_record in wiretap.error_records]
         if extra_columns_present and not allow_extra_columns:
-            # The first record should show up in the snapshot, but the rest should go to error.
+            # The first record should show up in the output, but the rest should go to error.
             assert records == data[0:1]
             assert error_records == [list(record.values()) for record in data[1:]]
         else:
             assert records == data
     finally:
         shell_executor(f'rm file_path')
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('create_directory_first', [True, False])
@@ -126,8 +125,8 @@ def test_directory_origin_configuration_allow_late_directory(sdc_builder, sdc_ex
                                  data_format='TEXT',
                                  files_directory=files_directory,
                                  file_name_pattern=FILE_NAME)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
@@ -135,18 +134,16 @@ def test_directory_origin_configuration_allow_late_directory(sdc_builder, sdc_ex
             with pytest.raises(StartError):
                 sdc_executor.start_pipeline(pipeline)
         else:
-            snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
+            sdc_executor.start_pipeline(pipeline)
             if not create_directory_first:
-                assert not snapshot[directory].output
+                assert not wiretap.output_records
                 create_directory_and_file(files_directory, FILE_NAME, FILE_CONTENTS)
-                snapshot = sdc_executor.capture_snapshot(pipeline).snapshot
-
-            record = snapshot[directory].output[0]
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+            sdc_executor.stop_pipeline(pipeline)
+            record = wiretap.output_records[0]
             assert record.field['text'] == FILE_CONTENTS
     finally:
         shell_executor(f'rm -r {files_directory}')
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('file_post_processing', ['ARCHIVE'])
@@ -177,22 +174,25 @@ def test_directory_origin_configuration_archive_directory(sdc_builder, sdc_execu
                                  files_directory=base_directory,
                                  file_name_pattern=FILE_NAME,
                                  file_post_processing=file_post_processing)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        record = snapshot[directory].output[0]
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+        record = wiretap.output_records[0]
         assert record.field['text'] == FILE_CONTENTS
         assert record.header.values['file'] == os.path.join(files_directory, FILE_NAME)
 
-        sdc_executor.stop_pipeline(pipeline)
-        # Confirm that the file has been archived by taking another snapshot and asserting to its emptiness.
+        # Confirm that the file has been archived by checking again and asserting to its emptiness.
         sdc_executor.reset_origin(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        assert not snapshot[directory].output
+        wiretap.reset()
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
+        assert not wiretap.output_records
 
         logger.info('Verifying that file %s was moved as part of post-processing ...', FILE_NAME)
         pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -202,20 +202,19 @@ def test_directory_origin_configuration_archive_directory(sdc_builder, sdc_execu
                                  process_subdirectories=True,
                                  files_directory=archive_directory,
                                  file_name_pattern=FILE_NAME)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        record = snapshot[directory].output[0]
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+        record = wiretap.output_records[0]
         assert record.field['text'] == FILE_CONTENTS
         assert record.header.values['file'] == os.path.join(archive_directory, 'a', 'b', 'c', FILE_NAME)
-        sdc_executor.stop_pipeline(pipeline)
     finally:
         shell_executor(f'rm -r {base_directory} {archive_directory}')
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('file_post_processing', ['ARCHIVE'])
@@ -237,23 +236,27 @@ def test_directory_origin_configuration_avro_schema(sdc_builder, sdc_executor, d
     pass
 
 
-@pytest.mark.parametrize('batch_size_in_recs', [2, 3, 4])
+@pytest.mark.parametrize('batch_size_in_recs', [1, 50, 100])
 def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_executor, shell_executor,
                                                            file_writer, batch_size_in_recs):
     """Verify batch size in records (batch_size_in_recs) configuration for various values
     which limits maximum number of records to pass through pipeline at time.
-    e.g. For 2 files with each containing 3 records. Verify with batch_size_in_recs = 2
-    (less than records per file), 3 (equal to number of records per file),
-    4 (greater than number of records per file).
+    e.g. For 2 files with each containing 50 records. Verify with batch_size_in_recs = 1
+    (less than records per file), 50 (equal to number of records per file),
+    100 (greater than number of records per file).
     """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME_1 = 'streamsets_temp1.txt'
     FILE_NAME_2 = 'streamsets_temp2.txt'
-    FILE_CONTENTS_1 = get_text_file_content('1')
-    FILE_CONTENTS_2 = get_text_file_content('2')
-    number_of_batches = math.ceil(3 / batch_size_in_recs) + math.ceil(3 / batch_size_in_recs)
-    if batch_size_in_recs == 3:
-        number_of_batches = 3
+    FILE_CONTENTS_1 = get_text_file_content('1', 50)
+    FILE_CONTENTS_2 = get_text_file_content('2', 50)
+    # Expected number of batches for each batch size (considering the events)
+    if batch_size_in_recs == 1:
+        number_of_batches = 100
+    elif batch_size_in_recs == 50:
+        number_of_batches = 2
+    elif batch_size_in_recs == 100:
+        number_of_batches = 1
     try:
         logger.debug('Creating files directory %s ...', files_directory)
         shell_executor(f'mkdir {files_directory}')
@@ -266,21 +269,27 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
                                  files_directory=files_directory,
                                  file_name_pattern='*.txt',
                                  batch_size_in_recs=batch_size_in_recs)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=number_of_batches).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        # Waiting for number of data records (50 + 50) per batch size
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', number_of_batches)
         sdc_executor.stop_pipeline(pipeline)
 
+        # Assert that we get the correct number of batches for the batch sizes
+        # As dc sends some control batches, we just verify is inside the range
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert number_of_batches + 5 >= history.latest.metrics.counter('pipeline.batchCount.counter').count\
+               >= number_of_batches
+
+        # Assert the data is correct
         raw_data = '{}\n{}'.format(FILE_CONTENTS_1, FILE_CONTENTS_2)
         temp = []
-        for snapshot_batch in snapshot.snapshot_batches:
-            for value in snapshot_batch[directory.instance_name].output_lanes.values():
-                assert batch_size_in_recs >= len(value)
-                for record in value:
-                    temp.append(str(record.field['text']))
+        for record in wiretap.output_records:
+            temp.append(str(record.field['text']))
         stage_output = '\n'.join(temp)
         assert raw_data == stage_output
     finally:
@@ -310,36 +319,37 @@ def test_directory_origin_configuration_buffer_size_in_bytes(sdc_builder, sdc_ex
 def test_directory_origin_configuration_charset(sdc_builder, sdc_executor, file_writer,
                                                 data_format, charset_correctly_set):
     """Instead of iterating over every possible charset (which would be a huge waste of time to write
-    and run), let's just take some random set of characters from the Big5 character set and ensure that,
+    and run), let's just take some random set of Chinese characters from the UTF-8 character set and ensure that,
     if those characters are written to disk and the Directory charset is set correctly, that they're
     correctly parsed and they aren't if it isn't.
     """
-    FILES_DIRECTORY = '/tmp'
+    files_directory = os.path.join('/tmp', get_random_string())
     FILE_CONTENTS = '駿 鮮 鮫 鮪 鮭 鴻 鴿 麋 黏 點 黜 黝 黛 鼾 齋 叢'
-    file_name = f'{get_random_string()}.txt'
-    ENCODING = 'Big5'
+    ENCODING = 'UTF-8'
+    FILE_NAME = 'myfile.txt'
 
-    file_writer(os.path.join(FILES_DIRECTORY, file_name), FILE_CONTENTS, ENCODING)
+    sdc_executor.execute_shell(f'mkdir -p {files_directory}')
+    sdc_executor.write_file(os.path.join(files_directory, FILE_NAME), FILE_CONTENTS)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory')
     directory.set_attributes(charset=ENCODING if charset_correctly_set else 'US-ASCII',
                              data_format=data_format,
-                             files_directory=FILES_DIRECTORY,
-                             file_name_pattern=file_name)
-    trash = pipeline_builder.add_stage('Trash')
-    directory >> trash
+                             files_directory=files_directory,
+                             file_name_pattern=FILE_NAME)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    directory >> [wiretap.destination, pipeline_finisher]
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    record = snapshot[directory].output[0]
-    sdc_executor.stop_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    text_fields = [record.field['text'] for record in wiretap.output_records]
 
     if charset_correctly_set:
-        assert record.field['text'] == FILE_CONTENTS
+        assert text_fields == [FILE_CONTENTS]
     else:
-        assert record.field['text'] != FILE_CONTENTS
+        assert text_fields != [FILE_CONTENTS]
 
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
@@ -357,7 +367,7 @@ def test_directory_origin_configuration_comment_marker(sdc_builder, sdc_executor
 def test_directory_origin_configuration_compression_format(sdc_builder, sdc_executor, data_format, compression_format,
                                                            compressed_file_writer, compression_codec, shell_executor,
                                                            keep_data):
-    """Verify direcotry origin can read data from compressed files.
+    """Verify directory origin can read data from compressed files.
         Pattern is inside the compressed file.
         e.g. compression_format_test.txt is compressed as compression_format_test.txt.gz then
         Using TEXT data format to check if data can be read from compressed txt files.
@@ -381,21 +391,25 @@ def test_directory_origin_configuration_compression_format(sdc_builder, sdc_exec
         compressed_file_writer(tmp_directory, data_format, file_content, compression_codec=compression_codec,
                                files_prefix='sdc-${sdc:id()}')
         # Reading from compressed file.
-        attributes = {'data_format': data_format,
-                      'file_name_pattern': 'sdc*',
-                      'file_name_pattern_mode': 'GLOB',
-                      'files_directory': tmp_directory,
-                      'compression_format': compression_format,
-                      'read_order': 'TIMESTAMP',
-                      'header_line': 'WITH_HEADER',
-                      'log_format': 'LOG4J'}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 file_name_pattern='sdc*',
+                                 file_name_pattern_mode='GLOB',
+                                 files_directory=tmp_directory,
+                                 compression_format=compression_format,
+                                 read_order='TIMESTAMP',
+                                 header_line='WITH_HEADER',
+                                 log_format='LOG4J')
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> wiretap.destination
+        directory >= pipeline_finisher
+        pipeline = pipeline_builder.build()
 
-        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format,
+        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, wiretap, data_format,
                                            actual_file_content, actual_file_content)
     finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
         if not keep_data:
             shell_executor(f'rm -r {tmp_directory}')
 
@@ -458,21 +472,25 @@ def test_directory_origin_configuration_data_format(sdc_builder, sdc_executor, d
     try:
         compressed_file_writer(files_directory, data_format, file_content, 'NONE')
 
-        attributes = {'data_format': data_format,
-                      'file_name_pattern': '*.json',
-                      'file_name_pattern_mode': 'GLOB',
-                      'files_directory': files_directory,
-                      'json_content': 'MULTIPLE_OBJECTS'}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.json',
+                                 file_name_pattern_mode='GLOB',
+                                 json_content='MULTIPLE_OBJECTS')
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [wiretap.destination, pipeline_finisher]
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = snapshot[directory].output
-        assert 2 == len(output_records)
-        assert output_records[0].field == json_data[0]
-        assert output_records[1].field == json_data[1]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert 2 == len(wiretap.output_records)
+        assert wiretap.output_records[0].field == json_data[0]
+        assert wiretap.output_records[1].field == json_data[1]
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -522,20 +540,20 @@ def test_directory_origin_configuration_delimiter_character(sdc_builder, sdc_exe
                                  delimiter_character=delimiter_character,
                                  root_field_type=root_field_type,
                                  header_line=header_line)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
-        assert 2 == len(output_records)
-        assert (output_records[0].field == OrderedDict(
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert 2 == len(wiretap.output_records)
+        assert (wiretap.output_records[0].field == OrderedDict(
             [('header1', 'Field11'), ('header2', 'Field12'), ('header3', 'fält13')]))
-        assert (output_records[1].field == OrderedDict(
+        assert (wiretap.output_records[1].field == OrderedDict(
             [('header1', 'стол'), ('header2', 'Field22'), ('header3', 'Field23')]))
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -571,18 +589,18 @@ def test_directory_origin_configuration_delimiter_element(sdc_builder, sdc_execu
                                  file_name_pattern='xml_delimited_file*',
                                  file_name_pattern_mode='GLOB',
                                  delimiter_element='msg')
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_data = snapshot[directory.instance_name].output[0].field
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_data = wiretap.output_records[0].field
         output_records = get_xml_output_field(directory, output_data, 'msg')
         assert output_records == EXPECTED_OUTPUT
 
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -619,20 +637,20 @@ def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_e
                                  delimiter_character=delimiter_character,
                                  root_field_type=root_field_type,
                                  header_line=header_line)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        sdc_executor.stop_pipeline(pipeline)
-        output_records = snapshot[directory.instance_name].output
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
         new_line_field = 'Field12\nSTR' if delimiter_format_type == 'EXCEL' else 'Field12'
 
-        assert 2 == len(output_records)
-        assert output_records[0].field == OrderedDict(
+        assert 2 == len(wiretap.output_records)
+        assert wiretap.output_records[0].field == OrderedDict(
             [('field1', 'Field11'), ('field2', new_line_field), ('field3', 'fält13')])
-        assert output_records[1].field == OrderedDict(
+        assert wiretap.output_records[1].field == OrderedDict(
             [('field1', 'стол'), ('field2', 'Field22'), ('field3', 'Field23')])
     finally:
         shell_executor(f'rm -r {files_directory}')
@@ -656,31 +674,34 @@ def test_directory_origin_configuration_enable_comments(sdc_builder, sdc_executo
     try:
         files_directory = create_file_and_directory(FILE_NAME, FILE_CONTENTS, shell_executor,
                                                                       file_writer)
-        attributes = {'data_format': data_format,
-                      'files_directory': files_directory,
-                      'file_name_pattern': '*.csv',
-                      'file_name_pattern_mode': 'GLOB',
-                      'delimiter_format_type': delimiter_format_type,
-                      'enable_comments': enable_comments,
-                      'comment_marker': comment_marker,
-                      'delimiter_character': ','}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.csv',
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 enable_comments=enable_comments,
+                                 comment_marker=comment_marker,
+                                 delimiter_character=',')
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [wiretap.destination, pipeline_finisher]
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         if enable_comments:
-            assert 2 == len(output_records)
-            assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
-            assert output_records[1].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
+            assert 2 == len(wiretap.output_records)
+            assert wiretap.output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
+            assert wiretap.output_records[1].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
         else:
-            assert 3 == len(output_records)
-            assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
-            assert output_records[1].field == OrderedDict([('0', '{} This is comment'.format(comment_marker))])
-            assert output_records[2].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
+            assert 3 == len(wiretap.output_records)
+            assert wiretap.output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'Field12'), ('2', 'Field13')])
+            assert wiretap.output_records[1].field == OrderedDict([('0', '{} This is comment'.format(comment_marker))])
+            assert wiretap.output_records[2].field == OrderedDict([('0', 'Field21'), ('1', 'Field22'), ('2', 'Field23')])
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -718,24 +739,23 @@ def test_directory_origin_configuration_excel_header_option(sdc_builder, sdc_exe
                                  data_format=data_format,
                                  files_directory=files_directory,
                                  file_name_pattern='*.xls')
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = snapshot[directory.instance_name].output
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         if excel_header_option == 'IGNORE_HEADER':
-            assert output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'ఫీల్డ్12'), ('2', 'fält13')])
+            assert wiretap.output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'ఫీల్డ్12'), ('2', 'fält13')])
         elif excel_header_option == 'NO_HEADER':
-            assert output_records[0].field == OrderedDict([('0', 'column1'), ('1', 'column2'), ('2', 'column3')])
-        else:
-            assert output_records[0].field == OrderedDict([('column1', 'Field11'), ('column2', 'ఫీల్డ్12'),
+            assert wiretap.output_records[0].field == OrderedDict([('0', 'column1'), ('1', 'column2'), ('2', 'column3')])
+        elif excel_header_option == 'WITH_HEADER':
+            assert wiretap.output_records[0].field == OrderedDict([('column1', 'Field11'), ('column2', 'ఫీల్డ్12'),
                                                            ('column3', 'fält13')])
     finally:
         shell_executor(f'rm -r {files_directory}')
-        sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
@@ -776,14 +796,15 @@ def test_extra_column_prefix(sdc_builder, sdc_executor, stage_attributes, keep_d
                                                                            files_directory=files_directory,
                                                                            file_name_pattern=FILE_NAME,
                                                                            **stage_attributes)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [trash, pipeline_finisher]
+        directory >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[directory].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = [record.field for record in wiretap.output_records]
 
         assert records == EXPECTED_OUTPUT
     finally:
@@ -817,18 +838,23 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
         files_directory = create_file_and_directory(files_name[0], files_content[0], shell_executor, file_writer)
         file_writer(os.path.join(files_directory, files_name[1]), files_content[1])
 
-        attributes = {'data_format': 'TEXT',
-                      'file_name_pattern': file_name_pattern,
-                      'file_name_pattern_mode': 'GLOB',
-                      'files_directory': files_directory}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 file_name_pattern=file_name_pattern,
+                                 file_name_pattern_mode='GLOB',
+                                 files_directory=files_directory)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(2)
         sdc_executor.stop_pipeline(pipeline)
 
+        records = [record.field for record in wiretap.output_records]
         raw_data = '\n'.join(files_content)
-        processed_data = '\n'.join(snapshot_content(snapshot, directory))
+        processed_data = '\n'.join(str(r['text']) for r in records)
         if file_name_pattern == 'pattern_check_processing_1.txt':
             assert files_content[0] == processed_data
         else:
@@ -837,41 +863,47 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
         shell_executor(f'rm -r {files_directory}')
 
 
-@pytest.mark.parametrize('file_name_pattern_mode', ['GLOB', 'REGEX'])
-def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_executor, shell_executor,
-                                                               file_writer, file_name_pattern_mode):
-    """Check how DC process different file pattern mode. Here we will be creating 2 files:
-    ``pattern_check_processing_1.txt`` and ``pattern_check_processing_2.txt``.
-    with regex we match only 1st file and with glob both files.
+@pytest.mark.parametrize('stage_attributes', [{'file_name_pattern_mode': 'GLOB'}, {'file_name_pattern_mode': 'REGEX'}])
+def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_executor, stage_attributes, keep_data):
+    """Test for both the GLOB and REGEX file name pattern mode.
+
+    Writes two files ("file1.txt" and "file_2.txt"). The GLOB pattern should match both files while the REGEX only
+    matches one.
     """
-    files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
-    files_content = [get_text_file_content(1, 1),
-                     get_text_file_content(2, 1)]
-    file_name_pattern = '*.txt' if file_name_pattern_mode == 'GLOB' else r'^p(.*)([0-9]{1})(\.txt)'
-    number_of_batches = 2 if file_name_pattern_mode == 'GLOB' else 1
+    files_directory = os.path.join('/tmp', get_random_string())
+    data = textwrap.dedent("""\
+                           line1
+                           line2
+                           line3
+                           """)
+    OUTPUT_DATA = ['line1', 'line2', 'line3']
+
+    sdc_executor.execute_shell(f'mkdir {files_directory}')
+    sdc_executor.write_file(os.path.join(files_directory, 'file1.txt'), data)
+    sdc_executor.write_file(os.path.join(files_directory, 'file_2.txt'), data)
 
     try:
-        files_directory = create_file_and_directory(files_name[0], files_content[0], shell_executor, file_writer)
-        file_writer(os.path.join(files_directory, files_name[1]), files_content[1])
+        pipeline_builder = sdc_builder.get_pipeline_builder()
 
-        attributes = {'data_format':'TEXT',
-                      'files_directory':files_directory,
-                      'file_name_pattern_mode':file_name_pattern_mode,
-                      'file_name_pattern':file_name_pattern}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        file_name_pattern = '*.txt' if stage_attributes['file_name_pattern_mode'] == 'GLOB' else r'^[a-z]*[0-9]\.txt'
+        directory = pipeline_builder.add_stage('Directory').set_attributes(data_format='TEXT',
+                                                                           files_directory=files_directory,
+                                                                           file_name_pattern=file_name_pattern,
+                                                                           **stage_attributes)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=number_of_batches).snapshot
-
-        raw_data = '\n'.join(files_content)
-        processed_data = '\n'.join(snapshot_content(snapshot, directory))
-        if file_name_pattern_mode == 'GLOB':
-            assert raw_data == processed_data
-        else:
-            assert files_content[0] == processed_data
-    finally:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 2)
         sdc_executor.stop_pipeline(pipeline)
-        shell_executor(f'rm -r {files_directory}')
+
+        text_fields = [record.field['text'] for record in wiretap.output_records]
+        assert text_fields == OUTPUT_DATA if directory.file_name_pattern_mode == 'REGEX' else OUTPUT_DATA * 2
+    finally:
+        if not keep_data:
+            sdc_executor.execute_shell(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('data_format', ['TEXT', 'DELIMITED', 'JSON', 'LOG', 'SDC_JSON', 'XML'])
@@ -881,7 +913,7 @@ def test_directory_origin_configuration_file_name_pattern_within_compressed_dire
                                                                                       shell_executor, file_writer,
                                                                                       delimited_file_writer,
                                                                                       compressed_file_writer):
-    """Verify direcotry origin can read data from compressed files with GLOB pattern.
+    """Verify directory origin can read data from compressed files with GLOB pattern.
     Pattern is inside the compressed file.
     e.g. compression_format_test.txt is compressed as compression_format_test.txt.zip then
     file_name_pattern_within_compressed_directory = '.txt'
@@ -921,21 +953,26 @@ def test_directory_origin_configuration_file_name_pattern_within_compressed_dire
                            f'&& rm {file_name}')
             file_name_pattern = '*.gz'
 
-        attributes = {'data_format': data_format,
-                      'files_directory': files_directory,
-                      'file_name_pattern_within_compressed_directory': 'compression_*',
-                      'file_name_pattern': file_name_pattern,
-                      'file_name_pattern_mode': 'GLOB',
-                      'compression_format': compression_format,
-                      'header_line': 'WITH_HEADER',
-                      'log_format': 'LOG4J',
-                      'json_content': 'MULTIPLE_OBJECTS'}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern_within_compressed_directory='compression_*',
+                                 file_name_pattern=file_name_pattern,
+                                 file_name_pattern_mode='GLOB',
+                                 compression_format=compression_format,
+                                 header_line='WITH_HEADER',
+                                 log_format='LOG4J',
+                                 json_content='MULTIPLE_OBJECTS')
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        directory >> wiretap.destination
+        directory >= pipeline_finisher
+        pipeline = pipeline_builder.build()
 
-        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
+        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, wiretap, data_format, file_content,
                                            json_data)
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -970,22 +1007,18 @@ def test_directory_origin_configuration_first_file_to_process(sdc_builder, sdc_e
                                  files_directory=files_directory,
                                  file_name_pattern='*.txt',
                                  first_file_to_process=FIRST_FILE_NAME)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
-        records = [record.field
-                   for batch in snapshot.snapshot_batches
-                   for record in batch.stage_outputs[directory.instance_name].output]
-        assert len(records) == 1
-        assert records[0] == {'text': FIRST_FILE_CONTENTS}
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 2)
         sdc_executor.stop_pipeline(pipeline)
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field == OrderedDict({'text': FIRST_FILE_CONTENTS})
     finally:
         shell_executor(f'rm -r {files_directory}')
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('grok_pattern_is_correct', [True, False])
@@ -1014,15 +1047,15 @@ def test_grok_pattern(sdc_builder, sdc_executor, stage_attributes, grok_pattern_
             # We use '%{HOST}', a valid grok pattern, as this will ensure that we don't trigger exceptions
             # but simply break matching.
             directory.grok_pattern = '%{HOST}'
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [trash, pipeline_finisher]
+        directory >> wiretap.destination
+        directory >= pipeline_finisher
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[directory].output]
-        error_records = [record.field for record in snapshot[directory].error_records]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         if grok_pattern_is_correct:
             assert records == [EXPECTED_OUTPUT]
         else:
@@ -1065,14 +1098,15 @@ def test_grok_pattern_definition(sdc_builder, sdc_executor, stage_attributes, sh
                                  grok_pattern='%{MYCUSTOMLOG}',
                                  grok_pattern_definition=GROK_PATTERN_DEFINITION,
                                  **stage_attributes)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [trash, pipeline_finisher]
+        directory >> wiretap.destination
+        directory >= pipeline_finisher
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[directory].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         assert records == [EXPECTED_OUTPUT]
     finally:
         if not keep_data:
@@ -1155,15 +1189,16 @@ def test_header_line(sdc_builder, sdc_executor, stage_attributes, file_writer, k
         directory = pipeline_builder.add_stage('Directory').set_attributes(file_name_pattern='file.csv',
                                                                            files_directory=files_directory,
                                                                            **stage_attributes)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [trash, pipeline_finisher]
+        directory >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = [record.field for record in snapshot[directory.instance_name].output]
-        assert output_records == (EXPECTED_OUTPUT_WITH_HEADER
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = [record.field for record in wiretap.output_records]
+        assert records == (EXPECTED_OUTPUT_WITH_HEADER
                                   if stage_attributes['header_line'] == 'WITH_HEADER'
                                   else EXPECTED_OUTPUT_WITHOUT_HEADER)
     finally:
@@ -1184,19 +1219,28 @@ def test_directory_origin_configuration_ignore_control_characters_text(sdc_build
     try:
         files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
-        attributes = get_control_characters_attributes('TEXT', files_directory, ignore_control_characters)
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern=file_name,
+                                 ignore_control_characters=ignore_control_characters)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        record = snapshot[directory].output[0]
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        record = wiretap.output_records[0]
         if ignore_control_characters:
             assert record.field['text'] == 'File  with  control characters with normal  string to  check the ignore control characters parameter.'
         else:
             assert record.field['text'] == 'File \x00 with \a control characters with normal \v string to \f check the ignore control characters parameter.'
     finally:
         shell_executor(f'rm -r {files_directory}')
-        sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
@@ -1215,24 +1259,32 @@ def test_directory_origin_configuration_ignore_control_characters_delimited(sdc_
         files_directory = create_file_and_directory(file_name, file_content, shell_executor, delimited_file_writer,
                                                     'CSV')
 
-        attributes = get_control_characters_attributes('DELIMITED', files_directory, ignore_control_characters)
-        attributes['header_line'] = 'WITH_HEADER'
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='DELIMITED',
+                                 files_directory=files_directory,
+                                 file_name_pattern=file_name,
+                                 header_line='WITH_HEADER',
+                                 ignore_control_characters=ignore_control_characters)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 3)
+        sdc_executor.stop_pipeline(pipeline)
 
-        assert 1 == len(output_records)
+        assert 1 == len(wiretap.output_records)
         if ignore_control_characters:
-            assert output_records[0].field == OrderedDict([('field1', 'Field 11'), ('field2', 'Field12'),
+            assert wiretap.output_records[0].field == OrderedDict([('field1', 'Field 11'), ('field2', 'Field12'),
                                                            ('field3', 'Field13')])
         else:
-            assert output_records[0].field == OrderedDict([('field1', 'Field\x00 11'), ('field2', 'Field\v12'),
+            assert wiretap.output_records[0].field == OrderedDict([('field1', 'Field\x00 11'), ('field2', 'Field\v12'),
                                                            ('field3', 'Fie\fld\a13')])
     finally:
         #shell_executor(f'rm -r {files_directory}')
-        sdc_executor.stop_pipeline(pipeline)
+        pass
 
 
 @pytest.mark.parametrize('stage_attributes', [{'ignore_control_characters': True},
@@ -1258,14 +1310,15 @@ def test_directory_origin_configuration_ignore_control_characters_json(sdc_build
                                                                            file_name_pattern='*.json',
                                                                            batch_size_in_recs=10,
                                                                            **stage_attributes)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [trash, pipeline_finisher]
+        directory >> wiretap.destination
+        directory >= pipeline_finisher
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[directory].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
         if stage_attributes['ignore_control_characters']:
             assert records == [EXPECTED_OUTPUT]
         else:
@@ -1294,20 +1347,28 @@ def test_directory_origin_configuration_ignore_control_characters_log(sdc_builde
     try:
         files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
-        attributes = get_control_characters_attributes('LOG', files_directory, ignore_control_characters)
-        attributes.update({'log_format': 'LOG4J'})
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='LOG',
+                                 files_directory=files_directory,
+                                 file_name_pattern=file_name,
+                                 log_format='LOG4J',
+                                 ignore_control_characters=ignore_control_characters)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        record = snapshot[directory].output[0]
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
         if ignore_control_characters:
-            assert record.field['message'] == 'This is sample log message'
+            assert wiretap.output_records[0].field['message'] == 'This is sample log message'
         else:
-            assert record.field['message'] == 'Th\fis is sam\aple l\x00og message\v'
+            assert wiretap.output_records[0].field['message'] == 'Th\fis is sam\aple l\x00og message\v'
     finally:
         shell_executor(f'rm -r {files_directory}')
-        sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('ignore_control_characters', [True, False])
@@ -1375,35 +1436,41 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
                             </b:book>
                         </bookstore>"""
     try:
-        files_directory = create_file_and_directory(FILE_NAME, FILE_CONTENTS, shell_executor,file_writer)
-        attributes = {'data_format': data_format,
-                      'files_directory': files_directory,
-                      'file_name_pattern': 'xml_include_xpath_file*',
-                      'file_name_pattern_mode': 'GLOB',
-                      'delimiter_element': '/*[1]/*',
-                      'include_field_xpaths': include_field_xpaths}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        files_directory = create_file_and_directory(FILE_NAME, FILE_CONTENTS, shell_executor, file_writer)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='xml_include_xpath_file*',
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_element='/*[1]/*',
+                                 include_field_xpaths=include_field_xpaths)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
         item_list = [get_xml_output_field(directory, output.field, 'b:book')
-                     for output in snapshot[directory.instance_name].output]
-        rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
+                     for output in wiretap.output_records]
+        rows_from_record = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
                               for item in item_list]
-        # Parse input xml data to verify results from snapshot using xpath for search.
+        # Parse input xml data to verify results from output using xpath for search.
         root = ElementTree.fromstring(FILE_CONTENTS)
         expected_data = [{msg.find('title').text: msg.find('{http://books.com/price}price').text}
                          for msg in root.findall('{http://books.com/book}book')]
-        assert rows_from_snapshot == expected_data
-        output_records = snapshot[directory.instance_name].output
+        assert rows_from_record == expected_data
 
-        output_data = output_records[0]._data['value']['value']
+        output_data = wiretap.output_records[0]._data['value']['value']
         field_info = get_xml_output_field(directory, output_data, 'b:book', 'value')
 
         if include_field_xpaths:
             # Test for Record Headers
-            record_header = [record.header.values for record in output_records]
+            record_header = [record.header.values for record in wiretap.output_records]
             assert record_header[0]['xmlns:b'] == 'http://books.com/book'
             assert record_header[0]['xmlns:prc'] == 'http://books.com/price'
             # Test for Field Headers .Currently using _data property since api for field header is not there.
@@ -1415,7 +1482,7 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
                     '/bookstore/b:book/prc:price')
         else:
             # Test for Record Headers
-            record_header = [record.header.values for record in output_records]
+            record_header = [record.header.values for record in wiretap.output_records]
             assert 'xmlns:b' not in record_header[0]
             assert 'xmlns:prc' not in record_header[0]
             # Test for Field Headers .Currently using _data property since api for field header is not there.
@@ -1423,7 +1490,6 @@ def test_directory_origin_configuration_include_field_xpaths(sdc_builder, sdc_ex
             assert 'attributes' not in field_info['title']['value'][0]['value']['value']
             assert 'attributes' not in field_info['prc:price']['value'][0]['value']['value']
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -1450,17 +1516,17 @@ def test_directory_origin_configuration_json_content(sdc_builder, sdc_executor, 
                                  file_name_pattern="*.json",
                                  file_name_pattern_mode='GLOB',
                                  json_content=json_content)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = snapshot[directory.instance_name].output
-
-        assert records == [record.field for record in output_records]
-    finally:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
+
+        assert records == [record.field for record in wiretap.output_records]
+    finally:
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -1488,22 +1554,22 @@ Field51,Field52,Field53"""
                                  file_name_pattern_mode='GLOB',
                                  delimiter_character=",",
                                  lines_to_skip=3)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = snapshot[directory.instance_name].output
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
-        assert 2 == len(output_records)
-        assert output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 3)],
+        assert 2 == len(wiretap.output_records)
+        assert wiretap.output_records[0].field == OrderedDict(zip([str(i) for i in range(0, 3)],
                                                       FILE_CONTENTS.split('\n')[3].split(',')))
-        assert output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 3)],
+        assert wiretap.output_records[1].field == OrderedDict(zip([str(i) for i in range(0, 3)],
                                                       FILE_CONTENTS.split('\n')[4].split(',')))
     finally:
         shell_executor(f'rm -r {files_directory}')
-        sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('data_format', ['LOG'])
@@ -1547,26 +1613,30 @@ def test_directory_origin_configuration_max_line_length(sdc_builder, sdc_executo
     try:
         files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
-        attributes = {'data_format': data_format,
-                      'file_name_pattern': 'sample_input_*',
-                      'file_name_pattern_mode': 'GLOB',
-                      'files_directory': files_directory,
-                      'max_line_length': max_line_length,
-                      'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
-                      'regular_expression': r'(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
-                      'log_format': 'REGEX'}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern="sample_input_*",
+                                 file_name_pattern_mode='GLOB',
+                                 max_line_length=max_line_length,
+                                 field_path_to_regex_group_mapping=field_path_to_regex_group_mapping,
+                                 regular_expression=r'(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
+                                 log_format='REGEX')
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        record = snapshot[directory].output[0]
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
         if data_format == 'TEXT':
-            assert record.field['text'] == file_content[:max_line_length]
+            assert wiretap.output_records[0].field['text'] == file_content[:max_line_length]
         else:
-            assert record.field['/message'] == file_content[55:max_line_length]
+            assert wiretap.output_records[0].field['/message'] == file_content[55:max_line_length]
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -1614,22 +1684,22 @@ def test_directory_origin_configuration_max_record_length_in_chars_xml(sdc_build
                                  file_name_pattern_mode='GLOB',
                                  delimiter_element='msg',
                                  max_record_length_in_chars=max_record_length_in_chars)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
         if max_record_length_in_chars < 208:
-            assert not snapshot[directory].output
+            assert not wiretap.output_records
         else:
-            msg_field = get_xml_output_field(directory, output_records[0].field, 'msg')
+            msg_field = get_xml_output_field(directory, wiretap.output_records[0].field, 'msg')
             assert msg_field == EXPECTED_OUTPUT
 
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -1695,25 +1765,26 @@ def test_directory_origin_configuration_namespaces(sdc_builder, sdc_executor, sh
                                  file_name_pattern_mode='GLOB',
                                  delimiter_element='/root/a:data/msg',
                                  namespaces=[{'key': 'a', 'value': 'http://www.companyA.com'}])
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
         item_list = [get_xml_output_field(directory, output.field, 'msg')
-                     for output in snapshot[directory.instance_name].output]
+                     for output in wiretap.output_records]
 
-        rows_from_snapshot = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
+        rows_from_output = [{item['time'][0]['value'].value: item['request'][0]['value'].value}
                               for item in item_list]
-        # Parse input xml data to verify results from snapshot using xpath for search.
+        # Parse input xml data to verify results from records using xpath for search.
         root = ElementTree.fromstring(FILE_CONTENTS)
         expected_data = [{msg.find('time').text: msg.find('request').text}
                          for msg in root.findall('.//msg')]
-        assert rows_from_snapshot == expected_data
+        assert rows_from_output == expected_data
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -1782,34 +1853,34 @@ def test_directory_origin_configuration_output_field_attributes(sdc_builder, sdc
                                  file_name_pattern_mode='GLOB',
                                  delimiter_element='/*[1]/*',
                                  output_field_attributes=output_field_attributes)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
         item_list = [get_xml_output_field(directory, output.field, 'b:book')
-                     for output in snapshot[directory.instance_name].output]
-        rows_from_snapshot = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
+                     for output in wiretap.output_records]
+        rows_from_output = [{item['title'][0]['value'].value: item['prc:price'][0]['value'].value}
                               for item in item_list]
-        # Parse input xml data to verify results from snapshot using xpath for search.
+        # Parse input xml data to verify results from output using xpath for search.
         root = ElementTree.fromstring(FILE_CONTENTS)
         expected_data = [{msg.find('title').text: msg.find('{http://books.com/price}price').text}
                          for msg in root.findall('{http://books.com/book}book')]
-        assert rows_from_snapshot == expected_data
-        output_records = snapshot[directory.instance_name].output
+        assert rows_from_output == expected_data
 
         if output_field_attributes:
             # Test for Field Attributes. Currently using _data property since attributes are not accessible with the
             # field property.
-            output_data = output_records[0]._data['value']
+            output_data = wiretap.output_records[0]._data['value']
             field_header = get_xml_output_field(directory, output_data, 'value', 'b:book')
             assert field_header['attributes']['xmlns:b'] == 'http://books.com/book'
         else:
-            assert 'attributes' not in output_records[0]._data['value']
+            assert 'attributes' not in wiretap.output_records[0]._data['value']
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -1838,14 +1909,15 @@ def test_parse_nulls(sdc_builder, sdc_executor, stage_attributes, keep_data,
                                                                            **stage_attributes)
         if stage_attributes['parse_nulls']:
             directory.null_constant = null_constant
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [trash, pipeline_finisher]
+        directory >> wiretap.destination
+        directory >= pipeline_finisher
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        records = [record.field for record in snapshot[directory].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
 
         assert records == [EXPECTED_OUTPUT]
     finally:
@@ -1858,7 +1930,7 @@ def test_parse_nulls(sdc_builder, sdc_executor, stage_attributes, keep_data,
 def test_directory_origin_configuration_process_subdirectories(sdc_builder, sdc_executor, read_order,
                                                                process_subdirectories, shell_executor, file_writer):
     """Check if the process_subdirectories configuration works properly. Here we will create  two files one
-    in root level (direcotry which we process) and one in nested directory.
+    in root level (directory which we process) and one in nested directory.
     """
     files_name = ['pattern_check_processing_1.txt', 'pattern_check_processing_2.txt']
     files_content = [get_text_file_content(1, 1), get_text_file_content(2, 1)]
@@ -1867,22 +1939,27 @@ def test_directory_origin_configuration_process_subdirectories(sdc_builder, sdc_
     try:
         files_directory = create_file_and_directory(files_name[0], files_content[0], shell_executor, file_writer)
         inner_directory = os.path.join(files_directory, get_random_string())
-        logger.debug('Creating nested direcotry within files directory %s ...', files_directory)
         shell_executor(f'mkdir -p {inner_directory}')
         file_writer(os.path.join(inner_directory, files_name[1]), files_content[1])
 
-        attributes = {'data_format': 'TEXT',
-                      'files_directory': files_directory,
-                      'process_subdirectories': process_subdirectories,
-                      'read_order': read_order,
-                      'file_name_pattern_mode': 'GLOB',
-                      'file_name_pattern': '*.txt'}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 process_subdirectories=process_subdirectories,
+                                 read_order=read_order,
+                                 file_name_pattern_mode='GLOB',
+                                 file_name_pattern='*.txt')
+        wiretap = pipeline_builder.add_wiretap()
+        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+        directory >> wiretap.destination
+        directory >= pipeline_finisher
+        pipeline = pipeline_builder.build()
 
         raw_data = "\n".join(files_content) if process_subdirectories else files_content[0]
-        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, 'TEXT', raw_data, None, no_of_batches)
+        execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, wiretap, 'TEXT', raw_data, None)
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -1916,23 +1993,27 @@ def test_directory_origin_configuration_quote_character(sdc_builder, sdc_executo
         files_directory = create_file_and_directory(file_name, data, shell_executor, delimited_file_writer,
                                                     delimiter_format_type, delimiter_character)
 
-        attributes = {'data_format': data_format,
-                      'files_directory': files_directory,
-                      'file_name_pattern': 'custom_delimited_*',
-                      'file_name_pattern_mode': 'GLOB',
-                      'delimiter_format_type': delimiter_format_type,
-                      'delimiter_character': delimiter_character,
-                      'quote_character': quote_character}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern='custom_delimited_*',
+                                 file_name_pattern_mode='GLOB',
+                                 delimiter_format_type=delimiter_format_type,
+                                 delimiter_character=delimiter_character,
+                                 quote_character=quote_character)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batch_size=3).snapshot
-        output_records = snapshot[directory.instance_name].output
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
         expected_output = [map(f1, data[0]), map(f1, data[1])]
-        verify_delimited_output(output_records, expected_output)
+        verify_delimited_output(wiretap.output_records, expected_output)
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -2003,24 +2084,31 @@ def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor, sh
         files_directory = create_file_and_directory(file_name_1, file_content_1, shell_executor, file_writer)
         file_writer(os.path.join(files_directory, file_name_2), file_content_2)
 
-        attributes = {'data_format': 'TEXT',
-                      'files_directory': files_directory,
-                      'file_name_pattern_mode': "GLOB",
-                      'file_name_pattern': "*.txt",
-                      'read_order': read_order}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format='TEXT',
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.txt',
+                                 file_name_pattern_mode='GLOB',
+                                 read_order=read_order)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=2).snapshot
-        processed_data = snapshot_content(snapshot, directory)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = [record.field for record in wiretap.output_records]
+        processed_data = '\n'.join(str(r['text']) for r in records)
 
         if read_order == "LEXICOGRAPHICAL":
             raw_data = '{}\n{}'.format(file_content_2, file_content_1)
         else:
             raw_data = '{}\n{}'.format(file_content_1, file_content_2)
-        assert raw_data == '\n'.join(processed_data)
+        assert raw_data == processed_data
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
@@ -2061,28 +2149,41 @@ def test_directory_origin_configuration_regular_expression(sdc_builder, sdc_exec
     try:
         files_directory = create_file_and_directory(file_name, file_content, shell_executor, file_writer)
 
-        attributes = {'data_format': data_format,
-                      'log_format': log_format,
-                      'files_directory': files_directory,
-                      'file_name_pattern_mode': 'GLOB',
-                      'file_name_pattern': '*.log',
-                      'field_path_to_regex_group_mapping': field_path_to_regex_group_mapping,
-                      'regular_expression': regular_expression}
-        directory, pipeline = get_directory_to_trash_pipeline(sdc_builder, attributes)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(data_format=data_format,
+                                 log_format=log_format,
+                                 files_directory=files_directory,
+                                 file_name_pattern_mode='GLOB',
+                                 file_name_pattern='*.log',
+                                 field_path_to_regex_group_mapping=field_path_to_regex_group_mapping,
+                                 regular_expression=regular_expression)
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
         if regular_expression == r'(\S+)(\W+)(\S+)\[(\W+)\](\S+)(\W+)':
-            output_records = execute_pipeline(sdc_executor, directory, pipeline)
-            assert not output_records
+            assert not wiretap.output_records
         else:
-            execute_and_verify_log_regex_output(sdc_executor, directory, pipeline)
+            assert (wiretap.output_records[0].field == {'/time': '08:23:53', '/date': '2019-04-30', '/timehalf': 'AM',
+                                                '/info': '[INFO]',
+                                                '/message': 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).',
+                                                '/file': '[streamsets.sdk.sdc_api]'})
+            assert (wiretap.output_records[1].field == {'/time': '08:23:57', '/date': '2019-04-30', '/timehalf': 'AM',
+                                                '/info': '[INFO]',
+                                                '/message': 'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...',
+                                                '/file': '[streamsets.sdk.sdc]'})
     finally:
-        sdc_executor.stop_pipeline(pipeline)
         shell_executor(f'rm -r {files_directory}')
 
 
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'LOG', 'retain_original_line': False},
                                               {'data_format': 'LOG', 'retain_original_line': True}])
-
 def test_retain_original_line(sdc_builder, sdc_executor, stage_attributes, file_writer):
     """Verifies that the configuration properly includes the original log line as a record field, when enabled."""
     FILE_NAME = 'custom_log_data.log'
@@ -2105,18 +2206,19 @@ def test_retain_original_line(sdc_builder, sdc_executor, stage_attributes, file_
                                  files_directory=files_directory, log_format='REGEX',
                                  regular_expression=r'(\S+) (\S+) (\S+) (\S+) (\S+) (.*)',
                                  **stage_attributes)
-        trash = pipeline_builder.add_stage('Trash')
+        wiretap = pipeline_builder.add_wiretap()
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [trash, pipeline_finisher]
+        directory >> wiretap.destination
+        directory >= pipeline_finisher
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = [record.field for record in snapshot[directory].output]
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        records = [record.field for record in wiretap.output_records]
 
         if stage_attributes['retain_original_line']:
             EXPECTED_OUTPUT['originalLine'] = FILE_CONTENT
-        assert output_records == [EXPECTED_OUTPUT]
+        assert records == [EXPECTED_OUTPUT]
     finally:
         sdc_executor.execute_shell(f'rm -r {files_directory}')
 
@@ -2197,21 +2299,21 @@ def test_directory_origin_configuration_trim_stack_trace_to_length(sdc_builder, 
                                  trim_stack_trace_to_length=trim_stack_trace_to_length,
                                  files_directory=files_directory,
                                  file_name_pattern=file_name)
-        trash = pipeline_builder.add_stage('Trash')
-        directory >> trash
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-        output_records = snapshot[directory.instance_name].output
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
 
         expected_output = '{}\n{}'.format('failed!',
                                           '\n'.join(input_content[1:trim_stack_trace_to_length+1]))
-        assert output_records[0].field['message'] == expected_output
+        assert wiretap.output_records[0].field['message'] == expected_output
 
     finally:
         shell_executor(f'rm -r {files_directory}')
-        sdc_executor.stop_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('data_format', ['DATAGRAM'])
@@ -2400,28 +2502,6 @@ def get_control_characters_attributes(data_format, files_directory, ignore_contr
             'ignore_control_characters': ignore_control_characters}
 
 
-def snapshot_content(snapshot, directory):
-    """This is common function can be used at in many TCs to get snapshot content."""
-    processed_data = []
-    for snapshot_batch in snapshot.snapshot_batches:
-        for value in snapshot_batch[directory.instance_name].output_lanes.values():
-            for record in value:
-                processed_data.append(str(record.field['text']))
-    return processed_data
-
-
-def execute_and_verify_log_regex_output(sdc_executor, directory, pipeline):
-    output_records = execute_pipeline(sdc_executor, directory, pipeline)
-    assert (output_records[0].field == {'/time': '08:23:53', '/date': '2019-04-30', '/timehalf': 'AM',
-                                        '/info': '[INFO]',
-                                        '/message': 'Pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 reached status EDITED (took 0.00 s).',
-                                        '/file': '[streamsets.sdk.sdc_api]'})
-    assert (output_records[1].field == {'/time': '08:23:57', '/date': '2019-04-30', '/timehalf': 'AM',
-                                        '/info': '[INFO]',
-                                        '/message': 'Starting pipeline Filewriterpipeline5340a2b5-b792-45f7-ac44-cf3d6df1dc29 ...',
-                                        '/file': '[streamsets.sdk.sdc]'})
-
-
 def write_multiple_files(sdc_builder, sdc_executor, tmp_directory, file_suffix):
     # 1st pipeline which writes one record per file with interval 0.1 seconds
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -2468,32 +2548,33 @@ def get_data_format_content(data_format):
     return data_format_content[data_format]
 
 
-def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, data_format, file_content,
-                                       json_data=None, no_of_batches=1):
+def execute_pipeline_and_verify_output(sdc_executor, directory, pipeline, wiretap, data_format, file_content,
+                                       json_data=None):
+
     sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, batches=no_of_batches).snapshot
-    output_records = snapshot[directory.instance_name].output
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
     if data_format == 'TEXT':
-        processed_data = snapshot_content(snapshot, directory)
-        assert file_content == '\n'.join(processed_data)
+        records = [record.field for record in wiretap.output_records]
+        processed_data = '\n'.join(str(r['text']) for r in records)
+        assert file_content == processed_data
     elif data_format == 'DELIMITED':
-        assert output_records[0].field == OrderedDict(zip(file_content[0], file_content[1]))
+        assert wiretap.output_records[0].field == OrderedDict(zip(file_content[0], file_content[1]))
     elif data_format == 'JSON':
-        assert output_records[0].field == [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13',
+        assert wiretap.output_records[0].field == [{'col11': 'value11', 'col12': 'value12', 'col13': 'value13',
                                             'col14': 'value14'}]
     elif data_format == 'LOG':
-        assert output_records[0].field == {'severity': 'DEBUG', 'relativetime': '200', 'thread': 'main',
+        assert wiretap.output_records[0].field == {'severity': 'DEBUG', 'relativetime': '200', 'thread': 'main',
                                            'category': 'org.StreamSets.Log4j', 'ndc': 'unknown',
                                            'message': 'This is sample log message'}
     elif data_format == 'XML':
-        xml_output_field = get_xml_output_field(directory, output_records[0].field, 'root')
+        xml_output_field = get_xml_output_field(directory, wiretap.output_records[0].field, 'root')
         msg_field = xml_output_field['msg']
 
         assert msg_field[0]['metainfo'][0]['value'] == 'Index page:More info about content'
         assert msg_field[0]['request'][0]['value'] == 'GET /index.html 200'
     elif data_format == 'SDC_JSON':
-        assert output_records[0].field == json_data[0]
+        assert wiretap.output_records[0].field == json_data[0]
 
 
 def generate_excel_file():
@@ -2520,11 +2601,4 @@ def generate_excel_file():
     sheet.write(2, 2, 'สนาม23')
     workbook.save(file_excel)
     return file_excel
-
-
-def execute_pipeline(sdc_executor, directory, pipeline):
-    sdc_executor.add_pipeline(pipeline)
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True).snapshot
-    output_records = snapshot[directory].output
-    return output_records
 
