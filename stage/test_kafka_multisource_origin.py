@@ -573,8 +573,9 @@ def test_kafka_origin_json_array_error(sdc_builder, sdc_executor, cluster):
 
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline)
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
     sdc_executor.stop_pipeline(pipeline)
+    assert 1 == len(wiretap.error_records)
     error_message = wiretap.error_records[0].header['errorMessage'].split("'")
     received_error = error_message[0] + error_message[2]
     assert expected_error_message == received_error
