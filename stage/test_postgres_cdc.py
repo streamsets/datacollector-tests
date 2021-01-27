@@ -403,6 +403,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
+    table = None
     try:
         # Database operations done after pipeline start will be captured by CDC.
         # Hence start the pipeline but do not wait for the capture to be finished.
@@ -479,6 +480,7 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder, sdc_executor, database):
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
+    table = None
     try:
         # Database operations done after pipeline start will be captured by CDC.
         # Hence start the pipeline but do not wait for the capture to be finished.
@@ -550,12 +552,10 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
+    # Create tables before pipeline starts
+    table_allow = _create_table_in_database(table_name_allow, database)
+    table_deny = _create_table_in_database(table_name_deny, database)
     try:
-
-        # Create tables before pipeline starts
-        table_allow = _create_table_in_database(table_name_allow, database)
-        table_deny = _create_table_in_database(table_name_deny, database)
-
         # Database operations done after pipeline start will be captured by CDC.
         sdc_executor.start_pipeline(pipeline)
 
@@ -643,6 +643,7 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
+    table = None
     try:
         # Database operations done after pipeline start will be captured by CDC.
         # Hence start the pipeline but do not wait for the capture to be finished.
@@ -711,6 +712,7 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder, sdc_exe
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
+    table = None
     try:
         pipeline_cmd = sdc_executor.start_pipeline(pipeline)
 
@@ -842,6 +844,7 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
+    table = []
     try:
         # Create tables and then perform insert, update and delete operations.
         table = [_create_table_in_database(name, database) for name in table_name]
@@ -929,8 +932,8 @@ def test_postgres_cdc_wal_sender_status_metrics(sdc_builder, sdc_executor, datab
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
+    table = _create_table_in_database(table_name, database)
     try:
-        table = _create_table_in_database(table_name, database)
         start_command = sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
         expected_operations_data = []
@@ -1002,8 +1005,8 @@ def test_postgres_cdc_queue_buffering_metrics(sdc_builder, sdc_executor, databas
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
+    tables = [_create_table_in_database(table_name, database) for table_name in table_names]
     try:
-        tables = [_create_table_in_database(table_name, database) for table_name in table_names]
         start_command = sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
 
