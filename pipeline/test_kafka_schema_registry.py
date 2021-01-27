@@ -56,6 +56,7 @@ def consumer_single(sdc_builder, topic, cluster, confluent):
 
     kafka_consumer = builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
     kafka_consumer.set_attributes(topic=topic,
+                                  consumer_group=get_random_string(),
                                   data_format='AVRO',
                                   avro_schema_location='REGISTRY',
                                   lookup_schema_by='AUTO',
@@ -77,6 +78,7 @@ def consumer_multi(sdc_builder, topic, cluster, confluent):
 
     kafka_consumer = builder.add_stage('Kafka Multitopic Consumer')
     kafka_consumer.set_attributes(topic_list=[topic],
+                                  consumer_group=get_random_string(),
                                   data_format='AVRO',
                                   avro_schema_location='REGISTRY',
                                   lookup_schema_by='AUTO',
@@ -332,6 +334,7 @@ def test_kafka_consumer_key_capture_modes(sdc_builder, sdc_executor, cluster, co
 
     kafka_consumer = builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
     kafka_consumer.set_attributes(topic=topic,
+                                  consumer_group=get_random_string(),
                                   data_format='AVRO',
                                   avro_schema_location='REGISTRY',
                                   lookup_schema_by='AUTO',
