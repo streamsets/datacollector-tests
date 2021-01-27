@@ -36,8 +36,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
     to assert data between the client to what has been ingested into the pipeline. The pipeline looks like:
 
     Firehose Destination pipeline:
-        dev_raw_data_source >> record_deduplicator >> firehose_destination
-                                                   >> to_error
+        dev_raw_data_source >> firehose_destination
     """
     s3_client = aws.s3
     firehose_client = aws.firehose
@@ -46,7 +45,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
     s3_bucket = aws.s3_bucket_name
     stream_name = aws.firehose_stream_name
     # json formatted string
-    random_raw_str = '{{"text":"{0}"}}'.format(get_random_string(string.ascii_letters, 10))
+    random_raw_str = f'{{"text":"{get_random_string(string.ascii_letters, 10)}"}}'
     record_count = 1  # random_raw_str record size
     s3_put_keys = []
 
@@ -54,24 +53,20 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  raw_data=random_raw_str)
-
-    record_deduplicator = builder.add_stage('Record Deduplicator')
-    to_error = builder.add_stage('To Error')
+                                                                                  raw_data=random_raw_str,
+                                                                                  stop_after_first_batch=True)
 
     firehose_destination = builder.add_stage('Kinesis Firehose')
     firehose_destination.set_attributes(stream_name=stream_name, data_format='JSON')
 
-    dev_raw_data_source >> record_deduplicator >> firehose_destination
-    record_deduplicator >> to_error
+    dev_raw_data_source >> firehose_destination
 
     firehose_dest_pipeline = builder.build(title='Amazon Firehose destination pipeline').configure_for_environment(aws)
     sdc_executor.add_pipeline(firehose_dest_pipeline)
 
     try:
         # start pipeline and assert
-        sdc_executor.start_pipeline(firehose_dest_pipeline).wait_for_pipeline_output_records_count(record_count)
-        sdc_executor.stop_pipeline(firehose_dest_pipeline)
+        sdc_executor.start_pipeline(firehose_dest_pipeline).wait_for_finished()
 
         # wait till data is available in S3. We do so by querying for buffer wait time and sleep till then
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
@@ -107,8 +102,7 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
     The pipeline looks like:
 
     Firehose Destination pipeline:
-        dev_raw_data_source >> record_deduplicator >> firehose_destination
-                                                   >> to_error
+        dev_raw_data_source >> firehose_destination
     """
     endpoint = SERVICE_ENDPOINT_FORMAT.format('firehose', aws.region)
 
@@ -119,7 +113,7 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
     s3_bucket = aws.s3_bucket_name
     stream_name = aws.firehose_stream_name
     # json formatted string
-    random_raw_str = '{{"text":"{0}"}}'.format(get_random_string(string.ascii_letters, 10))
+    random_raw_str = f'{{"text":"{get_random_string(string.ascii_letters, 10)}"}}'
     record_count = 1  # random_raw_str record size
     s3_put_keys = []
 
@@ -127,16 +121,13 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
     builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  raw_data=random_raw_str)
-
-    record_deduplicator = builder.add_stage('Record Deduplicator')
-    to_error = builder.add_stage('To Error')
+                                                                                  raw_data=random_raw_str,
+                                                                                  stop_after_first_batch=True)
 
     firehose_destination = builder.add_stage('Kinesis Firehose')
     firehose_destination.set_attributes(stream_name=stream_name, data_format='JSON')
 
-    dev_raw_data_source >> record_deduplicator >> firehose_destination
-    record_deduplicator >> to_error
+    dev_raw_data_source >> firehose_destination
 
     firehose_dest_pipeline = builder.build().configure_for_environment(aws)
     firehose_destination.set_attributes(region='OTHER', endpoint=endpoint)
@@ -144,8 +135,7 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
 
     try:
         # start pipeline and assert
-        sdc_executor.start_pipeline(firehose_dest_pipeline).wait_for_pipeline_output_records_count(record_count)
-        sdc_executor.stop_pipeline(firehose_dest_pipeline)
+        sdc_executor.start_pipeline(firehose_dest_pipeline).wait_for_finished()
 
         # wait till data is available in S3. We do so by querying for buffer wait time and sleep till then
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
