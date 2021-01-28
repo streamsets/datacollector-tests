@@ -11,18 +11,32 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import copy
 
 import pytest
 import string
 import logging
 import sqlalchemy
 
-from streamsets.testframework.environments.databases import OracleDatabase
+from streamsets.sdk.exceptions import ValidationError
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase, MySqlDatabase
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Dima'},
+    {'id': 2, 'name': 'Jarcec'},
+    {'id': 3, 'name': 'Arvind'}
+]
+ROWS_TO_UPDATE = [
+    {'id': 2, 'name': 'Eddie'},
+    {'id': 4, 'name': 'Jarcec'}
+]
+LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
+RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
 
 LOOKUP_TABLE_DATA = [
     {'id': 1, 'dept': 'mt', 'name': 'Arvind'},
@@ -41,9 +55,76 @@ def test_auto_commit(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-def test_column_mappings(sdc_builder, sdc_executor):
-    pass
+@database
+@pytest.mark.parametrize('column_type', ['BigInteger', 'Boolean', 'Date', 'DateTime', 'Enum', 'Float', 'Integer',
+                                         'Interval', 'LargeBinary', 'Numeric', 'PickleType', 'SmallInteger', 'String',
+                                         'Text', 'Unicode', 'UnicodeText'])
+@pytest.mark.parametrize('existing_column_name', [True, False])
+def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, column_type, existing_column_name):
+    """Simple JDBC Lookup processor test.
+    Pipeline would enrich records with the 'field' by adding a field as 'FirstName'.
+    This test just validates that the columnName from Column Mapping is well configured (except for String type,
+    that it also runs).
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> wiretap
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    name_type = getattr(sqlalchemy, column_type)
+    if column_type in {'String', 'Unicode', 'UnicodeText'}:
+        name_type = name_type(32)
+    elif column_type in {'Enum'}:
+        name_type = name_type('one', 'two')
+
+    column_name_config = 'columnName' if existing_column_name else 'notAColumnName'
+
+    table = _create_table(table_name, database, None, name_type)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(LOOKUP_RAW_DATA),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    query_str = f"SELECT name as columnName FROM {table_name} WHERE id = '${{record:value('/id')}}'"
+    column_mappings = [dict(dataType='USE_COLUMN_TYPE',
+                            columnName=column_name_config,
+                            field='/FirstName')]
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=column_mappings)
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> jdbc_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.validate_pipeline(pipeline)
+        # Only run pipeline for String type to check mapping, as if validated (meaning configuration is ok),
+        # it should not give any additional problem depending on datatypes
+        if column_type in {'String'}:
+            logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
+            connection = database.engine.connect()
+            connection.execute(table.insert(), ROWS_IN_DATABASE)
+            LOOKUP_EXPECTED_DATA = copy.deepcopy(ROWS_IN_DATABASE)
+            for record in LOOKUP_EXPECTED_DATA:
+                record.pop('id')
+                record['FirstName'] = record.pop('name')
+
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+            rows_from_wiretap = [{list(record.field.keys())[1]: list(record.field.values())[1].value}
+                                 for record in wiretap.output_records]
+            assert rows_from_wiretap == LOOKUP_EXPECTED_DATA
+    except ValidationError as e:
+        if not existing_column_name:
+            assert "JDBC_95" in str(e.args[0])
+        else:
+            # should never reach
+            raise e
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
 
 
 @stub
@@ -277,4 +358,39 @@ def _create_and_populate_lookup_table(name, database):
     connection = database.engine.connect()
     connection.execute(table.insert(), LOOKUP_TABLE_DATA)
 
+    return table
+
+
+def _create_table(table_name, database, schema_name=None, name_type=sqlalchemy.String(32)):
+    """Helper function to create a table with two columns: id (int, PK) and name.
+
+    Args:
+        table_name: (:obj:`str`) the name for the new table.
+        database: a :obj:`streamsets.testframework.environment.Database` object.
+        name_type: sqlalchemy type
+        schema_name: (:obj:`str`, optional) when provided, create the new table in a specific schema; otherwise,
+            the default schema for the engine’s database connection is used.
+
+    Return:
+        The new table as a sqlalchemy.Table object.
+
+    """
+    metadata = sqlalchemy.MetaData()
+
+    if type(database) == SQLServerDatabase:
+        table = sqlalchemy.Table(table_name,
+                                 metadata,
+                                 sqlalchemy.Column('name', name_type),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True,
+                                                   autoincrement=False),
+                                 schema=schema_name)
+    else:
+        table = sqlalchemy.Table(table_name,
+                                 metadata,
+                                 sqlalchemy.Column('name', name_type),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                                 schema=schema_name)
+
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
     return table
