@@ -1467,60 +1467,46 @@ def generate_files(sdc_builder, sdc_executor, tmp_directory):
 
 @pytest.mark.parametrize('read_order', ['TIMESTAMP', 'LEXICOGRAPHICAL'])
 @pytest.mark.parametrize('file_post_processing', ['DELETE', 'ARCHIVE'])
-def test_directory_no_post_process_older_files(sdc_builder, sdc_executor, file_writer, shell_executor, list_dir,
-                                               read_order, file_post_processing):
-    """
-    Test that only files that have been processed by the origin are post processed
-    """
+def test_directory_no_post_process_older_files(sdc_builder, sdc_executor, read_order, file_post_processing):
+    """Only files that have been processed by the origin are post-processed."""
+    files_directory = os.path.join('/tmp', get_random_string())
+    archive_directory = os.path.join('/tmp', get_random_string())
 
-    FILES_DIRECTORY = '/tmp'
+    # We'll write 4 files, but only read the last two and ensure that those are the only ones left in the files
+    # directory when the pipeline finishes.
+    FIRST_FILE_TO_PROCESS = 'file-2.txt'
+    UNPROCESSED_FILES = ['file-0.txt', 'file-1.txt']
+    PROCESSED_FILES = ['file-2.txt', 'file-3.txt']
 
-    random_str = get_random_string(string.ascii_letters, 10)
-    file_path = os.path.join(FILES_DIRECTORY, random_str)
-    archive_path = os.path.join(FILES_DIRECTORY, random_str + '_archive')
+    sdc_executor.execute_shell(f'mkdir -p {files_directory} {archive_directory}')
 
-    # Create files and archive directories
-    shell_executor(f"""
-        mkdir {file_path}
-        mkdir {archive_path}
-    """)
-
-    # Create files
     for i in range(4):
-        file_writer(os.path.join(file_path, f'file-{i}.txt'), f'{i}')
+        sdc_executor.write_file(os.path.join(files_directory, f'file-{i}.txt'), str(i))
 
-    builder = sdc_builder.get_pipeline_builder()
-    directory = builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='TEXT',
-                             file_name_pattern='file-*.txt',
-                             file_name_pattern_mode='GLOB',
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory')
+    directory.set_attributes(archive_directory=archive_directory, data_format='TEXT',
+                             file_name_pattern='*',
                              file_post_processing=file_post_processing,
-                             archive_directory=archive_path,
-                             files_directory=file_path,
-                             process_subdirectories=True,
-                             read_order=read_order,
-                             first_file_to_process='file-2.txt')
-
-    trash = builder.add_stage('Trash')
-
-    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
-    pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'],
+                             files_directory=files_directory,
+                             first_file_to_process=FIRST_FILE_TO_PROCESS,
+                             read_order=read_order)
+    trash = pipeline_builder.add_stage('Trash')
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(preconditions=["${record:eventType() == 'no-more-data'}"],
                                      on_record_error='DISCARD')
 
     directory >> trash
     directory >= pipeline_finisher
 
-    pipeline = builder.build(f'Test directory origin no postprocess older files {read_order} {file_post_processing}')
+    pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
-
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    unprocessed_files = [os.path.join(file_path, f'file-{i}.txt') for i in range(2)]
-    assert sorted(list_dir('TEXT', file_path, 'file-*.txt', batches=2)) == unprocessed_files
+    assert sorted(sdc_executor.execute_shell(f'ls {files_directory}').stdout.split()) == UNPROCESSED_FILES
 
     if file_post_processing == 'ARCHIVE':
-        archived_files = [os.path.join(archive_path, f'file-{i}.txt') for i in range(2, 4)]
-        assert sorted(list_dir('TEXT', archive_path, 'file-*.txt', batches=2)) == archived_files
+        assert sorted(sdc_executor.execute_shell(f'ls {archive_directory}').stdout.split()) == PROCESSED_FILES
 
 
 def setup_avro_file(sdc_executor, tmp_directory):
