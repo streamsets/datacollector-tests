@@ -250,7 +250,7 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
     FILE_NAME_2 = 'streamsets_temp2.txt'
     FILE_CONTENTS_1 = get_text_file_content('1', 50)
     FILE_CONTENTS_2 = get_text_file_content('2', 50)
-    # Expected number of batches for each batch size (considering the events)
+    # Expected number of batches for each batch size
     if batch_size_in_recs == 1:
         number_of_batches = 100
     elif batch_size_in_recs == 50:
@@ -275,8 +275,8 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        # Waiting for number of data records (50 + 50) per batch size
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', number_of_batches)
+        # Waiting for number of data records (50 + 50)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 100)
         sdc_executor.stop_pipeline(pipeline)
 
         # Assert that we get the correct number of batches for the batch sizes
@@ -286,12 +286,13 @@ def test_directory_origin_configuration_batch_size_in_recs(sdc_builder, sdc_exec
                >= number_of_batches
 
         # Assert the data is correct
+        assert 100 == len(wiretap.output_records)
         raw_data = '{}\n{}'.format(FILE_CONTENTS_1, FILE_CONTENTS_2)
         temp = []
         for record in wiretap.output_records:
             temp.append(str(record.field['text']))
         stage_output = '\n'.join(temp)
-        assert raw_data == stage_output
+        assert sorted(raw_data) == sorted(stage_output)
     finally:
         shell_executor(f'rm -r {files_directory}')
 
