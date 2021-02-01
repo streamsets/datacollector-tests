@@ -12,8 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import pytest
+import string
+import logging
+import json
 
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 @stub
@@ -193,10 +200,43 @@ def test_header_line(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'file_type': 'SEQUENCE_FILE'}, {'file_type': 'TEXT'}])
-def test_idle_timeout(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@pytest.mark.parametrize('idle_timeout, expected_num_files', [('${1 * SECONDS}', 5), ('${3 * SECONDS}', 1)])
+def test_idle_timeout(sdc_builder, sdc_executor, idle_timeout, expected_num_files):
+    """Test Idle Timeout. The pipeline test how many files are created when we write 5 batches if the Idle Timeout
+    are lower and higher than the the delay between batches.
+    Pipeline looks like:
+        dev_data_generator >> local_fs
+    """
+    tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=100,
+                                      delay_between_batches=2000,
+                                      fields_to_generate=[{'field': 'a', 'type': 'STRING'},
+                                                          {'field': 'b', 'type': 'STRING'},
+                                                          {'field': 'c', 'type': 'STRING'}])
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='DELIMITED',
+                            directory_template=tmp_directory,
+                            idle_timeout=idle_timeout)
+
+    dev_data_generator >> local_fs
+
+    pipeline = pipeline_builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(5)
+        sdc_executor.stop_pipeline(pipeline)
+
+        num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
+
+        assert num_created_files == expected_num_files
+    finally:
+        logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
+        sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
 
 
 @stub
@@ -237,9 +277,88 @@ def test_late_record_handling(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-def test_late_record_time_limit_in_secs(sdc_builder, sdc_executor):
-    pass
+@pytest.mark.parametrize('late_records_time, expected_records', [
+    ('${1 * SECONDS}', 1),
+    ('${10 * SECONDS}', 1),
+    ('${1 * MINUTES}', 2)
+])
+def test_late_record_time_limit_in_secs(sdc_builder, sdc_executor, late_records_time, expected_records):
+    """Test Late Records Time Limit (secs). We had 2 records and only second record had a 30 seconds delay. The
+    pipeline test how many files are created with different Late Records Time Limit.
+    Pipeline looks like:
+        dev_data_generator >> delay >> local_fs
+    """
+    tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+    raw_data = [{'id': 1, 'delay': True},
+                {'id': 2, 'delay': False}]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data='\n'.join(json.dumps(rec) for rec in raw_data),
+                                       stop_after_first_batch=True)
+
+    delay = pipeline_builder.add_stage('Delay')
+    delay.set_attributes(delay_between_batches=30000)   # 30 seconds
+
+    stream_selector = pipeline_builder.add_stage('Stream Selector')
+
+    to_error = pipeline_builder.add_stage('To Error')
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='JSON',
+                            directory_template=tmp_directory,
+                            late_record_time_limit_in_secs=late_records_time)
+
+    dev_raw_data_source >> stream_selector >> delay >> local_fs
+    stream_selector >> local_fs
+    stream_selector >> to_error
+
+    stream_selector.condition = [dict(outputLane=stream_selector.output_lanes[0],
+                                      predicate='${record:value("/delay") == true}'),
+                                 dict(outputLane=stream_selector.output_lanes[1],
+                                      predicate='${record:value("/delay") == false}'),
+                                 dict(outputLane=stream_selector.output_lanes[2],
+                                      predicate='default')]
+
+    pipeline = pipeline_builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+        num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
+        assert num_created_files == 1
+
+        # 2nd pipeline which reads the files using Directory Origin stage
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory', type='origin')
+        directory.set_attributes(batch_wait_time_in_secs=1,
+                                 data_format='JSON',
+                                 file_name_pattern='sdc-*',
+                                 files_directory=tmp_directory,
+                                 process_subdirectories=True,
+                                 read_order='TIMESTAMP')
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+        directory_pipeline = pipeline_builder.build('Directory Origin pipeline')
+        sdc_executor.add_pipeline(directory_pipeline)
+
+        cmd = sdc_executor.start_pipeline(directory_pipeline)
+        cmd.wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(directory_pipeline)
+
+        # assert all the data captured have the same raw_data
+        output = [record.field['id'].value for record in wiretap.output_records]
+        num_records = len(output)
+        output.sort()
+        assert num_records == expected_records
+        for i in range(num_records):
+            assert output[i] == raw_data[i]['id']
+
+    finally:
+        logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
+        sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
 
 
 @stub
@@ -253,16 +372,82 @@ def test_lookup_schema_by(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'file_type': 'SEQUENCE_FILE'}, {'file_type': 'TEXT'}])
-def test_max_file_size_in_mb(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@pytest.mark.parametrize('max_file_size, expected_num_files', [(0, 1), (1, 2)])
+def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_num_files):
+    """Test Max File Size in MB. The pipeline test how many files are created when we write 15k records (more than 1MB)
+     if the Max File Size are lower and higher than the number of records.
+    Pipeline looks like:
+        dev_data_generator >> local_fs
+    """
+    tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=3000,     # >1MB
+                                      delay_between_batches=1000,
+                                      fields_to_generate=[{'field': 'a', 'type': 'STRING'},
+                                                          {'field': 'b', 'type': 'STRING'},
+                                                          {'field': 'c', 'type': 'STRING'}])
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='DELIMITED',
+                            directory_template=tmp_directory,
+                            max_file_size_in_mb=max_file_size)
+
+    dev_data_generator >> local_fs
+
+    pipeline = pipeline_builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(5)
+        sdc_executor.stop_pipeline(pipeline)
+
+        num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
+
+        assert num_created_files == expected_num_files
+    finally:
+        logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
+        sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'file_type': 'SEQUENCE_FILE'}, {'file_type': 'TEXT'}])
-def test_max_records_in_file(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@pytest.mark.parametrize('max_records_in_file, expected_num_files', [(10, 10), (100, 1)])
+def test_max_records_in_file(sdc_builder, sdc_executor, max_records_in_file, expected_num_files):
+    """Test Max Records in File. The pipeline test how many files are created when we write 100 records if
+    the Max Records in File are lower and higher than the number of records.
+     Pipeline looks like:
+         dev_data_generator >> local_fs
+     """
+    tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=100,
+                                      delay_between_batches=1000,
+                                      fields_to_generate=[{'field': 'a', 'type': 'STRING'},
+                                                          {'field': 'b', 'type': 'STRING'},
+                                                          {'field': 'c', 'type': 'STRING'}])
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='DELIMITED',
+                            directory_template=tmp_directory,
+                            max_records_in_file=max_records_in_file)
+
+    dev_data_generator >> local_fs
+
+    pipeline = pipeline_builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
+
+        assert num_created_files == expected_num_files
+    finally:
+        logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
+        sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
 
 
 @stub
