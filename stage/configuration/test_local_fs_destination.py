@@ -15,6 +15,7 @@ import pytest
 import string
 import logging
 import json
+from datetime import datetime, timedelta
 
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.utils import get_random_string
@@ -277,88 +278,70 @@ def test_late_record_handling(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('late_records_time, expected_records', [
-    ('${1 * SECONDS}', 1),
-    ('${10 * SECONDS}', 1),
-    ('${1 * MINUTES}', 2)
+@pytest.mark.parametrize('late_records_time, expected_late_records', [
+    ('${1 * SECONDS}', True),
+    ('${2 * HOURS}', False)
 ])
-def test_late_record_time_limit_in_secs(sdc_builder, sdc_executor, late_records_time, expected_records):
+def test_late_record_time_limit_in_secs(sdc_builder, sdc_executor, late_records_time, expected_late_records):
     """Test Late Records Time Limit (secs). We had 2 records and only second record had a 30 seconds delay. The
     pipeline test how many files are created with different Late Records Time Limit.
     Pipeline looks like:
-        dev_data_generator >> delay >> local_fs
+        dev_data_generator >> field_type_converter >> delay >> local_fs
     """
-    tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
-    raw_data = [{'id': 1, 'delay': True},
-                {'id': 2, 'delay': False}]
+    tmp_directory_prefix = '/tmp/out'
+    tmp_directory = '/${YYYY()}-${MM()}-${DD()}-${hh()}-${mm()}'
+    tmp_late_directory = '/tmp/late/{}'.format(get_random_string(string.ascii_letters, 10))
+    timestamp = datetime.now() - timedelta(hours=1)
+    raw_data = [{'id': 1, 'timestamp': str(timestamp)},
+                {'id': 2, 'timestamp': str(timestamp)}]
+
+    field_type_converter_configs = [
+        {
+            'fields': ['/timestamp'],
+            'targetType': 'DATE',
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS'
+        }]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        raw_data='\n'.join(json.dumps(rec) for rec in raw_data),
-                                       stop_after_first_batch=True)
+                                       stop_after_first_batch=False)
+
+    field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter_fields.set_attributes(conversion_method='BY_FIELD',
+                                               field_type_converter_configs=field_type_converter_configs)
 
     delay = pipeline_builder.add_stage('Delay')
-    delay.set_attributes(delay_between_batches=30000)   # 30 seconds
-
-    stream_selector = pipeline_builder.add_stage('Stream Selector')
-
-    to_error = pipeline_builder.add_stage('To Error')
+    delay.set_attributes(delay_between_batches=10000)   # 30 seconds
 
     local_fs = pipeline_builder.add_stage('Local FS', type='destination')
     local_fs.set_attributes(data_format='JSON',
-                            directory_template=tmp_directory,
-                            late_record_time_limit_in_secs=late_records_time)
+                            directory_template=tmp_directory_prefix + tmp_directory,
+                            time_basis='${record:value("/timestamp")}',
+                            late_record_time_limit_in_secs=late_records_time,
+                            late_record_handling='SEND_TO_LATE_RECORDS_FILE',
+                            late_record_directory_template=tmp_late_directory)
 
-    dev_raw_data_source >> stream_selector >> delay >> local_fs
-    stream_selector >> local_fs
-    stream_selector >> to_error
-
-    stream_selector.condition = [dict(outputLane=stream_selector.output_lanes[0],
-                                      predicate='${record:value("/delay") == true}'),
-                                 dict(outputLane=stream_selector.output_lanes[1],
-                                      predicate='${record:value("/delay") == false}'),
-                                 dict(outputLane=stream_selector.output_lanes[2],
-                                      predicate='default')]
+    dev_raw_data_source >> field_type_converter_fields >> delay >> local_fs
 
     pipeline = pipeline_builder.build().configure_for_environment()
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(5)
+        sdc_executor.stop_pipeline(pipeline)
 
-        num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
-        assert num_created_files == 1
-
-        # 2nd pipeline which reads the files using Directory Origin stage
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        directory = pipeline_builder.add_stage('Directory', type='origin')
-        directory.set_attributes(batch_wait_time_in_secs=1,
-                                 data_format='JSON',
-                                 file_name_pattern='sdc-*',
-                                 files_directory=tmp_directory,
-                                 process_subdirectories=True,
-                                 read_order='TIMESTAMP')
-        wiretap = pipeline_builder.add_wiretap()
-        directory >> wiretap.destination
-        directory_pipeline = pipeline_builder.build('Directory Origin pipeline')
-        sdc_executor.add_pipeline(directory_pipeline)
-
-        cmd = sdc_executor.start_pipeline(directory_pipeline)
-        cmd.wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(directory_pipeline)
-
-        # assert all the data captured have the same raw_data
-        output = [record.field['id'].value for record in wiretap.output_records]
-        num_records = len(output)
-        output.sort()
-        assert num_records == expected_records
-        for i in range(num_records):
-            assert output[i] == raw_data[i]['id']
+        num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_late_directory} | wc -l').stdout)
+        if expected_late_records:
+            assert num_created_files > 0
+        else:
+            assert num_created_files == 0
 
     finally:
-        logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
-        sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
+        logger.info('Deleting files created by Local FS in %s and %s ...', tmp_directory_prefix, tmp_late_directory)
+        sdc_executor.execute_shell(f'rm -R {tmp_directory_prefix} ')
+        sdc_executor.execute_shell(f'rm -R {tmp_late_directory} ')
 
 
 @stub
@@ -385,6 +368,7 @@ def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
     dev_data_generator.set_attributes(batch_size=3000,     # >1MB
                                       delay_between_batches=1000,
+                                      root_field_type='LIST_MAP',
                                       fields_to_generate=[{'field': 'a', 'type': 'STRING'},
                                                           {'field': 'b', 'type': 'STRING'},
                                                           {'field': 'c', 'type': 'STRING'}])
@@ -424,6 +408,7 @@ def test_max_records_in_file(sdc_builder, sdc_executor, max_records_in_file, exp
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
     dev_data_generator.set_attributes(batch_size=100,
                                       delay_between_batches=1000,
+                                      root_field_type='LIST_MAP',
                                       fields_to_generate=[{'field': 'a', 'type': 'STRING'},
                                                           {'field': 'b', 'type': 'STRING'},
                                                           {'field': 'c', 'type': 'STRING'}])
@@ -443,8 +428,8 @@ def test_max_records_in_file(sdc_builder, sdc_executor, max_records_in_file, exp
         sdc_executor.stop_pipeline(pipeline)
 
         num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
-
         assert num_created_files == expected_num_files
+
     finally:
         logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
         sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
