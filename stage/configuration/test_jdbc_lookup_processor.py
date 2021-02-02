@@ -70,10 +70,10 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
     name_type = getattr(sqlalchemy, column_type)
-    if column_type in {'String', 'Unicode', 'UnicodeText'}:
+    if column_type in {'String', 'Unicode'}:
         name_type = name_type(32)
     elif column_type in {'Enum'}:
-        name_type = name_type('one', 'two')
+        name_type = name_type('happy', 'sad', name="mood_enum")
 
     column_name_config = 'columnName' if existing_column_name else 'notAColumnName'
 
@@ -87,7 +87,7 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
                                        stop_after_first_batch=True)
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
-    query_str = f"SELECT name as columnName FROM {table_name} WHERE id = '${{record:value('/id')}}'"
+    query_str = 'SELECT "name" as "columnName" FROM "{0}" WHERE '.format(table_name) + '"id" = ${record:value("/id")}'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
                             columnName=column_name_config,
                             field='/FirstName')]
@@ -376,20 +376,22 @@ def _create_table(table_name, database, schema_name=None, name_type=sqlalchemy.S
 
     """
     metadata = sqlalchemy.MetaData()
-
+    # quote=True makes the names case sensitive
     if type(database) == SQLServerDatabase:
         table = sqlalchemy.Table(table_name,
                                  metadata,
-                                 sqlalchemy.Column('name', name_type),
+                                 sqlalchemy.Column('name', name_type, quote=True),
                                  sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True,
-                                                   autoincrement=False),
-                                 schema=schema_name)
+                                                   autoincrement=False, quote=True),
+                                 schema=schema_name,
+                                 quote=True)
     else:
         table = sqlalchemy.Table(table_name,
                                  metadata,
-                                 sqlalchemy.Column('name', name_type),
-                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-                                 schema=schema_name)
+                                 sqlalchemy.Column('name', name_type, quote=True),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+                                 schema=schema_name,
+                                 quote=True)
 
     logger.info('Creating table %s in %s database ...', table_name, database.type)
     table.create(database.engine)
