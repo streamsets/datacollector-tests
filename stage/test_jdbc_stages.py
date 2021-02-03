@@ -174,7 +174,7 @@ def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database, credential_s
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     query_str = f"SELECT name FROM {table_name} WHERE id = '${{record:value('/id')}}'"
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
-                            columnName='name',
+                            columnName='NAME',
                             field='/FirstName')]
     jdbc_lookup.set_attributes(sql_query=query_str,
                                column_mappings=column_mappings)
