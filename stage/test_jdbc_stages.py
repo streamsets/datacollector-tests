@@ -81,7 +81,7 @@ def _get_random_schema_name(database, prefix='', length=5):
     return _get_random_name(database, prefix=prefix, length=length)
 
 
-def _create_table(table_name, database, schema_name=None):
+def _create_table(table_name, database, schema_name=None, quote=False):
     """Helper function to create a table with two columns: id (int, PK) and name (str).
 
     Args:
@@ -99,16 +99,18 @@ def _create_table(table_name, database, schema_name=None):
     if type(database) == SQLServerDatabase:
         table = sqlalchemy.Table(table_name,
                                  metadata,
-                                 sqlalchemy.Column('name', sqlalchemy.String(32)),
+                                 sqlalchemy.Column('name', sqlalchemy.String(32), quote=quote),
                                  sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True,
-                                                   autoincrement=False),
-                                 schema=schema_name)
+                                                   autoincrement=False, quote=quote),
+                                 schema=schema_name,
+                                 quote=quote)
     else:
         table = sqlalchemy.Table(table_name,
                                  metadata,
-                                 sqlalchemy.Column('name', sqlalchemy.String(32)),
-                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-                                 schema=schema_name)
+                                 sqlalchemy.Column('name', sqlalchemy.String(32), quote=quote),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=quote),
+                                 schema=schema_name,
+                                 quote=quote)
 
     logger.info('Creating table %s in %s database ...', table_name, database.type)
     table.create(database.engine)
@@ -159,7 +161,7 @@ def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database, credential_s
         dev_raw_data_source >> jdbc_lookup >> wiretap
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
-    table = _create_table(table_name, database)
+    table = _create_table(table_name, database, quote=True)
     logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
     connection = database.engine.connect()
     connection.execute(table.insert(), ROWS_IN_DATABASE)
@@ -172,9 +174,11 @@ def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database, credential_s
                                        stop_after_first_batch = True)
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
-    query_str = f"SELECT name FROM {table_name} WHERE id = '${{record:value('/id')}}'"
+    query_str = f'SELECT "name" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
+    if type(database) == MySqlDatabase:
+        query_str = f'SELECT `name` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
-                            columnName='NAME',
+                            columnName='name',
                             field='/FirstName')]
     jdbc_lookup.set_attributes(sql_query=query_str,
                                column_mappings=column_mappings)

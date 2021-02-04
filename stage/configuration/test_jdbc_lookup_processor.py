@@ -87,9 +87,9 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
                                        stop_after_first_batch=True)
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
-    query_str = 'SELECT "name" as "columnName" FROM "{0}" WHERE '.format(table_name) + '"id" = ${record:value("/id")}'
+    query_str = f'SELECT "name" as "columnName" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
     if type(database) == MySqlDatabase:
-        query_str = 'SELECT `name` as `columnName` FROM `{0}` WHERE '.format(table_name) + '`id` = ${record:value("/id")}'
+        query_str = f'SELECT `name` as `columnName` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
                             columnName=column_name_config,
                             field='/FirstName')]
