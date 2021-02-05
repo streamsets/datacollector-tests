@@ -28,11 +28,9 @@ def random_expression_pipeline_builder(sdc_builder):
     dev_data_generator.set_attributes(delay_between_batches=10000,
                                       batch_size = 10)
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
-    trash = pipeline_builder.add_stage('Trash')
-
     wiretap = pipeline_builder.add_wiretap()
 
-    dev_data_generator >> expression_evaluator >> [trash, wiretap.destination]
+    dev_data_generator >> expression_evaluator >> wiretap.destination
 
     yield namedtuple('PipelineBuilder', ['pipeline_builder',
                                          'dev_data_generator',

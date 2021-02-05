@@ -292,8 +292,5 @@ def test_error_records_with_job_info(random_expression_pipeline_builder, sdc_exe
     assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
     assert len(random_expression_pipeline_builder.wiretap.error_records) == metrics.pipeline.input_record_count
     for error_record in random_expression_pipeline_builder.wiretap.error_records:
-        assert None == error_record.header['errorJobId']
-        assert None == error_record.header['errorJobName']
-        # To do: change last two asserts for
-        # assert 'stfJobId' == error_record.header['errorJobId']
-        # assert 'stfJobName' == error_record.header['errorJobName']
+        assert error_record.header['errorJobId'] == 'stfJobId'
+        assert error_record.header['errorJobName'] == 'stfJobName'
