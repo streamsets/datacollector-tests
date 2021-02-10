@@ -181,8 +181,10 @@ def test_validate_sdc_info_generator(sdc_executor):
     assert f'{bundle_file_root}/conf/sdc-security.policy' in bundle.namelist()
     assert f'{bundle_file_root}/libexec/sdc-env.sh' in bundle.namelist()
     assert f'{bundle_file_root}/libexec/sdcd-env.sh' in bundle.namelist()
-    assert f'{bundle_file_root}/runtime/threads.txt' in bundle.namelist()
     assert f'{bundle_file_root}/runtime/jmx.json' in bundle.namelist()
+
+    thread_dumps = [file for file in bundle.namelist() if file.startswith(f'{bundle_file_root}/runtime/threads_')]
+    assert len(thread_dumps) >= 2
 
 
 def test_validate_redaction(sdc_executor):
