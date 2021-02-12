@@ -618,7 +618,7 @@ def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_e
     """
     files_directory = os.path.join('/tmp', get_random_string())
     FILE_NAME = 'delimited_file.csv'
-    FILE_CONTENTS = [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'fält13'], ['стол', 'Field22', 'Field23']]
+    FILE_CONTENTS = [['field1', 'field2', 'field3'], ['Field11', 'Field12', 'Field13'], ['Field21', 'Field22', 'Field23']]
     delimiter_character_map = {'CUSTOM': '^'}
     delimiter_character = '^' if delimiter_format_type == 'CUSTOM' else None
 
@@ -650,9 +650,9 @@ def test_directory_origin_configuration_delimiter_format_type(sdc_builder, sdc_e
 
         assert 2 == len(wiretap.output_records)
         assert wiretap.output_records[0].field == OrderedDict(
-            [('field1', 'Field11'), ('field2', new_line_field), ('field3', 'fält13')])
+            [('field1', 'Field11'), ('field2', new_line_field), ('field3', 'Field13')])
         assert wiretap.output_records[1].field == OrderedDict(
-            [('field1', 'стол'), ('field2', 'Field22'), ('field3', 'Field23')])
+            [('field1', 'Field21'), ('field2', 'Field22'), ('field3', 'Field23')])
     finally:
         shell_executor(f'rm -r {files_directory}')
 
