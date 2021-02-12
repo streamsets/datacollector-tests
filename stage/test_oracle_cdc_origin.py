@@ -2030,6 +2030,99 @@ def _setup_table(database, table_name, create_primary_key=True):
     return table
 
 
+@sdc_min_version('3.22.0')
+@database('oracle')
+@pytest.mark.parametrize('action', ['TO_ERROR', 'DISCARD'])
+def test_jdbc_52_error_format(sdc_builder, sdc_executor, database, action):
+    """Basic test to check the proper formatting of error JDBC_52.
+
+    The test creates a user guest/guest with just CONNECT privileges. This is enough to force an error when starting the Oracle Log Miner.
+    Whw compare then the produced error with the expected one. The test finishes removing the guest user to reset the database state.
+
+    Pipeline: oracle_cdc >> wiretap
+
+    """
+
+    try:
+        logger.info("Starting test for JDBC_52 error")
+
+        expected_message = "JDBC_52 - Error starting LogMiner: Action: Start generator thread - Message: JDBC_52 - Error starting LogMiner: Action: Start"
+
+        engine = database.engine
+        connection = engine.connect()
+        table = None
+        pipeline = None
+
+        guest_username = f"GUEST_{get_random_string(string.ascii_uppercase, 16)}"
+        guest_password = f"guest_{get_random_string(string.ascii_uppercase, 16)}"
+
+        # Create guest user
+        logger.info(f"Creating user {guest_username} in database...")
+        connection.execute(f"CREATE USER {guest_username} IDENTIFIED BY {guest_password}")
+        connection.execute(f"GRANT CONNECT TO {guest_username}")
+
+        # Create source table
+        src_table_name = get_random_string(string.ascii_uppercase, 9)
+        logger.info("Using source table name %s", src_table_name)
+
+        table = sqlalchemy.Table(src_table_name,
+                                 sqlalchemy.MetaData(),
+                                 sqlalchemy.Column(PRIMARY_KEY,
+                                                   sqlalchemy.Integer,
+                                                   primary_key=True),
+                                 sqlalchemy.Column(OTHER_COLUMN,
+                                                   sqlalchemy.Numeric(20, 2)))
+        table.create(engine)
+
+        # Define pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = _get_oracle_cdc_client_origin(connection=connection,
+                                                          database=database,
+                                                          sdc_builder=sdc_builder,
+                                                          pipeline_builder=pipeline_builder,
+                                                          buffer_locally=True,
+                                                          src_table_name=src_table_name)
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC: JDBC_52 error format").configure_for_environment(database)
+        pipeline.configuration["shouldRetry"] = False
+
+        # Assign a non privileged user to the pipeline
+        oracle_cdc_client.set_attributes(username=guest_username,
+                                         password=guest_password)
+
+        # Create the pipeline
+        sdc_executor.add_pipeline(pipeline)
+
+        # Execute the pipeline (it should stop with StageExcception)
+        with pytest.raises(Exception):
+            sdc_executor.start_pipeline(pipeline)
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+            if pipeline is not None:
+                if sdc_executor.get_pipeline_status(pipeline).response.json().get("status") == "RUNNING":
+                    sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        status = sdc_executor.get_pipeline_status(pipeline).response.json().get("status")
+        message = sdc_executor.get_pipeline_status(pipeline).response.json().get("message")
+
+        assert "RUN_ERROR" == status
+        assert message.startswith(expected_message)
+    finally:
+        # Drop guest user
+        logger.info(f"Dropping user {guest_username} in database...")
+        connection.execute(f"DROP USER {guest_username}")
+
+        # Stop pipeline
+        if pipeline is not None:
+            if sdc_executor.get_pipeline_status(pipeline).response.json().get("status") == "RUNNING":
+                sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        # Drop source table
+        if table is not None:
+            logger.info("Dropping source table table %s", src_table_name)
+            table.drop(engine)
+
+
 def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder, buffer_locally,
                                   src_table_name=None, batch_size=BATCH_SIZE, **kwargs):
     kwargs.setdefault('dictionary_source', 'DICT_FROM_ONLINE_CATALOG')
