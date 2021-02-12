@@ -918,8 +918,8 @@ def test_special_characters_in_partition_value(sdc_builder, sdc_executor, cluste
     hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
 
-    pipeline = (pipeline_builder.build(title='Hive drift test - Partition Characters')
-                .configure_for_environment(cluster))
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    pipeline.configuration['errorRecordPolicy'] = 'ORIGINAL_RECORD'
     sdc_executor.add_pipeline(pipeline)
     hive_cursor = cluster.hive.client.cursor()
     try:
@@ -1426,7 +1426,8 @@ def test_column_drift(sdc_builder, sdc_executor, cluster, external_table):
     hive_metadata >> [hadoop_fs, wiretap.destination]
     hive_metadata >> hive_metastore
 
-    pipeline = pipeline_builder.build(title='Hive drift test - Drift Test').configure_for_environment(cluster)
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    pipeline.configuration['errorRecordPolicy'] = 'ORIGINAL_RECORD'
     sdc_executor.add_pipeline(pipeline)
 
     hive_cursor = cluster.hive.client.cursor()
