@@ -737,11 +737,11 @@ def test_parse_nulls(sdc_builder, sdc_executor, csv_parser, null):
     assert len(records) == 2
 
     assert records[0].field['A'] == "1"
-    assert records[0].field['B'] is None
+    assert records[0].field['B'] == None
     assert records[0].field['C'] == "3"
     assert records[1].field['A'] == "10"
     assert records[1].field['B'] == "20"
-    assert records[1].field['C'] is None
+    assert records[1].field['C'] == None
 
 
 @sdc_min_version('3.22.0')
