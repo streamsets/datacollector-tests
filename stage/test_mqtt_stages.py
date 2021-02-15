@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import logging
+import string
 import time
 
 from streamsets.testframework.markers import mqtt
+from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +33,7 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
      4) check messages received by the MQTT client and ensure their number and contents match the
         origin data
     """
-    # pylint: disable=too-many-locals
-
-    data_topic = 'testframework_mqtt_topic'
+    data_topic = get_random_string(string.ascii_letters, 10)
 
     try:
         mqtt_broker.initialize(initial_topics=[data_topic])
@@ -66,7 +66,7 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
 
 
 @mqtt
-def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
+def test_mqtt_to_wiretap(sdc_builder, sdc_executor, mqtt_broker):
     """Integration test for the MQTT origin stage.
 
      1) load a pipeline that has an MQTT origin (text format) to wiretap
@@ -76,9 +76,7 @@ def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
      4) (in parallel) send message to the topic the pipeline is subscribed to
      5) after pipeline completes, verify outputs from pipeline against published messages
     """
-    # pylint: disable=too-many-locals
-
-    data_topic = 'mqtt_subscriber_topic'
+    data_topic = get_random_string(string.ascii_letters, 10)
     try:
         mqtt_broker.initialize(initial_topics=[data_topic])
 
@@ -100,21 +98,17 @@ def test_mqtt_to_trash(sdc_builder, sdc_executor, mqtt_broker):
         # to ACTUALLY start listening on the MQTT port, so if we don't sleep here, the
         # messages won't be delivered (without setting persist)
         time.sleep(1)
-        expected_messages = set()
+        expected_messages = []
         for i in range(10):
             expected_message = 'Message {0}'.format(i)
             mqtt_broker.publish_message(topic=data_topic, payload=expected_message)
-            expected_messages.add(expected_message)
+            expected_messages.append(expected_message)
 
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert len(wiretap.output_records) == 10
-
-        for output_record in wiretap.output_records:
-            value = output_record.field['text'].value
-            assert value in expected_messages
-            assert expected_messages.remove(value) is None
-        assert len(expected_messages) == 0
+        assert len(wiretap.output_records) == len(expected_messages)
+        messages = [record.field['text'] for record in wiretap.output_records]
+        assert messages == expected_messages
     finally:
         mqtt_broker.destroy()
