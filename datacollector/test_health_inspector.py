@@ -96,8 +96,8 @@ def test_jvm_instance_category(sdc_executor, entry_name, severity, details):
     ('Data Dir Available Space', 'GREEN', False),
     ('Runtime Dir Available Space', 'GREEN', False),
     ('Log Dir Available Space', 'GREEN', False),
-    ('File Descriptors', None, True),
-    ('SDC User Processes', None, True),
+    ('File Descriptors', 'GREEN', False),
+    ('SDC User Processes', 'RED', True),
 ])
 def test_machine_category(sdc_executor, entry_name, severity, details):
     report = sdc_executor.api_client.get_health_report('MachineHealthCategory').response.json()
