@@ -332,8 +332,8 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
         sdc_rpc_origin >> trash
     """
 
-    messages = [f'message{i}' for i in range(1, 21)]
-    expected = [f'message{i}' for i in range(1, 21)]
+    messages = [f'message{i}' for i in range(10, 30)]
+    expected = [f'message{i}' for i in range(10, 30)]
 
     kafka_consumer_group = get_random_string(string.ascii_letters, 10)
 
@@ -389,7 +389,8 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
 
         sdc_executor.wait_for_pipeline_metric(rpc_origin_pipeline, 'input_record_count', 20)
 
-        assert expected == [record.field['text'] for record in wiretap.output_records]
+        assert len(expected) == len(wiretap.output_records)
+        assert expected == sorted([str(record.field['text']) for record in wiretap.output_records])
     finally:
         status = sdc_executor.get_pipeline_status(kafka_consumer_pipeline).response.json().get('status')
         if status != 'STOPPED':
