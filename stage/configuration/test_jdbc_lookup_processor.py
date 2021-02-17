@@ -17,8 +17,8 @@ import pytest
 import string
 import logging
 import sqlalchemy
+from streamsets import sdk
 
-from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase, MySqlDatabase
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import database
@@ -101,9 +101,6 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
     pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database, credential_store)
     sdc_executor.add_pipeline(pipeline)
     try:
-        sdc_executor.validate_pipeline(pipeline)
-        # Only run pipeline for String type to check mapping, as if validated (meaning configuration is ok),
-        # it should not give any additional problem depending on datatypes
         if column_type in {'String'}:
             logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
             connection = database.engine.connect()
@@ -113,18 +110,22 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
                 record.pop('id')
                 record['FirstName'] = record.pop('name')
 
-            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        # Run pipeline to check mapping, as if not validated (meaning configuration is not ok), StartError
+        # exception should be raised
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-            rows_from_wiretap = [{list(record.field.keys())[1]: list(record.field.values())[1].value}
-                                 for record in wiretap.output_records]
-            assert rows_from_wiretap == LOOKUP_EXPECTED_DATA
-    except ValidationError as e:
+        rows_from_wiretap = [{list(record.field.keys())[1]: list(record.field.values())[1].value}
+                             for record in wiretap.output_records]
+        assert rows_from_wiretap == LOOKUP_EXPECTED_DATA
+    except sdk.sdc_api.StartError as e:
         if not existing_column_name:
             assert "JDBC_95" in str(e.args[0])
         else:
             # should never reach
             raise e
     finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
 
