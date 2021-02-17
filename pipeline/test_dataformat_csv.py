@@ -820,6 +820,80 @@ def test_max_characters_per_column(sdc_builder, sdc_executor, csv_parser):
     assert records[0].field['B'] == "2"
 
 
+@sdc_min_version('3.22.0')
+@pytest.mark.parametrize('csv_parser', ALL_PARSERS)
+def test_resume_offset(sdc_builder, sdc_executor, csv_parser):
+    data = "A,B\n" \
+           "1,2\n" \
+           "STOP,1\n" \
+           "3,4\n" \
+           "STOP,2\n" \
+           "5,6\n" \
+           "STOP,3\n" \
+           "7,8"
+
+    work_dir = _prepare_work_dir(sdc_executor, data)
+
+    # Create Pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Directory', type='origin')
+    origin.file_name_pattern = '*.csv'
+    origin.files_directory = work_dir
+
+    origin.data_format = 'DELIMITED'
+    origin.csv_parser = csv_parser
+    origin.header_line = 'WITH_HEADER'
+    origin.batch_size_in_recs = 1
+
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.preconditions = ['${record:value("/A") == "STOP"}']
+
+    wiretap = builder.add_wiretap()
+    origin >> [wiretap.destination, finisher]
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    # Now we will do series of pipeline stop/start and verify what we're seeing in the output
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    records = wiretap.output_records
+    assert len(records) == 2
+    assert records[0].field['A'] == "1"
+    assert records[0].field['B'] == "2"
+    assert records[1].field['A'] == "STOP"
+    assert records[1].field['B'] == "1"
+
+    wiretap.reset()
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    records = wiretap.output_records
+    assert len(records) == 2
+    assert records[0].field['A'] == "3"
+    assert records[0].field['B'] == "4"
+    assert records[1].field['A'] == "STOP"
+    assert records[1].field['B'] == "2"
+
+    wiretap.reset()
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    records = wiretap.output_records
+    assert len(records) == 2
+    assert records[0].field['A'] == "5"
+    assert records[0].field['B'] == "6"
+    assert records[1].field['A'] == "STOP"
+    assert records[1].field['B'] == "3"
+
+    # Last iteration should read one record and continue running (no stop thing in the way)
+    wiretap.reset()
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+    status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+    assert status == 'RUNNING'
+    sdc_executor.stop_pipeline(pipeline)
+    records = wiretap.output_records
+    assert len(records) == 1
+    assert records[0].field['A'] == "7"
+    assert records[0].field['B'] == "8"
+
+
 def _prepare_work_dir(sdc_executor, data):
     """Create work directory, insert test data, return the work directory."""
     work_dir = os.path.join(tempfile.gettempdir(), get_random_string())
