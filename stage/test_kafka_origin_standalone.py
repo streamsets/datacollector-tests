@@ -672,3 +672,41 @@ def test_kafka_origin_csv_record_header_missmatch(sdc_builder, sdc_executor, clu
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert [record.field for record in wiretap.output_records] == [expected]
     assert [record.field for record in wiretap.error_records] == [expected_error]
+
+
+@cluster('cdh', 'kafka')
+def test_kafka_consumer_null_payload(sdc_builder, sdc_executor, cluster):
+    """Check that retrieving a message with null payload from Kafka using Kafka Consumer Origin does not return anything.
+    The message should be written to Kafka without using SDC.
+
+    Kafka Consumer Origin pipeline with standalone mode:
+        kafka_consumer >> wiretap.destination
+    """
+    message = json.dumps({'abc': '123'})
+    topic = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(data_format='JSON')
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    # Add messages, one of them with null payload
+    producer = cluster.kafka.producer()
+    producer.send(kafka_consumer.topic, message.encode())
+    producer.send(kafka_consumer.topic, value=None, key='abc'.encode())
+    producer.flush()
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+
+    # Check the output records, there should be only 1 message, since the null should be discarded
+    output_records = [record.field for record in wiretap.output_records]
+    assert len(output_records) == 1
+    # Check that the null record did not generate an exception either
+    error_records = [record.field for record in wiretap.error_records]
+    assert len(error_records) == 0

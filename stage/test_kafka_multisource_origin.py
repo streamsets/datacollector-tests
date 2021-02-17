@@ -518,7 +518,7 @@ def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
 # SDC-16127: KafkaMultiConsumer: Does not handle Null message
 @cluster('cdh', 'kafka')
 def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
-    """Check that retrieving a message with null payload from Kafka using Kafka Multitopic Consumer returns an error.
+    """Check that retrieving a message with null payload from Kafka using Kafka Multitopic Consumer does not return anything.
     The message should be written to Kafka without using SDC.
 
     Kafka Multitopic Consumer Origin pipeline with standalone mode:
