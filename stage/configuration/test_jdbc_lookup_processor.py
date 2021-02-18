@@ -114,9 +114,11 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
         # exception should be raised
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        rows_from_wiretap = [{list(record.field.keys())[1]: list(record.field.values())[1].value}
-                             for record in wiretap.output_records]
-        assert rows_from_wiretap == LOOKUP_EXPECTED_DATA
+        # Only check correct data for String type and no StartError
+        if column_type in {'String'}:
+            rows_from_wiretap = [{list(record.field.keys())[1]: list(record.field.values())[1].value}
+                                 for record in wiretap.output_records]
+            assert rows_from_wiretap == LOOKUP_EXPECTED_DATA
     except sdk.sdc_api.StartError as e:
         if not existing_column_name:
             assert "JDBC_95" in str(e.args[0])
