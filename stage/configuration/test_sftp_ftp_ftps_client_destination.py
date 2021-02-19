@@ -11,17 +11,74 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 import pytest
+import string
+import tempfile
 
 from streamsets.testframework.decorators import stub
 
+from streamsets.testframework.markers import sftp, ftp, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 
-@stub
+
+@sdc_min_version("3.22.0")
+@sftp
 @pytest.mark.parametrize('stage_attributes', [{'authentication': 'NONE'},
                                               {'authentication': 'PASSWORD'},
                                               {'authentication': 'PRIVATE_KEY'}])
-def test_authentication(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_authentication(sdc_builder, sdc_executor, sftp, stage_attributes):
+    """Test SFTP and FTP/FTPS destination. We first create a local file using shell and use
+    that file for SFTP/FTP/FTPS destination stage to see if it gets successfully uploaded.
+    The pipelines look like:
+        directory >> sftp_ftp_client
+    """
+    # Our origin SFTP/FTP/FTPS file name
+    sftp_ftp_file_name = get_random_string(string.ascii_letters, 10)
+    local_tmp_directory = os.path.join('~', tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    local_file_name = f'sdc-{get_random_string(string.ascii_letters, 5)}'
+    raw_text_data = 'Hello World!'
+
+    sdc_executor.execute_shell(f'mkdir {local_tmp_directory}/')
+    sdc_executor.execute_shell(f'echo {raw_text_data} >> {local_tmp_directory}/{local_file_name}')
+
+    # Build source file pipeline logic
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.data_format = 'WHOLE_FILE'
+    directory.file_name_pattern = 'sdc*'
+    directory.files_directory = local_tmp_directory
+
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget')
+    sftp_ftp_client.file_name_expression = sftp_ftp_file_name
+
+    directory >> sftp_ftp_client
+
+    sftp_ftp_client.authentication = stage_attributes['authentication']
+
+    sftp_ftp_client_pipeline = builder.build('SFTP Destination Pipeline - Authentication').configure_for_environment(
+        sftp)
+
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    # Start SFTP/FTP/FTPS upload (destination) file pipeline and assert pipeline has processed expected number of files
+    sdc_executor.start_pipeline(sftp_ftp_client_pipeline).wait_for_pipeline_output_records_count(1)
+    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+    history = sdc_executor.get_pipeline_history(sftp_ftp_client_pipeline)
+
+    try:
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count >= 1
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count >= 1
+        assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 0
+
+        assert sftp.get_string(os.path.join(sftp.path, sftp_ftp_file_name)).strip() == raw_text_data
+
+        # Delete the test SFTP origin file we created
+        transport, client = sftp.client
+        client.remove(os.path.join(sftp.path, sftp_ftp_file_name))
+    finally:
+        client.close()
+        transport.close()
 
 
 @stub
@@ -382,6 +439,89 @@ def test_required_fields(sdc_builder, sdc_executor):
 @stub
 def test_resource_url(sdc_builder, sdc_executor):
     pass
+
+
+@sdc_min_version('3.22.0')
+@sftp
+@ftp
+@pytest.mark.parametrize('stage_attributes', [{'protocol': 'SFTP'},
+                                              {'protocol': 'FTP'},
+                                              {'protocol': 'FTPS'}
+                                              ])
+def test_protocol(sdc_builder, sdc_executor, sftp, ftp, stage_attributes):
+    """Test SFTP and FTP/FTPS destination. We first create a local file using shell and use
+    that file for SFTP/FTP/FTPS destination stage to see if it gets successfully uploaded.
+    The pipelines look like:
+        directory >> sftp_ftp_client
+    """
+    if ('FTPS' in ftp.ftp_type) and stage_attributes['protocol'] == 'FTP':
+        pytest.skip('FTP protocol only runs with ftp-type FTP')
+    elif ftp.ftp_type == 'FTP' and stage_attributes['protocol'] == 'FTPS':
+        pytest.skip('FTPS protocol only runs with ftp-type FTPS')
+
+    # Our destination SFTP/FTP/FTPS file name
+    sftp_ftp_file_name = get_random_string(string.ascii_letters, 10)
+    # Local temporary directory where we will create a source file to be uploaded to SFTP/FTP/FTPS server
+    local_tmp_directory = os.path.join('~', tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    local_file_name = f'sdc-{get_random_string(string.ascii_letters, 5)}'
+    raw_data = 'Hello World!'
+
+    sdc_executor.execute_shell(f'mkdir {local_tmp_directory}/')
+    sdc_executor.execute_shell(f'echo {raw_data} >> {local_tmp_directory}/{local_file_name}')
+
+    # Build source file pipeline logic
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.data_format = 'WHOLE_FILE'
+    directory.file_name_pattern = 'sdc*'
+    directory.files_directory = local_tmp_directory
+
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget')
+    sftp_ftp_client.file_name_expression = sftp_ftp_file_name
+
+    directory >> sftp_ftp_client
+
+    sftp_ftp_client.protocol = stage_attributes['protocol']
+
+    if stage_attributes['protocol'] == 'SFTP':
+        sftp_ftp_client_pipeline = builder.build('SFTP Destination Pipeline - Protocol').configure_for_environment(sftp)
+    elif stage_attributes['protocol'] == 'FTP':
+        sftp_ftp_client_pipeline = builder.build('FTP Destination Pipeline - Protocol').configure_for_environment(ftp)
+    else:
+        sftp_ftp_client_pipeline = builder.build('FTPS Destination Pipeline - Protocol').configure_for_environment(ftp)
+
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    # Start SFTP/FTP/FTPS upload (destination) file pipeline and assert pipeline has processed expected number of files
+    sdc_executor.start_pipeline(sftp_ftp_client_pipeline).wait_for_pipeline_output_records_count(1)
+    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+    history = sdc_executor.get_pipeline_history(sftp_ftp_client_pipeline)
+
+    try:
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count >= 1
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count >= 1
+        assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 0
+        if stage_attributes['protocol'] == 'SFTP':
+            # Read SFTP destination file and compare our source data to assert
+            assert sftp.get_string(os.path.join(sftp.path, sftp_ftp_file_name)).strip() == raw_data
+
+            # Delete the test SFTP origin file we created
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, sftp_ftp_file_name))
+        else:
+            # Read FTP destination file and compare our source data to assert
+            assert ftp.get_string(os.path.join(ftp.path, sftp_ftp_file_name)).strip() == raw_data
+
+    finally:
+        if stage_attributes['protocol'] == 'SFTP':
+            client.close()
+            transport.close()
+        else:
+            # Delete the test FTP destination file we created
+            client = ftp.client
+            client.delete(sftp_ftp_file_name)
+            client.quit()
+        sdc_executor.execute_shell(f'rm -R {local_tmp_directory}')
 
 
 @stub

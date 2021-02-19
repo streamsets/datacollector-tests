@@ -16,11 +16,12 @@ import json
 import logging
 import os
 import time
+import string
 
 import pytest
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import ftp, sdc_min_version, sftp
+from streamsets.testframework.markers import sftp, ftp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -69,12 +70,55 @@ def test_auth_file(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@sdc_min_version('3.22.0')
+@sftp
+@ftp
 @pytest.mark.parametrize('stage_attributes', [{'authentication': 'NONE'},
                                               {'authentication': 'PASSWORD'},
                                               {'authentication': 'PRIVATE_KEY'}])
-def test_authentication(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_authentication(sdc_builder, sdc_executor, sftp, ftp, stage_attributes):
+    """Test SFTP/FTP/FTPS origin. We first create a file on SFTP/FTP/FTPS server and have the SFTP/FTP/FTPS
+    origin stage read it. We then assert the ingested data using wiretap.
+    The pipelines look like:
+        sftp_ftp_client >> wiretap
+    """
+    # Our origin SFTP/FTP/FTPS file name
+    sftp_ftp_file_name = get_random_string(string.ascii_letters, 10)
+    raw_text_data = 'Hello World!'
+    sftp.put_string(os.path.join(sftp.path, sftp_ftp_file_name), raw_text_data)
+
+    builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
+    sftp_ftp_client.file_name_pattern = sftp_ftp_file_name
+    sftp_ftp_client.data_format = 'TEXT'
+
+    wiretap = builder.add_wiretap()
+
+    sftp_ftp_client >> wiretap.destination
+
+    sftp_ftp_client.authentication = stage_attributes['authentication']
+
+    sftp_ftp_client_pipeline = builder.build('SFTP Origin Pipeline - Authentication').configure_for_environment(sftp)
+
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    # Start SFTP/FTP/FTPS download (origin) file pipeline and assert pipeline has processed expected number of files
+    sdc_executor.start_pipeline(sftp_ftp_client_pipeline).wait_for_pipeline_output_records_count(1)
+    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+
+    try:
+        assert len(wiretap.output_records) == 1
+        assert sftp_ftp_file_name == wiretap.output_records[0].header.values['filename']
+        assert wiretap.output_records[0].field['text'] == raw_text_data
+
+        assert sftp.get_string(os.path.join(sftp.path, sftp_ftp_file_name)).strip() == raw_text_data
+
+        # Delete the test SFTP origin file we created
+        transport, client = sftp.client
+        client.remove(os.path.join(sftp.path, sftp_ftp_file_name))
+    finally:
+        client.close()
+        transport.close()
 
 
 @stub
@@ -1183,6 +1227,79 @@ def test_resource_url(sdc_builder, sdc_executor, sftp, resource_url_is_correct, 
             client.remove(os.path.join(sftp.path, file_name))
             client.close()
             transport.close()
+
+
+@sdc_min_version('3.22.0')
+@sftp
+@ftp
+@pytest.mark.parametrize('stage_attributes', [{'protocol': 'SFTP'},
+                                              {'protocol': 'FTP'},
+                                              {'protocol': 'FTPS'}
+                                              ])
+def test_protocol(sdc_builder, sdc_executor, sftp, ftp, stage_attributes):
+    """Test SFTP/FTP/FTPS origin. We first create a file on SFTP/FTP/FTPS server and have the SFTP/FTP/FTPS
+    origin stage read it. We then assert the ingested data using wiretap.
+    The pipelines look like:
+        sftp_ftp_client >> wiretap
+    """
+    if ('FTPS' in ftp.ftp_type) and stage_attributes['protocol'] == 'FTP':
+        pytest.skip('FTP protocol only runs with ftp-type FTP')
+    elif ftp.ftp_type == 'FTP' and stage_attributes['protocol'] == 'FTPS':
+        pytest.skip('FTPS protocol only runs with ftp-type FTPS')
+
+    # Our origin SFTP/FTP/FTPS file name
+    sftp_ftp_file_name = get_random_string(string.ascii_letters, 10)
+    raw_text_data = 'Hello World!'
+
+    if stage_attributes['protocol'] == 'SFTP':
+        sftp.put_string(os.path.join(sftp.path, sftp_ftp_file_name), raw_text_data)
+    else:
+        ftp.put_string(os.path.join(ftp.path, sftp_ftp_file_name), raw_text_data)
+
+    builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
+    sftp_ftp_client.file_name_pattern = sftp_ftp_file_name
+    sftp_ftp_client.data_format = 'TEXT'
+
+    wiretap = builder.add_wiretap()
+
+    sftp_ftp_client >> wiretap.destination
+
+    sftp_ftp_client.protocol = stage_attributes['protocol']
+
+    if stage_attributes['protocol'] == 'SFTP':
+        sftp_ftp_client_pipeline = builder.build('SFTP Origin Pipeline - Protocol').configure_for_environment(sftp)
+    elif stage_attributes['protocol'] == 'FTP':
+        sftp_ftp_client_pipeline = builder.build('FTP Origin Pipeline - Protocol').configure_for_environment(ftp)
+    else:
+        sftp_ftp_client_pipeline = builder.build('FTPS Origin Pipeline - Protocol').configure_for_environment(ftp)
+
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    # Start SFTP/FTP/FTPS download (origin) file pipeline and assert pipeline has processed expected number of files
+    sdc_executor.start_pipeline(sftp_ftp_client_pipeline).wait_for_pipeline_output_records_count(1)
+    sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+
+    try:
+        assert len(wiretap.output_records) == 1
+        assert sftp_ftp_file_name == wiretap.output_records[0].header.values['filename']
+        assert wiretap.output_records[0].field['text'] == raw_text_data
+
+        if stage_attributes['protocol'] == 'SFTP':
+            # Delete the test SFTP origin file we created
+            transport, client = sftp.client
+            client.remove(os.path.join(sftp.path, sftp_ftp_file_name))
+        else:
+            client = ftp.client
+    finally:
+        if stage_attributes['protocol'] == 'SFTP':
+            client.close()
+            transport.close()
+        else:
+            # Delete the test FTP origin file we created
+            client = ftp.client
+            client.delete(sftp_ftp_file_name)
+            client.quit()
 
 
 @stub
