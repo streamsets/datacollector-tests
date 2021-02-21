@@ -2046,15 +2046,17 @@ def test_jdbc_52_error_format(sdc_builder, sdc_executor, database, action):
     try:
         logger.info("Starting test for JDBC_52 error")
 
-        expected_message = "JDBC_52 - Error starting LogMiner: Action: Start generator thread - Message: JDBC_52 - Error starting LogMiner: Action: Start"
+        expected_message = "JDBC_52 - Error starting LogMiner: Action: Start generator thread - Message:"
 
         engine = database.engine
         connection = engine.connect()
         table = None
         pipeline = None
 
-        guest_username = f"GUEST_{get_random_string(string.ascii_uppercase, 16)}"
-        guest_password = f"guest_{get_random_string(string.ascii_uppercase, 16)}"
+        # As the Oracle 19 environment is a multitenant container database, Oracle mandates to have the user name start with C##
+        # https://community.oracle.com/tech/developers/discussion/4288833/ora-65096-invalid-common-user-or-role-name
+        guest_username = f"C##_GUEST_{get_random_string(string.ascii_uppercase, 16)}"
+        guest_password = f"C##_guest_{get_random_string(string.ascii_uppercase, 16)}"
 
         # Create guest user
         logger.info(f"Creating user {guest_username} in database...")
@@ -2109,8 +2111,14 @@ def test_jdbc_52_error_format(sdc_builder, sdc_executor, database, action):
         assert message.startswith(expected_message)
     finally:
         # Drop guest user
-        logger.info(f"Dropping user {guest_username} in database...")
-        connection.execute(f"DROP USER {guest_username}")
+        try:
+            logger.info(f"Dropping user {guest_username} in database...")
+            connection.execute(f"DROP USER {guest_username}")
+        finally:
+            # In an Oracle multitenant container databse (CDB), the user or table will not be created dur
+            # to enforced named constraints. This is not a real problem as we just want to fire somre
+            # internal error starting CDC
+            pass
 
         # Stop pipeline
         if pipeline is not None:
@@ -2119,9 +2127,12 @@ def test_jdbc_52_error_format(sdc_builder, sdc_executor, database, action):
 
         # Drop source table
         if table is not None:
-            logger.info("Dropping source table table %s", src_table_name)
-            table.drop(engine)
-
+            try:
+                logger.info("Dropping source table table %s", src_table_name)
+                table.drop(engine)
+            finally:
+                # Pass for the same reasons above
+                pass
 
 def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder, buffer_locally,
                                   src_table_name=None, batch_size=BATCH_SIZE, **kwargs):
