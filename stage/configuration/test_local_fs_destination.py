@@ -386,6 +386,7 @@ def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(5)
         sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status('STOPPED', timeout_sec=360)
 
         num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
 
