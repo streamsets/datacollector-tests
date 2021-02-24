@@ -74,8 +74,8 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
                                                pipeline_builder=builder,
                                                buffer_locally=True,
                                                src_table_name=table_name)
-        trash = builder.add_stage('Trash')
-        origin >> trash
+        wiretap = builder.add_wiretap()
+        origin >> wiretap.destination
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
@@ -87,12 +87,13 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         txn.commit()
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        snapshot = sdc_executor.capture_snapshot(pipeline=pipeline, start_pipeline=True).snapshot
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
-        assert len(snapshot[origin].output) == 2
-        record = snapshot[origin].output[0]
-        null_record = snapshot[origin].output[1]
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
 
         # Since we are controlling types, we want to check explicit values inside the record rather the the python
         # wrappers.
@@ -328,15 +329,16 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
                                                    start_scn=start_scn,
                                                    dictionary_source='DICT_FROM_REDO_LOGS')
         trash = builder.add_stage('Trash')
+        wiretap = builder.add_wiretap()
         oracle_cdc >> trash
+        oracle_cdc >= wiretap.destination
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline, drop cities table and insert some records into sports table to capture the snapshot
         # with all the events. We use the PURGE clause in the DROP statement to avoid sending the table to the
         # recycle bin, as it would create spurious ALTER events.
-        snapshot_cmd = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, wait=False,
-                                                     batches=len(2 * sports_data), batch_size=1)
+        sdc_executor.start_pipeline(pipeline)
 
         for id, name, sport in sports_data:
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
@@ -347,14 +349,13 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
         for id, name, sport in sports_data:
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
 
-        snapshot = snapshot_cmd.wait_for_finished(timeout_sec=420).snapshot
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', len(2 * sports_data), timeout_sec=420)
         sdc_executor.stop_pipeline(pipeline, force=True)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],
                        event.field)
-                      for batch in snapshot.snapshot_batches
-                      for event in batch[oracle_cdc.instance_name].event_records]
+                      for event in wiretap.output_records]
 
         # Check all the expected events have been generated. Events are expected to be sorted accordingly to
         # the database transaction order, except for STARTUP events. These will be the first events generated,
@@ -409,7 +410,7 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
 
             sdc_executor.start_pipeline(pipeline)
             sdc_executor.wait_for_pipeline_metric(
-                pipeline, 'input_record_count', records_per_iteration ,timeout_sec=3600)
+                pipeline, 'input_record_count', records_per_iteration, timeout_sec=3600)
 
             sdc_executor.stop_pipeline(pipeline, force=True)
 
