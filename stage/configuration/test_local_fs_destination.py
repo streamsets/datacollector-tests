@@ -355,7 +355,7 @@ def test_lookup_schema_by(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('max_file_size, expected_num_files', [(0, 1), (3, 2)])
+@pytest.mark.parametrize('max_file_size, expected_num_files', [(0, 1), (1, 2)])
 def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_num_files):
     """Test Max File Size in MB. The pipeline test how many files are created when we write 15k records (more than 1MB)
      if the Max File Size are lower and higher than the number of records.
@@ -366,7 +366,7 @@ def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
-    dev_data_generator.set_attributes(batch_size=6000,
+    dev_data_generator.set_attributes(batch_size=10000,
                                       delay_between_batches=1000,
                                       root_field_type='LIST_MAP',
                                       fields_to_generate=[{'field': 'a', 'type': 'STRING'},
@@ -384,13 +384,12 @@ def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(5)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
         sdc_executor.stop_pipeline(pipeline)
-        sdc_executor.get_pipeline_status(pipeline).wait_for_status('STOPPED', timeout_sec=360)
 
         num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
-
         assert num_created_files == expected_num_files
+
     finally:
         logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
         sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
