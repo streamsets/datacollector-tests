@@ -367,7 +367,7 @@ def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
     dev_data_generator.set_attributes(batch_size=10000,
-                                      delay_between_batches=1000,
+                                      delay_between_batches=100,
                                       root_field_type='LIST_MAP',
                                       fields_to_generate=[{'field': 'a', 'type': 'STRING'},
                                                           {'field': 'b', 'type': 'STRING'},
@@ -384,7 +384,7 @@ def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(10)
         sdc_executor.stop_pipeline(pipeline)
 
         num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
