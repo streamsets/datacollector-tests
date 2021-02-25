@@ -17,6 +17,7 @@ import string
 
 import pytest
 from pulsar import MessageId
+from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import pulsar, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 import json
@@ -120,6 +121,41 @@ def test_multiple_batch(sdc_builder, sdc_executor, pulsar, keep_data):
 @pulsar
 def test_push_pull(sdc_builder, sdc_executor, cluster):
     pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is art of test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")
+
+
+@stub
+def test_data_format_binary(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_delimited(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_json(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_protobuf(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_text(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_sdc_record(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_xml(sdc_builder, sdc_executor):
+    pass
 
 
 def _dump_messages_and_clean_up(topic_name, pulsar, keep_data):

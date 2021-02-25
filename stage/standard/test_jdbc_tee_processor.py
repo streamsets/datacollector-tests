@@ -632,5 +632,10 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
 
 
 @database
+def test_data_format(sdc_builder, sdc_executor, database, keep_data):
+    pytest.skip("JDBC Tee Processor doesn't deal with data formats")
+
+
+@database
 def test_push_pull(sdc_builder, sdc_executor, database):
     pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is art of test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")

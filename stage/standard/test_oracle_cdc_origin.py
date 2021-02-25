@@ -372,6 +372,11 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
 
 
 @database('oracle')
+def test_data_format(sdc_builder, sdc_executor, database, keep_data):
+    pytest.skip("Oracle CDC Origin doesn't deal with data formats")
+
+
+@database('oracle')
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     iterations = 3
     records_per_iteration = 10

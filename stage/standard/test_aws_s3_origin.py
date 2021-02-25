@@ -16,6 +16,7 @@ import logging
 import string
 
 import pytest
+from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import aws
 from streamsets.testframework.utils import get_random_string
 
@@ -442,3 +443,61 @@ def test_multiple_batch(sdc_builder, sdc_executor, aws):
     finally:
         # Clean up S3.
         aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+@stub
+@aws('s3')
+def test_data_format_avro(sdc_builder, sdc_executor, aws):
+    pass
+
+
+@stub
+@aws('s3')
+def test_data_format_delimited(sdc_builder, sdc_executor, aws):
+    pass
+
+@stub
+@aws('s3')
+def test_data_format_excel(sdc_builder, sdc_executor, aws):
+    pass
+
+
+@stub
+@aws('s3')
+def test_data_format_json(sdc_builder, sdc_executor, aws):
+    pass
+
+
+@stub
+@aws('s3')
+def test_data_format_log(sdc_builder, sdc_executor, aws):
+    pass
+
+
+@stub
+@aws('s3')
+def test_data_format_protobuf(sdc_builder, sdc_executor, aws):
+    pass
+
+
+@stub
+@aws('s3')
+def test_data_format_text(sdc_builder, sdc_executor, aws):
+    pass
+
+
+@stub
+@aws('s3')
+def test_data_format_sdc_record(sdc_builder, sdc_executor, aws):
+    pass
+
+
+@stub
+@aws('s3')
+def test_data_format_whole_file(sdc_builder, sdc_executor, aws):
+    pass
+
+
+@stub
+@aws('s3')
+def test_data_format_xml(sdc_builder, sdc_executor, aws):
+    pass

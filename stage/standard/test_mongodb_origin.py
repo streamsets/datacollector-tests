@@ -281,6 +281,11 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb, batch_size):
 
 
 @mongodb
+def test_data_format(sdc_builder, sdc_executor, mongodb, keep_data):
+    pytest.skip("MongoDB Origin doesn't deal with data formats")
+
+
+@mongodb
 def test_resume_offset(sdc_builder, sdc_executor, mongodb):
     """
     Test that we can start our pipeline multiple times without reading any duplicated record neither missing them.

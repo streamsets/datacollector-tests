@@ -133,6 +133,11 @@ def test_resume_offset(sdc_builder, sdc_executor, aws, keep_data):
 
 
 @aws('sqs')
+def test_data_format(sdc_builder, sdc_executor, aws, keep_data):
+    pytest.skip("AWS SQS Origin doesn't deal with data formats")
+
+
+@aws('sqs')
 def test_multiple_batch(sdc_builder, sdc_executor, aws, keep_data):
     messages = 10_000
     queue_name = get_random_string()

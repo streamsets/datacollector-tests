@@ -809,6 +809,11 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
 
 
 @database
+def test_data_format(sdc_builder, sdc_executor, database, keep_data):
+    pytest.skip("JDBC MultiTable Origin doesn't deal with data formats")
+
+
+@database
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     if isinstance(database, MemSqlDatabase):
         pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")

@@ -140,6 +140,11 @@ def test_dataflow_events(sdc_builder, sdc_executor, elasticsearch):
 
 
 @elasticsearch
+def test_data_format(sdc_builder, sdc_executor, elasticsearch, keep_data):
+    pytest.skip("ElasticSearch Origin doesn't deal with data formats")
+
+
+@elasticsearch
 def test_resume_offset(sdc_builder, sdc_executor, elasticsearch):
     iterations = 3
     records_per_iteration = 10

@@ -273,6 +273,11 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
 
 
 @mongodb
+def test_data_format(sdc_builder, sdc_executor, mongodb, keep_data):
+    pytest.skip("MongoDB Destination doesn't deal with data formats")
+
+
+@mongodb
 def test_push_pull(sdc_builder, sdc_executor, mongodb):
     """
     We plan to verify that the connector works fine with Dev Raw Data Source and Dev Data Generator, an example of pull

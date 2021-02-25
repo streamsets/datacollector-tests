@@ -422,6 +422,11 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
 
 
 @database('sqlserver')
+def test_data_format(sdc_builder, sdc_executor, database, keep_data):
+    pytest.skip("SQL Server CDC Origin doesn't deal with data formats")
+
+
+@database('sqlserver')
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')

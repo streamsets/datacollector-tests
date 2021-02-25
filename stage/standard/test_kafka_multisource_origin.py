@@ -17,6 +17,7 @@ import logging
 import string
 
 import pytest
+from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments import cloudera
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
 from streamsets.testframework.markers import cluster
@@ -238,6 +239,56 @@ def test_multiple_batch(sdc_builder, sdc_executor, cluster):
     assert len(records) == len(total_data)
     assert all(element in records for element in total_data)
     assert all(element in total_data for element in records)
+
+
+@stub
+def test_data_format_avro(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_binary(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_datagram(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_delimited(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_json(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_log(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_protobuf(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_text(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_sdc_record(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_xml(sdc_builder, sdc_executor):
+    pass
 
 
 def _get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list):

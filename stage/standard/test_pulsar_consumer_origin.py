@@ -16,6 +16,7 @@ import logging
 import string
 
 import pytest
+from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import pulsar
 from streamsets.testframework.utils import get_random_string
 
@@ -201,6 +202,51 @@ def test_resume_offset(sdc_builder, sdc_executor, pulsar, initial_offset, keep_d
             producer.close()
             client.close()
             admin.delete_topic(producer.topic())
+
+
+@stub
+def test_data_format_binary(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_datagram(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_delimited(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_json(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_log(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_protobuf(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_text(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_sdc_record(sdc_builder, sdc_executor):
+    pass
+
+
+@stub
+def test_data_format_xml(sdc_builder, sdc_executor):
+    pass
 
 
 @pulsar

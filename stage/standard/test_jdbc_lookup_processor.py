@@ -561,5 +561,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
 
 
 @database
+def test_data_format(sdc_builder, sdc_executor, database, keep_data):
+    pytest.skip("JDBC Lookup Processor doesn't deal with data formats")
+
+
+@database
 def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("JDBC Lookup processor does not support events today")

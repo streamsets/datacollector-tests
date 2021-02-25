@@ -262,6 +262,11 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
 
 
 @database('mysql')
+def test_data_format(sdc_builder, sdc_executor, database, keep_data):
+    pytest.skip("MySQL Origin doesn't deal with data formats")
+
+
+@database('mysql')
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     iterations = 3
     records_per_iteration = 10
