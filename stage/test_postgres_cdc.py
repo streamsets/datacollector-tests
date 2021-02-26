@@ -76,6 +76,7 @@ def _insert(connection, table, insert_rows=INSERT_ROWS, create_txn=False):
         txn = connection.begin()
 
     connection.execute(table.insert(), insert_rows)
+    logger.info('Inserting rows %s in %s table ...', insert_rows, table)
 
     if create_txn:
         txn.commit()
@@ -88,50 +89,60 @@ def _insert(connection, table, insert_rows=INSERT_ROWS, create_txn=False):
                                               [PRIMARY_KEY, NAME_COLUMN],
                                               list(row.values()),
                                               None))  # No oldkeys expected.
+    if create_txn:
+        txn.close()
+
     return operations_data
 
 
 def _update(connection, table, update_rows=UPDATE_ROWS):
+    operations_data = []
     txn = connection.begin()
 
     try:
         for row in update_rows:
             connection.execute(table.update().where(table.c.id == row[PRIMARY_KEY]).values(name=row[NAME_COLUMN]))
+            logger.info('Updating row %s from %s table ...', row, table)
+            # Prepare expected data to compare for verification against wiretap data.
+            operations_data.append(OperationsData(KIND_FOR_UPDATE,
+                                                  table.name,
+                                                  [PRIMARY_KEY, NAME_COLUMN],
+                                                  list(row.values()),
+                                                  Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
         txn.commit()
+
+
     except:
         txn.rollback()
-        raise
+        pytest.fail('Error updating rows ...')
 
-    # Prepare expected data to compare for verification against wiretap data.
-    operations_data = []
-    for row in update_rows:
-        operations_data.append(OperationsData(KIND_FOR_UPDATE,
-                                              table.name,
-                                              [PRIMARY_KEY, NAME_COLUMN],
-                                              list(row.values()),
-                                              Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
+    finally:
+        txn.close()
+
     return operations_data
 
 
 def _delete(connection, table, delete_rows=DELETE_ROWS):
     txn = connection.begin()
-
+    operations_data = []
     try:
         for row in delete_rows:
             connection.execute(table.delete().where(table.c.id == row[PRIMARY_KEY]))
+            logger.info('Deleting row %s from %s table ...', row, table)
+            # Prepare expected data to compare for verification against wiretap data.
+            operations_data.append(OperationsData(KIND_FOR_DELETE,
+                                                  table.name,
+                                                  None,  # No columnnames expected.
+                                                  None,  # No columnvalues expected.
+                                                  Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
         txn.commit()
+
     except:
         txn.rollback()
-        raise
+        pytest.fail('Error deleting rows ...')
+    finally:
+        txn.close()
 
-    # Prepare expected data to compare for verification against wiretap data.
-    operations_data = []
-    for row in delete_rows:
-        operations_data.append(OperationsData(KIND_FOR_DELETE,
-                                              table.name,
-                                              None,  # No columnnames expected.
-                                              None,  # No columnvalues expected.
-                                              Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
     return operations_data
 
 
@@ -240,6 +251,7 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
     finally:
         table.drop(database.engine)
         database.deactivate_and_drop_replication_slot(replication_slot)
+        database.engine.connect().close()
 
 
 @sdc_min_version('3.16.0')
@@ -372,6 +384,7 @@ def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, 
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         table.drop(database.engine)
         database.deactivate_and_drop_replication_slot(replication_slot)
+        database.engine.connect().close()
 
 
 @database('postgresql')
@@ -447,6 +460,7 @@ def test_postgres_cdc_client_basic(sdc_builder, sdc_executor, database):
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
+        connection.close()
 
 
 @database('postgresql')
@@ -514,6 +528,7 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder, sdc_executor, database):
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
+        connection.close()
 
 
 @database('postgresql')
@@ -608,6 +623,7 @@ def test_postgres_cdc_client_filtering_table(sdc_builder, sdc_executor, database
         if table_deny is not None:
             table_deny.drop(database.engine)
             logger.info('Table: %s dropped.', table_name_deny)
+        connection.close()
 
 
 @database('postgresql')
@@ -671,6 +687,7 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder, sdc_executor, 
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
+        connection.close()
 
 
 @database('postgresql')
@@ -808,6 +825,8 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder, sdc_exe
         if table is not None:
             table.drop(database.engine)
             logger.info('Table: %s dropped.', table_name)
+        for conn in connections:
+            conn.close()
 
 
 @database('postgresql')
@@ -853,19 +872,23 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
         # Hence start the pipeline but do not wait for the capture to be finished.
         sdc_executor.start_pipeline(pipeline)
 
-        connection = database.engine.connect()
-        expected_operations_data = []
-        for i in range(3):
-            expected_operations_data += _insert(connection=connection, table=table[i])
-            expected_operations_data += _update(connection=connection, table=table[i])
-            expected_operations_data += _delete(connection=connection, table=table[i])
+        with database.engine.connect().execution_options(autocommit=False) as connection:
+            expected_operations_data = []
+            for i in range(3):
 
-        # inserts/updates/deletes in table 3 should not be processed
-        _insert(connection=connection, table=table[3])
-        _update(connection=connection, table=table[3])
-        _delete(connection=connection, table=table[3])
+                expected_operations_data += _insert(connection=connection, table=table[i], create_txn=True)
+                time.sleep(1)
+                expected_operations_data += _update(connection=connection, table=table[i])
+                time.sleep(1)
+                expected_operations_data += _delete(connection=connection, table=table[i])
+                time.sleep(1)
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 9)
+            # inserts/updates/deletes in table 3 should not be processed
+            _insert(connection=connection, table=table[3], create_txn=True)
+            _update(connection=connection, table=table[3])
+            _delete(connection=connection, table=table[3])
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9)
         sdc_executor.stop_pipeline(pipeline)
 
         # Verify record data is received in exact order as expected.
@@ -874,7 +897,6 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
         # Each record record includes 3 records
         assert len(wiretap.output_records) * 3 == len(expected_operations_data)
         for record in wiretap.output_records:
-
             if record.get_field_data('/change'):
                 # Since we performed each operation (insert, update and delete) on 3 rows,
                 # each CDC  record change contains a list of 3 elements.
@@ -901,6 +923,7 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder, sdc_executor
         for t in table:
             t.drop(database.engine)
             logger.info('Table: %s dropped.', t.name)
+        database.engine.connect().close()
 
 
 @database('postgresql')
@@ -969,6 +992,7 @@ def test_postgres_cdc_wal_sender_status_metrics(sdc_builder, sdc_executor, datab
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         table.drop(database.engine)
         logger.info('Table: %s dropped.', table.name)
+        connection.close()
 
 
 @database('postgresql')
@@ -1047,3 +1071,4 @@ def test_postgres_cdc_queue_buffering_metrics(sdc_builder, sdc_executor, databas
         for t in tables:
             t.drop(database.engine)
             logger.info('Table: %s dropped.', t.name)
+        connection.close()
