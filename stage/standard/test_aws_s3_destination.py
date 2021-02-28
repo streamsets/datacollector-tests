@@ -78,6 +78,11 @@ S3_PATHS = [
 
 
 @aws('s3')
+def test_data_types(sdc_builder, sdc_executor, aws):
+    pytest.skip("AWS S3 doesn't talk to a structured system, so we don't need to test each data type.")
+
+
+@aws('s3')
 @pytest.mark.parametrize('test_name, bucket_generator', S3_BUCKET_NAMES, ids=[i[0] for i in S3_BUCKET_NAMES])
 def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_generator):
     """Test for S3 target stage. We do so by running a dev raw data source generator to S3 destination
