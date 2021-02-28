@@ -248,7 +248,7 @@ def test_resume_offset(sdc_builder, sdc_executor):
         _stop_pipeline(sdc_executor, directory_origin_pipeline)
 
 
-def test_empty_file(sdc_builder, sdc_executor):
+def test_empty_object_file(sdc_builder, sdc_executor):
     """ Test for empty file condition.
        Wiretap is used to assert no data was generated.
        One file empty file is created and then processed.
