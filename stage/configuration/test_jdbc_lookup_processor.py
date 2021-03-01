@@ -132,6 +132,62 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
         table.drop(database.engine)
 
 
+@database
+@pytest.mark.parametrize('validate_column_mappings', [True, False])
+def test_validate_column_mappings(sdc_builder, sdc_executor, database, credential_store, validate_column_mappings):
+    """Test validate column mapping checkbox
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    # It should always fail if validate_column_mappings is enabled
+    column_name_config = 'notAColumnName'
+
+    table = _create_table(table_name, database, None)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(LOOKUP_RAW_DATA),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    query_str = f'SELECT "name" as "columnName" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
+    if type(database) == MySqlDatabase:
+        query_str = f'SELECT `name` as `columnName` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
+    column_mappings = [dict(dataType='USE_COLUMN_TYPE',
+                            columnName=column_name_config,
+                            field='/FirstName')]
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=column_mappings,
+                               validate_column_mappings=validate_column_mappings)
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> jdbc_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        # Start error should be raised if getting validated
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        if validate_column_mappings:
+            # Should never reach
+            pytest.fail('Start pipeline should have failed, but did not')
+
+    except sdk.sdc_api.StartError as e:
+        if validate_column_mappings:
+            assert "JDBC_95" in str(e.args[0])
+        else:
+            # should never reach
+            pytest.fail(e.args[0])
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
 @stub
 def test_connection_health_test_query(sdc_builder, sdc_executor):
     pass
