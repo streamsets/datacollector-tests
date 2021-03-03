@@ -455,10 +455,60 @@ def test_data_format_avro(sdc_builder, sdc_executor, aws):
     pass
 
 
-@stub
 @aws('s3')
-def test_data_format_delimited(sdc_builder, sdc_executor, aws):
-    pass
+@pytest.mark.parametrize('csv_parser', ['UNIVOCITY', 'LEGACY_PARSER'])
+def test_data_format_delimited(sdc_builder, sdc_executor, aws, csv_parser):
+    DATA = "A,B,C\n" \
+           "1,2,3\n" \
+           "10,20,30\n"
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(bucket=s3_bucket,
+                             data_format='DELIMITED',
+                             header_line='WITH_HEADER',
+                             csv_parser=csv_parser,
+                             prefix_pattern=f'{s3_key}*')
+
+    wiretap = builder.add_wiretap()
+
+    s3_origin >> wiretap.destination
+
+    s3_origin_pipeline = builder.build().configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=DATA)
+
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'output_record_count', 2)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        records = wiretap.output_records
+        assert len(records) == 2
+
+        assert records[0].field['A'] == "1"
+        assert records[0].field['B'] == "2"
+        assert records[0].field['C'] == "3"
+        assert records[1].field['A'] == "10"
+        assert records[1].field['B'] == "20"
+        assert records[1].field['C'] == "30"
+    finally:
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
+        # Clean up S3.
+        aws.delete_s3_data(s3_bucket, s3_key)
 
 @stub
 @aws('s3')

@@ -16,6 +16,7 @@ import logging
 import string
 
 import pytest
+from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import pulsar
 from streamsets.testframework.utils import get_random_string
@@ -214,9 +215,50 @@ def test_data_format_datagram(sdc_builder, sdc_executor):
     pass
 
 
-@stub
-def test_data_format_delimited(sdc_builder, sdc_executor):
-    pass
+@pulsar
+@sdc_min_version('3.22.0')
+@pytest.mark.parametrize('csv_parser', ['UNIVOCITY', 'LEGACY_PARSER'])
+def test_data_format_delimited(sdc_builder, sdc_executor, pulsar, csv_parser, keep_data):
+    builder = sdc_builder.get_pipeline_builder()
+    consumer = builder.add_stage('Pulsar Consumer', type='origin')
+    consumer.data_format = 'DELIMITED'
+    consumer.csv_parser = csv_parser
+    consumer.topic = get_random_string()
+    consumer.batch_wait_time_in_ms = 20000
+    consumer.consumer_name = get_random_string()
+    consumer.initial_offset = 'EARLIEST'
+
+    wiretap = builder.add_wiretap()
+
+    consumer >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(pulsar)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    client = pulsar.client
+    admin = pulsar.admin
+    try:
+        producer = client.create_producer(consumer.topic)
+        producer.send("1,2,3,4".encode())
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = wiretap.output_records
+        assert len(records) == 1
+
+        assert records[0].field['0'] == "1"
+        assert records[0].field['1'] == "2"
+        assert records[0].field['2'] == "3"
+        assert records[0].field['3'] == "4"
+
+    finally:
+        if not keep_data:
+            producer.close()
+            client.close()
+            admin.delete_topic(producer.topic())
 
 
 @stub

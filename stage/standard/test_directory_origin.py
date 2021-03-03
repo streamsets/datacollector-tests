@@ -18,6 +18,7 @@ import string
 import tempfile
 
 import pytest
+from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.utils import get_random_string
 
@@ -294,9 +295,43 @@ def test_data_format_avro(sdc_builder, sdc_executor):
     pass
 
 
-@stub
-def test_data_format_delimited(sdc_builder, sdc_executor):
-    pass
+@sdc_min_version('3.22.0')
+@pytest.mark.parametrize('csv_parser', ['UNIVOCITY', 'LEGACY_PARSER'])
+def test_data_format_delimited(sdc_builder, sdc_executor, csv_parser):
+    DATA = "A,B,C\n" \
+           "1,2,3\n" \
+           "10,20,30\n"
+    work_dir = _prepare_work_dir(sdc_executor, DATA)
+
+    # Create Pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Directory', type='origin')
+    origin.file_name_pattern = '*.csv'
+    origin.files_directory = work_dir
+
+    origin.data_format = 'DELIMITED'
+    origin.csv_parser = csv_parser
+    origin.header_line = 'WITH_HEADER'
+
+    wiretap = builder.add_wiretap()
+    origin >> wiretap.destination
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
+    sdc_executor.stop_pipeline(pipeline)
+
+    records = wiretap.output_records
+    assert len(records) == 2
+
+    assert records[0].field['A'] == "1"
+    assert records[0].field['B'] == "2"
+    assert records[0].field['C'] == "3"
+    assert records[1].field['A'] == "10"
+    assert records[1].field['B'] == "20"
+    assert records[1].field['C'] == "30"
+
 
 @stub
 def test_data_format_excel(sdc_builder, sdc_executor):
@@ -364,3 +399,10 @@ def _write_file_with_pipeline(sdc_executor, file_path, file_name, file_contents)
 def _stop_pipeline(sdc_executor, pipeline):
     if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
         sdc_executor.stop_pipeline(pipeline)
+
+def _prepare_work_dir(sdc_executor, data):
+    """Create work directory, insert test data, return the work directory."""
+    work_dir = os.path.join(tempfile.gettempdir(), get_random_string())
+    sdc_executor.execute_shell(f'mkdir -p {work_dir}')
+    sdc_executor.write_file(os.path.join(work_dir, 'input.csv'), data)
+    return work_dir
