@@ -1,0 +1,11 @@
+
+Å
+addressbook.proto"3
+AddressBook$
+contacts (2.ContactRcontacts"E
+Contact
+
+first_name (	R	firstName
+	last_name (	RlastName"4
+SearchResult$
+contacts (2.ContactRcontacts
