@@ -39,6 +39,7 @@ from .utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_s
 
 CONTACT = 'Contact'
 CDC = 'CDC'
+ALL_EVENTS = 'ALL_EVENTS'
 PUSH_TOPIC = 'PUSH_TOPIC'
 API_VERSION = '47.0'
 COLON = ':'
@@ -2084,6 +2085,90 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
             else:
                 logger.info('Disabling CDC for Contact...')
                 disable_cdc(client, subscription_id)
+        if contact:
+            logger.info('Deleting contact...')
+            client.contact.delete(contact['id'])
+
+
+@salesforce
+@sdc_min_version('3.7.0')
+def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
+    """Start pipeline with replay option "All events", read all Salesforce data (if any exists) and stop the pipeline.
+    Then, create a new record in Salesforce, start pipeline again
+    and check if Salesforce origin receives the new changes done while it was offline as well as the previous data.
+
+    The pipeline looks like:
+        salesforce_origin >> wiretap
+
+    Args:
+        sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
+        sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
+        salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
+    """
+    client = salesforce.client
+
+    pipeline = None
+    subscription_id = None
+    contact = None
+    try:
+        session = SfdcSession(username=escape(salesforce.username),
+                              password=escape(salesforce.password),
+                              is_sandbox=True,
+                              api_version=API_VERSION)
+        session.login()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        subscription_id = enable_cdc(client)
+
+        salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        salesforce_origin.set_attributes(query_existing_data=False,
+                                         subscribe_for_notifications=True,
+                                         subscription_type=CDC,
+                                         change_data_capture_object=CONTACT,
+                                         replay_option=ALL_EVENTS)
+
+        wiretap = pipeline_builder.add_wiretap()
+        salesforce_origin >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        original_length = len(wiretap.output_records)
+        sdc_executor.stop_pipeline(pipeline)
+
+        logger.info('Creating a new record using Salesforce client...')
+        contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
+
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline)
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        # Verify that we read one more entry than the first time, and check its values are correct
+        assert len(wiretap.output_records) == (original_length + 1)
+        assert wiretap.output_records[original_length].header.values['salesforce.cdc.recordIds']
+        assert wiretap.output_records[original_length].field['Email'] == TEST_DATA['DATA_TO_INSERT'][0]['Email']
+        # CDC returns nested compound fields
+        assert wiretap.output_records[original_length].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][0][
+            'FirstName']
+        assert wiretap.output_records[original_length].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][0][
+            'LastName']
+
+        logger.info('Stopping pipeline')
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(pipeline)
+        if subscription_id:
+            logger.info('Disabling CDC for Contact...')
+            disable_cdc(client, subscription_id)
         if contact:
             logger.info('Deleting contact...')
             client.contact.delete(contact['id'])
