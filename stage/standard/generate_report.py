@@ -222,22 +222,28 @@ class Report:
         print(f"\tTest variants: {_format_count_and_total(implemented_variants, total_variants)}")
         print('')
 
-    def print_stages(self):
+    def print_stages(self, filter=None):
         print('Per Stage Stats')
         for test in self.tests:
-            test.print()
-            print('')
+            if filter is not None and filter not in test.test_name:
+                pass
+            else:
+                test.print()
+                print('')
 
-    def print_categories(self):
+    def print_categories(self, filter=None):
         print('Per Test Category Stats')
         for category in ALL_CATEGORIES:
-            print(f"Category {colored(category, 'white', attrs=['bold'])}")
-            for test in self.tests:
-                if category in test.tests:
-                    variants = test.tests[category]
-                    print(f"\tTest file {colored(test.test_name, 'white', attrs=['bold'])} is {_text_for_variants(variants)}")
+            if filter is not None and filter not in category:
+                pass
+            else:
+                print(f"Category {colored(category, 'white', attrs=['bold'])}")
+                for test in self.tests:
+                    if category in test.tests:
+                        variants = test.tests[category]
+                        print(f"\tTest file {colored(test.test_name, 'white', attrs=['bold'])} is {_text_for_variants(variants)}")
 
-            print()
+                print()
 
 
 # Parse Command line options
@@ -245,12 +251,14 @@ parser = argparse.ArgumentParser(description='Generate various coverage reports 
 parser.add_argument('--dir', dest='test_dir', help='Directory of standard tests (current working directory by default)')
 parser.add_argument('--verbose', dest='verbose', action='store_true', help='Log details while parsing test files')
 parser.add_argument('--summary', dest='summary', action='store_true', help='Print summary report for all test files')
-parser.add_argument('--stages', dest='stages', action='store_true', help='Print report for al individual stages')
+parser.add_argument('--stages', dest='stages', action='store_true', help='Print report for all individual stages')
+parser.add_argument('--stage', dest='stage', action='store', help='Print report for given stage')
 parser.add_argument('--categories', dest='categories', action='store_true', help='Print summary report pivoted for each test category')
+parser.add_argument('--category', dest='category', action='store', help='Print summary report pivoted given test category')
 
 args = parser.parse_args()
-if not args.summary and not args.stages and not args.tests:
-    raise Exception('At least one of --summary, --stages, --tests is required')
+if not args.summary and not args.stages and not args.stage and not args.categories and not args.category:
+    raise Exception('At least one of --summary, --stages, --stage, --categories or --category is required')
 
 # Configure logging per the arguments
 log_level = logging.DEBUG if args.verbose else logging.WARN
@@ -294,7 +302,7 @@ for file_path in test_files:
 report = Report(tests)
 if args.summary:
     report.print_summary()
-if args.stages:
-    report.print_stages()
-if args.categories:
-    report.print_categories()
+if args.stages or args.stage:
+    report.print_stages(args.stage)
+if args.categories or args.category:
+    report.print_categories(args.category)
