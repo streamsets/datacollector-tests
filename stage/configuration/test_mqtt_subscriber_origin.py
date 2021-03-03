@@ -88,18 +88,13 @@ def test_clean_session(sdc_builder, sdc_executor, mqtt_broker, clean_session):
      7) Start and check that those are received
     """
     data_topic = get_random_string(string.ascii_letters, 10)
-    client_id = f'client_id_{get_random_string()}'
     mqtt_broker.initialize(initial_topics=[data_topic])
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     mqtt_source = pipeline_builder.add_stage('MQTT Subscriber').set_attributes(data_format='TEXT',
                                                                                topic_filter=[data_topic],
-                                                                               clean_session=clean_session,
-                                                                               client_id=client_id,
-                                                                               client_persistence_mechanism='FILE',
-                                                                               client_persistence_data_directory='/mqtt/data/',
-                                                                               quality_of_service='AT_LEAST_ONCE')
+                                                                               clean_session=clean_session)
 
     wiretap = pipeline_builder.add_wiretap()
 
