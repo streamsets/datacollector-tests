@@ -11,9 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import pytest
+import string
+import time
 
+import pytest
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import mqtt
+from streamsets.testframework.utils import get_random_string
 
 
 @stub
@@ -69,10 +73,93 @@ def test_cipher_suites(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'clean_session': False}, {'clean_session': True}])
-def test_clean_session(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@mqtt
+@pytest.mark.parametrize('clean_session', [True, False])
+def test_clean_session(sdc_builder, sdc_executor, mqtt_broker, clean_session):
+    """Integration test for the MQTT origin stage.
+
+     1) load a pipeline that has an MQTT origin (text format) to wiretap
+     2) create MQTT instance (broker and a subscribed client) and inject appropriate values into
+        the pipeline config
+     3) run the pipeline
+     4) (in parallel) send message to the topic the pipeline is subscribed to
+     5) after pipeline completes, verify outputs from pipeline against published messages
+     6) introduce more messages while the pipeline is stopped
+     7) Start and check that those are received
+    """
+    data_topic = get_random_string(string.ascii_letters, 10)
+    client_id = f'client_id_{get_random_string()}'
+    mqtt_broker.initialize(initial_topics=[data_topic])
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    mqtt_source = pipeline_builder.add_stage('MQTT Subscriber').set_attributes(data_format='TEXT',
+                                                                               topic_filter=[data_topic],
+                                                                               clean_session=clean_session,
+                                                                               client_id=client_id,
+                                                                               client_persistence_mechanism='FILE',
+                                                                               client_persistence_data_directory='/mqtt/data/',
+                                                                               quality_of_service='AT_LEAST_ONCE')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    mqtt_source >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(mqtt_broker)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+
+        # can't figure out a cleaner way to do this; it takes a bit of time for the pipeline
+        # to ACTUALLY start listening on the MQTT port, so if we don't sleep here, the
+        # messages won't be delivered (without setting persist)
+        time.sleep(1)
+        expected_messages = []
+        for i in range(10, 20):
+            expected_message = f'Message {i}'
+            mqtt_broker.publish_message(topic=data_topic, payload=expected_message)
+            expected_messages.append(expected_message)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(wiretap.output_records) == len(expected_messages)
+        messages = [record.field['text'] for record in wiretap.output_records]
+        assert messages == expected_messages
+
+        wiretap.reset()
+
+        expected_messages_2 = []
+        for i in range(20, 30):
+            expected_message = f'Message {i}'
+            mqtt_broker.publish_message(topic=data_topic, payload=expected_message)
+            expected_messages_2.append(expected_message)
+
+        sdc_executor.start_pipeline(pipeline)
+        time.sleep(1)
+
+        expected_messages_3 = []
+        for i in range(30, 40):
+            expected_message = f'Message {i}'
+            mqtt_broker.publish_message(topic=data_topic, payload=expected_message)
+            expected_messages_3.append(expected_message)
+
+        if clean_session:
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
+            final_expected_messages = expected_messages_3
+        else:
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 20)
+            final_expected_messages = expected_messages_2 + expected_messages_3
+
+        sdc_executor.stop_pipeline(pipeline)
+        assert len(wiretap.output_records) == len(final_expected_messages)
+        messages = [record.field['text'] for record in wiretap.output_records]
+        assert messages == final_expected_messages
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        mqtt_broker.destroy()
 
 
 @stub
@@ -756,4 +843,3 @@ def test_username(sdc_builder, sdc_executor, stage_attributes):
                                               {'data_format': 'WHOLE_FILE', 'verify_checksum': True}])
 def test_verify_checksum(sdc_builder, sdc_executor, stage_attributes):
     pass
-
