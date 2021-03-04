@@ -72,16 +72,23 @@ def _text_for_variants(variant):
         return f"{colored('completely missing', 'red', attrs=['bold'])}"
 
     total = len(variant.keys())
-    sum = 0
+    implemented = 0
+    skipped = 0
     for implementation in variant.values():
-        if implementation == IMPLEMENTED or implementation == SKIPPED:
-            sum = sum + 1
+        if implementation == IMPLEMENTED:
+            implemented = implemented + 1
+        elif implementation == SKIPPED:
+            skipped = skipped + 1
 
-    if sum == total:
+    if implemented == total:
         return f"{colored('fully implemented', 'green', attrs=['bold'])} {_text_variants(variant)}"
-    elif sum == 0:
+    elif skipped == total:
+        return f"{colored('fully skipped', 'green', attrs=['bold'])} {_text_variants(variant)}"
+    elif skipped + implemented == total:
+        return f"{colored('either implemented or skipped', 'green', attrs=['bold'])} {_text_variants(variant)}"
+    elif skipped + implemented == 0:
         return f"{colored('is not implemented at all', 'red', attrs=['bold'])} {_text_variants(variant)}"
-    elif sum / total > 0.75:
+    elif (skipped + implemented) / total > 0.75:
         return f"{colored('is partially implemented', 'yellow', attrs=['bold'])} {_text_variants(variant)}"
     else:
         return f"{colored('is partially implemented', 'red', attrs=['bold'])} {_text_variants(variant)}"
