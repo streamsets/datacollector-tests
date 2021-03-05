@@ -1254,12 +1254,13 @@ def test_directory_origin_read_different_file_type(sdc_builder, sdc_executor):
     directory >> wiretap.destination
     directory >= pipeline_finisher
 
-    pipeline = builder.build('Validation')
+    pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert 10 == len(sdc_executor.get_stage_errors(pipeline, directory))
     assert 0 == len(wiretap.output_records)
+    history = sdc_executor.get_pipeline_history(pipeline)
+    assert history.latest.metrics.counter('stage.Directory_01.stageErrors.counter').count > 0
 
 
 @pytest.mark.parametrize('no_of_threads', [4])

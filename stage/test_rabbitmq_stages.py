@@ -313,8 +313,8 @@ def test_rabbitmq_rabbitmq_consumer_wrong_format(sdc_builder, sdc_executor, rabb
 
     # Second message produced an error - the last error in the list
 
-    error_msg = sdc_executor.get_stage_errors(consumer_origin_pipeline, rabbitmq_consumer)[0].error_code
-    assert error_msg == 'RABBITMQ_04'
+    history = sdc_executor.get_pipeline_history(consumer_origin_pipeline)
+    assert history.latest.metrics.counter('stage.RabbitMQConsumer_01.stageErrors.counter').count > 0
 
     output_records = [record.field
                       for record in wiretap.output_records]

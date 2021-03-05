@@ -1062,7 +1062,9 @@ def test_grok_pattern(sdc_builder, sdc_executor, stage_attributes, grok_pattern_
         else:
             # If grok pattern doesn't match the input, no records should go through and there should be stage errors
             # raised.
-            assert not records and sdc_executor.get_stage_errors(pipeline, directory)
+            assert records == []
+            history = sdc_executor.get_pipeline_history(pipeline)
+            assert history.latest.metrics.counter('stage.Directory_01.stageErrors.counter').count > 0
     finally:
         if not keep_data:
             shell_executor(f'rm -r {files_directory}')
@@ -1323,9 +1325,9 @@ def test_directory_origin_configuration_ignore_control_characters_json(sdc_build
         if stage_attributes['ignore_control_characters']:
             assert records == [EXPECTED_OUTPUT]
         else:
-            # If we don't ignore control characters, SPOOLDIR_01 is raised because the file cannot be parsed by the
-            # Directory origin and no records are output.
-            assert sdc_executor.get_stage_errors(pipeline, directory)[0].error_code == 'SPOOLDIR_01' and not records
+            assert records == []
+            history = sdc_executor.get_pipeline_history(pipeline)
+            assert history.latest.metrics.counter('stage.Directory_01.stageErrors.counter').count == 1
     finally:
         if not keep_data:
             shell_executor(f'rm -r {files_directory}')
