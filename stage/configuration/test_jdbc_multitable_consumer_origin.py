@@ -125,9 +125,9 @@ def test_jdbc_multitable_consumer_origin_configuration_create_header_attributes(
 @pytest.mark.parametrize('quote_character', ['BACKTICK', 'DOUBLE_QUOTES', 'NONE', 'SQUARE_BRACKETS'])
 def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_builder, sdc_executor, quote_character, database):
     builder = sdc_builder.get_pipeline_builder()
-    # PostreSQl can be used without quoting characters, but then the table and offset names are lowercased during their
-    # creation. Therefore, to test this particular case we need to make sure both names are already lowercase.
-    if database.type is 'PostgreSQL' and quote_character is 'NONE':
+    # PostreSQl and Oracle can be used without quoting characters, but then the table and offset names are lowercased during
+    # their creation. Therefore, to test this particular case we need to make sure both names are already lowercase.
+    if database.type in ('PostgreSQL', 'Oracle') and quote_character is 'NONE':
         table_name = get_random_string(string.ascii_lowercase, 10)
         offset_name = get_random_string(string.ascii_lowercase, 10)
     else:
