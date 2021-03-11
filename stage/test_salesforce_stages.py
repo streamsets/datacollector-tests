@@ -27,28 +27,26 @@ from xml.sax.saxutils import escape
 
 import pytest
 import requests
-from sfdclib import SfdcSession, SfdcMetadataApi
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
-from .utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, _insert_data_and_verify_using_wiretap, \
-    _verify_wiretap_data, get_ids, clean_up, TIMEOUT, create_push_topic, enable_cdc, verify_cdc_wiretap, disable_cdc, \
-    add_custom_field_to_contact, delete_custom_field_from_contact, FOLDER_NAME, CASE_SUBJECT, \
-    find_dataset_include_timestamp, find_dataset, CONTACTS_FOR_NO_MORE_DATA, ACCOUNTS_FOR_SUBQUERY, \
-    CONTACTS_FOR_SUBQUERY
+from .utils.utils_salesforce import (_insert_data_and_verify_using_wiretap, _verify_wiretap_data, ACCOUNTS_FOR_SUBQUERY,
+                                     add_custom_field_to_contact, CASE_SUBJECT, clean_up, CONTACTS_FOR_NO_MORE_DATA,
+                                     CONTACTS_FOR_SUBQUERY, create_push_topic, delete_custom_field_from_contact,
+                                     disable_cdc, enable_cdc, find_dataset, find_dataset_include_timestamp, FOLDER_NAME,
+                                     get_dev_raw_data_source, get_ids, set_up_random, TEST_DATA, TIMEOUT,
+                                     verify_cdc_wiretap)
 
 CONTACT = 'Contact'
 CDC = 'CDC'
 ALL_EVENTS = 'ALL_EVENTS'
 PUSH_TOPIC = 'PUSH_TOPIC'
-API_VERSION = '47.0'
 COLON = ':'
 PERIOD = '.'
 
 logger = logging.getLogger(__name__)
 
 
-@salesforce
 @pytest.fixture(autouse=True)
 def _set_up_random(salesforce):
     set_up_random(salesforce)
@@ -1389,22 +1387,15 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
     """
     client = salesforce.client
+    metadata_client = salesforce.metadata_client
 
     pipeline = None
     subscription_id = None
     contact = None
     contact2 = None
     try:
-        session = SfdcSession(username=escape(salesforce.username),
-                              password=escape(salesforce.password),
-                              is_sandbox=True,
-                              api_version=API_VERSION)
-        session.login()
-
-        metadata = SfdcMetadataApi(session)
-
         logger.info('Adding custom field to Contact object...')
-        add_custom_field_to_contact(metadata)
+        add_custom_field_to_contact(metadata_client)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -1455,7 +1446,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         contact2 = client.Contact.create(TEST_DATA['DATA_TO_INSERT'])
 
         logger.info('Deleting custom field from Contact object...')
-        delete_custom_field_from_contact(metadata)
+        delete_custom_field_from_contact(metadata_client)
 
         logger.info('Restarting pipeline')
         wiretap.reset()
@@ -1920,10 +1911,7 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce, m
         analytics_destination = pipeline_builder.add_stage('Einstein Analytics', type='destination')
         edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
         # Explicitly set auth credentials since Salesforce environment doesn't know about Einstein Analytics destination
-        analytics_destination.set_attributes(edgemart_alias=edgemart_alias,
-                                             username=salesforce.username,
-                                             password=salesforce.password,
-                                             auth_endpoint='test.salesforce.com')
+        analytics_destination.set_attributes(edgemart_alias=edgemart_alias)
         if multiple_data:
             analytics_destination.set_attributes(append_timestamp_to_alias=True)
 
@@ -2111,12 +2099,6 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
     subscription_id = None
     contact = None
     try:
-        session = SfdcSession(username=escape(salesforce.username),
-                              password=escape(salesforce.password),
-                              is_sandbox=True,
-                              api_version=API_VERSION)
-        session.login()
-
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         subscription_id = enable_cdc(client)
@@ -2161,7 +2143,6 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
 
         logger.info('Stopping pipeline')
         sdc_executor.stop_pipeline(pipeline)
-
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline')

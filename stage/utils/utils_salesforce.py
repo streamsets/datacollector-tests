@@ -23,11 +23,11 @@ from time import sleep
 from zipfile import ZipFile
 
 from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.environments.salesforce import API_VERSION
 
 CONTACT = 'Contact'
 CDC = 'CDC'
 PUSH_TOPIC = 'PUSH_TOPIC'
-API_VERSION = '47.0'
 COLON = ':'
 PERIOD = '.'
 
@@ -383,7 +383,7 @@ def create_push_topic(client):
     logger.info(f'Creating PushTopic {push_topic_name} in Salesforce')
     result = client.PushTopic.create({'Name': push_topic_name,
                                       'Query': 'SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact',
-                                      'ApiVersion': '47.0',
+                                      'ApiVersion': API_VERSION,
                                       'NotifyForOperationCreate': True,
                                       'NotifyForOperationUpdate': True,
                                       'NotifyForOperationUndelete': True,
