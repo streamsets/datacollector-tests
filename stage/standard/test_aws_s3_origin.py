@@ -17,7 +17,7 @@ import string
 
 import pytest
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import aws
+from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -449,6 +449,7 @@ def test_multiple_batch(sdc_builder, sdc_executor, aws):
         # Clean up S3.
         aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
+
 @stub
 @aws('s3')
 def test_data_format_avro(sdc_builder, sdc_executor, aws):
@@ -456,6 +457,7 @@ def test_data_format_avro(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('3.22.0')
 @pytest.mark.parametrize('csv_parser', ['UNIVOCITY', 'LEGACY_PARSER'])
 def test_data_format_delimited(sdc_builder, sdc_executor, aws, csv_parser):
     DATA = "A,B,C\n" \

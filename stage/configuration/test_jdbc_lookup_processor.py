@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import copy
+import logging
+import string
 
 import pytest
-import string
-import logging
 import sqlalchemy
 from streamsets import sdk
-
-from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase, MySqlDatabase
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import database
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, MySqlDatabase
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -133,6 +132,7 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
 
 
 @database
+@sdc_min_version('3.22.0')
 @pytest.mark.parametrize('validate_column_mappings', [True, False])
 def test_validate_column_mappings(sdc_builder, sdc_executor, database, credential_store, validate_column_mappings):
     """Test validate column mapping checkbox
