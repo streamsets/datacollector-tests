@@ -127,9 +127,13 @@ def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_build
     builder = sdc_builder.get_pipeline_builder()
     # PostreSQl and Oracle can be used without quoting characters, but then the table and offset names are lowercased during
     # their creation. Therefore, to test this particular case we need to make sure both names are already lowercase.
-    if database.type in ('PostgreSQL', 'Oracle') and quote_character is 'NONE':
+    if database.type is 'PostgreSQL' and quote_character is 'NONE':
         table_name = get_random_string(string.ascii_lowercase, 10)
         offset_name = get_random_string(string.ascii_lowercase, 10)
+    # Oracle also allows queries without quoting characters, but this time only if we use uppercased names
+    elif database.type is 'Oracle' and quote_character is 'NONE':
+        table_name = get_random_string(string.ascii_uppercase, 10)
+        offset_name = get_random_string(string.ascii_uppercase, 10)
     else:
         table_name = get_random_string(string.ascii_letters, 10)
         offset_name = get_random_string(string.ascii_letters, 10)
@@ -170,7 +174,7 @@ def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_build
         # Check if this DB and quoting character combination is correct
         if (quote_character is 'BACKTICK' and database.type is 'SQLServer')\
                 or (quote_character in ('DOUBLE_QUOTES', 'SQUARE_BRACKETS') and database.type is 'MySQL')\
-                or (quote_character in ('BACKTICK', 'NONE', 'SQUARE_BRACKETS') and database.type is 'Oracle')\
+                or (quote_character in ('BACKTICK', 'SQUARE_BRACKETS') and database.type is 'Oracle')\
                 or (quote_character in ('BACKTICK', 'SQUARE_BRACKETS') and database.type is 'PostgreSQL'):
             # If the combination is not allowed, check that the correct error is thrown
             try:
