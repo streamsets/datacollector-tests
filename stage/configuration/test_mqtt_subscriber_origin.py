@@ -94,7 +94,8 @@ def test_clean_session(sdc_builder, sdc_executor, mqtt_broker, clean_session):
 
     mqtt_source = pipeline_builder.add_stage('MQTT Subscriber').set_attributes(data_format='TEXT',
                                                                                topic_filter=[data_topic],
-                                                                               clean_session=clean_session)
+                                                                               clean_session=clean_session,
+                                                                               quality_of_service='AT_LEAST_ONCE')
 
     wiretap = pipeline_builder.add_wiretap()
 
