@@ -55,6 +55,7 @@ def test_auto_commit(sdc_builder, sdc_executor, stage_attributes):
 
 
 @database
+@sdc_min_version('3.22.0')
 @pytest.mark.parametrize('column_type', ['BigInteger', 'Boolean', 'Date', 'DateTime', 'Enum', 'Float', 'Integer',
                                          'Interval', 'LargeBinary', 'Numeric', 'PickleType', 'SmallInteger', 'String',
                                          'Text', 'Unicode', 'UnicodeText'])
@@ -114,6 +115,8 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Only check correct data for String type and no StartError
+        if not existing_column_name:
+            pytest.fail("Should not reach as Start Error should have been raised")
         if column_type in {'String'}:
             rows_from_wiretap = [{list(record.field.keys())[1]: list(record.field.values())[1].value}
                                  for record in wiretap.output_records]
