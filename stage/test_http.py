@@ -597,6 +597,40 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
         http_mock.delete_mock()
 
 
+def test_http_processor_wrong_url(sdc_builder, sdc_executor):
+    """Test HTTP Lookup Processor for a wrong URL. This should produce one
+    error record. This test ensures there are no multiple error records created
+    for each request. That is solved on SDC-16691
+
+        dev_raw_data_source >> http_client_processor >> wiretap
+    """
+
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    mock_path = get_random_string(string.ascii_letters, 5)
+
+    mock_uri = f'http://fake_url_{mock_path}'
+
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+    http_client_processor = builder.add_stage('HTTP Client', type='processor')
+
+    http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                         http_method='GET',
+                                         resource_url=mock_uri,
+                                         output_field=f'/result')
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> http_client_processor >> wiretap.destination
+    pipeline = builder.build(title=f'HTTP Lookup Wrong URL Processor pipeline')
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert len(wiretap.error_records) == 1
+    assert 'HTTP_03' == wiretap.error_records[0].header['errorCode']
+    assert 'UnknownHostException' in wiretap.error_records[0].header['errorMessage']
+
+
 @http
 @pytest.mark.parametrize(('method'), [
     'POST',
