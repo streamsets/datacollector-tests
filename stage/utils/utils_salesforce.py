@@ -1,4 +1,4 @@
-# Copyright 2020 StreamSets Inc.
+# Copyright 2021 StreamSets Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,9 +19,12 @@ import string
 from datetime import datetime, timedelta
 from io import BytesIO
 from json import JSONDecodeError
+from string import Template
 from time import sleep
 from zipfile import ZipFile
 
+from streamsets.sdk.utils import (DEFAULT_TIME_BETWEEN_CHECKS as DEFAULT_WAIT_TIME_BETWEEN_CHECKS,
+                                  DEFAULT_TIMEOUT as DEFAULT_WAIT_TIMEOUT, wait_for_condition)
 from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.environments.salesforce import API_VERSION
 
@@ -49,7 +52,7 @@ ADD_CUSTOM_FIELD_PACKAGE = f'''<?xml version="1.0" encoding="UTF-8"?>
 ADD_CUSTOM_FIELD = '''<?xml version="1.0" encoding="UTF-8"?>
 <CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
     <fields>
-        <fullName>BoolCustField__c</fullName>
+        <fullName>$CUSTOM_FIELD</fullName>
         <defaultValue>false</defaultValue>
         <description>ThisIsABoolCustField</description>
         <externalId>false</externalId>
@@ -64,7 +67,7 @@ CUSTOM_FIELD_PERMISSION = '''<?xml version="1.0" encoding="UTF-8"?>
 <Profile xmlns="http://soap.sforce.com/2006/04/metadata">
   <fieldPermissions>
         <editable>true</editable>
-        <field>Contact.BoolCustField__c</field>
+        <field>Contact.$CUSTOM_FIELD</field>
         <readable>true</readable>
     </fieldPermissions>
 </Profile>'''
@@ -77,10 +80,15 @@ DELETE_CUSTOM_FIELD_PACKAGE = f'''<?xml version="1.0" encoding="UTF-8"?>
 DELETE_CUSTOM_FIELD = '''<?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
     <types>
-        <members>Contact.BoolCustField__c</members>
+        <members>Contact.$CUSTOM_FIELD</members>
         <name>CustomField</name>
     </types>
 </Package>'''
+
+# Template objects
+ADD_CUSTOM_FIELD_TEMPLATE = Template(ADD_CUSTOM_FIELD)
+CUSTOM_FIELD_PERMISSION_TEMPLATE = Template(CUSTOM_FIELD_PERMISSION)
+DELETE_CUSTOM_FIELD_TEMPLATE = Template(DELETE_CUSTOM_FIELD)
 
 # Folder for Documents
 FOLDER_NAME = 'TestFolder'
@@ -160,22 +168,12 @@ def get_dev_raw_data_source(pipeline_builder, raw_data):
     return dev_raw_data_source
 
 
-def _verify_wiretap_data(wiretap, expected_data, sort=True):
-    """Utility method to verify that a wiretap matches the expected data
-
-    Args:
-        wiretap: wiretap containing data to be verified
-        expected_data (obj:`list`): Expected data as a list of dicts
-        sort (Boolean): Whether to sort or not before comparing
-
-    Returns:
-        (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
-    """
+def verify_wiretap_records_data(wiretap_records, expected_data, sort=True):
     # SDC-10773 - source IDs must be unique
-    source_ids = {record.header['sourceId'] for record in wiretap.output_records}
-    assert len(source_ids) == len(wiretap.output_records)
+    source_ids = {record.header['sourceId'] for record in wiretap_records}
+    assert len(source_ids) == len(wiretap_records)
 
-    rows_from_wiretap = [record.field for record in wiretap.output_records]
+    rows_from_wiretap = [record.field for record in wiretap_records]
 
     data_from_wiretap = [{field: record[field] for field in record if field not in ['Id', 'SystemModstamp']}
                          for record in rows_from_wiretap]
@@ -189,7 +187,21 @@ def _verify_wiretap_data(wiretap, expected_data, sort=True):
         assert data_from_wiretap == expected_data
 
 
-def _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expected_data, salesforce, data_to_insert, sort=True):
+def verify_wiretap_data(wiretap, expected_data, sort=True):
+    """Utility method to verify that a wiretap matches the expected data
+
+    Args:
+        wiretap: wiretap containing data to be verified
+        expected_data (obj:`list`): Expected data as a list of dicts
+        sort (Boolean): Whether to sort or not before comparing
+
+    Returns:
+        (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
+    """
+    verify_wiretap_records_data(wiretap.output_records, expected_data, sort)
+
+
+def insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expected_data, salesforce, data_to_insert, sort=True):
     """Utility method to insert data into Salesforce, start a pipeline, record a wiretap, verify that the data
     in the wiretap matches the expected data, and clean up the inserted records.
 
@@ -215,8 +227,7 @@ def _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expec
         logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        _verify_wiretap_data(wiretap, expected_data, sort)
-
+        verify_wiretap_data(wiretap, expected_data, sort)
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)
 
@@ -231,8 +242,7 @@ def get_ids(records, key):
     Returns:
         (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
     """
-    return [{'Id': record[key]}
-            for record in records]
+    return [{'Id': record[key]} for record in records]
 
 
 def clean_up(sdc_executor, pipeline, client, contact_ids):
@@ -245,18 +255,18 @@ def clean_up(sdc_executor, pipeline, client, contact_ids):
         contact_ids (:obj:`list`): List of contacts to be deleted in form [{'Id':'001000000000001'},...]
     """
     if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-        logger.info('Stopping pipeline')
+        logger.info('Stopping pipeline ...')
         try:
-            #Wait false is because no sincronization needed with the stop
+            # Wait false is because no synchronization needed with the stop
             sdc_executor.stop_pipeline(pipeline, wait=False)
         except Exception:
-            logger.error('Unable to stop the pipeline...')
+            logger.error('Unable to stop the pipeline ...')
     try:
         if contact_ids:
-            logger.info('Deleting records ...')
+            logger.info('Deleting Contact with id(s) %s ...', contact_ids)
             client.bulk.Contact.delete(contact_ids)
     except Exception:
-        logger.error('Unable to delete records...')
+        logger.error('Unable to delete Contacts ...')
 
 
 def find_dataset(client, name):
@@ -289,26 +299,20 @@ def find_dataset_include_timestamp(client, name):
     return None, None
 
 
-def verify_cdc_wiretap(wiretap, inserted_data):
-    assert len(wiretap.output_records) == 1
-    assert wiretap.output_records[0].header.values['salesforce.cdc.recordIds']
-    assert wiretap.output_records[0].field['Email'] == inserted_data['Email']
-    # CDC returns nested compound fields
-    assert wiretap.output_records[0].field['Name']['FirstName'] == inserted_data['FirstName']
-    assert wiretap.output_records[0].field['Name']['LastName'] == inserted_data['LastName']
-
-
-def add_custom_field_to_contact(metadata):
+def add_custom_field_to_contact(metadata, custom_field_name):
+    field_content = ADD_CUSTOM_FIELD_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name})
+    permission_content = CUSTOM_FIELD_PERMISSION_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name})
     deploy_metadata(metadata,
                     ADD_CUSTOM_FIELD_PACKAGE,
-                    [{'name': 'objects/Contact.object', 'content': ADD_CUSTOM_FIELD},
-                      {'name': 'profiles/Admin.profile', 'content': CUSTOM_FIELD_PERMISSION}])
+                    [{'name': 'objects/Contact.object', 'content': field_content},
+                      {'name': 'profiles/Admin.profile', 'content': permission_content}])
 
 
-def delete_custom_field_from_contact(metadata):
+def delete_custom_field_from_contact(metadata, custom_field_name):
+    field_content = DELETE_CUSTOM_FIELD_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name})
     deploy_metadata(metadata,
                     DELETE_CUSTOM_FIELD_PACKAGE,
-                    [{'name': 'destructiveChanges.xml', 'content': DELETE_CUSTOM_FIELD}])
+                    [{'name': 'destructiveChanges.xml', 'content': field_content}])
 
 
 def deploy_metadata(metadata, package_content, files):
@@ -333,56 +337,44 @@ def deploy_metadata(metadata, package_content, files):
     assert result == 'Succeeded'
 
 
-def enable_cdc(client):
-    """Utility method to enable Change Data Capture for Contact change events in an org.
+def get_cdc_wiretap_records(wiretap, record_ids, expected_count=1,
+                            time_between_checks=DEFAULT_WAIT_TIME_BETWEEN_CHECKS, timeout=DEFAULT_WAIT_TIMEOUT):
+    def failure(timeout):
+        raise TimeoutError('Timed out after {} seconds waiting to get CDC record(s) for id(s) {}'.format(timeout,
+                                                                                                      record_ids))
+
+    recorded_ids = []
+    records = []
+    def wiretap_condition():
+        for record in wiretap.output_records:
+            wiretap_record_id = record.header.values.get('salesforce.cdc.recordIds')
+            if wiretap_record_id and wiretap_record_id in record_ids and wiretap_record_id not in recorded_ids:
+                records.append(record)
+                recorded_ids.append(wiretap_record_id)
+
+        return len(records) == expected_count
+
+    wait_for_condition(condition=wiretap_condition, failure=failure,
+                       time_between_checks=time_between_checks, timeout=timeout)
+    return records
+
+
+def create_push_topic(client, last_name):
+    """Utility method to create a PushTopic to subscribe to an existing Contact change events.
 
     Args:
         client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
-
-    Returns:
-        (:obj:`str`) Event channel Id
-    """
-    payload = {
-        "FullName": "ChangeEvents_ContactChangeEvent",
-        "Metadata": {
-            "eventChannel": "ChangeEvents",
-            "selectedEntity": "ContactChangeEvent"
-        }
-    }
-    result = client.restful('tooling/sobjects/PlatformEventChannelMember', method='POST', json=payload)
-    assert result['success']
-    return result['id']
-
-
-def disable_cdc(client, subscription_id):
-    """Utility method to disable Change Data Capture for Contact change events in an org.
-
-    Args:
-        client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
-        subscription_id (:obj:`str`) Event channel Id
-    """
-    try:
-        client.restful(f'tooling/sobjects/PlatformEventChannelMember/{subscription_id}', method='DELETE')
-    except JSONDecodeError:
-        # Simple Salesforce issue #327
-        # https://github.com/simple-salesforce/simple-salesforce/issues/327
-        pass
-
-
-def create_push_topic(client):
-    """Utility method to create a PushTopic to subscribe to Contact change events.
-
-    Args:
-        client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
+        last_name (:obj:`str`): A random and unique last name of the Contact for the topic to listen by
 
     Returns:
         (:obj:`str`) PushTopic record Id
         (:obj:`str`) PushTopic name
     """
     push_topic_name = TEST_DATA['STR_15_RANDOM']
-    logger.info(f'Creating PushTopic {push_topic_name} in Salesforce')
+    logger.info(f'Creating PushTopic {push_topic_name} in Salesforce ...')
     result = client.PushTopic.create({'Name': push_topic_name,
-                                      'Query': 'SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact',
+                                      'Query': ('SELECT Id, FirstName, LastName, Email, LeadSource '
+                                                f"FROM Contact WHERE LastName = '{last_name}'"),
                                       'ApiVersion': API_VERSION,
                                       'NotifyForOperationCreate': True,
                                       'NotifyForOperationUpdate': True,

@@ -11,14 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import logging
 import pytest
 
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.decorators import stub
-from ..utils.utils_salesforce import set_up_random, TEST_DATA, get_dev_raw_data_source, _insert_data_and_verify_using_wiretap
+from ..utils.utils_salesforce import (insert_data_and_verify_using_wiretap, get_dev_raw_data_source, set_up_random,
+                                      TEST_DATA)
 
 logger = logging.getLogger(__name__)
+
 
 @salesforce
 @pytest.fixture(autouse=True)
@@ -209,8 +212,8 @@ def test_multiple_values_behavior(sdc_builder, sdc_executor, salesforce, stage_a
                                 {'FirstName': 'Test1', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest3@example.com',
                                  'LeadSource': 'Advertisement'}]
 
-    _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, lookup_expected_data,
-                                          salesforce, data_to_insert, False)
+    insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, lookup_expected_data,
+                                         salesforce, data_to_insert, False)
 
 
 @stub
@@ -324,4 +327,3 @@ def test_use_proxy(sdc_builder, sdc_executor, stage_attributes):
 @stub
 def test_username(sdc_builder, sdc_executor):
     pass
-

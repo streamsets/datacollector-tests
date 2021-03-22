@@ -1,4 +1,4 @@
-# Copyright 2017 StreamSets Inc.
+# Copyright 2021 StreamSets Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,15 +27,16 @@ from xml.sax.saxutils import escape
 
 import pytest
 import requests
+from streamsets.sdk.utils import wait_for_condition
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
-from .utils.utils_salesforce import (_insert_data_and_verify_using_wiretap, _verify_wiretap_data, ACCOUNTS_FOR_SUBQUERY,
+from .utils.utils_salesforce import (insert_data_and_verify_using_wiretap, verify_wiretap_data, ACCOUNTS_FOR_SUBQUERY,
                                      add_custom_field_to_contact, CASE_SUBJECT, clean_up, CONTACTS_FOR_NO_MORE_DATA,
                                      CONTACTS_FOR_SUBQUERY, create_push_topic, delete_custom_field_from_contact,
-                                     disable_cdc, enable_cdc, find_dataset, find_dataset_include_timestamp, FOLDER_NAME,
-                                     get_dev_raw_data_source, get_ids, set_up_random, TEST_DATA, TIMEOUT,
-                                     verify_cdc_wiretap)
+                                     find_dataset, find_dataset_include_timestamp, FOLDER_NAME,
+                                     get_cdc_wiretap_records, get_dev_raw_data_source, get_ids, set_up_random,
+                                     TEST_DATA, TIMEOUT)
 
 CONTACT = 'Contact'
 CDC = 'CDC'
@@ -276,8 +277,8 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, api, prefixed_
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, TEST_DATA['DATA_TO_INSERT'], salesforce,
-                                          TEST_DATA['DATA_TO_INSERT'])
+    insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, TEST_DATA['DATA_TO_INSERT'], salesforce,
+                                         TEST_DATA['DATA_TO_INSERT'])
 
 
 @salesforce
@@ -319,7 +320,7 @@ def test_salesforce_origin_nulls(sdc_builder, sdc_executor, salesforce, api):
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expected_data, salesforce, expected_data)
+    insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expected_data, salesforce, expected_data)
 
 
 @salesforce
@@ -372,7 +373,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
         sdc_executor.stop_pipeline(pipeline)
 
-        _verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
+        verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
         wiretap.reset()
         sdc_executor.start_pipeline(pipeline)
@@ -446,8 +447,8 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api,
     LOOKUP_EXPECTED_DATA = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'])
     for record in LOOKUP_EXPECTED_DATA:
         record['surName'] = record.pop('LastName')
-    _insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, LOOKUP_EXPECTED_DATA,
-                                          salesforce, TEST_DATA['DATA_TO_INSERT'])
+    insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, LOOKUP_EXPECTED_DATA,
+                                         salesforce, TEST_DATA['DATA_TO_INSERT'])
 
 
 @salesforce
@@ -502,7 +503,7 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
         for record in lookup_expected_data:
             record['surName'] = record.pop('FirstName')
 
-        _verify_wiretap_data(wiretap, lookup_expected_data)
+        verify_wiretap_data(wiretap, lookup_expected_data)
 
     finally:
         clean_up(sdc_executor, pipeline, client, contact_ids)
@@ -946,7 +947,7 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
-        _verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
+        verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
         logger.info('Revoking Salesforce session')
         r = requests.get(f'https://{client.sf_instance}/services/oauth2/revoke',
@@ -960,7 +961,7 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         logger.info('Capturing another wiretap')
         wiretap.reset()
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
-        _verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
+        verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)
@@ -1029,7 +1030,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        _verify_wiretap_data(wiretap, data_to_insert)
+        verify_wiretap_data(wiretap, data_to_insert)
 
         # Stage should produce events, and it does, since the fix for SDC-12418
         assert len(wiretap_events.output_records) == 1
@@ -1051,7 +1052,7 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
         wiretap_events.reset()
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        _verify_wiretap_data(wiretap, data_to_insert + data_to_insert_2)
+        verify_wiretap_data(wiretap, data_to_insert + data_to_insert_2)
 
         # stage should produce events...
         assert len(wiretap_events.output_records) == 1
@@ -1312,17 +1313,21 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
 
     pipeline = None
     subscription_id = None
-    contact = None
     push_topic_name = None
+    test_data = TEST_DATA['DATA_TO_INSERT'][0]
+
+    contact = client.Contact.create(test_data)
+    contact_id = contact['id']
+    logger.info('Created a Contact using Salesforce client with id as %s', contact_id)
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         if subscription_type == PUSH_TOPIC:
-            subscription_id, push_topic_name = create_push_topic(client)
+            # note test_data['LastName'] is random unique data
+            subscription_id, push_topic_name = create_push_topic(client, test_data['LastName'])
         else:
             if Version(sdc_builder.version) < Version('3.7.0'):
                 pytest.skip('CDC Feature requires minimum SDC version 3.7.0')
-            subscription_id = enable_cdc(client)
 
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
         salesforce_origin.set_attributes(query_existing_data=False,
@@ -1338,38 +1343,45 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
-        logger.info('Starting pipeline')
-        sdc_executor.start_pipeline(pipeline)
-        # Give the pipeline time to connect to the Streaming API
-        time.sleep(10)
+        logger.info('Starting pipeline ...')
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd.wait_for_status('RUNNING')
+        time.sleep(10) # Give the pipeline time to connect to the Streaming API
 
         # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
         # updates could flood a channel."
         # REST API in Simple Salesforce can only create one record at a time, so just create one contact
-        logger.info('Creating record using Salesforce client...')
-        contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
+        test_data['FirstName'] = 'Updated FirstName' # a good case for CDC to detect this change
+        client.Contact.update(contact_id, test_data)
+        logger.info('Updated a Contact using Salesforce client with id as %s', contact_id)
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
-
+        pipeline_cmd.wait_for_pipeline_output_records_count(1)
         if subscription_type == PUSH_TOPIC:
-            _verify_wiretap_data(wiretap, [TEST_DATA['DATA_TO_INSERT'][0]])
+            change_records = [record for record in wiretap.output_records if record.field['Id'] == contact_id]
+            assert change_records
+            change_record = change_records[0]
+            assert change_record.field['Email'] == test_data['Email']
+            assert change_record.field['FirstName'] == test_data['FirstName']
+            assert change_record.field['LastName'] == test_data['LastName']
         else:
-            verify_cdc_wiretap(wiretap, TEST_DATA['DATA_TO_INSERT'][0])
+            change_records = get_cdc_wiretap_records(wiretap, [contact_id])
+            assert change_records
+            change_record = change_records[0]
+            assert change_record.header.values['salesforce.cdc.changeType'] == 'UPDATE'
+            assert change_record.field['Name']['FirstName'] == test_data['FirstName']
 
+        logger.info('Stopping pipeline after success ...')
+        sdc_executor.stop_pipeline(pipeline)
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
+            logger.info('Stopping pipeline after possible failure ...')
             sdc_executor.stop_pipeline(pipeline)
-        if subscription_id:
-            if subscription_type == PUSH_TOPIC:
-                logger.info('Deleting PushTopic...')
-                client.PushTopic.delete(subscription_id)
-            else:
-                logger.info('Disabling CDC for Contact...')
-                disable_cdc(client, subscription_id)
-        if contact:
-            logger.info('Deleting contact...')
-            client.contact.delete(contact['id'])
+        if subscription_id and subscription_type == PUSH_TOPIC:
+            logger.info('Deleting PushTopic with id %s ...', subscription_id)
+            client.PushTopic.delete(subscription_id)
+        if contact_id:
+            logger.info('Deleting Contact with id %s ...', contact_id)
+            client.contact.delete(contact_id)
 
 
 @salesforce
@@ -1388,18 +1400,18 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
     """
     client = salesforce.client
     metadata_client = salesforce.metadata_client
+    test_data = TEST_DATA['DATA_TO_INSERT'][0]
+    custom_field_name = '{}__c'.format(get_random_string(string.ascii_letters, 10))
+
+    logger.info('Adding custom field %s to Contact object ...', custom_field_name)
+    add_custom_field_to_contact(metadata_client, custom_field_name)
+    custom_field_deleted = False
 
     pipeline = None
-    subscription_id = None
-    contact = None
-    contact2 = None
+    contact_id = None
+    contact_id_2 = None
     try:
-        logger.info('Adding custom field to Contact object...')
-        add_custom_field_to_contact(metadata_client)
-
         pipeline_builder = sdc_builder.get_pipeline_builder()
-
-        subscription_id = enable_cdc(client)
 
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
         salesforce_origin.set_attributes(query_existing_data=False,
@@ -1412,75 +1424,72 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
-        logger.info('Starting pipeline')
-        sdc_executor.start_pipeline(pipeline)
-        # Give the pipeline time to connect to the Streaming API
-        time.sleep(10)
+        logger.info('Starting pipeline ...')
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd.wait_for_status('RUNNING')
+        time.sleep(10) # Give the pipeline time to connect to the Streaming API
 
         # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
         # updates could flood a channel."
         # REST API in Simple Salesforce can only create one record at a time, so just create one contact
-        logger.info('Creating first record using Salesforce client...')
-        contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
+        # create change data
+        contact = client.Contact.create(test_data)
+        contact_id = contact['id']
+        logger.info('Created first record of Contact using Salesforce client with id as %s', contact_id)
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        pipeline_cmd.wait_for_pipeline_output_records_count(1)
+        change_records = get_cdc_wiretap_records(wiretap, [contact_id])
+        assert change_records
+        change_record = change_records[0]
+        assert change_record.field['Email'] == test_data['Email']
+        assert change_record.field['Name']['FirstName'] == test_data['FirstName']
+        assert change_record.field['Name']['LastName'] == test_data['LastName']
 
-        # CDC returns more than just the record fields, so verify_snapshot isn't so useful
-        assert len(wiretap.output_records) == 1
-        assert wiretap.output_records[0].header.values['salesforce.cdc.recordIds']
-        assert wiretap.output_records[0].field['Email'] == TEST_DATA['DATA_TO_INSERT'][0]['Email']
-        # CDC returns nested compound fields
-        assert wiretap.output_records[0].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][0][
-            'FirstName']
-        assert wiretap.output_records[0].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][0][
-            'LastName']
-
-        logger.info('Stopping pipeline')
+        logger.info('Stopping pipeline after success ...')
         sdc_executor.stop_pipeline(pipeline)
 
         # Create another record, setting the custom field, then delete the
         # field, so that the current schema doesn't match the CDC notification
-        logger.info('Creating second record using Salesforce client...')
-        TEST_DATA['DATA_TO_INSERT'] = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'][1])
-        TEST_DATA['DATA_TO_INSERT']['BoolCustField__c'] = True
-        contact2 = client.Contact.create(TEST_DATA['DATA_TO_INSERT'])
+        test_data_2 = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'][1])
+        test_data_2[custom_field_name] = True
+        contact_2 = client.Contact.create(test_data_2)
+        contact_id_2 = contact_2['id']
+        logger.info('Created second record of Contact using Salesforce client with id as %s', contact_id_2)
 
-        logger.info('Deleting custom field from Contact object...')
-        delete_custom_field_from_contact(metadata_client)
+        logger.info('Deleting custom field %s from Contact object ...', custom_field_name)
+        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        custom_field_deleted = True
 
-        logger.info('Restarting pipeline')
+        logger.info('Restarting pipeline ...')
         wiretap.reset()
-        sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd_2 = sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd_2.wait_for_status('RUNNING')
+        time.sleep(10) # Give the pipeline time to connect to the Streaming API
 
-        # Give the pipeline time to connect to the Streaming API
-        time.sleep(10)
+        pipeline_cmd_2.wait_for_pipeline_output_records_count(1)
+        change_records_2 = get_cdc_wiretap_records(wiretap, [contact_id_2])
+        assert change_records_2
+        change_record_2 = change_records_2[0]
+        assert change_record_2.field['Email'] == test_data_2['Email']
+        assert change_record_2.field[custom_field_name] == test_data_2[custom_field_name]
+        assert change_record_2.field['Name']['FirstName'] == test_data_2['FirstName']
+        assert change_record_2.field['Name']['LastName'] == test_data_2['LastName']
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
-
-        assert len(wiretap.output_records) == 1
-        assert wiretap.output_records[0].header.values['salesforce.cdc.recordIds']
-        assert wiretap.output_records[0].field['Email'] == TEST_DATA['DATA_TO_INSERT']['Email']
-        assert wiretap.output_records[0].field['BoolCustField__c'] == TEST_DATA['DATA_TO_INSERT'][
-            'BoolCustField__c']
-        # CDC returns nested compound fields
-        assert wiretap.output_records[0].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][
-            'FirstName']
-        assert wiretap.output_records[0].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][
-            'LastName']
-
+        logger.info('Stopping pipeline after success ...')
+        sdc_executor.stop_pipeline(pipeline)
     finally:
+        if contact_id:
+            logger.info('Deleting Contact with id %s ...', contact_id)
+            client.contact.delete(contact_id)
+        if contact_id_2:
+            logger.info('Deleting Contact with id %s ...', contact_id_2)
+            client.contact.delete(contact_id_2)
+        if not custom_field_deleted:
+            logger.info('Deleting custom field %s from Contact object ...', custom_field_name)
+            delete_custom_field_from_contact(metadata_client, custom_field_name)
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
+            logger.info('Stopping pipeline after possible failure ...')
             sdc_executor.stop_pipeline(pipeline)
-        if subscription_id:
-            logger.info('Disabling CDC for Contact...')
-            disable_cdc(client, subscription_id)
-        if contact:
-            logger.info('Deleting contact...')
-            client.contact.delete(contact['id'])
-        if contact2:
-            logger.info('Deleting contact...')
-            client.contact.delete(contact2['id'])
 
 
 @salesforce
@@ -1503,59 +1512,61 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
         enough_buffer_size (:obj:`str`): Whether to test the happy path, or a too-small buffer size: True or False
     """
     client = salesforce.client
-    contact = None
 
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    push_topic, push_topic_name = create_push_topic(client)
+    pipeline = None
+    push_topic = None
+    test_data = TEST_DATA['DATA_TO_INSERT'][0]
 
-    # 1048576 is default buffer size
-    # 256 is big enough to connect, but not to receive data
-    salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
-    salesforce_origin.set_attributes(query_existing_data=False,
-                                     subscribe_for_notifications=True,
-                                     subscription_type=PUSH_TOPIC,
-                                     push_topic=push_topic_name,
-                                     streaming_buffer_size=(1048576 if enough_buffer_size else 256))
-
-    wiretap = pipeline_builder.add_wiretap()
-    salesforce_origin >> wiretap.destination
-
-    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
-    sdc_executor.add_pipeline(pipeline)
-
+    contact = client.Contact.create(test_data)
+    contact_id = contact['id']
+    logger.info('Created a Contact using Salesforce client with id as %s', contact_id)
     try:
-        logger.info('Starting pipeline')
-        sdc_executor.start_pipeline(pipeline)
-        # Give the pipeline time to connect to the Streaming API
-        time.sleep(10)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        # note test_data['LastName'] is random unique data
+        push_topic, push_topic_name = create_push_topic(client, test_data['LastName'])
 
-        # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
-        # updates could flood a channel."
-        # REST API in Simple Salesforce can only create one record at a time, so just create one contact
-        logger.info('Creating record using Salesforce client...')
-        contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
+        # 1048576 is default buffer size
+        # 256 is big enough to connect, but not to receive data
+        salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        salesforce_origin.set_attributes(query_existing_data=False,
+                                         subscribe_for_notifications=True,
+                                         subscription_type=PUSH_TOPIC,
+                                         push_topic=push_topic_name,
+                                         streaming_buffer_size=(1048576 if enough_buffer_size else 256))
 
-        logger.info('Waiting for one record')
+        wiretap = pipeline_builder.add_wiretap()
+        salesforce_origin >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline).wait_for_status('RUNNING')
+        time.sleep(10) # Give the pipeline time to connect to the Streaming API
+
+        # We update the Contact (with same data) to trigger a push event
+        client.Contact.update(contact_id, test_data)
 
         if enough_buffer_size:
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
-            _verify_wiretap_data(wiretap, [TEST_DATA['DATA_TO_INSERT'][0]])
+            verify_wiretap_data(wiretap, [test_data])
+            logger.info('Stopping pipeline after success ...')
+            sdc_executor.stop_pipeline(pipeline)
         else:
             # Pipeline should stop with StageException
-            assert len(wiretap.output_records) == 0
             assert len(wiretap.output_records) == 0
             sdc_executor.get_pipeline_status(pipeline).wait_for_status('RUN_ERROR')
             status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
             assert 'RUN_ERROR' == status
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
-            sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting records ...')
+        if contact_id:
+            logger.info('Deleting Contact with id %s ...', contact_id)
+            client.contact.delete(contact_id)
         if push_topic:
+            logger.info('Deleting PushTopic with id %s ...', push_topic)
             client.PushTopic.delete(push_topic)
-        if contact:
-            client.contact.delete(contact['id'])
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline after possible failure ...')
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @salesforce
@@ -1875,7 +1886,7 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
 
-        _verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
+        verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)
@@ -1996,25 +2007,24 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
 
     pipeline = None
     subscription_id = None
-    contact = None
-    inserted_ids = None
+    test_data = TEST_DATA['DATA_TO_INSERT']
+
+    inserted_ids = get_ids(client.bulk.Contact.insert(test_data), 'id')
+    logger.info('Created Contacts using Salesforce client with id(s) as %s', inserted_ids)
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         if subscription_type == PUSH_TOPIC:
-            subscription_id, push_topic_name = create_push_topic(client)
+            # note test_data 'LastName' is random unique data same across all records
+            subscription_id, push_topic_name = create_push_topic(client, test_data[0]['LastName'])
         else:
             if Version(sdc_builder.version) < Version('3.7.0'):
                 pytest.skip('CDC Feature requires minimum SDC version 3.7.0')
-            subscription_id = enable_cdc(client)
 
         query = ("SELECT Id, FirstName, LastName, Email, LeadSource FROM Contact "
                  "WHERE Id > '000000000000000' AND "
                  f"Email LIKE \'xtest%\' and LastName = '{TEST_DATA['STR_15_RANDOM']}'"
                  " ORDER BY Id")
-
-        first_data_to_insert = TEST_DATA['DATA_TO_INSERT'][:-1]
-        second_data_to_insert = TEST_DATA['DATA_TO_INSERT'][-1]
 
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
         salesforce_origin.set_attributes(query_existing_data=True,
@@ -2032,50 +2042,41 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
-        client = salesforce.client
-        # Using Salesforce client, create rows in Contact.
-        logger.info('Creating rows using Salesforce client ...')
-        inserted_ids = get_ids(client.bulk.Contact.insert(first_data_to_insert), 'id')
+        sdc_executor.start_pipeline(pipeline).wait_for_status('RUNNING')
+        time.sleep(10) # Give the pipeline time to connect to the Streaming API
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(test_data))
 
-        logger.info('Starting pipeline')
-        sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(first_data_to_insert))
-
-        _verify_wiretap_data(wiretap, first_data_to_insert)
-
-        # Give the pipeline time to connect to the Streaming API
-        time.sleep(10)
+        if subscription_type == PUSH_TOPIC:
+            verify_wiretap_data(wiretap, test_data)
+        else:
+            # cannot verify CDC at this point as we not replaying all events prior to pipeline start
+            pass
 
         # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
         # updates could flood a channel."
-        # REST API in Simple Salesforce can only create one record at a time, so just create one contact
-        logger.info('Creating record using Salesforce client...')
-        wiretap.reset()
-        contact = client.Contact.create(second_data_to_insert)
+        # REST API in Simple Salesforce can only create one record at a time, so just update one Contact
+        test_data[0]['FirstName'] = 'Updated FirstName'
+        contact_id = inserted_ids[0]['Id']
+        client.Contact.update(contact_id, test_data[0])
+        logger.info('Updated a Contact using Salesforce client with id as %s', contact_id)
 
-        logger.info('Capturing second batch data')
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(first_data_to_insert) + 1)
+        logger.info('Capturing second batch of data ...')
+        wiretap.reset()
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(test_data) + 1)
 
         if subscription_type == PUSH_TOPIC:
-            _verify_wiretap_data(wiretap, [second_data_to_insert])
+            verify_wiretap_data(wiretap, [test_data[0]])
         else:
-            verify_cdc_wiretap(wiretap, second_data_to_insert)
-
+            change_records = get_cdc_wiretap_records(wiretap, [contact_id])
+            assert change_records
+            change_record = change_records[0]
+            assert change_record.header.values['salesforce.cdc.changeType'] == 'UPDATE'
+            assert change_record.field['Name']['FirstName'] == test_data[0]['FirstName']
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
-            sdc_executor.stop_pipeline(pipeline)
-        if subscription_id:
-            if subscription_type == PUSH_TOPIC:
-                logger.info('Deleting PushTopic...')
-                client.PushTopic.delete(subscription_id)
-            else:
-                logger.info('Disabling CDC for Contact...')
-                disable_cdc(client, subscription_id)
-        if contact:
-            logger.info('Deleting contact...')
-            client.contact.delete(contact['id'])
+        if subscription_id and subscription_type == PUSH_TOPIC:
+            logger.info('Deleting PushTopic with id %s ...', subscription_id)
+            client.PushTopic.delete(subscription_id)
 
 
 @salesforce
@@ -2096,60 +2097,79 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
     client = salesforce.client
 
     pipeline = None
-    subscription_id = None
-    contact = None
+    contact_id = None
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
-
-        subscription_id = enable_cdc(client)
-
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        # Since we are gonna retrieve all events, lets increase buffer size (from default 1048576 bytes)
         salesforce_origin.set_attributes(query_existing_data=False,
                                          subscribe_for_notifications=True,
                                          subscription_type=CDC,
                                          change_data_capture_object=CONTACT,
-                                         replay_option=ALL_EVENTS)
+                                         replay_option=ALL_EVENTS,
+                                         streaming_buffer_size=10485760)
 
         wiretap = pipeline_builder.add_wiretap()
         salesforce_origin >> wiretap.destination
 
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline)
-        # Give the pipeline time to connect to the Streaming API
-        time.sleep(10)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
-        original_length = len(wiretap.output_records)
-        sdc_executor.stop_pipeline(pipeline)
 
-        logger.info('Creating a new record using Salesforce client...')
+        logger.info('Starting pipeline ...')
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd.wait_for_status('RUNNING')
+        time.sleep(10) # Give the pipeline time to connect to the Streaming API
+
+        # create change data
         contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
+        contact_id = contact['id']
+        logger.info('Created a Contact using Salesforce client with id as %s', contact_id)
 
-        logger.info('Starting pipeline')
-        sdc_executor.start_pipeline(pipeline)
-        # Give the pipeline time to connect to the Streaming API
-        time.sleep(10)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        def failure(timeout):
+            raise TimeoutError('Timed out after {} seconds waiting to get CDC record(s) for Contact id {}'.format(
+                               timeout, contact_id))
 
-        # Verify that we read one more entry than the first time, and check its values are correct
-        assert len(wiretap.output_records) == (original_length + 1)
-        assert wiretap.output_records[original_length].header.values['salesforce.cdc.recordIds']
-        assert wiretap.output_records[original_length].field['Email'] == TEST_DATA['DATA_TO_INSERT'][0]['Email']
-        # CDC returns nested compound fields
-        assert wiretap.output_records[original_length].field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][0][
-            'FirstName']
-        assert wiretap.output_records[original_length].field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][0][
-            'LastName']
+        pipeline_cmd.wait_for_pipeline_output_records_count(1) # do an initial wait before metrics counter is available
+        current_count = None
+        change_records = []
 
-        logger.info('Stopping pipeline')
+        def change_records_condition():
+            nonlocal current_count
+            # we make sure pipeline is running - it cannot if it has API issues with Salesforce (like timeout) and
+            # we don't want to keep looping in the condition
+            if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') != 'RUNNING':
+                raise Exception('Pipeline is not in a RUNNING state. It possibly errored out')
+            metrics = sdc_executor.get_pipeline_metrics(pipeline)
+            if metrics:
+                new_count = metrics.pipeline.output_record_count
+                if not current_count or new_count > current_count:
+                    change_records.extend([record for record in wiretap.output_records
+                                           if record.header.values.get('salesforce.cdc.recordIds') == contact_id])
+                    if change_records:
+                        return True
+                current_count = new_count
+
+        wait_for_condition(condition=change_records_condition, failure=failure, time_between_checks=10, timeout=300)
+
+        assert change_records
+        change_record = change_records[0]
+        assert change_record.field['Email'] == TEST_DATA['DATA_TO_INSERT'][0]['Email']
+        assert change_record.field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][0]['FirstName']
+        assert change_record.field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][0]['LastName']
+
+        logger.info('Stopping pipeline after success ...')
         sdc_executor.stop_pipeline(pipeline)
     finally:
+        if contact_id:
+            logger.info('Deleting Contact with id %s ...', contact_id)
+            client.contact.delete(contact_id)
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
-            sdc_executor.stop_pipeline(pipeline)
-        if subscription_id:
-            logger.info('Disabling CDC for Contact...')
-            disable_cdc(client, subscription_id)
-        if contact:
-            logger.info('Deleting contact...')
-            client.contact.delete(contact['id'])
+            logger.info('Stopping pipeline after possible failure ...')
+            try:
+                # An errored pipeline cannot be stopped as pipeline's Salesforce connection seems like it goes into
+                # retry. Till SDC-16822 is resolved, we will have to force stop so as other tests which rely on
+                # Salesforce API wont get impacted
+                sdc_executor.stop_pipeline(pipeline, timeout_sec=120)
+            except:
+                sdc_executor.stop_pipeline(pipeline, force=True)
+                raise
