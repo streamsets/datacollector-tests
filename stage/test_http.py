@@ -1427,3 +1427,57 @@ def test_http_destination_with_body(sdc_builder, sdc_executor, method, http_clie
     finally:
         if not keep_data:
             http_mock.delete_mock()
+
+
+# SDC-16431:  Allow sending body with DELETE and other HTTP methods in HTTP components
+@http
+@sdc_min_version("3.11.0")
+@pytest.mark.parametrize('method', [
+    'GET',
+    'PUT',
+    'POST',
+    'DELETE',
+    'HEAD',
+    'PATCH'
+])
+def test_http_processor_duplicate_requests(sdc_builder, sdc_executor, method, http_client, keep_data):
+    expected_data = json.dumps({'A': 1})
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('Dev Raw Data Source')
+        origin.set_attributes(data_format='TEXT', raw_data='dummy')
+        origin.stop_after_first_batch = True
+
+        processor = builder.add_stage('HTTP Client', type='processor')
+        processor.set_attributes(data_format='JSON', http_method=method,
+                                 resource_url=mock_uri,
+                                 output_field='/result',
+                                 request_data="{'something': 'here'}",
+                                 multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS')
+        wiretap = builder.add_wiretap()
+
+        origin >> processor >> wiretap.destination
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == 1
+
+        # The mock server won't return body on HEAD (rightfully so), but we can still send body to it though
+        if method != 'HEAD':
+            assert records[0].field['result'] == {'A': 1}
+
+        # Finally, check that only one request has been made
+        assert len(http_mock.get_request()) == 1
+
+    finally:
+        if not keep_data:
+            http_mock.delete_mock()
