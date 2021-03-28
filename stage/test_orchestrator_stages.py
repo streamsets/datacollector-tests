@@ -14,9 +14,10 @@
 
 import logging
 import pytest
+import string
 import uuid
 
-from streamsets.sdk.utils import Version
+from streamsets.sdk.utils import get_random_string
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import Version
 
@@ -388,6 +389,85 @@ def test_stopping_pipeline_on_error(sdc_builder, sdc_executor):
     status = sdc_executor.get_pipeline_status(orchestrator_pipeline).response.json()
     assert status.get('status') == 'RUN_ERROR'
     assert 'Failed to run pipeline1 due to random error' in status.get('message')
+
+
+@pytest.mark.parametrize('propagate', [True, False])
+@sdc_min_version('3.23.0')
+def test_start_pipeline_origin_propagate_runtime_parameters(sdc_builder, sdc_executor, propagate):
+
+    group = get_random_string(string.ascii_lowercase, 8)
+
+    # Triggered pipeline setup - Start
+    pipeline01_builder = sdc_builder.get_pipeline_builder()
+    pipeline01_origin = pipeline01_builder.add_stage('Dev Raw Data Source')
+    pipeline01_origin.stop_after_first_batch = True
+    pipeline01_wiretap = pipeline01_builder.add_wiretap()
+    pipeline01_evaluator = pipeline01_builder.add_stage('Expression Evaluator')
+    pipeline01_evaluator.field_expressions = \
+        [
+            {
+                'fieldToSet': '/f4',
+                'expression': '${sdc:id()}'
+            },
+            {
+                'fieldToSet': '/f5',
+                'expression': 'Token'
+            },
+            {
+                'fieldToSet': '/f6',
+                'expression': '${Key01}'
+            },
+            {
+                'fieldToSet': '/f7',
+                'expression': '${Key02}'
+            }
+        ]
+    pipeline01_origin >> pipeline01_evaluator
+    pipeline01_evaluator >> pipeline01_wiretap.destination
+    pipeline01 = pipeline01_builder.build(f'Triggered pipeline @ SDC :: {group}')
+    pipeline01.add_parameters(Key01='ValueFromTriggeredPipeline01',
+                                       Key02='ValueFromTriggeredPipeline02')
+    sdc_executor.add_pipeline(pipeline01)
+    sdc_executor.validate_pipeline(pipeline01)
+    # Triggered pipeline setup - End
+
+    # Triggering pipeline setup - Start
+    pipeline02_builder = sdc_builder.get_pipeline_builder()
+    pipeline02_origin = pipeline02_builder.add_stage('Start Pipelines', type='origin')
+    pipeline02_origin.task_name = 'Task'
+    pipeline02_origin.pipelines = \
+    [
+        {
+            'pipelineIdType': 'ID',
+            'pipelineId': pipeline01.id,
+            'runtimeParameters': '''{
+                                        "Key01": "ValueFromTriggeringPipeline01",
+                                        "Key02": "ValueFromTriggeringPipeline02"
+                                    }''',
+            'propagateRuntimeParameters': propagate
+        }
+    ]
+    pipeline02_wiretap = pipeline02_builder.add_wiretap()
+    pipeline02_origin >> pipeline02_wiretap.destination
+    pipeline02 = pipeline02_builder.build(f'Triggering pipeline @ SDC :: {group}')
+    sdc_executor.add_pipeline(pipeline02)
+    sdc_executor.validate_pipeline(pipeline02)
+    # Triggering pipeline setup - End
+
+    # Actual execution - Start
+    try:
+        sdc_executor.start_pipeline(pipeline02).wait_for_finished()
+        pipeline01_records = pipeline01_wiretap.output_records
+        assert len(pipeline01_records) == 1
+        assert pipeline01_records[0].field['f4'] == sdc_executor.id
+        if propagate:
+            assert pipeline01_records[0].field['f6'] == 'ValueFromTriggeringPipeline01'
+        else:
+            assert pipeline01_records[0].field['f6'] == 'ValueFromTriggeredPipeline01'
+    finally:
+        sdc_builder.remove_pipeline(pipeline02)
+        sdc_builder.remove_pipeline(pipeline01)
+    # Actual execution - End
 
 
 def _create_batch_pipeline(sdc_builder, title):
