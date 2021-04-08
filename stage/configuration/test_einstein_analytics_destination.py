@@ -11,14 +11,47 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import string
+
 import pytest
+from streamsets.sdk.exceptions import ValidationError
 
 from streamsets.testframework.decorators import stub
 
+from streamsets.testframework.markers import salesforce, sdc_min_version
+from streamsets.sdk.exceptions import ValidationError
+from streamsets.testframework.utils import get_random_string
 
-@stub
-def test_api_version(sdc_builder, sdc_executor):
-    pass
+@salesforce
+@sdc_min_version('3.23.0')
+def test_api_version(sdc_builder, sdc_executor, salesforce):
+    """Verify that error FORCE-51 is thrown when using an API field that is not formatted as a valid Salesforce API.
+
+    The pipeline looks like:
+        dev_raw_data_source >> analytics_destination
+
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    analytics_destination = pipeline_builder.add_stage('Einstein Analytics', type='destination')
+
+    edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
+
+    analytics_destination.set_attributes(api_version='bad_api',
+                                         edgemart_alias=edgemart_alias)
+
+    dev_raw_data_source >> analytics_destination
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.validate_pipeline(pipeline)
+        pytest.fail('This point should not be reached')
+    except ValidationError as error:
+        assert error.issues['issueCount'] == 1
+        assert 'FORCE_51' in error.issues['stageIssues']['EinsteinAnalytics_01'][0]['message']
+
 
 
 @stub

@@ -14,6 +14,7 @@
 
 import logging
 import pytest
+from streamsets.sdk.exceptions import ValidationError
 
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.decorators import stub
@@ -28,9 +29,36 @@ logger = logging.getLogger(__name__)
 def _set_up_random(salesforce):
     set_up_random(salesforce)
 
-@stub
-def test_api_version(sdc_builder, sdc_executor):
-    pass
+@salesforce
+@sdc_min_version('3.23.0')
+def test_api_version(sdc_builder, sdc_executor, salesforce):
+    """Verify that error FORCE-51 is thrown when using an API field that is not formatted as a valid Salesforce API.
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_lookup_processor >> wiretap
+
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
+    wiretap = pipeline_builder.add_wiretap()
+
+    query = "SELECT test FROM Test WHERE test.Id <> 'testid' ORDER BY test.Id"
+
+    salesforce_lookup.set_attributes(api_version='bad_api',
+                                     soql_query=query)
+
+    dev_raw_data_source >> salesforce_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.validate_pipeline(pipeline)
+        pytest.fail('This point should not be reached')
+    except ValidationError as error:
+        assert error.issues['issueCount'] == 1
+        assert 'FORCE_51' in error.issues['stageIssues']['SalesforceLookup_01'][0]['message']
 
 
 @stub
