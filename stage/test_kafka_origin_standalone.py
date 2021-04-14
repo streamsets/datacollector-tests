@@ -239,6 +239,7 @@ def test_kafka_consumer_null_payload(sdc_builder, sdc_executor, cluster):
         kafka_consumer >> wiretap.destination
     """
     message = json.dumps({'abc': '123'})
+    expected_error_message = 'KAFKA_74 - Tombstone message: payload is null'
     topic = get_random_string()
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -263,6 +264,7 @@ def test_kafka_consumer_null_payload(sdc_builder, sdc_executor, cluster):
     # Check the output records, there should be only 1 message, since the null should be discarded
     output_records = [record.field for record in wiretap.output_records]
     assert len(output_records) == 1
-    # Check that the null record did not generate an exception either
-    error_records = [record.field for record in wiretap.error_records]
-    assert len(error_records) == 0
+    # Check that the null record did generate an error record
+    assert 1 == len(wiretap.error_records)
+    error_message = wiretap.error_records[0].header['errorMessage']
+    assert expected_error_message == error_message
