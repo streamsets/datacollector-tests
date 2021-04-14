@@ -458,7 +458,7 @@ def _get_azure_eventhub_consumer_stage(builder, container_name, event_hub_name, 
 
 
 @azure('eventhub')
-@pytest.mark.parametrize('max_threads', [1, 10, 20])
+@pytest.mark.parametrize('max_threads', [1, 3])
 def test_multithreading(sdc_builder, sdc_executor, azure, max_threads):
     """
     Test that using multithreaded pipeline we can start our pipeline multiple times adding more objects in between
@@ -491,7 +491,7 @@ def test_multithreading(sdc_builder, sdc_executor, azure, max_threads):
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
 
-        send_records = [{'Body': f'Event {msg}'} for msg in range(20)]
+        send_records = [{'Body': f'Event {msg}'} for msg in range(10)]
         eh_service_bus.send_event(event_hub_name, json.dumps(send_records))
 
         sdc_executor.start_pipeline(consumer_origin_pipeline)
@@ -499,7 +499,7 @@ def test_multithreading(sdc_builder, sdc_executor, azure, max_threads):
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         results = [{key: value for key, value in record.items()} for record in wiretap.output_records[0].field]
-        assert len(results) == 20
+        assert len(results) == 10
         assert results == send_records
     finally:
         try:
