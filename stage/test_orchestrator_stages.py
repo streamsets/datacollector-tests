@@ -99,7 +99,7 @@ def test_control_hub_api_processor(sdc_builder, sdc_executor):
     dev_raw_data_source.stop_after_first_batch = True
 
     control_hub_api_processor = pipeline_builder.add_stage('Control Hub API')
-    control_hub_api_processor.control_hub_url = 'https://cloud.streamsets.com/public-rest/v1/health'
+    control_hub_api_processor.control_hub_api_url = 'https://cloud.streamsets.com/public-rest/v1/health'
     control_hub_api_processor.output_field = "/"
     control_hub_api_processor.control_hub_user_name = "user"
     control_hub_api_processor.password = "password"
