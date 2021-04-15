@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -149,10 +150,66 @@ def test_directory_in_header(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'directory_in_header': False}])
-def test_directory_template(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@sdc_min_version('3.23.0')
+def test_directory_template(sdc_builder, sdc_executor):
+    """Test Directory Template. Two pipelines are started, each one generating a _tmp_sdc file. Their paths are similar
+    but use different parameters. While they are running, we check that starting the second pipeline did not rename the
+    _tmp_sdc file of the first pipeline.
+    The pipelines look like:
+        dev_data_generator >> local_fs
+    """
+
+    # Create first pipeline
+    tmp_directory_1 = '/tmp/out/${directory1}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(directory_template=tmp_directory_1,
+                            data_format='JSON')
+
+    dev_data_generator >> local_fs
+
+    pipeline1 = pipeline_builder.build().configure_for_environment()
+    pipeline1.add_parameters(directory1='test1')
+    sdc_executor.add_pipeline(pipeline1)
+
+    # Create second pipeline
+    tmp_directory_2 = '/tmp/out/${directory2}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(directory_template=tmp_directory_2,
+                            data_format='JSON')
+
+    dev_data_generator >> local_fs
+
+    pipeline2 = pipeline_builder.build().configure_for_environment()
+    pipeline2.add_parameters(directory2='test2')
+    sdc_executor.add_pipeline(pipeline2)
+
+    try:
+        sdc_executor.start_pipeline(pipeline1).wait_for_pipeline_batch_count(5)
+        sdc_executor.start_pipeline(pipeline2).wait_for_pipeline_batch_count(5)
+
+        final_tmp_directory_1 = '/tmp/out/test1'
+        final_tmp_directory_2 = '/tmp/out/test2'
+
+        num_tmp_files_1 = int(sdc_executor.execute_shell(f'ls {final_tmp_directory_1} | grep _tmp_ | wc -l').stdout)
+        num_tmp_files_2 = int(sdc_executor.execute_shell(f'ls {final_tmp_directory_2} | grep _tmp_ | wc -l').stdout)
+
+        assert num_tmp_files_1 == 1
+        assert num_tmp_files_2 == 1
+    finally:
+        sdc_executor.stop_pipeline(pipeline1)
+        sdc_executor.stop_pipeline(pipeline2)
+        logger.info('Deleting files created by Local FS in %s ...', tmp_directory_1)
+        sdc_executor.execute_shell(f'rm -R {tmp_directory_1} ')
+        logger.info('Deleting files created by Local FS in %s ...', tmp_directory_2)
+        sdc_executor.execute_shell(f'rm -R {tmp_directory_2} ')
 
 
 @stub
