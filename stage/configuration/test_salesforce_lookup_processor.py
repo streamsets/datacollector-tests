@@ -30,7 +30,7 @@ def _set_up_random(salesforce):
     set_up_random(salesforce)
 
 @salesforce
-@sdc_min_version('3.23.0')
+@sdc_min_version('4.0.0')
 def test_api_version(sdc_builder, sdc_executor, salesforce):
     """Verify that error FORCE-51 is thrown when using an API field that is not formatted as a valid Salesforce API.
 

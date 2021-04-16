@@ -150,7 +150,7 @@ def test_directory_in_header(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@sdc_min_version('3.23.0')
+@sdc_min_version('4.0.0')
 def test_directory_template(sdc_builder, sdc_executor):
     """Test Directory Template. Two pipelines are started, each one generating a _tmp_sdc file. Their paths are similar
     but use different parameters. While they are running, we check that starting the second pipeline did not rename the

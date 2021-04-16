@@ -23,7 +23,7 @@ from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.utils import get_random_string
 
 @salesforce
-@sdc_min_version('3.23.0')
+@sdc_min_version('4.0.0')
 def test_api_version(sdc_builder, sdc_executor, salesforce):
     """Verify that error FORCE-51 is thrown when using an API field that is not formatted as a valid Salesforce API.
 

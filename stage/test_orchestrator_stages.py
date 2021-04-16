@@ -392,7 +392,7 @@ def test_stopping_pipeline_on_error(sdc_builder, sdc_executor):
 
 
 @pytest.mark.parametrize('propagate', [True, False])
-@sdc_min_version('3.23.0')
+@sdc_min_version('4.0.0')
 def test_start_pipeline_origin_propagate_runtime_parameters(sdc_builder, sdc_executor, propagate):
 
     group = get_random_string(string.ascii_lowercase, 8)
