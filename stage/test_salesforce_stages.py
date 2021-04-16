@@ -39,6 +39,7 @@ from .utils.utils_salesforce import (insert_data_and_verify_using_wiretap, verif
                                      TEST_DATA, TIMEOUT)
 
 CONTACT = 'Contact'
+ACCOUNT = 'Account'
 CDC = 'CDC'
 ALL_EVENTS = 'ALL_EVENTS'
 PUSH_TOPIC = 'PUSH_TOPIC'
@@ -2097,7 +2098,7 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
     client = salesforce.client
 
     pipeline = None
-    contact_id = None
+    account_id = None
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
         salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
@@ -2105,7 +2106,7 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
         salesforce_origin.set_attributes(query_existing_data=False,
                                          subscribe_for_notifications=True,
                                          subscription_type=CDC,
-                                         change_data_capture_object=CONTACT,
+                                         change_data_capture_object=ACCOUNT,
                                          replay_option=ALL_EVENTS,
                                          streaming_buffer_size=10485760)
 
@@ -2121,13 +2122,16 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
         time.sleep(10) # Give the pipeline time to connect to the Streaming API
 
         # create change data
-        contact = client.Contact.create(TEST_DATA['DATA_TO_INSERT'][0])
-        contact_id = contact['id']
-        logger.info('Created a Contact using Salesforce client with id as %s', contact_id)
+        test_data = {'Name': 'Test1', 'Fax': 'testFax', 'Site': 'testLocation'}
+
+
+        account = client.Account.create(test_data)
+        account_id = account['id']
+        logger.info('Created an Account using Salesforce client with id as %s', account_id)
 
         def failure(timeout):
-            raise TimeoutError('Timed out after {} seconds waiting to get CDC record(s) for Contact id {}'.format(
-                               timeout, contact_id))
+            raise TimeoutError('Timed out after {} seconds waiting to get CDC record(s) for Account id {}'.format(
+                               timeout, account_id))
 
         pipeline_cmd.wait_for_pipeline_output_records_count(1) # do an initial wait before metrics counter is available
         current_count = None
@@ -2144,7 +2148,7 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
                 new_count = metrics.pipeline.output_record_count
                 if not current_count or new_count > current_count:
                     change_records.extend([record for record in wiretap.output_records
-                                           if record.header.values.get('salesforce.cdc.recordIds') == contact_id])
+                                           if record.header.values.get('salesforce.cdc.recordIds') == account_id])
                     if change_records:
                         return True
                 current_count = new_count
@@ -2153,16 +2157,16 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
 
         assert change_records
         change_record = change_records[0]
-        assert change_record.field['Email'] == TEST_DATA['DATA_TO_INSERT'][0]['Email']
-        assert change_record.field['Name']['FirstName'] == TEST_DATA['DATA_TO_INSERT'][0]['FirstName']
-        assert change_record.field['Name']['LastName'] == TEST_DATA['DATA_TO_INSERT'][0]['LastName']
+        assert change_record.field['Name'] == 'Test1'
+        assert change_record.field['Fax'] == 'testFax'
+        assert change_record.field['Site'] == 'testLocation'
 
         logger.info('Stopping pipeline after success ...')
         sdc_executor.stop_pipeline(pipeline)
     finally:
-        if contact_id:
-            logger.info('Deleting Contact with id %s ...', contact_id)
-            client.contact.delete(contact_id)
+        if account_id:
+            logger.info('Deleting Contact with id %s ...', account_id)
+            client.account.delete(account_id)
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline after possible failure ...')
             try:
