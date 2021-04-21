@@ -1089,6 +1089,466 @@ def test_field_type_converter_parse_errors(sdc_builder, sdc_executor, input, tar
     assert wiretap.error_records[0].header['errorCode'] == 'CONVERTER_00'
 
 
+@pytest.mark.parametrize('target_type', [
+     'CHAR',
+     'BYTE',
+     'SHORT',
+     'INTEGER',
+     'LONG',
+     'FLOAT',
+     'DOUBLE',
+     'DECIMAL',
+     'DATE',
+     'TIME',
+     'DATETIME',
+     'ZONED_DATETIME',
+])
+# SDC-16770: field type converter is not ignoring empty string when converting them to double
+def test_field_type_converter_source_empty_error_by_type(sdc_builder, sdc_executor, target_type):
+    """Ensure that an error record is given when trying to convert from emtpy string"""
+    raw_data = json.dumps([{'empty': '', 'list': ['']}, ''])
+    converter_configs = [
+        {
+            'sourceType': 'STRING',
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD_HH_MM_SS",
+            "encoding": "UTF-8"
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_TYPE', whole_type_converter_configs=converter_configs)
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 0
+    assert len(wiretap.error_records) == 2
+    for record in wiretap.error_records:
+        assert record.header['errorCode'] == 'CONVERTER_00'
+
+
+@sdc_min_version('4.0.0')
+@pytest.mark.parametrize('target_type', [
+     'CHAR',
+     'BYTE',
+     'SHORT',
+     'INTEGER',
+     'LONG',
+     'FLOAT',
+     'DOUBLE',
+     'DECIMAL',
+     'DATE',
+     'TIME',
+     'DATETIME',
+     'ZONED_DATETIME',
+])
+# SDC-16770: field type converter is not ignoring empty string when converting them to double
+def test_field_type_converter_source_empty_null_by_type(sdc_builder, sdc_executor, target_type):
+    """Ensure that converting from emtpy string with the NULL config results in null"""
+    raw_data = json.dumps([{'empty': '', 'list': ['']}, ''])
+    converter_configs = [
+        {
+            'sourceType': 'STRING',
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD_HH_MM_SS",
+            "encoding": "UTF-8",
+            'inputFieldEmpty': 'NULL'
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_TYPE', whole_type_converter_configs=converter_configs)
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 2
+    assert len(wiretap.error_records) == 0
+
+    output = wiretap.output_records
+
+    assert output[0].field['empty'].type == target_type
+    assert output[0].field['empty'].value is None
+
+    assert len(output[0].field['list']) == 1
+    assert output[0].field['list'][0].type == target_type
+    assert output[0].field['list'][0].value is None
+
+    assert output[1].field.type == target_type
+    assert output[1].field.value is None
+
+
+@sdc_min_version('4.0.0')
+@pytest.mark.parametrize('target_type', [
+     'CHAR',
+     'BYTE',
+     'SHORT',
+     'INTEGER',
+     'LONG',
+     'FLOAT',
+     'DOUBLE',
+     'DECIMAL',
+     'DATE',
+     'TIME',
+     'DATETIME',
+     'ZONED_DATETIME',
+])
+# SDC-16770: field type converter is not ignoring empty string when converting them to double
+def test_field_type_converter_source_empty_delete_by_type(sdc_builder, sdc_executor, target_type):
+    """Ensure that emtpy string fields are deleted with the DELETE config"""
+    raw_data = json.dumps([{'empty': '', 'list': ['']}, ''])
+    converter_configs = [
+        {
+            'sourceType': 'STRING',
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD_HH_MM_SS",
+            "encoding": "UTF-8",
+            'inputFieldEmpty': 'DELETE'
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_TYPE', whole_type_converter_configs=converter_configs)
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert len(wiretap.error_records) == 0
+
+    output = wiretap.output_records
+
+    assert 'empty' not in output[0].field
+
+    assert len(output[0].field['list']) == 0
+
+
+@sdc_min_version('4.0.0')
+@pytest.mark.parametrize('target_type', [
+     'CHAR',
+     'BYTE',
+     'SHORT',
+     'INTEGER',
+     'LONG',
+     'FLOAT',
+     'DOUBLE',
+     'DECIMAL',
+     'DATE',
+     'TIME',
+     'DATETIME',
+     'ZONED_DATETIME',
+])
+# SDC-16770: field type converter is not ignoring empty string when converting them to double
+def test_field_type_converter_source_empty_ignore_by_type(sdc_builder, sdc_executor, target_type):
+    """Ensure that empty strings are not converted with the IGNORE config"""
+    raw_data = json.dumps([{'empty': '', 'list': ['']}, ''])
+    converter_configs = [
+        {
+            'sourceType': 'STRING',
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD_HH_MM_SS",
+            "encoding": "UTF-8",
+            'inputFieldEmpty': 'IGNORE'
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_TYPE', whole_type_converter_configs=converter_configs)
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 2
+    assert len(wiretap.error_records) == 0
+
+    output = wiretap.output_records
+
+    assert output[0].field['empty'].type == 'STRING'
+    assert output[0].field['empty'].value == ''
+
+    assert len(output[0].field['list']) == 1
+    assert output[0].field['list'][0].type == 'STRING'
+    assert output[0].field['list'][0].value == ''
+
+    assert output[1].field.type == 'STRING'
+    assert output[1].field.value == ''
+
+
+@pytest.mark.parametrize('target_type', [
+     'CHAR',
+     'BYTE',
+     'SHORT',
+     'INTEGER',
+     'LONG',
+     'FLOAT',
+     'DOUBLE',
+     'DECIMAL',
+     'DATE',
+     'TIME',
+     'DATETIME',
+     'ZONED_DATETIME',
+])
+# SDC-16770: field type converter is not ignoring empty string when converting them to double
+def test_field_type_converter_source_empty_error_by_field(sdc_builder, sdc_executor, target_type):
+    """Ensure that an error record is given when trying to convert from emtpy string"""
+    raw_data = json.dumps([{'value': ''}])
+    converter_configs = [
+        {
+            'fields': ['/value'],
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD_HH_MM_SS",
+            "encoding": "UTF-8",
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_FIELD', field_type_converter_configs=converter_configs)
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 0
+    assert len(wiretap.error_records) == 1
+    for record in wiretap.error_records:
+        assert record.header['errorCode'] == 'CONVERTER_00'
+
+
+@sdc_min_version('4.0.0')
+@pytest.mark.parametrize('target_type', [
+     'CHAR',
+     'BYTE',
+     'SHORT',
+     'INTEGER',
+     'LONG',
+     'FLOAT',
+     'DOUBLE',
+     'DECIMAL',
+     'DATE',
+     'TIME',
+     'DATETIME',
+     'ZONED_DATETIME',
+])
+# SDC-16770: field type converter is not ignoring empty string when converting them to double
+def test_field_type_converter_source_empty_null_by_field(sdc_builder, sdc_executor, target_type):
+    """Ensure that converting from emtpy string with the NULL config results in null"""
+    raw_data = json.dumps([{'value': ''}])
+    converter_configs = [
+        {
+            'fields': ['/value'],
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD_HH_MM_SS",
+            "encoding": "UTF-8",
+            'inputFieldEmpty': 'NULL'
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_FIELD', field_type_converter_configs=converter_configs)
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert len(wiretap.error_records) == 0
+
+    output = wiretap.output_records
+
+    assert output[0].field['value'].type == target_type
+    assert output[0].field['value'].value is None
+
+
+@sdc_min_version('4.0.0')
+@pytest.mark.parametrize('target_type', [
+     'CHAR',
+     'BYTE',
+     'SHORT',
+     'INTEGER',
+     'LONG',
+     'FLOAT',
+     'DOUBLE',
+     'DECIMAL',
+     'DATE',
+     'TIME',
+     'DATETIME',
+     'ZONED_DATETIME',
+])
+# SDC-16770: field type converter is not ignoring empty string when converting them to double
+def test_field_type_converter_source_empty_delete_by_field(sdc_builder, sdc_executor, target_type):
+    """Ensure that emtpy string fields are deleted with the DELETE config"""
+    raw_data = json.dumps([{'value': ''}])
+    converter_configs = [
+        {
+            'fields': ['/value'],
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD_HH_MM_SS",
+            "encoding": "UTF-8",
+            'inputFieldEmpty': 'DELETE'
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_FIELD', field_type_converter_configs=converter_configs)
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert len(wiretap.error_records) == 0
+
+    output = wiretap.output_records
+
+    assert 'value' not in output[0].field
+
+
+@sdc_min_version('4.0.0')
+@pytest.mark.parametrize('target_type', [
+     'CHAR',
+     'BYTE',
+     'SHORT',
+     'INTEGER',
+     'LONG',
+     'FLOAT',
+     'DOUBLE',
+     'DECIMAL',
+     'DATE',
+     'TIME',
+     'DATETIME',
+     'ZONED_DATETIME',
+])
+# SDC-16770: field type converter is not ignoring empty string when converting them to double
+def test_field_type_converter_source_empty_ignore_by_field(sdc_builder, sdc_executor, target_type):
+    """Ensure that empty strings are not converted with the IGNORE config"""
+    raw_data = json.dumps([{'value': ''}])
+    converter_configs = [
+        {
+            'fields': ['/value'],
+            'targetType': target_type,
+            'dataLocale': 'en,US',
+            'scale': -1,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY',
+            "dateFormat": "YYYY_MM_DD_HH_MM_SS",
+            "encoding": "UTF-8",
+            'inputFieldEmpty': 'IGNORE'
+        }
+    ]
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source')
+    source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                          stop_after_first_batch=True)
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.set_attributes(conversion_method='BY_FIELD', field_type_converter_configs=converter_configs)
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> wiretap.destination
+
+    pipeline = builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert len(wiretap.error_records) == 0
+
+    output = wiretap.output_records
+
+    assert output[0].field['value'].type == 'STRING'
+    assert output[0].field['value'].value == ''
+
+
 def test_field_zip(sdc_builder, sdc_executor):
     """Test field zip processor. The pipeline would look like:
 
