@@ -12,8 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import pytest
+import logging
+import string
 
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import database, sdc_min_version
+from streamsets.testframework.utils import get_random_string
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_SCHEMA_NAME = 'dbo'
 
 
 @stub
@@ -56,11 +64,95 @@ def test_convert_timestamp_to_string(sdc_builder, sdc_executor, stage_attributes
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'enable_schema_changes_event': False},
-                                              {'enable_schema_changes_event': True}])
-def test_enable_schema_changes_event(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@sdc_min_version('4.0.0.0')
+@pytest.mark.parametrize('enable_schema_changes_event', [False, True])
+def test_enable_schema_changes_event(sdc_builder, sdc_executor, database, enable_schema_changes_event):
+    """Test for SQL Server CDC origin stage 'Enable Schema Changes Event' parameter.
+    Create a table and enable CDC on it, then add some data and change the table schema. If the parameter is true,
+    we should receive an extra event indicating the schema has changed.
+    The pipeline looks like:
+        sql_server_cdc_origin >> wiretap
+    And for events:
+        sql_server_cdc_origin >= wiretap
+    """
+    num_of_tables = 1
+    schema_name = DEFAULT_SCHEMA_NAME
+    table_prefix = get_random_string(string.ascii_lowercase, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('SQL Server CDC Client')
+    origin.enable_schema_changes_event = enable_schema_changes_event
+    origin.table_configs = [{'capture_instance': f'dbo_{table_prefix}_%'}]
+
+    wiretap_out = builder.add_wiretap()
+    wiretap_event = builder.add_wiretap()
+
+    origin >> wiretap_out.destination
+    origin >= wiretap_event.destination
+
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = database.engine.connect()
+    try:
+        test_value = 42
+
+        table_name = f"{table_prefix}_{get_random_string(string.ascii_lowercase, 20)}"
+        connection.execute(f"CREATE TABLE {schema_name}.{table_name}(id INT)")
+        _enable_cdc(connection, schema_name, table_name)
+        connection.execute(f"INSERT INTO {schema_name}.{table_name} VALUES({test_value})")
+
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = wiretap_out.output_records
+        assert len(records) == 1
+        assert records[0].field['id'] == test_value
+
+        # Add a new column to the tables
+        logger.info('Adding the column new_column varchar(10) on %s.%s...', schema_name, table_name)
+        connection.execute(f'ALTER TABLE {table_name} ADD new_column INT')
+
+        # Reset record accumulation
+        wiretap_out.reset()
+        wiretap_event.reset()
+
+        # Insert new data to the tables
+        logger.info("Inserting new row into %s", table_name)
+        connection.execute(f"INSERT INTO {schema_name}.{table_name} VALUES({test_value}, {test_value})")
+
+        logger.info("Waiting on pipeline to finish processing all records")
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Check that the insert was read and the number of times the schema change event was recorded
+        records = wiretap_out.output_records
+        events = wiretap_event.output_records
+
+        assert len(records) == num_of_tables
+        assert records[0].field['id'] == test_value
+
+        changes = 0
+        event_message = ['source-table-name']
+        for i in range(0, len(events)):
+            if any(substring in str(events[i]) for substring in event_message):
+                changes += 1
+
+        # If 'enable_schema_changes_event' is true, the event should be registered once, otherwise it should not appear
+        if enable_schema_changes_event:
+            assert changes == 1
+        else:
+            assert changes == 0
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        _disable_cdc(connection, schema_name, table_name)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f"DROP TABLE {schema_name}.{table_name}")
 
 
 @stub
@@ -228,3 +320,26 @@ def test_use_direct_table_query(sdc_builder, sdc_executor, stage_attributes):
 def test_username(sdc_builder, sdc_executor, stage_attributes):
     pass
 
+
+def _enable_cdc(connection, schema_name, table_name, capture_instance=None):
+    if capture_instance is None:
+        capture_instance = f"{schema_name}_{table_name}"
+
+    logger.info('Enabling CDC on %s.%s into table %s...', schema_name, table_name, capture_instance)
+    connection.execute(f'EXEC sys.sp_cdc_enable_table '
+                       f'@source_schema=N\'{schema_name}\', '
+                       f'@source_name=N\'{table_name}\','
+                       f'@role_name = NULL, '
+                       f'@capture_instance={capture_instance}')
+
+
+def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
+    if capture_instance is None:
+        capture_instance = f"{schema_name}_{table_name}"
+
+    logger.info('Disabling CDC on %s.%s from table %s...', schema_name, table_name, capture_instance)
+    connection.execute(
+        f'EXEC sys.sp_cdc_disable_table '
+        f'@source_schema=N\'{schema_name}\', '
+        f'@source_name=N\'{table_name}\','
+        f'@capture_instance={capture_instance}')
