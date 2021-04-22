@@ -205,7 +205,9 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
                                                                        subscription_name=subscriber_id, peek_lock=False,
                                                                        timeout=10).body.decode().strip())
                     for _ in range(len(raw_records))]
-        assert raw_records == messages
+        assert len(raw_records) == len(messages)
+        assert all(item in messages for item in raw_records)
+
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
