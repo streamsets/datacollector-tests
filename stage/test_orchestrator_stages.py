@@ -103,6 +103,8 @@ def test_control_hub_api_processor(sdc_builder, sdc_executor):
     control_hub_api_processor.output_field = "/"
     control_hub_api_processor.control_hub_user_name = "user"
     control_hub_api_processor.password = "password"
+    if Version(sdc_builder.version) >= Version('4.0.0'):
+        control_hub_api_processor.authentication_type = 'USER_PASSWORD'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -140,6 +142,8 @@ def test_control_hub_api_processor_invalid_credentials(sdc_builder, sdc_executor
     control_hub_api_processor.output_field = "/output"
     control_hub_api_processor.control_hub_user_name = "invalid user"
     control_hub_api_processor.password = "invalid password"
+    if Version(sdc_builder.version) >= Version('4.0.0'):
+        control_hub_api_processor.authentication_type = 'USER_PASSWORD'
 
     wiretap = pipeline_builder.add_wiretap()
 
