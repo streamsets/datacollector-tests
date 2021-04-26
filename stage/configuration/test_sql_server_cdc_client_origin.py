@@ -64,7 +64,8 @@ def test_convert_timestamp_to_string(sdc_builder, sdc_executor, stage_attributes
     pass
 
 
-@sdc_min_version('4.0.0.0')
+@database('sqlserver')
+@sdc_min_version('4.0.0')
 @pytest.mark.parametrize('enable_schema_changes_event', [False, True])
 def test_enable_schema_changes_event(sdc_builder, sdc_executor, database, enable_schema_changes_event):
     """Test for SQL Server CDC origin stage 'Enable Schema Changes Event' parameter.
