@@ -1462,6 +1462,48 @@ def test_field_mapper_sanitize_names(sdc_builder, sdc_executor):
     assert second.get('secondSubz') == None
     assert second.get('secondSub2').get('Dave') == 'Richardson'
 
+
+def test_field_mapper_names_ignore(sdc_builder, sdc_executor):
+    """
+    Test the Field Mapper processor, by name. Set a condition that matches the root field and list elements and
+    check that they are ignored since they have no names.
+
+    (SDC-16864)
+
+    The pipeline that will be constructed is:
+
+        dev_raw_data_source (JSON data) >> field_mapper >> wiretap
+    """
+    raw_data = '{ "first": ["blah", "blech", "blargh"] }'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+    field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
+    field_mapper.set_attributes(
+      operate_on = 'FIELD_NAMES',
+      conditional_expression = "${str:matches(f:name(),'req_.*') == false}",
+      mapping_expression = 'data_${f:name()}'
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_mapper >> wiretap.destination
+
+    pipeline = pipeline_builder.build()
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        field_mapper_output = wiretap.output_records
+        output_field = field_mapper_output[0].field;
+        assert 'first' not in output_field
+        assert output_field['data_first'][0] == "blah"
+        assert output_field['data_first'][1] == "blech"
+        assert output_field['data_first'][2] == "blargh"
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
+
+
 @sdc_min_version('3.8.0')
 def test_field_mapper_operate_on_values(sdc_builder, sdc_executor):
     """
