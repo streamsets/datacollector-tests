@@ -22,7 +22,6 @@ import pytest
 from streamsets.testframework.markers import cluster
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @pytest.fixture(scope='module')

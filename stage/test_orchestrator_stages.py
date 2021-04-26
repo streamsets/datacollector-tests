@@ -22,7 +22,6 @@ from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import Version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @pytest.fixture(scope='module')
@@ -519,7 +518,3 @@ def _validate_start_pipeline_output(orchestrator_tasks_field,
                 assert pipeline_results[key]['pipelineMetrics']['pipeline']['errorRecords'] == 0
                 assert pipeline_results[key]['pipelineMetrics']['pipeline']['errorMessages'] == 0
                 assert pipeline_results[key]['pipelineMetrics']['stages'] is not None
-
-
-
-

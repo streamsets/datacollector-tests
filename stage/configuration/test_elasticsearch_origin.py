@@ -23,7 +23,6 @@ from streamsets.testframework.markers import elasticsearch, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 @stub

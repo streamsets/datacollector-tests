@@ -11,12 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import logging
 
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 # SDC-10376
@@ -43,5 +43,3 @@ def test_preview_with_events(sdc_builder, sdc_executor, cluster):
     preview = sdc_executor.run_pipeline_preview(pipeline).preview
     assert preview is not None
     assert preview.issues.issues_count == 0
-
-

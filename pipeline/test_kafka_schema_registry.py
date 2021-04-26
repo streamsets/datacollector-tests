@@ -36,7 +36,6 @@ from streamsets.testframework.markers import cluster, confluent, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 AVRO_SCHEMA = '{"type":"record","name":"Brno","doc":"","fields":[{"name":"a","type":"int"},{"name":"b","type":"string"}]}'
 
@@ -262,7 +261,7 @@ def perform_test(sdc_executor, producer, consumer, wiretap):
 def test_kafka_consumer_key_capture_modes(sdc_builder, sdc_executor, cluster, confluent, topic, key_capture_mode):
     """
     Test the KeyCaptureMode introduced in SDC-4813
-    
+
     We will first publish an Avro message (with separate key and value schema) to Kafka, then try to read it from a
     pipeline, and ensure the key is captured correctly as per configuration.
     """

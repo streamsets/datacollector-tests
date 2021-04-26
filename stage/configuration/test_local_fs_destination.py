@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import pytest
 import string
 import logging
@@ -22,7 +23,6 @@ from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @stub
@@ -684,4 +684,3 @@ def test_validate_schema(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'XML', 'validate_schema': True}])
 def test_xml_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
-

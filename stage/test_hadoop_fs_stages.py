@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import json
 import logging
 import os
@@ -24,7 +25,6 @@ from streamsets.testframework.markers import aster_authentication, cluster, larg
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_LISTENING_PORT = 20000

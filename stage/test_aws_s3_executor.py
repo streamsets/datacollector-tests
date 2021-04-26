@@ -25,7 +25,6 @@ from .utils.utils_aws import allow_public_access, restore_public_access, configu
     create_anonymous_client
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Sandbox prefix for S3 bucket
 S3_SANDBOX_PREFIX = 'sandbox'

@@ -18,9 +18,7 @@ import os
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 ADLS_GEN2_ORIGIN = 'com_streamsets_pipeline_stage_origin_datalake_gen2_DataLakeGen2DSource'
 

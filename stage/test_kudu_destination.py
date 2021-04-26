@@ -25,7 +25,6 @@ from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 DEFAULT_KUDU_PORT = 7051
 

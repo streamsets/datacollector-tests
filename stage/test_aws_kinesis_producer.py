@@ -19,7 +19,6 @@ from streamsets.testframework.markers import aws
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 SERVICE_ENDPOINT_FORMAT = '{}.{}.amazonaws.com'
 

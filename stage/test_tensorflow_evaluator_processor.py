@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import logging
 
 import pytest
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 TENSOR_FLOW_IRIS_MODEL_PATH = '/resources/resources/tensorflow_iris_model'
 

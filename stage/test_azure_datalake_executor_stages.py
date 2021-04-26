@@ -36,7 +36,6 @@ ADLS_GEN1_TARGET = 'com_streamsets_pipeline_stage_destination_datalake_gen1_Data
 ADLS_GEN2_TARGET = 'com_streamsets_pipeline_stage_destination_datalake_gen2_DataLakeGen2DTarget'
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @pytest.fixture(autouse=True)

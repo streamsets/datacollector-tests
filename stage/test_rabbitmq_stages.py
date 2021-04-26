@@ -24,7 +24,6 @@ from streamsets.testframework.utils import get_random_string
 from streamsets.sdk.sdc_api import StartError
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @rabbitmq

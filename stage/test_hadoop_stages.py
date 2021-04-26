@@ -16,6 +16,7 @@
 :py:obj:`testframework.sdc_models.PipelineBuilder` in one version of SDC and then importing and running them in
 another.
 """
+
 import logging
 import string
 import time
@@ -25,7 +26,6 @@ from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @cluster('cdh', 'hdp')

@@ -22,7 +22,6 @@ from streamsets.testframework.markers import azure
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # To workaround the stage label tweak introduced in 3.0.1.0 (SDC-8077), we use the
 # Azure IoT/Event Hub Consumer stage's full name in tests.

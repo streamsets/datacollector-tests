@@ -23,7 +23,7 @@ import json
 S3_SANDBOX_PREFIX = 'sandbox'
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+
 
 @aws('s3')
 def test_startup(sdc_builder, sdc_executor, aws, benchmark):

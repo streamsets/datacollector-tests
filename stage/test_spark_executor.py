@@ -20,7 +20,6 @@ from streamsets.testframework.markers import cluster
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Spark executor was renamed in SDC-10697, so we need to reference it by name.
 SPARK_EXECUTOR_STAGE_NAME = 'com_streamsets_datacollector_pipeline_executor_spark_SparkDExecutor'

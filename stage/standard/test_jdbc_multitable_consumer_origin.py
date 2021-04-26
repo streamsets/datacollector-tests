@@ -32,7 +32,6 @@ def sdc_builder_hook():
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 # https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm#CNCPT1821

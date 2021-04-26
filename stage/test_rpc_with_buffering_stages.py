@@ -19,8 +19,6 @@ import string
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_LISTENING_PORT = 20000
@@ -80,4 +78,3 @@ def test_sdcrpc_with_buffering_origin_target(sdc_builder, sdc_executor):
 
     records_data = wiretap.output_records[0].field['text'].value
     assert raw_str == records_data
-

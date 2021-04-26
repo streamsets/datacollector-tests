@@ -23,7 +23,6 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # pylint: disable=pointless-statement, too-many-locals
 

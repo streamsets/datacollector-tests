@@ -21,7 +21,6 @@ from streamsets.testframework.markers import redis
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # pylint: disable=pointless-statement, redefined-outer-name, too-many-locals
 

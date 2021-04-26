@@ -19,7 +19,6 @@ import textwrap
 from streamsets.testframework.markers import rpmpackaging
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 SDC_LIBS_FOLDER = '/opt/streamsets-datacollector/streamsets-libs'
 

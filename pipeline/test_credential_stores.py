@@ -25,7 +25,6 @@ from streamsets.testframework.markers import elasticsearch
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 @elasticsearch

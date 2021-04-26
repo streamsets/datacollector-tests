@@ -23,7 +23,6 @@ from streamsets.testframework.decorators import stub
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 NAMES = [
     ('max_size', get_random_string(string.ascii_lowercase, 255)),

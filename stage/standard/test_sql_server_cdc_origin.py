@@ -29,7 +29,6 @@ def sdc_builder_hook():
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 DEFAULT_SCHEMA_NAME = 'dbo'
 

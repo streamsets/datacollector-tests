@@ -24,7 +24,6 @@ from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Specify a port for SDC RPC stages to use.
 SDC_RPC_LISTENING_PORT = 21512

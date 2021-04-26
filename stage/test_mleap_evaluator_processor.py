@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import logging
 from collections import OrderedDict
 
@@ -20,7 +19,6 @@ import pytest
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 MLEAP_AIRBNB_MODEL_PATH = '/resources/resources/mleap_airbnb_model/airbnb.model.rf'
 

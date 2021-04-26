@@ -22,7 +22,6 @@ from streamsets.testframework.markers import influxdb
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @influxdb

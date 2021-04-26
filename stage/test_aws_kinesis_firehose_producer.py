@@ -21,7 +21,6 @@ from streamsets.testframework.markers import aws
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Sandbox prefix for S3 bucket
 S3_SANDBOX_PREFIX = 'sandbox'

@@ -25,7 +25,6 @@ import uuid
 import pytest
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @pytest.mark.parametrize('number_of_records', (50_000, 100_000))

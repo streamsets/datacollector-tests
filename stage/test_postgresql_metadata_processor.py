@@ -19,7 +19,6 @@ from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @database('postgresql')
@@ -63,4 +62,3 @@ def test_non_matching_types(sdc_builder, sdc_executor, database, keep_data):
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
             connection.execute(f"DROP TABLE IF EXISTS {table_name}")
-

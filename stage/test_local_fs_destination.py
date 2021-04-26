@@ -22,7 +22,6 @@ from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 @sdc_min_version('3.22.0')

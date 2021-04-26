@@ -16,7 +16,6 @@ import logging
 from xml.etree import ElementTree
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # pylint: disable=pointless-statement, too-many-locals
 
