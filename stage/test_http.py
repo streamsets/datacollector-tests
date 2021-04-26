@@ -36,7 +36,6 @@ from streamsets.testframework.credential_stores.jks import JKSCredentialStore
 from streamsets.testframework.markers import http, sdc_min_version, spnego
 from streamsets.testframework.utils import get_random_string
 
-
 logger = logging.getLogger(__name__)
 
 # pylint: disable=pointless-statement, redefined-outer-name, too-many-locals
@@ -105,7 +104,7 @@ def http_client_pipeline(sdc_builder, sdc_executor):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(raw_data = '${RAW_DATA}', data_format = 'JSON', stop_after_first_batch = True)
+    dev_raw_data_source.set_attributes(raw_data='${RAW_DATA}', data_format='JSON', stop_after_first_batch=True)
 
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
 
@@ -129,8 +128,8 @@ def http_client_pipeline(sdc_builder, sdc_executor):
     yield namedtuple('Pipeline', ['pipeline',
                                   'wiretap_data_source',
                                   'wiretap_expression_evaluator'])(pipeline,
-                                                  wiretap_data_source,
-                                                  wiretap_expression_evaluator)
+                                                                   wiretap_data_source,
+                                                                   wiretap_expression_evaluator)
 
 
 @http
@@ -201,10 +200,10 @@ def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client)
 
         dev_raw_data_source >> http_client_processor >> wiretap
     """
-    #The data returned by the HTTP mock server
-    dataArr = [{'A':i,'C':i+1,'G':i+2,'T':i+3} for i in range(10)]
+    # The data returned by the HTTP mock server
+    data_array = [{'A': i, 'C': i + 1, 'G': i + 2, 'T': i + 3} for i in range(10)]
 
-    expected_data = json.dumps(dataArr)
+    expected_data = json.dumps(data_array)
     record_output_field = 'result'
     mock_path = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
@@ -250,10 +249,10 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
 
         dev_raw_data_source >> http_client_processor >> wiretap
     """
-    #The data returned by the HTTP mock server
-    dataArr = [{'A':i,'C':i+1,'G':i+2,'T':i+3} for i in range(10)]
+    # The data returned by the HTTP mock server
+    data_array = [{'A': i, 'C': i + 1, 'G': i + 2, 'T': i + 3} for i in range(10)]
 
-    expected_data = json.dumps(dataArr)
+    expected_data = json.dumps(data_array)
     record_output_field = 'result'
     mock_path = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
@@ -293,6 +292,7 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
         except:
             logger.info("Deleting http mock failed")
 
+
 @http
 @sdc_min_version("3.17.0")
 def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, http_client):
@@ -329,10 +329,10 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
                                              http_method='GET', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}')
-        http_client_processor.per_status_actions=[
+        http_client_processor.per_status_actions = [
             {
-              'statusCode':404,
-              'action':'STAGE_ERROR'
+              'statusCode': 404,
+              'action': 'STAGE_ERROR'
             },
         ]
         trash = builder.add_stage('Trash')
@@ -384,10 +384,10 @@ def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, 
                                              http_method='GET', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}')
-        http_client_processor.per_status_actions=[
+        http_client_processor.per_status_actions = [
             {
-                'statusCode':404,
-                'action':'ERROR_RECORD'
+                'statusCode': 404,
+                'action': 'ERROR_RECORD'
             },
         ]
         wiretap = builder.add_wiretap()
@@ -489,16 +489,16 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
                                              output_field=f'/{record_output_field}')
         http_client_processor.records_for_remaining_statuses = False
         http_client_processor.batch_wait_time_in_ms = 150
-        http_client_processor.multiple_values_behavior='ALL_AS_LIST'
-        http_client_processor.per_status_actions=[
+        http_client_processor.multiple_values_behavior = 'ALL_AS_LIST'
+        http_client_processor.per_status_actions = [
             {
-                'statusCode':404,
-                'action':'RETRY_LINEAR_BACKOFF',
-                'backoffInterval':100,
-                'maxNumRetries':10
+                'statusCode': 404,
+                'action': 'RETRY_LINEAR_BACKOFF',
+                'backoffInterval': 100,
+                'maxNumRetries': 10
             },
         ]
-        http_client_processor.on_record_error='STOP_PIPELINE'
+        http_client_processor.on_record_error = 'STOP_PIPELINE'
 
         trash = builder.add_stage('Trash')
         dev_raw_data_source >> http_client_processor >> trash
@@ -568,19 +568,19 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
         http_client_processor.records_for_remaining_statuses = False
         http_client_processor.batch_wait_time_in_ms = 500000
         http_client_processor.pagination_mode = pagination_option;
-        http_client_processor.per_status_actions=[
+        http_client_processor.per_status_actions = [
             {
-                'statusCode':404,
-                'action':retry_action,
-                'backoffInterval':100,
-                'maxNumRetries':3
+                'statusCode': 404,
+                'action': retry_action,
+                'backoffInterval': 100,
+                'maxNumRetries': 3
             },
         ]
-        http_client_processor.result_field_path='/'
-        http_client_processor.next_page_link_field='/foo'
-        http_client_processor.stop_condition='1==1'
-        http_client_processor.multiple_values_behavior='ALL_AS_LIST'
-        #Must do it like this because the attribute name has the '/' char
+        http_client_processor.result_field_path = '/'
+        http_client_processor.next_page_link_field = '/foo'
+        http_client_processor.stop_condition = '1==1'
+        http_client_processor.multiple_values_behavior = 'ALL_AS_LIST'
+        # Must do it like this because the attribute name has the '/' char
         setattr(http_client_processor, 'initial_page/offset', 1)
 
         trash = builder.add_stage('Trash')
@@ -632,7 +632,7 @@ def test_http_processor_wrong_url(sdc_builder, sdc_executor):
 
 
 @http
-@pytest.mark.parametrize(('method'), [
+@pytest.mark.parametrize('method', [
     'POST',
     # Testing of SDC-10809
     'PATCH'
@@ -697,12 +697,12 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
 
 
 @http
-@pytest.mark.parametrize(('method'), [
+@pytest.mark.parametrize('method', [
     'POST',
     # Testing of SDC-10809
     'PATCH'
 ])
-@pytest.mark.parametrize(('request_option'), [
+@pytest.mark.parametrize('request_option', [
     'one_request_per_batch',
     # Testing of SDC-10809
     'one_request_per_record'
@@ -734,7 +734,7 @@ def test_http_destination(sdc_builder, sdc_executor, http_client, method, reques
                                                headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                                http_method=method,
                                                resource_url=mock_uri,
-                                               one_request_per_batch=(request_option=='one_request_per_batch'))
+                                               one_request_per_batch=(request_option == 'one_request_per_batch'))
 
         dev_raw_data_source >> http_client_destination
         pipeline = builder.build(title=f'HTTP {method} Destination pipeline')
@@ -827,19 +827,19 @@ def test_http_server_multiple_application_ids(sdc_builder, sdc_executor):
 
         # Try a GET request using sample data with a valid Application-ID and we should expect a 200 response.
         http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
-        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}',{'X-SDC-APPLICATION-ID': 'TEST_ID_FIRST'})
+        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}', {'X-SDC-APPLICATION-ID': 'TEST_ID_FIRST'})
         resp = http_res.getresponse()
         assert resp.status == 200
 
         # Try a GET request using sample data with another valid Application-ID and we should expect a 200 response.
         http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
-        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}',{'X-SDC-APPLICATION-ID': 'TEST_ID_SECOND'})
+        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}', {'X-SDC-APPLICATION-ID': 'TEST_ID_SECOND'})
         resp = http_res.getresponse()
         assert resp.status == 200
 
         # Try a GET request using sample data with a non valid Application-ID and we should expect a 403 response.
         http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
-        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}',{'X-SDC-APPLICATION-ID': 'TEST_ID_THIRD'})
+        http_res.request('GET', '/', '{"f1": "abc"}{"f1": "xyz"}', {'X-SDC-APPLICATION-ID': 'TEST_ID_THIRD'})
         resp = http_res.getresponse()
         assert resp.status == 403
     finally:
@@ -851,9 +851,9 @@ def test_http_server_multiple_application_ids(sdc_builder, sdc_executor):
 def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, sdc_executor, http_client):
     """HTTP Client Origin using pagination with Keep All Fields config enabled writing on a LocalFS must
     not repeat records on the file obtained. This tests the issue on ESC-999 (SDC-15893)"""
-    dataArr = {'metadata': 'Example', 'next_page':None, 'data':[
-        {'id': 0, 'name':"INDURAIN"},{'id': 1, 'name':"PANTANI"},{'id': 2, 'name':"ULRICH"} ]}
-    expected_data = json.dumps(dataArr)
+    data_array = {'metadata': 'Example', 'next_page': None, 'data': [
+        {'id': 0, 'name': "INDURAIN"}, {'id': 1, 'name': "PANTANI"}, {'id': 2, 'name': "ULRICH"}]}
+    expected_data = json.dumps(data_array)
     mock_path = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
@@ -875,11 +875,11 @@ def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, s
                                    keep_all_fields=True)
         localfs = builder.add_stage('Local FS', type='destination')
         localfs.set_attributes(data_format='JSON',
-                                json_content='MULTIPLE_OBJECTS',
-                                directory_template=tmp_directory,
-                                file_type='TEXT',
-                                files_prefix='example',
-                                files_suffix='txt')
+                               json_content='MULTIPLE_OBJECTS',
+                               directory_template=tmp_directory,
+                               file_type='TEXT',
+                               files_prefix='example',
+                               files_suffix='txt')
         wiretap = builder.add_wiretap()
 
         http_source >> [localfs, wiretap.destination]
@@ -892,9 +892,9 @@ def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, s
         records = wiretap.output_records
         assert len(records) == 3
         for i in range(3):
-            assert records[i].field['metadata']=='Example'
-            assert records[i].field['data']['id']==i
-            assert records[i].field['data']['name']==dataArr['data'][i]['name']
+            assert records[i].field['metadata'] == 'Example'
+            assert records[i].field['data']['id'] == i
+            assert records[i].field['data']['name'] == data_array['data'][i]['name']
 
         logger.info("Creating the second pipeline")
 
@@ -902,19 +902,19 @@ def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, s
         pipeline_builder = sdc_builder.get_pipeline_builder()
         directory = pipeline_builder.add_stage('Directory', type='origin')
         directory.set_attributes(batch_wait_time_in_secs=1,
-                             data_format='JSON',
-                             files_directory=tmp_directory,
-                             file_name_pattern='example_*',
-                             file_name_pattern_mode='GLOB',
-                             json_content='MULTIPLE_OBJECTS',
-                             batch_size_in_recs=10)
+                                 data_format='JSON',
+                                 files_directory=tmp_directory,
+                                 file_name_pattern='example_*',
+                                 file_name_pattern_mode='GLOB',
+                                 json_content='MULTIPLE_OBJECTS',
+                                 batch_size_in_recs=10)
 
         wiretap_second = pipeline_builder.add_wiretap()
 
         directory >> wiretap_second.destination
 
-        pipeline_directory = pipeline_builder.build(title='HTTP Client Origin Keep All Fields not repeating records when writing LocalFS'
-                                       ' (Read the file)')
+        pipeline_directory = pipeline_builder.build(
+            title='HTTP Client Origin Keep All Fields not repeating records when writing LocalFS (Read the file)')
         sdc_executor.add_pipeline(pipeline_directory)
         sdc_executor.start_pipeline(pipeline_directory)
         sdc_executor.wait_for_pipeline_metric(pipeline_directory, 'input_record_count', 3)
@@ -923,9 +923,9 @@ def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, s
         records = wiretap.output_records
         assert len(records) == 3
         for i in range(3):
-            assert records[i].field['metadata']=='Example'
-            assert records[i].field['data']['id']==i
-            assert records[i].field['data']['name']==dataArr['data'][i]['name']
+            assert records[i].field['metadata'] == 'Example'
+            assert records[i].field['data']['id'] == i
+            assert records[i].field['data']['name'] == data_array['data'][i]['name']
     finally:
         http_mock.delete_mock()
         logger.info("Removing tmp folder: %s", tmp_directory)
@@ -937,7 +937,7 @@ def test_http_client_origin_keep_all_fields_not_repeating_records(sdc_builder, s
 @sdc_min_version("3.16.0")
 def test_http_client_wrong_pagination_field(sdc_builder, sdc_executor, http_client):
     """HTTP Client Origin with some an invalid page link field must throw an StageException HTTP_66"""
-    dataArr = {'Name': f'Example', 'data':[{'id': 2, 'foo':2}]}
+    dataArr = {'Name': f'Example', 'data': [{'id': 2, 'foo': 2}]}
 
     expected_data = json.dumps(dataArr)
     mock_path = get_random_string(string.ascii_letters, 10)
@@ -949,14 +949,15 @@ def test_http_client_wrong_pagination_field(sdc_builder, sdc_executor, http_clie
 
         builder = sdc_builder.get_pipeline_builder()
         http_source = builder.add_stage('HTTP Client', type='origin')
-        http_source.set_attributes(data_format='JSON', http_method='GET',
-                                             resource_url=mock_uri,
-                                             mode='POLLING',
-                                             pagination_mode='LINK_FIELD',
-                                             next_page_link_prefix=f'{mock_uri}&starting_after=',
-                                             next_page_link_field="/pageField",
-                                             stop_condition="1==0",
-                                             result_field_path="/data")
+        http_source.set_attributes(data_format='JSON',
+                                   http_method='GET',
+                                   resource_url=mock_uri,
+                                   mode='POLLING',
+                                   pagination_mode='LINK_FIELD',
+                                   next_page_link_prefix=f'{mock_uri}&starting_after=',
+                                   next_page_link_field="/pageField",
+                                   stop_condition="1==0",
+                                   result_field_path="/data")
         trash = builder.add_stage('Trash')
 
         http_source >> trash
@@ -984,9 +985,9 @@ def test_http_client_propagate_all_records(sdc_builder, sdc_executor, http_clien
     """HTTP Client Origin with the config 'Records for Remaining Statuses' set generates a record when gets a response
     different than the 200 OK HTTP Status. In this test we will simulate it gets a 404 HTTP Status and we will
     check a record is created"""
-    dataArr = {'Name': f'Example'}
+    data_array = {'Name': f'Example'}
 
-    expected_data = json.dumps(dataArr)
+    expected_data = json.dumps(data_array)
     mock_path = get_random_string(string.ascii_letters, 10)
     mock_wrong_path = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
@@ -1011,10 +1012,11 @@ def test_http_client_propagate_all_records(sdc_builder, sdc_executor, http_clien
 
         # ensure HTTP GET result has 1 records
         assert len(wiretap.output_records) == 1
-        assert wiretap.output_records[0].header.values['HTTP-Status']=='404'
+        assert wiretap.output_records[0].header.values['HTTP-Status'] == '404'
 
     finally:
         http_mock.delete_mock()
+
 
 @http
 @sdc_min_version("3.16.0")
@@ -1222,11 +1224,11 @@ def test_http_server_remote_vault(sdc_builder, sdc_executor, http_client, creden
 
 @http
 @sdc_min_version("3.18.0")
-@pytest.mark.parametrize(('miss_val_bh'), [
+@pytest.mark.parametrize('miss_val_bh', [
     'PASS_RECORD_ON',
     'SEND_TO_ERROR'
 ])
-def test_http_processor_response_JSON_empty(sdc_builder, sdc_executor, http_client, miss_val_bh):
+def test_http_processor_response_json_empty(sdc_builder, sdc_executor, http_client, miss_val_bh):
     """
     Test when the http processor stage has as a response an empty JSON.
 
@@ -1481,3 +1483,165 @@ def test_http_processor_duplicate_requests(sdc_builder, sdc_executor, method, ht
     finally:
         if not keep_data:
             http_mock.delete_mock()
+
+
+@http
+@pytest.mark.parametrize('timeout_mode,'
+                         'http_status,'
+                         'missing_behavior',
+                         [('connection', 200, 'PASS_RECORD_ON'),
+                          ('read', 200, 'PASS_RECORD_ON'),
+                          ('request', 200, 'PASS_RECORD_ON'),
+                          ('record', 500, 'SEND_TO_ERROR')])
+@pytest.mark.parametrize('timeout_action',
+                         ['RETRY_IMMEDIATELY',
+                          'RETRY_LINEAR_BACKOFF',
+                          'RETRY_EXPONENTIAL_BACKOFF',
+                          'STAGE_ERROR',
+                          'ERROR_RECORD'])
+def test_http_client_processor_timeout(sdc_builder,
+                                       sdc_executor,
+                                       http_client,
+                                       timeout_mode,
+                                       timeout_action,
+                                       http_status,
+                                       missing_behavior):
+    """
+        Test timeout handling for HTTP Client Processor.
+        We get a Connection Timeout using a non-routable IP in resource_url
+        We get a Read Timeout using an extremely low read_timeout
+        We get a Request Timeout using an extremely low maximum_request_time_in_sec
+        We get a Record Processing Timeout using an extremely low batch_wait_time_in_ms
+    """
+
+    try:
+
+        non_routable_ip = '192.168.255.255'
+        record_output_field = 'oteai'
+        one_millisecond = 1000
+        wait_seconds = 10
+        retries = 5
+        no_time = 0
+        short_time = 1
+        long_time = (one_millisecond * wait_seconds * (retries + 2)) * 100
+
+        http_mock_server = http_client.mock()
+        http_mock_path = get_random_string(string.ascii_letters, 10)
+        http_mock_content = dict(kisei='Kobayashi Koichi', meijin='Ishida Yoshio', honinbo='Takemiya Masaki')
+        http_mock_data = json.dumps(http_mock_content)
+
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=http_status,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=FOREVER)
+
+        http_mock_url_ok = f'{http_mock_server.pretend_url}/{http_mock_path}'
+        http_mock_url_ko = http_mock_url_ok.replace(http_mock_server.host, non_routable_ip)
+
+        if timeout_mode == 'connection':
+            resource_url = http_mock_url_ok
+            connect_timeout = short_time
+            read_timeout = long_time
+            maximum_request_time_in_sec = long_time
+            batch_wait_time_in_ms = long_time
+        elif timeout_mode == 'read':
+            resource_url = http_mock_url_ok
+            connect_timeout = long_time
+            read_timeout = short_time
+            maximum_request_time_in_sec = long_time
+            batch_wait_time_in_ms = long_time
+        elif timeout_mode == 'request':
+            resource_url = http_mock_url_ko
+            connect_timeout = long_time
+            read_timeout = long_time
+            maximum_request_time_in_sec = short_time
+            batch_wait_time_in_ms = long_time
+        elif timeout_mode == 'record':
+            resource_url = http_mock_url_ok
+            connect_timeout = long_time
+            read_timeout = long_time
+            maximum_request_time_in_sec = long_time
+            batch_wait_time_in_ms = short_time
+        else:
+            resource_url = http_mock_url_ko
+            connect_timeout = no_time
+            read_timeout = no_time
+            maximum_request_time_in_sec = no_time
+            batch_wait_time_in_ms = no_time
+
+        pipeline_name = f'{timeout_mode} - {timeout_action} - {get_random_string(string.ascii_letters, 10)}'
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source_origin = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source_origin.set_attributes(data_format='JSON',
+                                                  raw_data=http_mock_data,
+                                                  stop_after_first_batch=True)
+
+        http_client_processor = pipeline_builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             resource_url=resource_url,
+                                             http_method='GET',
+                                             default_request_content_type='application/json',
+                                             request_data="${record:value('/honinbo')}",
+                                             output_field=f'/{record_output_field}',
+                                             connect_timeout=connect_timeout,
+                                             read_timeout=read_timeout,
+                                             maximum_request_time_in_sec=maximum_request_time_in_sec,
+                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
+                                             action_for_timeout=timeout_action,
+                                             base_backoff_interval_in_ms=5000,
+                                             max_retries=5,
+                                             records_for_remaining_statuses=False,
+                                             missing_values_behavior=missing_behavior)
+        if timeout_mode == 'record':
+            http_client_processor.per_status_actions = [{
+                'statusCode': 500,
+                'action': 'RETRY_LINEAR_BACKOFF',
+                'backoffInterval': 5000,
+                'maxNumRetries': 1
+            }]
+        wiretap = pipeline_builder.add_wiretap()
+
+        dev_raw_data_source_origin >> http_client_processor >> wiretap.destination
+
+        pipeline_title = f'HTTP Client Processor Timeout Test Pipeline: {pipeline_name}'
+        pipeline = pipeline_builder.build(title=pipeline_title)
+        pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+
+        if timeout_mode == 'read' and timeout_action == 'STAGE_ERROR':
+            with pytest.raises(Exception) as exception:
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        else:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        if timeout_mode == 'connection':
+            expected_output = 1
+            expected_error = 0
+        elif timeout_mode == 'read':
+            expected_output = 0
+            expected_error = 1
+        elif timeout_mode == 'request':
+            expected_output = 0
+            if timeout_action == 'STAGE_ERROR':
+                expected_error = 1
+            else:
+                expected_error = 0
+        elif timeout_mode == 'record':
+            expected_output = 0
+            expected_error = 1
+
+        assert len(wiretap.output_records) == expected_output
+        assert len(wiretap.error_records) == expected_error
+
+        pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        if timeout_mode == 'read' and timeout_action == 'STAGE_ERROR':
+            assert pipeline_status == 'RUN_ERROR'
+        else:
+            assert pipeline_status == 'FINISHED'
+
+    finally:
+
+        http_mock_server.delete_mock()
