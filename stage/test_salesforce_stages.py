@@ -2122,7 +2122,7 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
         time.sleep(10) # Give the pipeline time to connect to the Streaming API
 
         # create change data
-        test_data = {'Name': 'Test1', 'Fax': 'testFax', 'Site': 'testLocation'}
+        test_data = {'Name': 'Test1', 'Fax': 'testFax'}
 
 
         account = client.Account.create(test_data)
@@ -2159,7 +2159,6 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
         change_record = change_records[0]
         assert change_record.field['Name'] == 'Test1'
         assert change_record.field['Fax'] == 'testFax'
-        assert change_record.field['Site'] == 'testLocation'
 
         logger.info('Stopping pipeline after success ...')
         sdc_executor.stop_pipeline(pipeline)
