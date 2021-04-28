@@ -11,43 +11,33 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import pytest
-
-from streamsets.testframework.markers import sdc_min_version
-from streamsets.sdk.sdc_api import StartError
+import json
 
 
-# SDC-6217
-@sdc_min_version('3.6.1')
-def test_capture_same_snapshot_twice(sdc_builder, sdc_executor):
-    """Verify that creating the same snapshot twice will properly fail."""
-    builder = sdc_builder.get_pipeline_builder()
+def test_capture_snapshot(sdc_builder, sdc_executor):
+    """Verify the most basic use case for capture_snapshot where we capture the data and assert with the original."""
+    pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    # Super simple cluster pipeline
-    source = builder.add_stage('Dev Data Generator')
-    trash = builder.add_stage('Trash')
-    source >> trash
+    data = [
+        {'NAME': 'Alex Sanchez', 'ROLE': 'Tech Lead', 'AGE': 27, 'TEAM': 'Data Plane'},
+        {'NAME': 'Martin Balzamo', 'ROLE': 'Manager', 'AGE': 50, 'TEAM': 'BCN'},
+        {'NAME': 'Tucu', 'ROLE': 'Distinguished Engineer', 'AGE': 50, 'TEAM': 'Innovation'},
+        {'NAME': 'Xavi Baques', 'ROLE': 'Tech Lead', 'AGE': 28, 'TEAM': 'Enterprise'},
+    ]
 
-    pipeline = builder.build()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data='\n'.join((json.dumps(row) for row in data)),
+                                       stop_after_first_batch=True)
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> trash
+
+    pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
 
-    # First snapshot needs to succeed
-    snapshot = sdc_executor.capture_snapshot(pipeline, start_pipeline=True, snapshot_name='name').snapshot
-    sdc_executor.stop_pipeline(pipeline)
-    assert snapshot is not None
+    snapshot = sdc_executor.capture_snapshot(pipeline, snapshot_name='name', start_pipeline=True, wait=False).snapshot
 
-    # Trying to capture the same snapshot second time should fail
-    try:
-        sdc_executor.capture_snapshot(pipeline, snapshot_name='name', start_pipeline=True, wait=False)
-    except StartError:
-        # We are expecting error that we will further inspect via pipeline status
-        pass
-    else:
-        assert False
+    assert data == [record.field for record in snapshot[pipeline.stages[0]].output]
 
-    sdc_executor.get_pipeline_status(pipeline).wait_for_status('START_ERROR', ignore_errors=True)
-    status = sdc_executor.get_pipeline_status(pipeline).response.json()
-    assert 'CONTAINER_0606' in status['message']
-    assert 'Snapshot name for pipeline' in status['message']
 
