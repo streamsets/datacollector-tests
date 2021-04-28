@@ -2289,6 +2289,7 @@ def test_jdbc_52_error_format(sdc_builder, sdc_executor, database, action):
         logger.info(f"Creating user {guest_username} in database...")
         connection.execute(f"CREATE USER {guest_username} IDENTIFIED BY {guest_password}")
         connection.execute(f"GRANT CONNECT TO {guest_username}")
+        connection.execute(f"GRANT SELECT_CATALOG_ROLE TO {guest_username}")
 
         # Create source table
         src_table_name = get_random_string(string.ascii_uppercase, 9)
