@@ -653,6 +653,10 @@ def test_oracle_cdc_client_sequence(sdc_builder,
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3 * number_of_rows)
 
         sequence = 0
+        operation_types = {'INSERT', 'UPDATE', 'DELETE'}
+        operations_sequences = {}
+        for operation_type in operation_types:
+            operations_sequences[operation_type] = {}
         operation = ''
         for record in wiretap.output_records:
             record_operation = record.header.values["oracle.cdc.operation"]
@@ -660,8 +664,17 @@ def test_oracle_cdc_client_sequence(sdc_builder,
                 operation = record_operation
                 sequence = 0
             record_sequence = int(record.header.values["oracle.cdc.sequence.internal"])
-            assert record_sequence == sequence
+            record_string_sequence = record.header.values["oracle.cdc.sequence.internal"]
+            logger.info(f'{record_operation} - {record_sequence}')
+            operations_sequences[record_operation][record_string_sequence] = True
+            # assert record_sequence == sequence
             sequence = sequence + 1
+        operation_types = {'INSERT', 'UPDATE', 'DELETE'}
+        for operation_type in operation_types:
+            for operation_sequence in range(100):
+                operation_string_sequence = f'{operation_sequence}'
+                assert operations_sequences[operation_type][operation_string_sequence] != None, \
+                    f'{operation_type} - {operation_string_sequence} sequence not found and requiered'
 
     finally:
 
