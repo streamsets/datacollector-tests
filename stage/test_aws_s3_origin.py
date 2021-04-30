@@ -194,61 +194,61 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         s3_origin >> wiretap
         s3_origin >= pipeline_finished_executor
     """
-    if anonymous:
-        s3_bucket = create_bucket(aws)
-        logger.info(f'Bucket {s3_bucket} created')
-    else:
-        s3_bucket = aws.s3_bucket_name
-
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
-
-    json_data = dict(f1=get_random_string(), f2=get_random_string())
-
-    s3_obj_count = number_of_records
-
-    # Build pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    builder.add_error_stage('Discard')
-
-    s3_origin = builder.add_stage('Amazon S3', type='origin')
-
-    if Version(sdc_builder.version) >= Version('3.7.0'):
-        s3_origin.set_attributes(bucket=s3_bucket,
-                                 data_format=data_format,
-                                 prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
-                                 number_of_threads=number_of_threads,
-                                 read_order=read_order)
-    elif number_of_threads == 1:
-        s3_origin.set_attributes(bucket=s3_bucket,
-                                 data_format=data_format,
-                                 prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
-                                 read_order=read_order)
-    else:
-        pytest.skip("Multithreaded features are supported in S3 origin only for SDC Versions >= 3.7.0")
-
-    # Since Use Path Style Addess Model doesn't exist in all versions, we set it conditionally only if it should
-    # have some real value.
-    if use_path_style_address_model is not None:
-        s3_origin.use_path_style_address_model = use_path_style_address_model
-
-    wiretap = builder.add_wiretap()
-
-    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
-    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
-
-    s3_origin >> wiretap.destination
-    s3_origin >= pipeline_finished_executor
-
-    s3_origin_pipeline = builder.build().configure_for_environment(aws)
-    s3_origin_pipeline.configuration['shouldRetry'] = False
-
-    if anonymous:
-        configure_stage_for_anonymous(s3_origin)
-
-    sdc_executor.add_pipeline(s3_origin_pipeline)
-
-    client = aws.s3
     try:
+        if anonymous:
+            s3_bucket = create_bucket(aws)
+            logger.info(f'Bucket {s3_bucket} created')
+        else:
+            s3_bucket = aws.s3_bucket_name
+
+        s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+        json_data = dict(f1=get_random_string(), f2=get_random_string())
+
+        s3_obj_count = number_of_records
+
+        # Build pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        builder.add_error_stage('Discard')
+
+        s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+        if Version(sdc_builder.version) >= Version('3.7.0'):
+            s3_origin.set_attributes(bucket=s3_bucket,
+                                     data_format=data_format,
+                                     prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
+                                     number_of_threads=number_of_threads,
+                                     read_order=read_order)
+        elif number_of_threads == 1:
+            s3_origin.set_attributes(bucket=s3_bucket,
+                                     data_format=data_format,
+                                     prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
+                                     read_order=read_order)
+        else:
+            pytest.skip("Multithreaded features are supported in S3 origin only for SDC Versions >= 3.7.0")
+
+        # Since Use Path Style Address Model doesn't exist in all versions, we set it conditionally only if it should
+        # have some real value.
+        if use_path_style_address_model is not None:
+            s3_origin.use_path_style_address_model = use_path_style_address_model
+
+        wiretap = builder.add_wiretap()
+
+        pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+        s3_origin >> wiretap.destination
+        s3_origin >= pipeline_finished_executor
+
+        s3_origin_pipeline = builder.build().configure_for_environment(aws)
+        s3_origin_pipeline.configuration['shouldRetry'] = False
+
+        if anonymous:
+            configure_stage_for_anonymous(s3_origin)
+
+        sdc_executor.add_pipeline(s3_origin_pipeline)
+
+        client = aws.s3
         acl = 'public-read' if anonymous else 'private'
 
         # Insert objects into S3.

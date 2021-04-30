@@ -94,66 +94,66 @@ def test_s3_error_destination_anonymous(sdc_builder, sdc_executor, aws):
 
 
 def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
-    if anonymous:
-        s3_bucket = create_bucket(aws)
-        logger.info(f'Bucket {s3_bucket} created')
-    else:
-        s3_bucket = aws.s3_bucket_name
-
-    s3_key = f'{S3_SANDBOX_PREFIX}/errDest-{get_random_string()}/'
-    random_string = get_random_string(string.ascii_letters, 10)
-    random_raw_json_str = f'{{"text":"{random_string}"}}'
-
-    # Build pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    s3_err = builder.add_error_stage('Write to Amazon S3')
-    s3_err.set_attributes(
-        bucket=s3_bucket,
-        common_prefix=s3_key
-    )
-    if anonymous:
-        configure_stage_for_anonymous(s3_err)
-
-    origin = builder.add_stage('Dev Raw Data Source', type='origin')
-    origin.set_attributes(
-        data_format='JSON',
-        raw_data=random_raw_json_str,
-        stop_after_first_batch=True
-    )
-
-    target = builder.add_stage('To Error', type='destination')
-
-    origin >> target
-
-    pipeline = builder.build().configure_for_environment(aws)
-    pipeline.configuration['shouldRetry'] = False
-    sdc_executor.add_pipeline(pipeline)
-
-    # Now we build and run another pipeline with an S3 Origin to read the data back
-    builder = sdc_builder.get_pipeline_builder()
-    s3_origin = builder.add_stage('Amazon S3', type='origin')
-    s3_origin.set_attributes(
-        bucket=s3_bucket,
-        data_format='SDC_JSON',
-        prefix_pattern=f'{s3_key}*',
-        max_batch_size_in_records=100
-    )
-    if anonymous:
-        configure_stage_for_anonymous(s3_origin)
-
-    wiretap = builder.add_wiretap()
-    finisher = builder.add_stage('Pipeline Finisher Executor')
-    finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
-
-    s3_origin >> wiretap.destination
-    s3_origin >= finisher
-
-    read_pipeline = builder.build().configure_for_environment(aws)
-    read_pipeline.configuration['shouldRetry'] = False
-    sdc_executor.add_pipeline(read_pipeline)
-
-    client = aws.s3
     try:
+        if anonymous:
+            s3_bucket = create_bucket(aws)
+            logger.info(f'Bucket {s3_bucket} created')
+        else:
+            s3_bucket = aws.s3_bucket_name
+
+        s3_key = f'{S3_SANDBOX_PREFIX}/errDest-{get_random_string()}/'
+        random_string = get_random_string(string.ascii_letters, 10)
+        random_raw_json_str = f'{{"text":"{random_string}"}}'
+
+        # Build pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        s3_err = builder.add_error_stage('Write to Amazon S3')
+        s3_err.set_attributes(
+            bucket=s3_bucket,
+            common_prefix=s3_key
+        )
+        if anonymous:
+            configure_stage_for_anonymous(s3_err)
+
+        origin = builder.add_stage('Dev Raw Data Source', type='origin')
+        origin.set_attributes(
+            data_format='JSON',
+            raw_data=random_raw_json_str,
+            stop_after_first_batch=True
+        )
+
+        target = builder.add_stage('To Error', type='destination')
+
+        origin >> target
+
+        pipeline = builder.build().configure_for_environment(aws)
+        pipeline.configuration['shouldRetry'] = False
+        sdc_executor.add_pipeline(pipeline)
+
+        # Now we build and run another pipeline with an S3 Origin to read the data back
+        builder = sdc_builder.get_pipeline_builder()
+        s3_origin = builder.add_stage('Amazon S3', type='origin')
+        s3_origin.set_attributes(
+            bucket=s3_bucket,
+            data_format='SDC_JSON',
+            prefix_pattern=f'{s3_key}*',
+            max_batch_size_in_records=100
+        )
+        if anonymous:
+            configure_stage_for_anonymous(s3_origin)
+
+        wiretap = builder.add_wiretap()
+        finisher = builder.add_stage('Pipeline Finisher Executor')
+        finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+        s3_origin >> wiretap.destination
+        s3_origin >= finisher
+
+        read_pipeline = builder.build().configure_for_environment(aws)
+        read_pipeline.configuration['shouldRetry'] = False
+        sdc_executor.add_pipeline(read_pipeline)
+
+        client = aws.s3
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # We should have exactly one file in the bucket
@@ -165,10 +165,12 @@ def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
         assert len(wiretap.output_records) == 1
         assert [record.field['text'] for record in wiretap.output_records][0] == random_string
     finally:
-        aws.delete_s3_data(s3_bucket, s3_key)
-        if anonymous:
-            logger.info(f'Deleting bucket {s3_bucket}')
-            aws.s3.delete_bucket(Bucket=s3_bucket)
+        try:
+            aws.delete_s3_data(s3_bucket, s3_key)
+        finally:
+            if anonymous:
+                logger.info(f'Deleting bucket {s3_bucket}')
+                aws.s3.delete_bucket(Bucket=s3_bucket)
 
 
 @aws('s3')
@@ -312,46 +314,46 @@ def test_s3_destination_sse_kms(sdc_builder, sdc_executor, aws):
 
 
 def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous):
-    if anonymous:
-        s3_bucket = create_bucket(aws)
-        logger.info(f'Bucket {s3_bucket} created')
-    else:
-        s3_bucket = aws.s3_bucket_name
-
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
-
-    # Bucket name is inside the record itself
-    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
-
-    # Build the pipeline
-    builder = sdc_builder.get_pipeline_builder()
-
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  raw_data=raw_str,
-                                                                                  stop_after_first_batch=True)
-
-    s3_destination = builder.add_stage('Amazon S3', type='destination')
-    bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
-    s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key)
-    if sse_kms:
-        # Use SSE with KMS
-        s3_destination.set_attributes(use_server_side_encryption=True,
-                                      server_side_encryption_option='KMS',
-                                      aws_kms_key_arn=aws.kms_key_arn)
-    if anonymous:
-        configure_stage_for_anonymous(s3_destination)
-
-    wiretap = builder.add_wiretap()
-
-    dev_raw_data_source >> s3_destination
-    s3_destination >= wiretap.destination
-
-    s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
-    sdc_executor.add_pipeline(s3_dest_pipeline)
-
-    client = aws.s3
-
     try:
+        if anonymous:
+            s3_bucket = create_bucket(aws)
+            logger.info(f'Bucket {s3_bucket} created')
+        else:
+            s3_bucket = aws.s3_bucket_name
+
+        s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+        # Bucket name is inside the record itself
+        raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
+
+        # Build the pipeline
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                      raw_data=raw_str,
+                                                                                      stop_after_first_batch=True)
+
+        s3_destination = builder.add_stage('Amazon S3', type='destination')
+        bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
+        s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key)
+        if sse_kms:
+            # Use SSE with KMS
+            s3_destination.set_attributes(use_server_side_encryption=True,
+                                          server_side_encryption_option='KMS',
+                                          aws_kms_key_arn=aws.kms_key_arn)
+        if anonymous:
+            configure_stage_for_anonymous(s3_destination)
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> s3_destination
+        s3_destination >= wiretap.destination
+
+        s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+        sdc_executor.add_pipeline(s3_dest_pipeline)
+
+        client = aws.s3
+
         # start pipeline and capture pipeline messages to assert
         sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
 

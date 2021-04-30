@@ -101,16 +101,6 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
 
         try:
             client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
-            client.put_bucket_tagging(
-                Bucket=s3_bucket,
-                Tagging={
-                    'TagSet': [
-                        {'Key': 'stf-env', 'Value': 'nightly-tests'},
-                        {'Key': 'managed-by', 'Value': 'ep'},
-                        {'Key': 'dept', 'Value': 'eng'},
-                    ]
-                }
-            )
         except Exception as e:
             s3_bucket = None
             logger.error(f"Can't use bucket name '{s3_bucket}': {e}")
@@ -118,27 +108,37 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
     # We might not be able to find suitable bucket in max retries in which case we will simply die
     assert s3_bucket is not None
 
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
-
-    # Bucket name is inside the record itself
-    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
-
-    # Build the pipeline
-    builder = sdc_builder.get_pipeline_builder()
-
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
-                                                                                  raw_data=raw_str,
-                                                                                  stop_after_first_batch=True)
-
-    s3_destination = builder.add_stage('Amazon S3', type='destination')
-    s3_destination.set_attributes(bucket=s3_bucket, data_format='JSON', partition_prefix=s3_key)
-
-    dev_raw_data_source >> s3_destination
-
-    s3_dest_pipeline = builder.build().configure_for_environment(aws)
-    sdc_executor.add_pipeline(s3_dest_pipeline)
-
     try:
+        client.put_bucket_tagging(
+            Bucket=s3_bucket,
+            Tagging={
+                'TagSet': [
+                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                    {'Key': 'managed-by', 'Value': 'ep'},
+                    {'Key': 'dept', 'Value': 'eng'},
+                ]
+            }
+        )
+        s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+        # Bucket name is inside the record itself
+        raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
+
+        # Build the pipeline
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                      raw_data=raw_str,
+                                                                                      stop_after_first_batch=True)
+
+        s3_destination = builder.add_stage('Amazon S3', type='destination')
+        s3_destination.set_attributes(bucket=s3_bucket, data_format='JSON', partition_prefix=s3_key)
+
+        dev_raw_data_source >> s3_destination
+
+        s3_dest_pipeline = builder.build().configure_for_environment(aws)
+        sdc_executor.add_pipeline(s3_dest_pipeline)
+
         sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
 
         # assert record count to S3 the size of the objects put

@@ -104,6 +104,7 @@ def create_anonymous_client():
     """
     return boto3.client('s3', config=Config(signature_version=UNSIGNED))
 
+
 def create_bucket(aws):
     """Creates a bucket with the same root name than  aws.s3_bucket_name"""
     s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'

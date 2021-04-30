@@ -100,16 +100,6 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
 
         try:
             client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
-            client.put_bucket_tagging(
-                Bucket=s3_bucket,
-                Tagging={
-                    'TagSet': [
-                        {'Key': 'stf-env', 'Value': 'nightly-tests'},
-                        {'Key': 'managed-by', 'Value': 'ep'},
-                        {'Key': 'dept', 'Value': 'eng'},
-                    ]
-                }
-            )
         except Exception as e:
             s3_bucket = None
             logger.error(f"Can't use bucket name '{s3_bucket}': {e}")
@@ -117,35 +107,45 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
     # We might not be able to find suitable bucket in max retries in which case we will simply die
     assert s3_bucket is not None
 
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
-
-    data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
-
-    # Build pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    builder.add_error_stage('Discard')
-
-    s3_origin = builder.add_stage('Amazon S3', type='origin')
-
-    s3_origin.set_attributes(bucket=s3_bucket,
-                             data_format='JSON',
-                             json_content='ARRAY_OBJECTS',
-                             prefix_pattern=f'{s3_key}*')
-
-    wiretap = builder.add_wiretap()
-
-    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
-    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
-
-    s3_origin >> wiretap.destination
-    s3_origin >= pipeline_finished_executor
-
-    s3_origin_pipeline = builder.build().configure_for_environment(aws)
-    s3_origin_pipeline.configuration['shouldRetry'] = False
-
-    sdc_executor.add_pipeline(s3_origin_pipeline)
-
     try:
+        client.put_bucket_tagging(
+            Bucket=s3_bucket,
+            Tagging={
+                'TagSet': [
+                    {'Key': 'stf-env', 'Value': 'nightly-tests'},
+                    {'Key': 'managed-by', 'Value': 'ep'},
+                    {'Key': 'dept', 'Value': 'eng'},
+                ]
+            }
+        )
+        s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+        data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
+
+        # Build pipeline.
+        builder = sdc_builder.get_pipeline_builder()
+        builder.add_error_stage('Discard')
+
+        s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+        s3_origin.set_attributes(bucket=s3_bucket,
+                                 data_format='JSON',
+                                 json_content='ARRAY_OBJECTS',
+                                 prefix_pattern=f'{s3_key}*')
+
+        wiretap = builder.add_wiretap()
+
+        pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+        s3_origin >> wiretap.destination
+        s3_origin >= pipeline_finished_executor
+
+        s3_origin_pipeline = builder.build().configure_for_environment(aws)
+        s3_origin_pipeline.configuration['shouldRetry'] = False
+
+        sdc_executor.add_pipeline(s3_origin_pipeline)
+
         # Insert objects into S3.
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
@@ -155,9 +155,6 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
         assert len(output_records_values) == 10
         assert output_records_values == data
     finally:
-        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
-            logger.info('Stopping pipeline')
-            sdc_executor.stop_pipeline(s3_origin_pipeline)
         # Clean up S3.
         try:
             aws.delete_s3_data(s3_bucket, s3_key)
@@ -168,6 +165,10 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
                 client.delete_bucket(Bucket=s3_bucket)
             except Exception as e:
                 logger.error(f"Can't delete buckeet: {e}")
+
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline')
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
 
 
 @aws('s3')
