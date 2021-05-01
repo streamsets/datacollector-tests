@@ -1644,7 +1644,9 @@ def test_http_client_processor_timeout(sdc_builder,
             else:
                 expected_error = 1
 
-        logger.info(f'Finishing test: {timeout_mode} - {timeout_action} - {pass_record} - {expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
+        logger.info(
+            f'Finishing test: {timeout_mode} - {timeout_action} - {pass_record} - '
+            f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
 
         assert len(wiretap.output_records) == expected_output
         assert len(wiretap.error_records) == expected_error
@@ -1711,7 +1713,7 @@ def test_http_client_processor_passthrough(sdc_builder,
         interval = 2000
         no_time = 0
         short_time = 1
-        long_time = (one_millisecond * wait_seconds * (retries + 2)) * 100
+        long_time = (one_millisecond * wait_seconds * (retries + 2)) * 10
 
         http_mock_server = http_client.mock()
         http_mock_path = get_random_string(string.ascii_letters, 10)
@@ -1799,15 +1801,381 @@ def test_http_client_processor_passthrough(sdc_builder,
                 else:
                     expected_output = 0
                 expected_error = 1
-                
-        logger.info(f'Finishing test: {http_status} - {exhausted_action} - {pass_record} - {pass_record_other_status} - '
-                    f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
+
+        logger.info(
+            f'Finishing test: {http_status} - {exhausted_action} - {pass_record} - {pass_record_other_status} - '
+            f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
 
         assert len(wiretap.output_records) == expected_output
         assert len(wiretap.error_records) == expected_error
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         if exhausted_action == 'STAGE_ERROR' and http_status == 500:
+            assert pipeline_status == 'RUN_ERROR'
+        else:
+            assert pipeline_status == 'FINISHED'
+
+    finally:
+
+        http_mock_server.delete_mock()
+
+
+@sdc_min_version("4.0.0")
+@http
+@pytest.mark.parametrize('exhausted_action',
+                         [
+                             'RETRY_IMMEDIATELY',
+                             'RETRY_LINEAR_BACKOFF',
+                             'RETRY_EXPONENTIAL_BACKOFF',
+                             'STAGE_ERROR',
+                             'ERROR_RECORD'
+                         ])
+@pytest.mark.parametrize('pass_record',
+                         [
+                             True,
+                             False
+                         ])
+@pytest.mark.parametrize('pass_record_other_status',
+                         [
+                             True,
+                             False
+                         ])
+def test_http_client_processor_alternating_status(sdc_builder,
+                                                  sdc_executor,
+                                                  http_client,
+                                                  exhausted_action,
+                                                  pass_record,
+                                                  pass_record_other_status):
+    """
+        Test exhausted handling for HTTP Client Processor with alternating status.
+    """
+
+    try:
+
+        logger.info(f'Running test: {exhausted_action} - {pass_record} - {pass_record_other_status}')
+
+        record_output_field = 'oteai'
+        one_millisecond = 1000
+        wait_seconds = 1
+        retries = 2
+        interval = 2000
+        no_time = 0
+        short_time = 1
+        long_time = (one_millisecond * wait_seconds * (retries + 2)) * 100
+
+        http_mock_server = http_client.mock()
+        http_mock_path = get_random_string(string.ascii_letters, 10)
+        http_mock_content = dict(kisei='Kobayashi Koichi', meijin='Ishida Yoshio', honinbo='Takemiya Masaki')
+        http_mock_data = json.dumps(http_mock_content)
+
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=500,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=404,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=500,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=404,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=500,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=404,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=500,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data,
+                                                                   status=404,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+
+        http_mock_url = f'{http_mock_server.pretend_url}/{http_mock_path}'
+
+        resource_url = http_mock_url
+        connect_timeout = long_time
+        read_timeout = long_time
+        maximum_request_time_in_sec = long_time
+        batch_wait_time_in_ms = long_time
+
+        pipeline_name = f'{exhausted_action} - {pass_record} - {pass_record_other_status}' \
+                        f' - {get_random_string(string.ascii_letters, 10)}'
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source_origin = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source_origin.set_attributes(data_format='JSON',
+                                                  raw_data=http_mock_data,
+                                                  stop_after_first_batch=True)
+
+        http_client_processor = pipeline_builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             resource_url=resource_url,
+                                             http_method='GET',
+                                             default_request_content_type='application/json',
+                                             request_data="${record:value('/honinbo')}",
+                                             output_field=f'/{record_output_field}',
+                                             connect_timeout=connect_timeout,
+                                             read_timeout=read_timeout,
+                                             maximum_request_time_in_sec=maximum_request_time_in_sec,
+                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
+                                             action_for_timeout='STAGE_ERROR',
+                                             records_for_remaining_statuses=pass_record_other_status,
+                                             missing_values_behavior='SEND_TO_ERROR')
+        http_client_processor.per_status_actions = [
+            {
+                'statusCode': 404,
+                'action': exhausted_action,
+                'backoffInterval': interval,
+                'maxNumRetries': retries,
+                'passRecord': pass_record
+            },
+            {
+                'statusCode': 500,
+                'action': exhausted_action,
+                'backoffInterval': interval,
+                'maxNumRetries': retries,
+                'passRecord': pass_record
+            }
+        ]
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        dev_raw_data_source_origin >> http_client_processor >> wiretap.destination
+
+        pipeline_title = f'HTTP Client Processor Passthrough Test Pipeline: {pipeline_name}'
+        pipeline = pipeline_builder.build(title=pipeline_title)
+        pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+
+        if exhausted_action == 'STAGE_ERROR':
+            with pytest.raises(Exception) as exception:
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        else:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        if exhausted_action == 'STAGE_ERROR':
+            expected_output = 0
+            expected_error = 0
+        else:
+            if pass_record:
+                expected_output = 1
+            else:
+                expected_output = 0
+            expected_error = 1
+
+        logger.info(
+            f'Finishing test: {exhausted_action} - {pass_record} - {pass_record_other_status} - '
+            f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
+
+        assert len(wiretap.output_records) == expected_output
+        assert len(wiretap.error_records) == expected_error
+
+        pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        if exhausted_action == 'STAGE_ERROR':
+            assert pipeline_status == 'RUN_ERROR'
+        else:
+            assert pipeline_status == 'FINISHED'
+
+    finally:
+
+        http_mock_server.delete_mock()
+
+@sdc_min_version("4.0.0")
+@http
+@pytest.mark.parametrize('exhausted_action',
+                         [
+                             'RETRY_IMMEDIATELY',
+                             'RETRY_LINEAR_BACKOFF',
+                             'RETRY_EXPONENTIAL_BACKOFF',
+                             'STAGE_ERROR',
+                             'ERROR_RECORD'
+                         ])
+@pytest.mark.parametrize('pass_record',
+                         [
+                             True,
+                             False
+                         ])
+@pytest.mark.parametrize('pass_record_other_status',
+                         [
+                             True,
+                             False
+                         ])
+def test_http_client_processor_alternating_status_timeout(sdc_builder,
+                                                          sdc_executor,
+                                                          http_client,
+                                                          exhausted_action,
+                                                          pass_record,
+                                                          pass_record_other_status):
+    """
+        Test exhausted handling for HTTP Client Processor with alternating status and timeout.
+    """
+
+    try:
+
+        logger.info(f'Running test: {exhausted_action} - {pass_record} - {pass_record_other_status}')
+
+        record_output_field = 'oteai'
+        one_millisecond = 1000
+        wait_seconds_ok = 1
+        wait_seconds_ko = 10
+        retries = 2
+        interval = 2000
+        no_time = 0
+        short_time = 5000
+        long_time = (one_millisecond * wait_seconds_ko * (retries + 2)) * 300
+
+        http_mock_server = http_client.mock()
+        http_mock_path = get_random_string(string.ascii_letters, 10)
+        http_mock_content = dict(kisei='Kobayashi Koichi', meijin='Ishida Yoshio', honinbo='Takemiya Masaki')
+        http_mock_data = json.dumps(http_mock_content)
+
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds_ok,
+                                                                   body=http_mock_data,
+                                                                   status=500,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds_ko,
+                                                                   body=http_mock_data,
+                                                                   status=200,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(
+                                                                   body=http_mock_data,
+                                                                   status=500,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds_ko,
+                                                                   body=http_mock_data,
+                                                                   status=200,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds_ok,
+                                                                   body=http_mock_data,
+                                                                   status=500,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds_ko,
+                                                                   body=http_mock_data,
+                                                                   status=200,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds_ok,
+                                                                   body=http_mock_data,
+                                                                   status=500,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds_ko,
+                                                                   body=http_mock_data,
+                                                                   status=200,
+                                                                   headers={'Content-Type': 'application/json'},
+                                                                   times=1)
+
+        http_mock_url = f'{http_mock_server.pretend_url}/{http_mock_path}'
+
+        resource_url = http_mock_url
+        connect_timeout = long_time
+        read_timeout = short_time
+        maximum_request_time_in_sec = long_time
+        batch_wait_time_in_ms = long_time
+
+        pipeline_name = f'{exhausted_action} - {pass_record} - {pass_record_other_status}' \
+                        f' - {get_random_string(string.ascii_letters, 10)}'
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source_origin = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source_origin.set_attributes(data_format='JSON',
+                                                  raw_data=http_mock_data,
+                                                  stop_after_first_batch=True)
+
+        http_client_processor = pipeline_builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             resource_url=resource_url,
+                                             http_method='GET',
+                                             default_request_content_type='application/json',
+                                             request_data="${record:value('/honinbo')}",
+                                             output_field=f'/{record_output_field}',
+                                             connect_timeout=connect_timeout,
+                                             read_timeout=read_timeout,
+                                             maximum_request_time_in_sec=maximum_request_time_in_sec,
+                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
+                                             base_backoff_interval_in_ms=interval,
+                                             max_retries=retries,
+                                             pass_record=pass_record,
+                                             action_for_timeout='RETRY_IMMEDIATELY',
+                                             records_for_remaining_statuses=pass_record_other_status,
+                                             missing_values_behavior='SEND_TO_ERROR')
+        http_client_processor.per_status_actions = [
+            {
+                'statusCode': 500,
+                'action': exhausted_action,
+                'backoffInterval': interval,
+                'maxNumRetries': retries,
+                'passRecord': pass_record
+            },
+            {
+                'statusCode': 404,
+                'action': exhausted_action,
+                'backoffInterval': interval,
+                'maxNumRetries': retries,
+                'passRecord': pass_record
+            }
+        ]
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        dev_raw_data_source_origin >> http_client_processor >> wiretap.destination
+
+        pipeline_title = f'HTTP Client Processor Passthrough Test Pipeline: {pipeline_name}'
+        pipeline = pipeline_builder.build(title=pipeline_title)
+        pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+
+        if exhausted_action == 'STAGE_ERROR':
+            with pytest.raises(Exception) as exception:
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        else:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        if exhausted_action == 'STAGE_ERROR':
+            expected_output = 0
+            expected_error = 0
+        else:
+            if pass_record:
+                expected_output = 1
+            else:
+                expected_output = 0
+            expected_error = 1
+
+        logger.info(
+            f'Finishing test: {exhausted_action} - {pass_record} - {pass_record_other_status} - '
+            f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
+
+        assert len(wiretap.output_records) == expected_output
+        assert len(wiretap.error_records) == expected_error
+
+        pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        if exhausted_action == 'STAGE_ERROR':
             assert pipeline_status == 'RUN_ERROR'
         else:
             assert pipeline_status == 'FINISHED'
