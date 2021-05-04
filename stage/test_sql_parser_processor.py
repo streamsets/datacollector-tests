@@ -83,3 +83,44 @@ def test_sql_parser_case_sensitive(sdc_builder, sdc_executor, case_sensitive):
             assert record.field['columns']['B'] == '21'
             assert not ('c' in record.field['columns'])
             assert record.field['columns']['C'] == '3'
+
+
+def test_sql_parser_parse_exception(sdc_builder, sdc_executor):
+
+    """
+    Check that SQL Parser Processor treats wrong statements.
+    """
+
+    statement_sql = 'update "schema"."table" set a = 1, b = 2, A = 11, B ='
+    statement_data = dict(statement=statement_sql)
+    statement_json = json.dumps(statement_data)
+
+    pipeline_name = f' {get_random_string(string.ascii_letters, 10)}'
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source_origin = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source_origin.set_attributes(data_format='JSON',
+                                              raw_data=statement_json,
+                                              stop_after_first_batch=True)
+
+    sql_parser_processor = pipeline_builder.add_stage(name=SQL_PARSER_STAGE_NAME)
+    sql_parser_processor.set_attributes(sql_field='/statement',
+                                        target_field='/columns',
+                                        resolve_schema_from_db=False,
+                                        case_sensitive_names=True,
+                                        db_time_zone='UTC')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source_origin >> sql_parser_processor >> wiretap.destination
+
+    pipeline_title = f'SQL Parser Processor Test Pipeline: {pipeline_name}'
+    pipeline = pipeline_builder.build(title=pipeline_title)
+    pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.validate_pipeline(pipeline)
+
+    with pytest.raises(sdc_api.RunError) as exception:
+        sdc_executor.start_pipeline(pipeline)
+
+    assert 'JDBC_96' in f'{exception.value}'
