@@ -16,6 +16,14 @@ import pytest
 from streamsets.testframework.decorators import stub
 
 
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-groovy_2_4-lib')
+
+    return hook
+
+
 @stub
 def test_destroy_script(sdc_builder, sdc_executor):
     pass
