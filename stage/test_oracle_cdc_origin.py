@@ -688,6 +688,143 @@ def test_oracle_cdc_client_sequence(sdc_builder,
             target_table.drop(database.engine)
 
 
+@sdc_min_version('4.0.0')
+@database('oracle')
+@pytest.mark.parametrize('case_sensitive', [True, False])
+@pytest.mark.parametrize('pseudocolumns_in_header', [True, False])
+def test_sql_parser_pseudocolumns(sdc_builder,
+                                  sdc_executor,
+                                  database,
+                                  case_sensitive,
+                                  pseudocolumns_in_header):
+    """
+    Check pseudocolumns processing.
+    """
+
+    source_table = None
+    target_table = None
+
+    pipeline = None
+
+    try:
+
+        database_connection = database.engine.connect()
+
+        source_table_name = get_random_string(string.ascii_uppercase, 16)
+        logger.info('Creating source table %s in %s database ...', source_table_name, database.type)
+        source_table = sqlalchemy.Table(source_table_name, sqlalchemy.MetaData(),
+                                        sqlalchemy.Column('Id', sqlalchemy.Integer, primary_key=True),
+                                        sqlalchemy.Column('Name', sqlalchemy.String(32)),
+                                        sqlalchemy.Column('Surname', sqlalchemy.String(64)),
+                                        sqlalchemy.Column('Country', sqlalchemy.String(2)),
+                                        sqlalchemy.Column('City', sqlalchemy.String(3)))
+        source_table.create(database.engine)
+        target_table_name = get_random_string(string.ascii_uppercase, 16)
+        logger.info('Creating target table %s in %s database ...', target_table_name, database.type)
+        target_table = sqlalchemy.Table(target_table_name, sqlalchemy.MetaData(),
+                                        sqlalchemy.Column('Id', sqlalchemy.Integer, primary_key=True),
+                                        sqlalchemy.Column('Name', sqlalchemy.String(32)),
+                                        sqlalchemy.Column('Surname', sqlalchemy.String(64)),
+                                        sqlalchemy.Column('Country', sqlalchemy.String(2)),
+                                        sqlalchemy.Column('City', sqlalchemy.String(3)))
+        target_table.create(database.engine)
+
+        database_last_scn = _get_last_scn(database_connection)
+        number_of_rows = 1
+
+        database_transaction = database_connection.begin()
+        for id in range(0, number_of_rows):
+            table_id = id
+            table_name = "'" + str(uuid.uuid4())[:32] + "'"
+            table_surname = "'" + str(uuid.uuid4())[:64] + "'"
+            table_country = "'" + str(uuid.uuid4())[:2] + "'"
+            table_city = "'" + str(uuid.uuid4())[:3] + "'"
+            sentence = f'insert into {source_table} values ({table_id}, {table_name}, {table_surname}, {table_country}, {table_city})'
+            sql = text(sentence)
+            database_connection.execute(sql)
+        database_transaction.commit()
+
+        database_transaction = database_connection.begin()
+        sentence = f'insert into {target_table_name} select * from {source_table_name}'
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        database_transaction = database_connection.begin()
+        sentence = f'update {target_table_name} set "City"  = "Country"'
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        database_transaction = database_connection.begin()
+        sentence = f'delete from {target_table_name}'
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
+        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                         tables=[{'schema': database.username.upper(), 'table': target_table_name, 'excludePattern': ''}],
+                                         buffer_changes_locally=True,
+                                         logminer_session_window='${10 * MINUTES}',
+                                         maximum_transaction_length='${2 * MINUTES}',
+                                         db_time_zone='UTC',
+                                         max_batch_size_in_records=1,
+                                         initial_change='SCN',
+                                         start_scn=database_last_scn,
+                                         parse_sql_query=True,
+                                         case_sensitive_names=case_sensitive,
+                                         pseudocolumns_in_header=pseudocolumns_in_header)
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3 * number_of_rows)
+
+        for record in wiretap.output_records:
+            record_operation = record.header.values["oracle.cdc.operation"]
+            if record_operation == 'UPDATE':
+                if case_sensitive:
+                    assert ('Id' in record.field)
+                    assert ('Name' in record.field)
+                    assert ('Surname' in record.field)
+                    assert ('Country' in record.field)
+                    assert ('City' in record.field)
+                    assert not ('ID' in record.field)
+                    assert not ('NAME' in record.field)
+                    assert not ('SURNAME' in record.field)
+                    assert not ('COUNTRY' in record.field)
+                    assert not ('CITY' in record.field)
+                else:
+                    assert ('ID' in record.field)
+                    assert ('NAME' in record.field)
+                    assert ('SURNAME' in record.field)
+                    assert ('COUNTRY' in record.field)
+                    assert ('CITY' in record.field)
+                    assert not ('Id' in record.field)
+                    assert not ('Name' in record.field)
+                    assert not ('Surname' in record.field)
+                    assert not ('Country' in record.field)
+                    assert not ('City' in record.field)
+                assert ('oracle.cdc.rowId' in record.header.values)
+                if pseudocolumns_in_header:
+                    assert ('oracle.cdc.oracle.pseudocolumn.ROWID' in record.header.values)
+                else:
+                    assert not ('oracle.cdc.oracle.pseudocolumn.ROWID' in record.header.values)
+
+    finally:
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
+        if source_table is not None:
+            source_table.drop(database.engine)
+
+        if target_table is not None:
+            target_table.drop(database.engine)
+
+
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @database('oracle')
 def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, buffer_locally):
