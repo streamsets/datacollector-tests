@@ -91,24 +91,25 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
     client = aws.s3
     retry = 0
     s3_bucket = None
-    # Since S3 buckets are globally unique, doing our usual randomization doesn't work well - we always have a chance
-    # to create bucket that already exists. That is why we have a retry logic - we try to generate several bucket names
-    # and see which one we manage to "claim".
-    while s3_bucket is None and retry < 10:
-        retry = retry + 1
-        s3_bucket = bucket_generator()
-        logger.info(f"Retry {retry} with bucket name '{s3_bucket}'")
-
-        try:
-            client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
-        except Exception as e:
-            s3_bucket = None
-            logger.error(f"Can't use bucket name '{s3_bucket}': {e}")
-
-    # We might not be able to find suitable bucket in max retries in which case we will simply die
-    assert s3_bucket is not None
 
     try:
+        # Since S3 buckets are globally unique, doing our usual randomization doesn't work well - we always have a chance
+        # to create bucket that already exists. That is why we have a retry logic - we try to generate several bucket names
+        # and see which one we manage to "claim".
+        while s3_bucket is None and retry < 10:
+            retry = retry + 1
+            s3_bucket = bucket_generator()
+            logger.info(f"Retry {retry} with bucket name '{s3_bucket}'")
+
+            try:
+                client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+            except Exception as e:
+                s3_bucket = None
+                logger.error(f"Can't use bucket name '{s3_bucket}': {e}")
+
+        # We might not be able to find suitable bucket in max retries in which case we will simply die
+        assert s3_bucket is not None
+
         client.put_bucket_tagging(
             Bucket=s3_bucket,
             Tagging={
