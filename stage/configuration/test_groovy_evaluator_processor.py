@@ -14,6 +14,7 @@
 import pytest
 
 from streamsets.testframework.decorators import stub
+from streamsets.testframework.markers import sdc_min_version
 
 
 @pytest.fixture(scope='module')
@@ -41,6 +42,7 @@ def test_init_script(sdc_builder, sdc_executor):
     pass
 
 
+@sdc_min_version('3.10.0')
 @pytest.mark.parametrize('stage_attributes', [{'on_record_error': 'DISCARD', 'error_expected': ''},
                                               {'on_record_error': 'STOP_PIPELINE', 'error_expected': 'SCRIPTING_06'},
                                               {'on_record_error': 'TO_ERROR', 'error_expected': 'SCRIPTING_04'}])
