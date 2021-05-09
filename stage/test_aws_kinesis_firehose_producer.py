@@ -71,7 +71,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
         dests = resp['DeliveryStreamDescription']['Destinations'][0]
         wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
-        time.sleep(wait_secs + 15)  # few seconds more to wait to make sure S3 gets the data
+        time.sleep(wait_secs + 60)  # an extra minute to wait to make sure S3 gets the data
 
         # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
         # read data to assert
@@ -140,7 +140,7 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
         dests = resp['DeliveryStreamDescription']['Destinations'][0]
         wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
-        time.sleep(wait_secs + 15)  # few seconds more to wait to make sure S3 gets the data
+        time.sleep(wait_secs + 60)  # an extra minute to wait to make sure S3 gets the data
 
         # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
         # read data to assert
