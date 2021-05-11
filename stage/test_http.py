@@ -1637,19 +1637,41 @@ def test_http_client_processor_timeout(sdc_builder,
                     expected_output = 0
 
         if timeout_action == 'STAGE_ERROR':
-            expected_error = 0
+            if timeout_mode == 'record':
+                expected_error = 0
+                expected_message = 1
+            else:
+                expected_error = 0
+                expected_message = 0
         else:
             if timeout_mode == 'record':
                 expected_error = 0
+                expected_message = 1
             else:
-                expected_error = 1
+                if expected_output == 0:
+                    expected_error = 1
+                    expected_message = 0
+                else:
+                    expected_error = 0
+                    expected_message = 1
+
+        try:
+            pipeline_metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
+            error_metric = f'stage.{http_client_processor.instance_name}.stageErrors.counter'
+            error_counter = pipeline_metrics.counter(error_metric).count
+        except:
+            logger.warning('Error reading metrics...')
+            error_counter = 0
 
         logger.info(
             f'Finishing test: {timeout_mode} - {timeout_action} - {pass_record} - '
-            f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
+            f'{expected_output} vs {len(wiretap.output_records)} - '
+            f'{expected_error} vs {len(wiretap.error_records)} - '
+            f'{expected_message} vs {error_counter}')
 
-        assert len(wiretap.output_records) == expected_output
-        assert len(wiretap.error_records) == expected_error
+        assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
+        assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         if timeout_action == 'STAGE_ERROR':
@@ -1784,30 +1806,48 @@ def test_http_client_processor_passthrough(sdc_builder,
         if http_status == 200:
             expected_output = 1
             expected_error = 0
+            expected_message = 0
         elif http_status == 404:
             if pass_record_other_status:
                 expected_output = 1
                 expected_error = 0
+                expected_message = 0
             else:
                 expected_output = 0
                 expected_error = 1
+                expected_message = 0
         elif http_status == 500:
             if exhausted_action == 'STAGE_ERROR':
                 expected_output = 0
                 expected_error = 0
+                expected_message = 0
             else:
                 if pass_record:
                     expected_output = 1
+                    expected_error = 0
+                    expected_message = 1
                 else:
                     expected_output = 0
-                expected_error = 1
+                    expected_error = 1
+                    expected_message = 0
+
+        try:
+            pipeline_metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
+            error_metric = f'stage.{http_client_processor.instance_name}.stageErrors.counter'
+            error_counter = pipeline_metrics.counter(error_metric).count
+        except:
+            logger.warning('Error reading metrics...')
+            error_counter = 0
 
         logger.info(
             f'Finishing test: {http_status} - {exhausted_action} - {pass_record} - {pass_record_other_status} - '
-            f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
+            f'{expected_output} vs {len(wiretap.output_records)} - '
+            f'{expected_error} vs {len(wiretap.error_records)} - '
+            f'{expected_message} vs {error_counter}')
 
-        assert len(wiretap.output_records) == expected_output
-        assert len(wiretap.error_records) == expected_error
+        assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
+        assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         if exhausted_action == 'STAGE_ERROR' and http_status == 500:
@@ -1976,19 +2016,34 @@ def test_http_client_processor_alternating_status(sdc_builder,
         if exhausted_action == 'STAGE_ERROR':
             expected_output = 0
             expected_error = 0
+            expected_message = 0
         else:
             if pass_record:
                 expected_output = 1
+                expected_error = 0
+                expected_message = 1
             else:
                 expected_output = 0
-            expected_error = 1
+                expected_error = 1
+                expected_message = 0
+
+        try:
+            pipeline_metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
+            error_metric = f'stage.{http_client_processor.instance_name}.stageErrors.counter'
+            error_counter = pipeline_metrics.counter(error_metric).count
+        except:
+            logger.warning('Error reading metrics...')
+            error_counter = 0
 
         logger.info(
             f'Finishing test: {exhausted_action} - {pass_record} - {pass_record_other_status} - '
-            f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
+            f'{expected_output} vs {len(wiretap.output_records)} - '
+            f'{expected_error} vs {len(wiretap.error_records)} - '
+            f'{expected_message} vs {error_counter}')
 
-        assert len(wiretap.output_records) == expected_output
-        assert len(wiretap.error_records) == expected_error
+        assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
+        assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         if exhausted_action == 'STAGE_ERROR':
@@ -2160,19 +2215,34 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
         if exhausted_action == 'STAGE_ERROR':
             expected_output = 0
             expected_error = 0
+            expected_message = 0
         else:
             if pass_record:
                 expected_output = 1
+                expected_error = 0
+                expected_message = 1
             else:
                 expected_output = 0
-            expected_error = 1
+                expected_error = 1
+                expected_message = 0
+
+        try:
+            pipeline_metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
+            error_metric = f'stage.{http_client_processor.instance_name}.stageErrors.counter'
+            error_counter = pipeline_metrics.counter(error_metric).count
+        except:
+            logger.warning('Error reading metrics...')
+            error_counter = 0
 
         logger.info(
             f'Finishing test: {exhausted_action} - {pass_record} - {pass_record_other_status} - '
-            f'{expected_output} vs {len(wiretap.output_records)} - {expected_error} vs {len(wiretap.error_records)}')
+            f'{expected_output} vs {len(wiretap.output_records)} - '
+            f'{expected_error} vs {len(wiretap.error_records)} - '
+            f'{expected_message} vs {error_counter}')
 
-        assert len(wiretap.output_records) == expected_output
-        assert len(wiretap.error_records) == expected_error
+        assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
+        assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         if exhausted_action == 'STAGE_ERROR':
