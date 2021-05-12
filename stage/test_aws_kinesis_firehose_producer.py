@@ -71,16 +71,13 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
         dests = resp['DeliveryStreamDescription']['Destinations'][0]
         wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
-        time.sleep(wait_secs + 60)  # an extra minute to wait to make sure S3 gets the data
+        time.sleep(wait_secs + 15)  # an extra minute to wait to make sure S3 gets the data
 
-        # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
-        # read data to assert
-        list_s3_objs = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=datetime.utcnow().strftime("%Y/%m/%d"))
-        for s3_content in list_s3_objs['Contents']:
-            akey = s3_content['Key']
-            aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
-            if aobj['Body'].read().decode().strip() == random_raw_str:
-                s3_put_keys.append(akey)
+        iteration = 0
+        while len(s3_put_keys) == 0 and iteration < 3:
+            s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
+            iteration = iteration + 1
+            time.sleep(30)
 
         assert len(s3_put_keys) == record_count
     finally:
@@ -140,16 +137,13 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
         dests = resp['DeliveryStreamDescription']['Destinations'][0]
         wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
-        time.sleep(wait_secs + 60)  # an extra minute to wait to make sure S3 gets the data
+        time.sleep(wait_secs + 15)  # an extra minute to wait to make sure S3 gets the data
 
-        # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
-        # read data to assert
-        list_s3_objs = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=datetime.utcnow().strftime("%Y/%m/%d"))
-        for s3_content in list_s3_objs['Contents']:
-            akey = s3_content['Key']
-            aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
-            if aobj['Body'].read().decode().strip() == random_raw_str:
-                s3_put_keys.append(akey)
+        iteration = 0
+        while len(s3_put_keys) == 0 and iteration < 3:
+            s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
+            iteration = iteration + 1
+            time.sleep(30)
 
         assert len(s3_put_keys) == record_count
     finally:
@@ -163,3 +157,17 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
 def _ensure_pipeline_is_stopped(sdc_executor, pipeline):
     if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
         sdc_executor.stop_pipeline(pipeline)
+
+
+def _get_firehose_data(s3_client, s3_bucket, random_raw_str):
+    s3_put_keys = []
+    # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
+    # read data to assert
+    list_s3_objs = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=datetime.utcnow().strftime("%Y/%m/%d"))
+    for s3_content in list_s3_objs['Contents']:
+        akey = s3_content['Key']
+        aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
+        if aobj['Body'].read().decode().strip() == random_raw_str:
+            s3_put_keys.append(akey)
+
+    return s3_put_keys
