@@ -2055,6 +2055,7 @@ def test_http_client_processor_alternating_status(sdc_builder,
 
         http_mock_server.delete_mock()
 
+
 @sdc_min_version("4.0.0")
 @http
 @pytest.mark.parametrize('exhausted_action',
@@ -2249,6 +2250,293 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
             assert pipeline_status == 'RUN_ERROR'
         else:
             assert pipeline_status == 'FINISHED'
+
+    finally:
+
+        http_mock_server.delete_mock()
+
+
+@http
+@pytest.mark.parametrize('pagination_mode',
+                         [
+                             'BY_PAGE',
+                             'BY_OFFSET',
+                             'LINK_HEADER',
+                             'LINK_FIELD'
+                         ])
+@pytest.mark.parametrize('pagination_end_mode',
+                         [
+                             'empty',
+                             'void',
+                             'vacuum',
+                             'unexisting',
+                             'nothing',
+                             'null'
+                         ])
+@pytest.mark.parametrize('stop_condition',
+                         [
+                             'value',
+                             'existence'
+                         ])
+@sdc_min_version("4.0.0")
+def test_http_processor_pagination_with_empty_response(sdc_builder,
+                                                       sdc_executor,
+                                                       http_client,
+                                                       pagination_mode,
+                                                       pagination_end_mode,
+                                                       stop_condition):
+    """
+        Test when a pagination option is set up and last page is empty.
+    """
+
+    try:
+
+        logger.info(f'Running test: {pagination_mode} - {pagination_end_mode} - {stop_condition}')
+
+        record_output_field = 'oteai'
+        one_millisecond = 1000
+        wait_seconds = 1
+        retries = 10
+        interval = 2000
+        no_time = 0
+        short_time = 5000
+        long_time = (one_millisecond * wait_seconds * (retries + 2)) * 300
+
+        if stop_condition == 'value':
+            condition = '${record:value(\'/current_page\') == 4}'
+        else:
+            condition = '${!record:exists(\'/current_page\')}'
+
+        http_mock_content = dict(type='tournaments', mode='verbose')
+        http_mock_data = json.dumps(http_mock_content)
+
+        http_mock_server = http_client.mock()
+        http_mock_path = get_random_string(string.ascii_letters, 10)
+        http_mock_url = f'{http_mock_server.pretend_url}/{http_mock_path}?page=${{startAt}}&offset=${{startAt}}'
+        http_mock_simple_url = f'{http_mock_server.pretend_url}/{http_mock_path}?page=1&offset=1'
+        http_mock_content_01 = \
+            {
+                'tournaments':
+                [
+                    {'title': 'Kisei',   'player': 'Kobayashi Koichi'},
+                    {'title': 'Meijin',  'player': 'Ishida Yoshio'},
+                    {'title': 'Honinbo', 'player': 'Takemiya Masaki'}
+                ],
+                'current_page': 1,
+                'next_page': http_mock_simple_url
+            }
+        http_mock_content_02 = \
+            {
+                'tournaments':
+                [
+                    {'title': 'Judan',  'player': 'Otake Hideo'},
+                    {'title': 'Tengen', 'player': 'Rin Kaiho'},
+                    {'title': 'Gosei',  'player': 'Cho Chikun'}
+                ],
+                'current_page': 2,
+                'next_page': http_mock_simple_url
+            }
+
+        http_mock_content_03 = \
+            {
+                'tournaments':
+                [
+                    {'title': 'Oza',     'player': 'Kato Masao'},
+                    {'title': 'NHK Cup', 'player': 'Go Seigen'},
+                    {'title': 'NEC Cup', 'player': 'Kitani Minoru'}
+                ],
+                'current_page': 3,
+                'next_page': http_mock_simple_url
+            }
+        if pagination_mode == 'LINK_FIELD' and stop_condition == 'value':
+            if pagination_end_mode == 'empty':
+                http_mock_content_04 = \
+                    {
+                        'tournaments':
+                        [
+                        ],
+                        'current_page': 4,
+                        'next_page': http_mock_simple_url
+                    }
+                http_mock_data_04 = json.dumps(http_mock_content_04)
+            elif pagination_end_mode == 'void':
+                http_mock_data_04 = f'{{[], \'current_page\': 4, \'next_page\': \'{http_mock_simple_url}\'}}'
+            elif pagination_end_mode == 'vacuum':
+                http_mock_data_04 = f'[], \'current_page\': 4, \'next_page\': \'{http_mock_simple_url}\''
+            elif pagination_end_mode == 'unexisting':
+                http_mock_content_04 = \
+                    {
+                        'titles':
+                            [
+                                {'title': 'Ryusei', 'player': 'Takeo Kajiwara'},
+                                {'title': 'Okage',  'player': 'Fujisawa Shuko'},
+                                {'title': 'Okan',   'player': 'Sakata Eio'}
+                            ],
+                        'current_page': 4,
+                        'next_page': http_mock_simple_url
+                    }
+                http_mock_data_04 = json.dumps(http_mock_content_04)
+            elif pagination_end_mode == 'nothing':
+                http_mock_content_04 = \
+                    {
+                        'current_page': 4,
+                        'next_page': http_mock_simple_url
+                    }
+                http_mock_data_04 = json.dumps(http_mock_content_04)
+            elif pagination_end_mode == 'null':
+                http_mock_data_04 = f'\'current_page\': 4, \'next_page\': \'{http_mock_simple_url}\''
+        else:
+            if pagination_end_mode == 'empty':
+                http_mock_content_04 = \
+                    {
+                        'tournaments':
+                        [
+                        ]
+                    }
+                http_mock_data_04 = json.dumps(http_mock_content_04)
+            elif pagination_end_mode == 'void':
+                http_mock_data_04 = '{[]}'
+            elif pagination_end_mode == 'vacuum':
+                http_mock_data_04 = '[]'
+            elif pagination_end_mode == 'unexisting':
+                http_mock_content_04 = \
+                    {
+                        'titles':
+                            [
+                                {'title': 'Ryusei', 'player': 'Takeo Kajiwara'},
+                                {'title': 'Okage',  'player': 'Fujisawa Shuko'},
+                                {'title': 'Okan',   'player': 'Sakata Eio'}
+                            ]
+                    }
+                http_mock_data_04 = json.dumps(http_mock_content_04)
+            elif pagination_end_mode == 'nothing':
+                http_mock_content_04 = {}
+                http_mock_data_04 = json.dumps(http_mock_content_04)
+            elif pagination_end_mode == 'null':
+                http_mock_data_04 = ''
+
+        http_mock_data_01 = json.dumps(http_mock_content_01)
+        http_mock_data_02 = json.dumps(http_mock_content_02)
+        http_mock_data_03 = json.dumps(http_mock_content_03)
+
+        header_content_type_value = f'application/json'
+        header_link_value = f'<{http_mock_simple_url}>; rel=next'
+
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data_01,
+                                                                   status=200,
+                                                                   headers={'Content-Type': header_content_type_value,
+                                                                            'Link': header_link_value},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data_02,
+                                                                   status=200,
+                                                                   headers={'Content-Type': header_content_type_value,
+                                                                            'Link': header_link_value},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data_03,
+                                                                   status=200,
+                                                                   headers={'Content-Type': header_content_type_value,
+                                                                            'Link': header_link_value},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data_04,
+                                                                   status=200,
+                                                                   headers={'Content-Type': header_content_type_value},
+                                                                   times=1)
+
+        resource_url = http_mock_url
+        connect_timeout = long_time
+        read_timeout = long_time
+        maximum_request_time_in_sec = long_time
+        batch_wait_time_in_ms = long_time
+
+        pipeline_name = f'{pagination_mode}' \
+                        f' - {get_random_string(string.ascii_letters, 10)}'
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source_origin = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source_origin.set_attributes(data_format='JSON',
+                                                  raw_data=http_mock_data,
+                                                  stop_after_first_batch=True)
+
+        http_client_processor = pipeline_builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             resource_url=resource_url,
+                                             http_method='GET',
+                                             default_request_content_type='application/json',
+                                             request_data='token',
+                                             output_field=f'/{record_output_field}',
+                                             connect_timeout=connect_timeout,
+                                             read_timeout=read_timeout,
+                                             maximum_request_time_in_sec=maximum_request_time_in_sec,
+                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
+                                             base_backoff_interval_in_ms=interval,
+                                             max_retries=retries,
+                                             pass_record=False,
+                                             action_for_timeout='RETRY_IMMEDIATELY',
+                                             records_for_remaining_statuses=False,
+                                             missing_values_behavior='SEND_TO_ERROR',
+                                             pagination_mode=pagination_mode,
+                                             result_field_path='/tournaments',
+                                             multiple_values_behavior='ALL_AS_LIST',
+                                             next_page_link_field='/next_page',
+                                             stop_condition=f'{condition}')
+
+        # Must do it like this because the attribute name has the '/' char
+        setattr(http_client_processor, 'initial_page/offset', 1)
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        dev_raw_data_source_origin >> http_client_processor >> wiretap.destination
+
+        pipeline_title = f'HTTP Client Processor Void Pagination Test Pipeline: {pipeline_name}'
+        pipeline = pipeline_builder.build(title=pipeline_title)
+        pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.validate_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        if pagination_end_mode == 'void' or pagination_end_mode == 'null':
+            expected_output = 0
+            expected_error = 1
+            expected_message = 0
+        elif pagination_end_mode == 'vacuum':
+            if pagination_mode == 'LINK_FIELD' and stop_condition == 'value':
+                expected_output = 0
+                expected_error = 1
+                expected_message = 0
+            else:
+                expected_output = 1
+                expected_error = 0
+                expected_message = 0
+        else:
+            expected_output = 1
+            expected_error = 0
+            expected_message = 0
+
+        try:
+            pipeline_metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
+            error_metric = f'stage.{http_client_processor.instance_name}.stageErrors.counter'
+            error_counter = pipeline_metrics.counter(error_metric).count
+        except:
+            logger.warning('Error reading metrics...')
+            error_counter = 0
+
+        logger.info(
+            f'Finishing test: {pagination_mode} - {pagination_end_mode} - {stop_condition} - '
+            f'{expected_output} vs {len(wiretap.output_records)} - '
+            f'{expected_error} vs {len(wiretap.error_records)} - '
+            f'{expected_message} vs {error_counter}')
+
+        assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
+        assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        assert error_counter == expected_message, 'Unexpected number of stage errors'
+
+        pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        assert pipeline_status == 'FINISHED'
 
     finally:
 
