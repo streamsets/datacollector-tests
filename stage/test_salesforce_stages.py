@@ -2081,7 +2081,7 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
 
 
 @salesforce
-@sdc_min_version('3.7.0')
+@sdc_min_version('3.12.0')
 def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
     """Start pipeline with replay option "All events", read all Salesforce data (if any exists) and stop the pipeline.
     Then, create a new record in Salesforce, start pipeline again
