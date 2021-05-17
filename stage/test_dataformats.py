@@ -14,10 +14,15 @@
 
 import logging
 import pytest
+import os
+import io
+import textwrap
 from streamsets.sdk.utils import Version
 from decimal import Decimal
+from xlwt import Workbook
 
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.utils import get_random_string
 from stage.utils.utils_xml import get_xml_output_field
 logger = logging.getLogger(__name__)
 
@@ -416,3 +421,136 @@ def test_delimited_escape_multichar(sdc_builder, sdc_executor):
 
     records = [record.field for record in wiretap.output_records]
     assert records == [{"a": "de||f", "b": "g", "c": "h"}]
+
+
+def test_excel_with_empty_columns(sdc_builder, sdc_executor):
+    """Test if some records had empty value for a column, it don't ignore the column and keep the same schema and
+    write it in avro file. Test empty values in the first, medium and last column and get it as a null.
+
+    directory >> schema_generator >> local_fs
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    files_directory = os.path.join('/tmp', get_random_string())
+    directory_out = os.path.join('/tmp', get_random_string())
+    file_name = f'{get_random_string()}.xls'
+    file_path = os.path.join(files_directory, file_name)
+    schema_name = 'test_schema'
+    num_records = 4
+
+    try:
+        sdc_executor.execute_shell(f'mkdir {files_directory}')
+        file_writer(sdc_executor, file_path, generate_excel_file().getvalue())
+
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(excel_header_option='WITH_HEADER',
+                                 data_format='EXCEL',
+                                 files_directory=files_directory,
+                                 file_name_pattern='*.xls')
+
+        schema_generator = pipeline_builder.add_stage('Schema Generator')
+        schema_generator.set_attributes(schema_name=schema_name,
+                                        namespace=schema_name,
+                                        nullable_fields=True)
+
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='AVRO', avro_schema_location='HEADER', directory_template=directory_out)
+
+        directory >> schema_generator >> local_fs
+
+        pipeline_write = pipeline_builder.build('Read Excel files')
+        sdc_executor.add_pipeline(pipeline_write)
+
+        sdc_executor.start_pipeline(pipeline_write).wait_for_pipeline_output_records_count(num_records)
+        sdc_executor.stop_pipeline(pipeline_write)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        origin = pipeline_builder.add_stage('Directory')
+        origin.set_attributes(data_format='AVRO',
+                              files_directory=directory_out,
+                              file_name_pattern='*')
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        origin >> wiretap.destination
+
+        pipeline_read = pipeline_builder.build('Wiretap Pipeline')
+        sdc_executor.add_pipeline(pipeline_read)
+
+        sdc_executor.start_pipeline(pipeline_read).wait_for_pipeline_output_records_count(num_records)
+        sdc_executor.stop_pipeline(pipeline_read)
+
+        assert len(wiretap.output_records) == num_records
+        for x in range(num_records):
+            name_field = 'column' + str(x)
+            assert wiretap.output_records[x].field[name_field].value == ''
+            # We check if it works for 2 empty columns at end of the row
+            if x == 3:
+                name_field = 'column' + str(x-1)
+                assert wiretap.output_records[x].field[name_field].value == ''
+    finally:
+        logger.info('Delete directory in %s and %s...', files_directory, directory_out)
+        sdc_executor.execute_shell(f'rm -r {files_directory}')
+        sdc_executor.execute_shell(f'rm -r {directory_out}')
+
+
+def file_writer(sdc_executor, file_path, file_contents):
+    encoding = 'utf8'
+    FILE_WRITER_SCRIPT_BINARY = """
+        with open('{filepath}', 'wb') as f:
+            f.write({file_contents})
+    """
+
+    builder = sdc_executor.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='noop', stop_after_first_batch=True)
+    jython_evaluator = builder.add_stage('Jython Evaluator')
+
+    file_writer_script = FILE_WRITER_SCRIPT_BINARY
+    jython_evaluator.script = textwrap.dedent(file_writer_script).format(filepath=str(file_path),
+                                                                         file_contents=file_contents,
+                                                                         encoding=encoding)
+    trash = builder.add_stage('Trash')
+    dev_raw_data_source >> jython_evaluator >> trash
+    pipeline = builder.build('File writer pipeline')
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    sdc_executor.remove_pipeline(pipeline)
+
+
+def generate_excel_file():
+    """Builds excel file in memory, later bind this data to BINARY file.
+    """
+    file_excel = io.BytesIO()  # create a file-like object
+    # Create the Excel file
+    workbook = Workbook(encoding='utf-8')
+    sheet = workbook.add_sheet('sheet1')
+
+    sheet.write(0, 0, 'column0')
+    sheet.write(0, 1, 'column1')
+    sheet.write(0, 2, 'column2')
+    sheet.write(0, 3, 'column3')
+
+    sheet.write(1, 0, None)
+    sheet.write(1, 1, 'yes')
+    sheet.write(1, 2, 'yes')
+    sheet.write(1, 3, 'yes')
+
+    sheet.write(2, 0, 'no')
+    sheet.write(2, 1, None)
+    sheet.write(2, 2, 'no')
+    sheet.write(2, 3, 'no')
+
+    sheet.write(3, 0, 'hello')
+    sheet.write(3, 1, 'hello')
+    sheet.write(3, 2, None)
+    sheet.write(3, 3, 'hello')
+
+    sheet.write(4, 0, 'world')
+    sheet.write(4, 1, 'world')
+    sheet.write(4, 2, None)
+    sheet.write(4, 3, None)
+
+    workbook.save(file_excel)
+    return file_excel
