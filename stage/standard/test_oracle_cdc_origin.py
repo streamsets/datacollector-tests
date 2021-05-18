@@ -86,9 +86,9 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         txn.commit()
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_pipeline_cmd = sdc_executor.start_pipeline(pipeline)
+        sdc_pipeline_cmd.wait_for_pipeline_output_records_count(2)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         assert len(wiretap.output_records) == 2
         record = wiretap.output_records[0]
@@ -151,7 +151,7 @@ def test_object_names_tables(sdc_builder, sdc_executor, database, keep_data, tab
             connection.execute(f'INSERT INTO "{table_name}" VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline)
 
         output_values = [rec.field['ID'].value for rec in wiretap.output_records]
         assert input_values == output_values
@@ -205,7 +205,7 @@ def test_object_names_columns(sdc_builder, sdc_executor, database, keep_data, co
             connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline)
 
         output_values = [rec.field[column_name].value for rec in wiretap.output_records]
         assert input_values == output_values
@@ -337,7 +337,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
         # Start pipeline, drop cities table and insert some records into sports table to capture the snapshot
         # with all the events. We use the PURGE clause in the DROP statement to avoid sending the table to the
         # recycle bin, as it would create spurious ALTER events.
-        sdc_executor.start_pipeline(pipeline)
+        sdc_pipeline_cmd=sdc_executor.start_pipeline(pipeline)
 
         for id, name, sport in sports_data:
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
@@ -348,8 +348,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
         for id, name, sport in sports_data:
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', len(2 * sports_data), timeout_sec=420)
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_pipeline_cmd.wait_for_pipeline_output_records_count(len(2 * sports_data), timeout_sec=420)
+        sdc_executor.stop_pipeline(pipeline)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],

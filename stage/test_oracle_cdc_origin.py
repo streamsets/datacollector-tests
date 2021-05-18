@@ -200,7 +200,7 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(2)
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         # Assert all the data captured have the same raw_data.
         records = sorted(wiretap.output_records,
@@ -1233,7 +1233,7 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database):
         sdc_executor.add_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(input_data))
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         # Check there is no data loss.
         sdc_records = [record.field for record in wiretap.output_records]
@@ -1331,7 +1331,7 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
 
         # Pre-3.1.0.0, this times out
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows_c2))
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         # assert all the data captured have the same raw_data
         output = wiretap.output_records
@@ -1397,17 +1397,17 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
         inserts = _insert(connection=connection, table=src_table, count=batch_size).rows
 
         start_pipeline_cmd = sdc_executor.start_pipeline(pipeline)
-        start_pipeline_cmd.wait_for_pipeline_batch_count(1)
+        start_pipeline_cmd.wait_for_pipeline_output_records_count(10)
 
         assert [tuple(row.values()) for row in inserts] == _select_from_table(db_engine=db_engine, dest_table=dest_table)
 
         updates = _update(connection=connection, table=src_table, count=batch_size).rows
-        start_pipeline_cmd.wait_for_pipeline_batch_count(2)
+        start_pipeline_cmd.wait_for_pipeline_output_records_count(20)
 
         assert [tuple(row.values()) for row in updates] == _select_from_table(db_engine=db_engine, dest_table=dest_table)
 
         _delete(connection=connection, table=src_table, count=batch_size)
-        start_pipeline_cmd.wait_for_pipeline_batch_count(3)
+        start_pipeline_cmd.wait_for_pipeline_output_records_count(30)
 
         assert len(_select_from_table(db_engine=db_engine, dest_table=dest_table)) == 0
 
@@ -1580,7 +1580,7 @@ def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database,
 
         # Capture the output and check the record is correctly generated.
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(expected_output))
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         actual_output = [record.field
                          for record in wiretap.output_records]
@@ -1654,7 +1654,7 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, ac
         # Capture and check the output.
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(expected_output))
 
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         actual_output = [record.field for record in wiretap.output_records]
         actual_error_output = [record.field for record in wiretap.error_records]
@@ -1978,7 +1978,7 @@ def test_event_startup(sdc_builder, sdc_executor, database):
         txn.commit()
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
 
         assert len(event_wiretap.output_records) == 1
         assert event_wiretap.output_records[0].header.values['sdc.event.type'] == 'STARTUP'
@@ -2059,7 +2059,7 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
 
         # Start pipeline and check only cities data is consumed by Oracle CDC origin.
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(sports_data2))
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline)
 
         sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
                        for record in wiretap.output_records]
@@ -2138,7 +2138,7 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
 
         status.wait_for_pipeline_output_records_count(len(sports_data1+sports_data2))
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],
@@ -2226,7 +2226,7 @@ def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
 
         # Start pipeline, create table and populate
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(sports_data))
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],
@@ -2316,7 +2316,7 @@ def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
         # Check the data consumed by the pipeline is the expected one.
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_data))
         consumed_data = [rec.field['ID'].value for rec in wiretap.output_records]
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline=pipeline)
         assert sorted(consumed_data) == expected_data
 
     finally:
@@ -2380,7 +2380,7 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
 
         # Start pipeline and check the data consumed by the pipeline is the expected one.
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(input_data))
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline)
         consumed_data = [rec.field['ID'].value for rec in wiretap.output_records]
         assert sorted(consumed_data) == input_data
 
@@ -2452,7 +2452,7 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
         # Start pipeline, populate table with data 1 and wait for the pipeline to consume it.
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(txn1_data+txn2_data), timeout_sec=380)
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline)
         consumed_data = [record.field['ID'].value for record in wiretap.output_records]
         assert sorted(consumed_data) == txn1_data + txn2_data
 
@@ -2506,7 +2506,7 @@ def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data,
             connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records, timeout_sec=360)
-        sdc_executor.stop_pipeline(pipeline, force=True)
+        sdc_executor.stop_pipeline(pipeline)
 
         output_values = [rec.field['ID'].value for rec in wiretap.output_records]
         assert input_values == output_values
