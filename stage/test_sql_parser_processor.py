@@ -15,24 +15,20 @@
 import json
 import logging
 import string
+import uuid
 
 import pytest
+import sqlalchemy
+from sqlalchemy import text
 from streamsets.sdk import sdc_api
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
 # SQL Parser processor was renamed in SDC-10697, so we need to reference it by name.
 SQL_PARSER_STAGE_NAME = 'com_streamsets_pipeline_stage_processor_parser_sql_SqlParserDProcessor'
-
-
-@pytest.fixture(scope='module')
-def sdc_common_hook():
-    def hook(data_collector):
-        data_collector.add_stage_lib('streamsets-datacollector-jdbc-lib')
-
-    return hook
 
 
 @pytest.mark.parametrize('case_sensitive', [True, False])
@@ -293,3 +289,362 @@ def test_sql_parser_pseudocolumns(sdc_builder, sdc_executor, case_sensitive, pse
                 assert not ('RoWnUm' in record.field['columns'])
                 assert not ('rowid' in record.field['columns'])
                 assert not ('RoWiD' in record.field['columns'])
+
+
+@sdc_min_version('4.1.0')
+@database('oracle')
+@pytest.mark.parametrize('add_unsupported_fields_to_records', [True, False])
+@pytest.mark.parametrize('case_sensitive', [True, False])
+@pytest.mark.parametrize('use_peg_parser', [True, False])
+@pytest.mark.parametrize('pseudocolumns_in_header', [True, False])
+@pytest.mark.parametrize('resolve_schema_from_db', [True, False])
+@pytest.mark.parametrize('include_nulls', [True, False])
+def test_sql_parser_dual_parser(sdc_builder,
+                                sdc_executor,
+                                database,
+                                add_unsupported_fields_to_records,
+                                case_sensitive,
+                                use_peg_parser,
+                                pseudocolumns_in_header,
+                                resolve_schema_from_db,
+                                include_nulls):
+    """
+    Check SQL Parser from CDC with several options and both SQL parsers available.
+    """
+
+    try:
+
+        test_pattern = f'{add_unsupported_fields_to_records} - '\
+                       f'{case_sensitive} - '\
+                       f'{use_peg_parser} - '\
+                       f'{pseudocolumns_in_header} - '\
+                       f'{resolve_schema_from_db} - '\
+                       f'{include_nulls}'
+
+        logger.info(f'Running test: {test_pattern}')
+
+        source_table = None
+        target_table = None
+
+        pipeline = None
+
+        database_connection = database.engine.connect()
+
+        if case_sensitive:
+            source_table_name = f'{get_random_string(string.ascii_uppercase, 8)}{get_random_string(string.ascii_lowercase, 8)}'
+        else:
+            source_table_name = f'{get_random_string(string.ascii_uppercase, 16)}'
+        logger.info('Creating source table %s in %s database ...', source_table_name, database.type)
+        source_table = sqlalchemy.Table(source_table_name, sqlalchemy.MetaData(),
+                                        sqlalchemy.Column('Id', sqlalchemy.Integer, primary_key=True),
+                                        sqlalchemy.Column('Name', sqlalchemy.String(32)),
+                                        sqlalchemy.Column('Surname', sqlalchemy.String(64)),
+                                        sqlalchemy.Column('Country', sqlalchemy.String(2)),
+                                        sqlalchemy.Column('City', sqlalchemy.String(3)),
+                                        sqlalchemy.Column('Secret', sqlalchemy.String(10)),
+                                        sqlalchemy.Column('Document', sqlalchemy.BLOB))
+        source_table.create(database.engine)
+
+        if case_sensitive:
+            target_table_name = f'{get_random_string(string.ascii_uppercase, 8)}{get_random_string(string.ascii_lowercase, 8)}'
+        else:
+            target_table_name = f'{get_random_string(string.ascii_uppercase, 16)}'
+        logger.info('Creating target table %s in %s database ...', target_table_name, database.type)
+        target_table = sqlalchemy.Table(target_table_name, sqlalchemy.MetaData(),
+                                        sqlalchemy.Column('Id', sqlalchemy.Integer, primary_key=True),
+                                        sqlalchemy.Column('Name', sqlalchemy.String(32)),
+                                        sqlalchemy.Column('Surname', sqlalchemy.String(64)),
+                                        sqlalchemy.Column('Country', sqlalchemy.String(2)),
+                                        sqlalchemy.Column('City', sqlalchemy.String(3)),
+                                        sqlalchemy.Column('Secret', sqlalchemy.String(10)),
+                                        sqlalchemy.Column('Document', sqlalchemy.BLOB))
+        target_table.create(database.engine)
+
+        database_last_scn = _get_last_scn(database_connection)
+        number_of_rows = 1
+
+        database_transaction = database_connection.begin()
+        for id in range(0, number_of_rows):
+            table_id = id
+            table_name = "'" + get_random_string(string.ascii_uppercase, 32) + "'"
+            table_surname = "'" + get_random_string(string.ascii_uppercase, 64) + "'"
+            table_country = "'" + get_random_string(string.ascii_uppercase, 2) + "'"
+            table_city = "'" + get_random_string(string.ascii_uppercase, 3) + "'"
+            table_benull = "''"
+            table_beblob = "utl_raw.cast_to_raw('" + get_random_string(string.ascii_uppercase, 128) + "')"
+            sentence = f'insert into "{source_table}" values ({table_id}, {table_name}, {table_surname}, {table_country}, {table_city}, {table_benull}, {table_beblob})'
+            sql = text(sentence)
+            database_connection.execute(sql)
+        database_transaction.commit()
+
+        database_transaction = database_connection.begin()
+        sentence = f'insert into "{target_table_name}" select * from "{source_table_name}"'
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        database_transaction = database_connection.begin()
+        sentence = f'update "{target_table_name}" set "City" = "Country"'
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        database_transaction = database_connection.begin()
+        sentence = f'delete from "{target_table_name}"'
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
+        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                         tables=[{'schema': database.username.upper(),
+                                                  'table': target_table_name,
+                                                  'excludePattern': ''}],
+                                         buffer_changes_locally=True,
+                                         logminer_session_window='${10 * MINUTES}',
+                                         maximum_transaction_length='${2 * MINUTES}',
+                                         db_time_zone='UTC',
+                                         max_batch_size_in_records=1,
+                                         initial_change='SCN',
+                                         start_scn=database_last_scn,
+                                         case_sensitive_names=case_sensitive,
+                                         include_nulls=False,
+                                         parse_sql_query=False,
+                                         pseudocolumns_in_header=False,
+                                         send_redo_query_in_headers=True,
+                                         use_peg_parser=False)
+
+        sql_parser_processor = pipeline_builder.add_stage(name=SQL_PARSER_STAGE_NAME)
+        sql_parser_processor.set_attributes(sql_field='/sql',
+                                            target_field='/columns',
+                                            unsupported_field_type='SEND_TO_PIPELINE',
+                                            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
+                                            use_peg_parser=use_peg_parser,
+                                            pseudocolumns_in_header=pseudocolumns_in_header,
+                                            resolve_schema_from_db=resolve_schema_from_db,
+                                            include_nulls=include_nulls,
+                                            case_sensitive_names=case_sensitive,
+                                            db_time_zone='UTC')
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        oracle_cdc_client >> sql_parser_processor >> wiretap.destination
+
+        pipeline_name = f'{test_pattern} - {get_random_string(string.ascii_letters, 8)}'
+        pipeline_title = f'Oracle SQL Parser Pipeline: {pipeline_name}'
+        pipeline = pipeline_builder.build(title=pipeline_title).configure_for_environment(database)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(4 * number_of_rows)
+
+        for record in wiretap.output_records:
+            record_operation = record.header.values['oracle.cdc.operation']
+            record_sequence = record.header.values['oracle.cdc.sequence.internal']
+
+            debug_data = f'Debug Data: {test_pattern} - '\
+                         f'{record_operation} - '\
+                         f'{record_sequence} -  '\
+                         f'{"Secret" in record.field["columns"]} - '\
+                         f'{"SECRET" in record.field["columns"]} - '\
+                         f'{"Document" in record.field["columns"]} - '\
+                         f'{"DOCUMENT" in record.field["columns"]} - '\
+                         f'{("oracle.pseudocolumn.ROWID" in record.header.values)} - '\
+                         f'{("oracle.cdc.rowId" in record.header.values)} - '\
+                         f'{("jdbc.Id.precision" in record.header.values)} - ' \
+                         f'{("jdbc.Id.scale" in record.header.values)} - '\
+                         f'{"ROWID" in record.field["columns"]}'
+
+            trace_data = f'Trace Data: {test_pattern} - '\
+                         f'{record.header.values["oracle.cdc.scn"]} | '\
+                         f'{record.header.values["oracle.cdc.sequence.internal"]} - '\
+                         f'{record.header.values["oracle.cdc.sequence.oracle"]} - '\
+                         f'{record.header.values["oracle.cdc.RS_ID"]} - '\
+                         f'{record.header.values["oracle.cdc.SSN"]} - '\
+                         f'{record.header.values["oracle.cdc.rowId"]} - '\
+                         f'{record.header.values["oracle.cdc.xid"]} - '\
+                         f'{record_operation} -  '\
+                         f'##Field: {record.field} - '\
+                         f'##Header: {record.header.values}'
+
+            logger.info(f'{debug_data}')
+            logger.info(f'{trace_data}')
+
+            error_message = f'Unexpected value placement {debug_data} | {trace_data}'
+
+            if case_sensitive:
+                assert ('Id' in record.field['columns']), error_message
+                assert ('Name' in record.field['columns']), error_message
+                assert ('Surname' in record.field['columns']), error_message
+                assert ('Country' in record.field['columns']), error_message
+                assert ('City' in record.field['columns']), error_message
+                assert not ('ID' in record.field['columns']), error_message
+                assert not ('NAME' in record.field['columns']), error_message
+                assert not ('SURNAME' in record.field['columns']), error_message
+                assert not ('COUNTRY' in record.field['columns']), error_message
+                assert not ('CITY' in record.field['columns']), error_message
+            else:
+                assert ('ID' in record.field['columns']), error_message
+                assert ('NAME' in record.field['columns']), error_message
+                assert ('SURNAME' in record.field['columns']), error_message
+                assert ('COUNTRY' in record.field['columns']), error_message
+                assert ('CITY' in record.field['columns']), error_message
+                assert not ('Id' in record.field['columns']), error_message
+                assert not ('Name' in record.field['columns']), error_message
+                assert not ('Surname' in record.field['columns']), error_message
+                assert not ('Country' in record.field['columns']), error_message
+                assert not ('City' in record.field['columns']), error_message
+
+            if use_peg_parser:
+                if case_sensitive:
+                    assert ('Secret' in record.field['columns']), error_message
+                    assert not ('SECRET' in record.field['columns']), error_message
+                else:
+                    assert not ('Secret' in record.field['columns']), error_message
+                    assert ('SECRET' in record.field['columns']), error_message
+            else:
+                if record_operation == 'INSERT':
+                    if case_sensitive:
+                        assert ('Secret' in record.field['columns']), error_message
+                        assert not ('SECRET' in record.field['columns']), error_message
+                    else:
+                        assert not ('Secret' in record.field['columns']), error_message
+                        assert ('SECRET' in record.field['columns']), error_message
+                else:
+                    if resolve_schema_from_db and include_nulls:
+                        if case_sensitive:
+                            assert ('Secret' in record.field['columns']), error_message
+                            assert not ('SECRET' in record.field['columns']), error_message
+                        else:
+                            assert not ('Secret' in record.field['columns']), error_message
+                            assert ('SECRET' in record.field['columns']), error_message
+                    else:
+                        assert not ('Secret' in record.field['columns']), error_message
+                        assert not ('SECRET' in record.field['columns']), error_message
+
+            if add_unsupported_fields_to_records:
+                if record_operation == 'INSERT':
+                    if case_sensitive:
+                        assert ('Document' in record.field['columns']), error_message
+                        assert not ('DOCUMENT' in record.field['columns']), error_message
+                    else:
+                        assert not ('Document' in record.field['columns']), error_message
+                        assert ('DOCUMENT' in record.field['columns']), error_message
+                else:
+                    if record_operation == 'UPDATE' and record_sequence == '1':
+                        if case_sensitive:
+                            assert ('Document' in record.field['columns']), error_message
+                            assert not ('DOCUMENT' in record.field['columns']), error_message
+                        else:
+                            assert not ('Document' in record.field['columns']), error_message
+                            assert ('DOCUMENT' in record.field['columns']), error_message
+                    else:
+                        if resolve_schema_from_db and include_nulls:
+                            if case_sensitive:
+                                assert ('Document' in record.field['columns']), error_message
+                                assert not ('DOCUMENT' in record.field['columns']), error_message
+                            else:
+                                assert not ('Document' in record.field['columns']), error_message
+                                assert ('DOCUMENT' in record.field['columns']), error_message
+                        else:
+                            assert not ('Document' in record.field['columns']), error_message
+                            assert not ('DOCUMENT' in record.field['columns']), error_message
+            else:
+                if resolve_schema_from_db:
+                    assert not ('Document' in record.field['columns']), error_message
+                    assert not ('DOCUMENT' in record.field['columns']), error_message
+                else:
+                    if record_operation == 'DELETE':
+                        assert not ('Document' in record.field['columns']), error_message
+                        assert not ('DOCUMENT' in record.field['columns']), error_message
+                    else:
+                        if record_operation == 'UPDATE' and record_sequence == '0':
+                            assert not ('Document' in record.field['columns']), error_message
+                            assert not ('DOCUMENT' in record.field['columns']), error_message
+                        else:
+                            if case_sensitive:
+                                assert ('Document' in record.field['columns']), error_message
+                                assert not ('DOCUMENT' in record.field['columns']), error_message
+                            else:
+                                assert not ('Document' in record.field['columns']), error_message
+                                assert ('DOCUMENT' in record.field['columns']), error_message
+
+            if pseudocolumns_in_header:
+                if record_operation == 'INSERT':
+                    assert not ('oracle.pseudocolumn.ROWID' in record.header.values), error_message
+                else:
+                    assert ('oracle.pseudocolumn.ROWID' in record.header.values), error_message
+            else:
+                assert not ('oracle.pseudocolumn.ROWID' in record.header.values), error_message
+
+            if pseudocolumns_in_header:
+                assert not ('ROWID' in record.field["columns"]), error_message
+            else:
+                if record_operation == 'INSERT':
+                    assert not ('ROWID' in record.field["columns"]), error_message
+                else:
+                    assert ('ROWID' in record.field["columns"]), error_message
+
+            if resolve_schema_from_db:
+                if case_sensitive:
+                    assert ('jdbc.Id.precision' in record.header.values), error_message
+                    assert ('jdbc.Id.scale' in record.header.values), error_message
+                    assert not ('jdbc.ID.precision' in record.header.values), error_message
+                    assert not ('jdbc.ID.scale' in record.header.values), error_message
+                else:
+                    assert not ('jdbc.Id.precision' in record.header.values), error_message
+                    assert not ('jdbc.Id.scale' in record.header.values), error_message
+                    assert ('jdbc.ID.precision' in record.header.values), error_message
+                    assert ('jdbc.ID.scale' in record.header.values), error_message
+
+            assert ('oracle.cdc.scn' in record.header.values), error_message
+            assert ('oracle.cdc.sequence.internal' in record.header.values), error_message
+            assert ('oracle.cdc.sequence.oracle' in record.header.values), error_message
+            assert ('SEQ' in record.header.values), error_message
+            assert ('oracle.cdc.xid' in record.header.values), error_message
+            assert ('oracle.cdc.RS_ID' in record.header.values), error_message
+            assert ('oracle.cdc.SSN' in record.header.values), error_message
+            assert ('oracle.cdc.undoValue' in record.header.values), error_message
+            assert ('oracle.cdc.redoValue' in record.header.values), error_message
+            assert ('oracle.cdc.operation' in record.header.values), error_message
+            assert ('sdc.operation.type' in record.header.values), error_message
+            assert ('TABLE_SCHEM' in record.header.values), error_message
+            assert ('TABLE_NAME' in record.header.values), error_message
+            assert ('oracle.cdc.table' in record.header.values), error_message
+            assert ('schema' in record.header.values), error_message
+            assert ('sql.table' in record.header.values), error_message
+            assert ('oracle.cdc.rowId' in record.header.values), error_message
+            assert ('oracle.cdc.timestamp' in record.header.values), error_message
+            assert ('oracle.cdc.precisionTimestamp' in record.header.values), error_message
+            assert ('oracle.cdc.user' in record.header.values), error_message
+            assert ('rollback' in record.header.values), error_message
+            assert ('oracle.cdc.query' in record.header.values), error_message
+
+    finally:
+
+        logger.info(f'Finished test: {test_pattern}')
+
+        if pipeline is not None:
+            try:
+                sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+            except:
+                pass
+
+        if source_table is not None:
+            source_table.drop(database.engine)
+
+        if target_table is not None:
+            target_table.drop(database.engine)
+
+
+def _get_last_scn(connection):
+
+    """
+    Obtains last SCN from the database or raises an Exception if anything wrong happened.
+    """
+    try:
+        return str(connection.execute('select CURRENT_SCN from V$DATABASE').first()[0])
+    except:
+        raise Exception('Error retrieving last SCN from Oracle database.')
