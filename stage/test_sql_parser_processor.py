@@ -15,20 +15,27 @@
 import json
 import logging
 import string
-import uuid
 
 import pytest
 import sqlalchemy
 from sqlalchemy import text
 from streamsets.sdk import sdc_api
-from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.markers import database
+from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
 # SQL Parser processor was renamed in SDC-10697, so we need to reference it by name.
 SQL_PARSER_STAGE_NAME = 'com_streamsets_pipeline_stage_processor_parser_sql_SqlParserDProcessor'
+
+
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-jdbc-lib')
+
+    return hook
 
 
 @pytest.mark.parametrize('case_sensitive', [True, False])
