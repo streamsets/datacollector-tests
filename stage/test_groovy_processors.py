@@ -253,3 +253,108 @@ sdcFunctions.toEvent(event)
 
     assert len(events_wiretap.output_records) == 1
     assert events_wiretap.output_records[0].get_field_data('/value') == 'secret'
+
+
+@sdc_min_version('4.1.0')
+@pytest.mark.parametrize('on_script_error', [(True, 'STOP_PIPELINE'),
+                                             (True, 'TO_ERROR'),
+                                             (False, 'TO_ERROR')])
+def test_script_error(sdc_builder, sdc_executor, on_script_error):
+    """Evaluate batches with 5 records and write 4 of them and send the first one to error. Check if pipeline stops or
+    send the error to log depends on Groovy Evaluator configuration. The pipeline looks like:
+        groovy_origin >> groovy_evaluator >> wiretap.destination
+    """
+    batch_size = 5
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    script_origin = """
+        entityName = ''
+        offset = 0
+        cur_batch = sdc.createBatch()
+        cur_batch = sdc.createBatch()
+        record = sdc.createRecord('generated data')
+        
+        hasNext = true
+        while (hasNext) {
+            try {
+                offset = offset + 1
+                record = sdc.createRecord('generated data')
+                value = entityName + ':' + offset.toString()
+                record.value = value
+                cur_batch.add(record)
+        
+                // if the batch is full, process it and start a new one
+                if (cur_batch.size() >= sdc.batchSize) {
+                    cur_batch.process(entityName, offset.toString())
+                    cur_batch = sdc.createBatch()
+                    if (sdc.isStopped()) {
+                        hasNext = false
+                    }
+                  count = 0
+                }
+            } catch (Exception e) {
+                cur_batch.addError(record, e.toString())
+                cur_batch.process(entityName, offset.toString())
+                hasNext = false
+            }
+        }
+        
+        if (cur_batch.size() + cur_batch.errorCount() + cur_batch.eventCount() > 0) {
+            cur_batch.process(entityName, offset.toString())
+        }
+        """
+
+    groovy_origin = pipeline_builder.add_stage('Groovy Scripting')
+    groovy_origin.set_attributes(record_type='NATIVE_OBJECTS',
+                                 user_script=script_origin,
+                                 batch_size=batch_size,
+                                 number_of_threads=1)
+
+    groovy_evaluator = pipeline_builder.add_stage('Groovy Evaluator', type='processor')
+    script_processor = '''
+        records = sdc.records
+        count = 1
+        for (record in records) {
+            try {
+              if (count == 1){
+                sdc.error.write(record, 'Groovy STF force error')
+              } else {
+                sdc.output.write(record)
+              }
+              count = count + 1
+            } catch (Exception e) {
+                // Write a record to the error pipeline
+                sdc.log.error(e.toString(), e)
+                sdc.error.write(record, e.toString())
+            }
+        }
+        '''
+    groovy_evaluator.set_attributes(record_processing_mode='BATCH',
+                                    script=script_processor,
+                                    init_script='',
+                                    destroy_script='',
+                                    script_error_as_record_error=on_script_error[0],
+                                    on_record_error=on_script_error[1])
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    groovy_origin >> groovy_evaluator >> wiretap.destination
+
+    pipeline = pipeline_builder.build()
+    pipeline.configuration['runnerIdleTIme'] = 2
+    pipeline.configuration['shouldRetry'] = False
+
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(2)
+        sdc_executor.stop_pipeline(pipeline)
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        total_records = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+        # Since the batch size was 5, the output records will be 1 error + 4 output
+        expected_error_records = int(total_records/batch_size)
+        assert len(wiretap.error_records) == expected_error_records
+        assert len(wiretap.output_records) == total_records - expected_error_records
+    except Exception as e:
+        assert len(wiretap.error_records) == 0
+        assert 'SCRIPTING_06' in e.message
