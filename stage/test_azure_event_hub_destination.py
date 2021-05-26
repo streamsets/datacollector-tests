@@ -135,7 +135,13 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_
     finally:
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 

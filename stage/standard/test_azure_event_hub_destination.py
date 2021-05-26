@@ -123,7 +123,13 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
@@ -214,7 +220,13 @@ def test_object_names_container(sdc_builder, sdc_executor, azure, container_name
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
@@ -309,7 +321,13 @@ def test_object_names_blob(sdc_builder, sdc_executor, azure, blob_name_category,
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
@@ -396,7 +414,13 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, batch_size):
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
@@ -483,7 +507,13 @@ def test_data_format_json(sdc_builder, sdc_executor, azure):
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
@@ -568,7 +598,13 @@ def test_data_format_text(sdc_builder, sdc_executor, azure):
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
@@ -651,7 +687,13 @@ def test_data_format_xml(sdc_builder, sdc_executor, azure):
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
@@ -734,7 +776,13 @@ def test_multithreading(sdc_builder, sdc_executor, azure, no_of_threads):
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
@@ -814,7 +862,13 @@ def test_push_pull(sdc_builder, sdc_executor, azure):
         try:
             logger.info('Deleting event hub %s under event hub namespace %s', event_hub_name,
                         azure.event_hubs.namespace)
-            eh_service_bus.delete_event_hub(event_hub_name)
+            event_hub_exists = True
+            while event_hub_exists:
+                eh_service_bus.delete_event_hub(event_hub_name)
+                try:
+                    eh_service_bus.get_event_hub(event_hub_name)
+                except Exception:
+                    event_hub_exists = False
         except Exception as err:
             logger.error('Failure deleting event hub %s. Reason found: %s', event_hub_name, err)
 
