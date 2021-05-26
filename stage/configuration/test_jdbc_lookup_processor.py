@@ -137,17 +137,35 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
 @database
 @sdc_min_version('3.22.0')
 @pytest.mark.parametrize('validate_column_mappings', [True, False])
-def test_validate_column_mappings(sdc_builder, sdc_executor, database, credential_store, validate_column_mappings):
+@pytest.mark.parametrize('correct_column_name_config', [True, False])
+@pytest.mark.parametrize('table_type', ['known', 'el_var', 'wrong'])
+def test_validate_column_mappings(sdc_builder, sdc_executor, database, credential_store, validate_column_mappings,
+                                  correct_column_name_config, table_type):
     """Test validate column mapping checkbox
     The pipeline looks like:
         dev_raw_data_source >> jdbc_lookup >> trash
     """
     table_name = get_random_string(string.ascii_lowercase, 20)
 
-    # It should always fail if validate_column_mappings is enabled
-    column_name_config = 'notAColumnName'
+    if correct_column_name_config:
+        column_name_config = 'name'
+    else:
+        column_name_config = 'notAColumnName'
 
     table = _create_table(table_name, database, None)
+
+    if table_type == 'known':
+        if type(database) == MySqlDatabase:
+            table_name = f'`{table_name}`'
+        else:
+            table_name = f'"{table_name}"'
+    elif table_type == 'el_var':
+        table_name = "${table_name}"
+    elif table_type == 'wrong':
+        if type(database) == MySqlDatabase:
+            table_name = f'`wrong_table_name`'
+        else:
+            table_name = f'"wrong_table_name"'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
@@ -157,9 +175,10 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
                                        stop_after_first_batch=True)
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
-    query_str = f'SELECT "name" as "columnName" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
     if type(database) == MySqlDatabase:
-        query_str = f'SELECT `name` as `columnName` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
+        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = ${{record:value("/id")}}'
+    else:
+        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = ${{record:value("/id")}}'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
                             columnName=column_name_config,
                             field='/FirstName')]
@@ -174,12 +193,14 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
     try:
         # Start error should be raised if getting validated
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        if validate_column_mappings:
+        if validate_column_mappings and not correct_column_name_config:
             # Should never reach
             pytest.fail('Start pipeline should have failed, but did not')
 
     except sdk.sdc_api.StartError as e:
-        if validate_column_mappings:
+        if table_type == 'wrong':
+            assert "JDBC_97" in str(e.args[0])
+        elif validate_column_mappings and not correct_column_name_config:
             assert "JDBC_95" in str(e.args[0])
         else:
             # should never reach
