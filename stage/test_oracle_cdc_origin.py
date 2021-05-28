@@ -444,7 +444,7 @@ def test_oracle_cdc_client_bulk(sdc_builder,
             target_table.drop(database.engine)
 
 
-@sdc_min_version('4.0.0')
+@sdc_min_version('3.22.3')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @database('oracle')
 def test_oracle_cdc_client_headers(sdc_builder,
@@ -565,7 +565,8 @@ def test_oracle_cdc_client_headers(sdc_builder,
         if target_table is not None:
             target_table.drop(database.engine)
 
-@sdc_min_version('4.0.0')
+
+@sdc_min_version('3.22.3')
 @database('oracle')
 def test_oracle_cdc_client_sequence(sdc_builder,
                                     sdc_executor,
@@ -688,7 +689,7 @@ def test_oracle_cdc_client_sequence(sdc_builder,
             target_table.drop(database.engine)
 
 
-@sdc_min_version('4.0.0')
+@sdc_min_version('3.22.3')
 @database('oracle')
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('pseudocolumns_in_header', [True, False])
