@@ -320,3 +320,69 @@ def test_rabbitmq_rabbitmq_consumer_wrong_format(sdc_builder, sdc_executor, rabb
 
     # Datacollector does not guarantee the order of the messages, so we sort them.
     assert sorted(output_records, key=lambda rec: rec['msg'].value) == expected_messages
+
+
+@rabbitmq
+@sdc_min_version('4.1.0')
+def test_rabbitmq_rabbitmq_consumer_quorum_queue(sdc_builder, sdc_executor, rabbitmq):
+    """Test for RabbitMQ consumer with quorum queue. Similar to origin test but set using x-queue-type.
+
+    RabbitMQ Consumer pipeline:
+        rabbitmq_consumer >> wiretap
+    """
+    name = get_random_string(string.ascii_letters, 10)
+
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    # Specify queue type in the additional configuration.
+    rabbitmq_consumer = builder.add_stage('RabbitMQ Consumer').set_attributes(name=name,
+                                                                              data_format='TEXT',
+                                                                              durable=True,
+                                                                              auto_delete=False,
+                                                                              bindings=[],
+                                                                              declaration_properties=[{
+                                                                                "key": "x-queue-type",
+                                                                                "value": "quorum"
+                                                                              }])
+    wiretap = builder.add_wiretap()
+
+    rabbitmq_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build(title='RabbitMQ Consumer pipeline').configure_for_environment(rabbitmq)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+    sdc_executor.start_pipeline(consumer_origin_pipeline)
+
+    expected_messages = set()
+    connection = rabbitmq.blocking_connection
+    channel = connection.channel()
+
+    # Set the queue type as quorum in the additional arguments.
+    channel.queue_declare(queue=name,
+                          durable=True,
+                          exclusive=False,
+                          auto_delete=False,
+                          arguments={"x-queue-type": "quorum"})
+    channel.confirm_delivery()
+
+    for i in range(10):
+        expected_message = 'Message {0}'.format(i)
+        expected_messages.add(expected_message)
+        try:
+            channel.basic_publish(exchange="",
+                                  routing_key=name,  # Routing key has to be same as queue name.
+                                  body=expected_message,
+                                  properties=pika.BasicProperties(content_type='text/plain', delivery_mode=1),
+                                  mandatory=True)
+        except:
+            logger.warning('Message %s could not be sent.', expected_message)
+
+    channel.close()
+    connection.close()
+
+    sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', 1)
+    sdc_executor.stop_pipeline(consumer_origin_pipeline)
+    output_records = [record.field['text'].value
+                      for record in wiretap.output_records]
+
+    assert set(output_records) == expected_messages
