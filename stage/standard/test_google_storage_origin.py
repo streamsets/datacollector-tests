@@ -20,7 +20,7 @@ import string
 import time
 
 import pytest
-from streamsets.testframework.markers import gcp
+from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from xlwt import Workbook
 
@@ -324,6 +324,7 @@ def test_data_format_avro(sdc_builder, sdc_executor, gcp):
 
 
 @gcp
+@sdc_min_version('3.22.0')
 @pytest.mark.parametrize('csv_parser', ['LEGACY_PARSER', 'UNIVOCITY'])
 def test_data_format_delimited(sdc_builder, sdc_executor, gcp, csv_parser):
     """
