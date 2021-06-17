@@ -243,12 +243,22 @@ def test_jdbc_producer_no_implicit_mapping(sdc_builder, sdc_executor, database, 
     if isinstance(database, OracleDatabase) and not field_mapping:
         pytest.skip('In case we depend on native mapping, Oracle will fail due to the upper-casing logic.')
 
+    if isinstance(database, OracleDatabase) and multi_row:
+        pytest.skip('multi_row is not supported on oracle databases')
+
     # Every second record have columns not available in the target table and should end up inside error stream
     INSERT_DATA = [
         {'id': 1, 'name': 'Dima'},
         {'date_of_birth': 'yesterday'},
         {'id': 2, 'name': 'Arvind'},
         {'date_of_birth': 'tomorrow'},
+        # These extra rows will actually hit the multi-row block of code causing it to fail on db's that don't support
+        # multi-row
+        {'id': 3, 'name': 'Arvind1'},
+        {'id': 4, 'name': 'Arvind2'},
+        {'id': 5, 'name': 'Arvind3'},
+        {'id': 6, 'name': 'Arvind4'},
+
     ]
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -474,7 +484,11 @@ def test_jdbc_producer_multirow_with_duplicates(sdc_builder, sdc_executor, datab
     Make sure that when using Multi Row insert, data related errors are send to error stream.
     """
     if type(database) == SQLServerDatabase:
-        pytest.skip('This test is trying to insert explicit value to identity column which is not supported on SQL Server')
+        pytest.skip(
+            'This test is trying to insert explicit value to identity column which is not supported on SQL Server')
+
+    if isinstance(database, OracleDatabase):
+        pytest.skip('multi_row is not supported on oracle databases')
 
     table_name = get_random_string(string.ascii_lowercase, 15)
 
@@ -762,6 +776,10 @@ def test_jdbc_producer_multischema_multitable(sdc_builder, sdc_executor, databas
 @database
 def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
     """Ensure that variously intertwined operations won't be executed out of order in harmful way."""
+
+    if isinstance(database, OracleDatabase) and multi_row:
+        pytest.skip('multi_row is not supported on oracle databases')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     metadata = sqlalchemy.MetaData()
     table = sqlalchemy.Table(
@@ -864,9 +882,8 @@ def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
 
 # SDC-11092: Improve the ability of JDBC Destination to cover non-standard Data related SQL Error codes
 @sdc_min_version('3.0.0.0')
-@pytest.mark.parametrize('multi_row', [True, False])
 @database('oracle')
-def test_jdbc_producer_oracle_data_errors(sdc_builder, sdc_executor, multi_row, database):
+def test_jdbc_producer_oracle_data_errors(sdc_builder, sdc_executor, database):
     """Ensure that data related error in Oracle will be sent to eror stream rather then shutting the pipeline down."""
     table_name = get_random_string(string.ascii_lowercase, 20)
     metadata = sqlalchemy.MetaData()
@@ -888,7 +905,7 @@ def test_jdbc_producer_oracle_data_errors(sdc_builder, sdc_executor, multi_row, 
     producer.field_to_column_mapping = []
     producer.default_operation = 'INSERT'
     producer.table_name = table_name
-    producer.use_multi_row_operation = multi_row
+    producer.use_multi_row_operation = False
 
     source >> producer
 
@@ -980,10 +997,13 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
     And the error message should contain a description of the actual error and not the NPE as before.
     """
 
+    if isinstance(database, OracleDatabase) and multi_row:
+        pytest.skip('multi_row is not supported on oracle databases')
+
     table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(0, 4 if dyn_table else 1)]
     table_name_expression = ("${str:toUpper(record:attribute('tbl'))}"
-        if database.type == 'Oracle'
-        else "${record:attribute('tbl')}") if dyn_table else (
+                             if database.type == 'Oracle'
+                             else "${record:attribute('tbl')}") if dyn_table else (
         table_names[0].upper() if database.type == 'Oracle'
         else table_names[0])
     metadata = sqlalchemy.MetaData()
