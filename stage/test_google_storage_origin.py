@@ -303,3 +303,65 @@ def test_google_storage_no_more_data(sdc_builder, sdc_executor, gcp):
     finally:
         logger.info('Deleting bucket %s ...', created_bucket.name)
         gcp.retry_429(created_bucket.delete)(force=True)
+
+
+@gcp
+@sdc_min_version('4.1.0')
+@pytest.mark.parametrize('action', ['ARCHIVE', 'DELETE'])
+def test_google_storage_post_processing(sdc_builder, sdc_executor, gcp, action):
+    """Test file post-processing functionality in GCS
+
+    Write data to Google cloud storage using Storage Client
+    and then check if Google Storage Origin receives them using wiretap.
+    Also, assert that processing works by checking paths existence.
+
+    The pipeline looks like:
+        google_cloud_storage_origin >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT',
+                                        post_processing_option=action)
+    wiretap = pipeline_builder.add_wiretap()
+
+    google_cloud_storage >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
+    try:
+        data = [get_random_string(ascii_letters, 100) for _ in range(10)]
+        file_path = 'gcs-test/a/b/c/d/e/'
+        file_name = 'sdc-test.txt'
+        blob = created_bucket.blob(file_path + file_name)
+        blob.upload_from_string('\n'.join(data))
+
+        logger.info('Starting GCS Origin pipeline and wait until the information is read ...')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
+        sdc_executor.stop_pipeline(pipeline)
+
+        rows_from_wiretap = [record.field['text'] for record in wiretap.output_records]
+
+        # If post processing option is enabled, old file path should not exist
+        assert not storage_client.get_bucket(bucket_name).blob(file_path + file_name).exists()
+
+        # If ARCHIVE, default prefix is empty, so it gets moved to root of bucket
+        if action == 'ARCHIVE':
+            assert storage_client.get_bucket(bucket_name).blob(file_name).exists()
+
+        assert len(data) == len(rows_from_wiretap)
+        assert rows_from_wiretap == data
+    finally:
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
