@@ -20,7 +20,7 @@ import time
 import pytest
 from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
-from streamsets.testframework.markers import cluster
+from streamsets.testframework.markers import cluster, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -1668,3 +1668,60 @@ def test_hbase_destination_cluster_mode_hbase_config_dir_abs_path(sdc_builder, s
         logger.info('Deleting HBase table %s ...', random_table_name)
         cluster.hbase.client.delete_table(name=random_table_name, disable=True)
         logger.info('removing pipeline')
+
+
+@cluster('cdh', 'hdp')
+@sdc_min_version('4.1.0')
+@pytest.mark.parametrize('column_name', ['name', 'name:f', 'name:f:first'])
+def test_hbase_delimiter_column_name(sdc_builder, sdc_executor, cluster, column_name):
+    """HBase destination test multiple number of delimiters in column names.
+    Pipeline: haddop_fs >> hbase
+    """
+    # Convert to some raw data for the Dev Raw Data Source.
+    raw_data = json.dumps({'name': 'john'})
+
+    # Create random table name to avoid collisions.
+    random_table_name = get_random_string(string.ascii_letters, 10)
+
+    # Pipeline:
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Create Dev Raw Data Source stage.
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    # Add HBase stage to pipeline.
+    hbase = pipeline_builder.add_stage('HBase', type='destination')
+    hbase.table_name = random_table_name
+    hbase.row_key = '/name'
+    hbase.fields = [dict(columnValue='/name',
+                         columnStorageType='TEXT',
+                         columnName=column_name)]
+
+    # Build pipeline.
+    dev_raw_data_source >> hbase
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Creating HBase table %s ...', random_table_name)
+        cluster.hbase.client.create_table(name=random_table_name, families={'name:f': {}})
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        if column_name == 'name':
+            pytest.fail('Should not reach here')
+
+        # Validate data from HBASE:
+        for element in cluster.hbase.client.table(random_table_name).scan():
+            assert element[1][column_name.encode('utf-8')] == b'john'
+    except Exception as err:
+        if column_name != 'name':
+            pytest.fail('Should not reach here')
+        assert column_name == 'name'
+        assert 'HBASE_28' in err.message
+    finally:
+        # Delete table.
+        logger.info('Deleting HBase table %s ...', random_table_name)
+        cluster.hbase.client.delete_table(name=random_table_name, disable=True)
