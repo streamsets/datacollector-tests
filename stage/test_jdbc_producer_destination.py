@@ -1069,3 +1069,110 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
         for i in range(0, created_table_count):  # We will drop only the tables we have created
             tables[i].drop(database.engine)
         connection.close()
+
+
+# COLLECTOR-88: JDBC Producer truncates decimals when using multi-row operations against SQL Server
+@database('sqlserver')
+def test_mssql_producer_decimal_precision(sdc_builder, sdc_executor, database):
+    """
+    JDBC SQLServer Producer truncated some decimals prior to the implementation of COLLECTOR-88. The issue is only
+    reproducible when certain conditions are met:
+    - The data comes coded with different values of decimal precision.
+    - Multi-row operations are enabled.
+
+    To reproduce this scenario, the pipeline is the following:
+
+    jdbc_multitable_consumer >> stream_selector >>                      >> jdbc_producer
+                                                   field_type_converter >>
+
+    The stream selector separates initial data in two streams, and one of them is converted from Numeric(5,3) to
+    Numeric(5,2) without losing precision since those values already had only 2 decimals. When trying to insert the data
+    into SQLServer again, everything should be converted to Numeric(5,3) again so precision is not lost.
+    """
+    table_name_origin = get_random_string(string.ascii_lowercase, 20)
+    table_name_dest = get_random_string(string.ascii_lowercase, 20)
+
+    rows_in_table = [{'data': 11.11},
+                     {'data': 22.22},
+                     {'data': 33.33},
+                     {'data': 55.55555},
+                     {'data': 66.66666},
+                     {'data': 77.77777}]
+
+    # Create origin table and add some values to it
+    table_origin = sqlalchemy.Table(
+        table_name_origin,
+        sqlalchemy.MetaData(),
+        sqlalchemy.Column('data', sqlalchemy.Numeric(7,5), primary_key=True)
+    )
+    table_origin.create(database.engine)
+    connection = database.engine.connect()
+    connection.execute(table_origin.insert(), rows_in_table)
+    connection.close()
+
+    # Create destination table
+    table_dest = sqlalchemy.Table(
+        table_name_dest,
+        sqlalchemy.MetaData(),
+        sqlalchemy.Column('data', sqlalchemy.Numeric(7,5), primary_key=True)
+    )
+    table_dest.create(database.engine)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'%{table_name_origin}%'}])
+
+    stream_selector = pipeline_builder.add_stage('Stream Selector')
+
+    field_type_converter_configs = [
+        {
+            'sourceType': 'DECIMAL',
+            'targetType': 'DECIMAL',
+            'dataLocale': 'en,US',
+            'scale': 2,
+            'decimalScaleRoundingStrategy': 'ROUND_UNNECESSARY'
+        }
+    ]
+
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter.set_attributes(conversion_method='BY_TYPE',
+                                        whole_type_converter_configs=field_type_converter_configs)
+
+    jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+    jdbc_producer.set_attributes(default_operation='INSERT',
+                                 table_name=table_name_dest,
+                                 field_to_column_mapping=[],
+                                 use_multi_row_operation=True)
+    wiretap = pipeline_builder.add_wiretap()
+
+    jdbc_multitable_consumer >> stream_selector
+    stream_selector >> [jdbc_producer, wiretap.destination]
+    stream_selector >> field_type_converter >> [jdbc_producer, wiretap.destination]
+
+    # Stream Selector conditions depend on the output lanes, so we set them after connecting the stages.
+    stream_selector.condition = [{'outputLane': stream_selector.output_lanes[0],
+                                  'predicate': '${record:value("/data") > 50}'},
+                                 {'outputLane': stream_selector.output_lanes[1],
+                                  'predicate': 'default'}]
+
+    pipeline = pipeline_builder.build('MSSQL MultiRow decimals').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(6)
+        sdc_executor.stop_pipeline(pipeline)
+
+        result = database.engine.execute(table_dest.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by value
+        result.close()
+
+        expected_data = [(row['data']) for row in rows_in_table]
+
+        for i in range(0, len(expected_data)):
+            assert math.isclose(float(str(data_from_database[i][0])), expected_data[i], rel_tol=0.00002)
+
+    finally:
+        logger.info('Dropping tables in %s database ...', database.type)
+        table_origin.drop(database.engine)
+        table_dest.drop(database.engine)
