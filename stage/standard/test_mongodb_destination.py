@@ -11,40 +11,61 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import datetime
+import json
 import logging
 import string
-import copy
-import pytest
-import json
+from decimal import Decimal
 
-from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import mongodb, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+import pytest
+from streamsets.testframework.markers import mongodb
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
 
 DATA_TYPES = [
-    ('true', 'BOOLEAN', True),
-    ('a', 'CHAR', 'a'),
-#   ('a', 'BYTE', None), # Not supported today
-    (120, 'SHORT', 120),
-    (120, 'INTEGER', 120),
-    (120, 'LONG', 120),
-    (20.1, 'FLOAT', 20.1),
-    (20.1, 'DOUBLE', 20.1),
-    (20.1, 'DECIMAL', 20.1),
-    ('2020-01-01 10:00:00', 'DATE', 1577872800000),
-    ('2020-01-01 10:00:00', 'TIME', 1577872800000),
-    ('2020-01-01 10:00:00', 'DATETIME', 1577872800000),
-    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', '2020-01-01T10:00:00Z'),
-    ('string', 'STRING', 'string'),
-#   ('string', 'BYTE_ARRAY', 'string'), # Not supported today
+    ('true', 'BOOLEAN', False, True),
+    ('true', 'BOOLEAN', True, True),
+    ('a', 'CHAR', False, 'a'),
+    ('a', 'CHAR', True, 'a'),
+    # ('a', 'BYTE', False, None),  # Not supported today
+    # ('a', 'BYTE', True, None),  # Not supported today
+    (120, 'SHORT', False, 120),
+    (120, 'SHORT', True, 120),
+    (120, 'INTEGER', False, 120),
+    (120, 'INTEGER', True, 120),
+    (120, 'LONG', False, 120),
+    (120, 'LONG', True, 120),
+    (20.1, 'FLOAT', False, 20.1),
+    (20.1, 'FLOAT', True, 20.1),
+    (20.1, 'DOUBLE', False, 20.1),
+    (20.1, 'DOUBLE', True, 20.1),
+    (20.1, 'DECIMAL', False, 20.1),
+    (20.1, 'DECIMAL', True, Decimal(20.10)),
+    ('2020-01-01 10:00:00', 'DATE', False, 1577872800000),
+    ('2020-01-01 10:00:00', 'DATE', True, datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01 10:00:00', 'TIME', False, 1577872800000),
+    ('2020-01-01 10:00:00', 'TIME', True, datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01 10:00:00', 'DATETIME', False, 1577872800000),
+    ('2020-01-01 10:00:00', 'DATETIME', True,  datetime.datetime(2020, 1, 1, 10, 0)),
+    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', False, '2020-01-01T10:00:00Z'),
+    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', True, '2020-01-01T10:00:00Z'),
+    ('string', 'STRING', False, 'string'),
+    ('string', 'STRING', True, 'string'),
+    # ('string', 'BYTE_ARRAY', False, 'string'),  # Not supported today
+    ('string', 'BYTE_ARRAY', True, b'string'),
 ]
+
+
 @mongodb
-@pytest.mark.parametrize('input,converter_type,expected', DATA_TYPES, ids=[i[1] for i in DATA_TYPES])
-def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, expected):
+@pytest.mark.parametrize('input,converter_type,improve_types,expected', DATA_TYPES,
+                         ids=[f'{i[2]}_{i[1]}' for i in DATA_TYPES])
+def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, improve_types, expected):
+
+    if Version(sdc_builder.version) < Version('4.0.2') and improve_types:
+        pytest.skip('Improved Type Conversion is not present on that SDC version')
+
     database = get_random_string(string.ascii_letters, 5)
     collection = get_random_string(string.ascii_letters, 10)
 
@@ -74,6 +95,10 @@ def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, e
                                                           'headerAttributeExpression': '1'}]
 
     mongodb_dest = pipeline_builder.add_stage('MongoDB', type='destination')
+
+    if Version(sdc_builder.version) > Version('4.0.2'):
+        mongodb_dest.set_attributes(improve_type_conversion=improve_types)
+
     mongodb_dest.set_attributes(database=database,
                                 collection=collection)
 
@@ -91,7 +116,13 @@ def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, e
 
         assert len(mongodb_documents) == 1
         doc = mongodb_documents[0]
-        assert doc['value'] == expected
+
+        if converter_type == 'FLOAT' and improve_types:
+            assert pytest.approx(doc['value']) == expected
+        elif converter_type == 'DECIMAL' and improve_types:
+            assert pytest.approx(Decimal(str(doc['value']))) == expected
+        else:
+            assert doc['value'] == expected
 
     finally:
         logger.info('Dropping %s database...', mongodb_dest.database)
@@ -104,12 +135,14 @@ DATA = ['To be or not to be.',
 
 # Reference https://docs.mongodb.com/manual/reference/limits/
 INDEX_DATABASE = [
-    ('max_size', get_random_string(string.ascii_letters, 64).lower()),
-    ('plus', get_random_string(string.ascii_letters, 5).lower() + '+' + get_random_string(string.ascii_letters, 5).lower()),
-    ('underscore', get_random_string(string.ascii_letters, 5).lower() + '_' + get_random_string(string.ascii_letters, 5).lower()),
-    ('comma', get_random_string(string.ascii_letters, 5).lower() + ',' + get_random_string(string.ascii_letters, 5).lower()),
+    ('max_size', get_random_string(string.ascii_lowercase, 64)),
+    ('plus', get_random_string(string.ascii_lowercase, 5) + '+' + get_random_string(string.ascii_lowercase, 5)),
+    ('underscore', get_random_string(string.ascii_lowercase, 5) + '_' + get_random_string(string.ascii_lowercase, 5)),
+    ('comma', get_random_string(string.ascii_lowercase, 5) + ',' + get_random_string(string.ascii_lowercase, 5)),
     ('short', 'a'),
 ]
+
+
 @mongodb
 @pytest.mark.parametrize('database_name_category,index', INDEX_DATABASE, ids=[i[0] for i in INDEX_DATABASE])
 def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name_category, index):
@@ -161,13 +194,15 @@ def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name
 
 # Reference https://docs.mongodb.com/manual/reference/limits/
 INDEX_COLLECTION = [
-    ('max_size', get_random_string(string.ascii_letters, 255).lower()),
-    ('begin_number', '5' + get_random_string(string.ascii_letters, 5).lower()),
-    ('plus', get_random_string(string.ascii_letters, 5).lower() + '+' + get_random_string(string.ascii_letters, 5).lower()),
-    ('underscore', get_random_string(string.ascii_letters, 5).lower() + '_' + get_random_string(string.ascii_letters, 5).lower()),
-    ('comma', get_random_string(string.ascii_letters, 5).lower() + ',' + get_random_string(string.ascii_letters, 5).lower()),
+    ('max_size', get_random_string(string.ascii_lowercase, 255)),
+    ('begin_number', '5' + get_random_string(string.ascii_lowercase, 5)),
+    ('plus', get_random_string(string.ascii_lowercase, 5) + '+' + get_random_string(string.ascii_lowercase, 5)),
+    ('underscore', get_random_string(string.ascii_lowercase, 5) + '_' + get_random_string(string.ascii_lowercase, 5)),
+    ('comma', get_random_string(string.ascii_lowercase, 5) + ',' + get_random_string(string.ascii_lowercase, 5)),
     ('short', 'a'),
 ]
+
+
 @mongodb
 @pytest.mark.parametrize('collection_name_category,index', INDEX_COLLECTION, ids=[i[0] for i in INDEX_COLLECTION])
 def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_name_category, index):
@@ -219,7 +254,7 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
 
 @mongodb
 def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
-    pytest.skip("No events supported in ElasticSearch destination at this time.")
+    pytest.skip("No events supported in MongoDB destination at this time.")
 
 
 @mongodb
