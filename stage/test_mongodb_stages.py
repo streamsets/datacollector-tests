@@ -661,7 +661,7 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
                                 collection=get_random_string(ascii_letters, 10))
 
     if Version(sdc_builder.version) >= Version('4.1.0'):
-        mongodb_dest.set_attributes(improved_type_conversion=False)
+        mongodb_dest.set_attributes(improve_type_conversion=False)
 
     # From 3.6.0, unique key field is a list, otherwise single string for older version.
     mongodb_dest.unique_key_field = ['/text'] if Version(sdc_builder.version) >= Version('3.6.0') else '/text'
@@ -709,7 +709,7 @@ def test_mongodb_destination_update_on_nested_key(sdc_builder, sdc_executor, mon
                                 unique_key_field=unique_key_field)
 
     if Version(sdc_builder.version) >= Version('4.1.0'):
-        mongodb_dest.set_attributes(improved_type_conversion=False)
+        mongodb_dest.set_attributes(improve_type_conversion=False)
 
     dev_raw_data_source >> expression_evaluator >> mongodb_dest
 
