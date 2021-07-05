@@ -63,7 +63,7 @@ DATA_TYPES = [
                          ids=[f'{i[2]}_{i[1]}' for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, improve_types, expected):
 
-    if Version(sdc_builder.version) < Version('4.0.2') and improve_types:
+    if Version(sdc_builder.version) <= Version('4.0.2') and improve_types:
         pytest.skip('Improved Type Conversion is not present on that SDC version')
 
     database = get_random_string(string.ascii_letters, 5)
