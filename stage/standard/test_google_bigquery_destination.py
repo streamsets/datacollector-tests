@@ -144,6 +144,8 @@ def test_object_names_tables(sdc_builder, sdc_executor, gcp, table_name):
                                        stop_after_first_batch=True,
                                        raw_data='\n'.join(CSV_DATA_TO_INSERT))
 
+    # If tests fail for any reason, leftovers with equal names might lead to more errors
+    table_name = f'{table_name}_{get_random_string(string.ascii_letters, 5)}'
     dataset_name = get_random_string(string.ascii_letters, 5)
 
     google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
@@ -202,6 +204,8 @@ def test_object_names_datasets(sdc_builder, sdc_executor, gcp, dataset_name):
                                        raw_data='\n'.join(CSV_DATA_TO_INSERT))
 
     table_name = get_random_string(string.ascii_letters, 5)
+    # If tests fail for any reason, leftovers with equal names might lead to more errors
+    dataset_name = f'{dataset_name}_{get_random_string(string.ascii_letters, 5)}'
 
     google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
