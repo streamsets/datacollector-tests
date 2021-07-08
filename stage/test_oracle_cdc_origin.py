@@ -551,8 +551,7 @@ def test_oracle_cdc_client_headers(sdc_builder,
             assert {record.header.values["oracle.cdc.precisionTimestamp"]} is not None
             assert {record.header.values["oracle.cdc.query"]} is not None
             assert {record.header.values["oracle.cdc.sequence.oracle"]} is not None
-            if buffer_locally:
-                assert {record.header.values["oracle.cdc.sequence.internal"]} is not None
+            assert {record.header.values["oracle.cdc.sequence.internal"]} is not None
 
     finally:
 
