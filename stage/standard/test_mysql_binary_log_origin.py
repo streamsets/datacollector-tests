@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import random
 import string
 
 import pytest
@@ -325,3 +326,30 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
             table.drop(database.engine)
+
+
+def _get_server_id():
+    server_id = str(random.randint(1, 2147483647))
+    logger.info(f"Generated server id {server_id}")
+    return server_id
+
+
+def _get_initial_offset(database):
+    """Return current position of the bin log that can be used for Initial Offset configuration."""
+    connection = database.engine.connect()
+    rs = None
+
+    try:
+        rs = connection.execute("SHOW MASTER STATUS")
+        rows = [row for row in rs]
+
+        assert len(rows) == 1
+        offset = f"{rows[0][0]}:{rows[0][1]}"
+        logger.info(f"Generated starting offset: {offset}")
+        return offset
+    finally:
+        if rs is not None:
+            rs.close()
+
+        if connection is not None:
+            connection.close()
