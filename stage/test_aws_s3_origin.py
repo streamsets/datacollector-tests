@@ -20,6 +20,7 @@ import time
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
 
+import docker
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version, large
 from streamsets.testframework.utils import get_random_string, Version
@@ -1890,3 +1891,64 @@ def test_whole_file_with_empty_files(sdc_builder, sdc_executor, aws, keep_data):
         if not keep_data:
             # Clean up S3.
             aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+
+# COLLECTOR-25. S3 Origin should keep the current offset if the connection is lost
+@aws('s3')
+def test_s3_keep_offset_on_disconnect(sdc_builder, sdc_executor, aws):
+    """Ensure that the origin saves the current offset if the connection to AWS S3 is lost, and that it continues
+    from that offset upon restoring connectivity."""
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+
+    num_objects = 1500
+    rate_limit = 100
+
+    test_data = [f'{i}' for i in range(num_objects)]
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern=f'**/*',
+                          read_order='LEXICOGRAPHICAL', common_prefix=f'/{s3_key}/',
+                          max_batch_size_in_records=1500)
+
+    wiretap = builder.add_wiretap()
+
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+    origin >> wiretap.destination
+    origin >= finisher
+
+    pipeline = builder.build(rate_limit=rate_limit).configure_for_environment(aws)
+    pipeline.rate_limit = rate_limit
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        # Insert objects into S3.
+        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/data.txt", Body='\n'.join(test_data).encode('ascii'))
+
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd.wait_for_status('RUNNING', timeout_sec=120)
+        time.sleep(3)
+
+        logger.info(f'Disconnecting the network...')
+        sdc_executor.container.network_disconnect()
+        time.sleep(5)
+        logger.info(f'Reconnecting the network...')
+        sdc_executor.container.network_reconnect()
+
+        pipeline_cmd.wait_for_finished()
+
+        records = wiretap.output_records
+
+        expected_value = 0
+        for record in records:
+            assert record.field == expected_value
+            expected_value = expected_value + 1
+
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
