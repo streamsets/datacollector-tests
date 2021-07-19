@@ -26,6 +26,8 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.category('standard')]
+
 bytes_column = base64.b64encode("dataAsBytes".encode('utf-8'))
 
 SCHEMA = [SchemaField('full_name', 'STRING', mode='required'),

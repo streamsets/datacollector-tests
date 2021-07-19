@@ -23,6 +23,8 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.category('standard')]
+
 TMPOUT = '/tmp/out/'
 PROTOBUF_FILE_PATH = 'resources/protobuf/addressbook.desc'
 

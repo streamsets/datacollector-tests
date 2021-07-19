@@ -26,6 +26,8 @@ from xlwt import Workbook
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.category('standard')]
+
 TMPOUT = '/tmp/out/'
 PROTOBUF_FILE_PATH = 'resources/protobuf/addressbook.desc'
 

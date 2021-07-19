@@ -24,6 +24,9 @@ from streamsets.testframework.decorators import stub
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.category('nonstandard')]
+
+
 @stub
 @pytest.mark.parametrize('stage_attributes', [{'credentials_provider': 'JSON'}])
 def test_credentials_file_content_in_json(sdc_builder, sdc_executor, stage_attributes):
@@ -135,4 +138,3 @@ def test_table_cache_size(sdc_builder, sdc_executor):
 @stub
 def test_table_name(sdc_builder, sdc_executor):
     pass
-

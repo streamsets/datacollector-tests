@@ -15,10 +15,13 @@
 import logging
 from string import ascii_letters
 
+import pytest
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.category('nonstandard')]
 
 DEFAULT_COLUMN_FAMILY_NAME = 'cf'  # for Google Bigtable
 

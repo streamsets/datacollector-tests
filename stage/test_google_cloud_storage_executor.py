@@ -18,11 +18,15 @@ import pytest
 import string
 import collections
 
+import pytest
 from streamsets.sdk import sdc_api
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.category('nonstandard')]
+
 
 @gcp
 @sdc_min_version('4.1.0')

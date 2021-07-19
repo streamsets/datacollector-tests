@@ -18,10 +18,13 @@ import time
 from string import ascii_letters, ascii_lowercase
 from time import sleep
 
+import pytest
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.category('nonstandard')]
 
 
 @gcp

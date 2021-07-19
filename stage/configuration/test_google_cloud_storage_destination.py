@@ -24,6 +24,8 @@ from streamsets.testframework.decorators import stub
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.category('nonstandard')]
+
 
 @stub
 @pytest.mark.parametrize('stage_attributes', [{'avro_compression_codec': 'BZIP2', 'data_format': 'AVRO'},
@@ -462,4 +464,3 @@ def test_validate_schema(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'XML', 'validate_schema': True}])
 def test_xml_schema(sdc_builder, sdc_executor, stage_attributes):
     pass
-
