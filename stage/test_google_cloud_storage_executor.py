@@ -93,7 +93,7 @@ def test_google_cloud_storage_executor_create_object(sdc_builder, sdc_executor, 
                                                   raw_data=raw_data,
                                                   stop_after_first_batch=True)
 
-        google_cloud_storage_executor = pipeline_builder.add_stage('Google Cloud Storage Executor', type='executor')
+        google_cloud_storage_executor = pipeline_builder.add_stage('Google Cloud Storage', type='executor')
         google_cloud_storage_executor.set_attributes(task='CREATE_OBJECT',
                                                      project_id=gcp.project_id,
                                                      bucket=bucket_specification,
@@ -234,7 +234,7 @@ def test_google_cloud_storage_executor_copy_object(sdc_builder, sdc_executor, gc
                                                   raw_data=raw_data,
                                                   stop_after_first_batch=True)
 
-        google_cloud_storage_executor = pipeline_builder.add_stage('Google Cloud Storage Executor', type='executor')
+        google_cloud_storage_executor = pipeline_builder.add_stage('Google Cloud Storage', type='executor')
         google_cloud_storage_executor.set_attributes(task='COPY_OBJECT',
                                                      project_id=gcp.project_id,
                                                      source_bucket=source_bucket_specification,
@@ -388,7 +388,7 @@ def test_google_cloud_storage_executor_move_object(sdc_builder, sdc_executor, gc
                                                   raw_data=raw_data,
                                                   stop_after_first_batch=True)
 
-        google_cloud_storage_executor = pipeline_builder.add_stage('Google Cloud Storage Executor', type='executor')
+        google_cloud_storage_executor = pipeline_builder.add_stage('Google Cloud Storage', type='executor')
         google_cloud_storage_executor.set_attributes(task='MOVE_OBJECT',
                                                      project_id=gcp.project_id,
                                                      source_bucket=source_bucket_specification,
@@ -525,7 +525,7 @@ def test_google_cloud_storage_executor_change_object(sdc_builder, sdc_executor, 
                                                   raw_data=raw_data,
                                                   stop_after_first_batch=True)
 
-        google_cloud_storage_executor = pipeline_builder.add_stage('Google Cloud Storage Executor', type='executor')
+        google_cloud_storage_executor = pipeline_builder.add_stage('Google Cloud Storage', type='executor')
         google_cloud_storage_executor.set_attributes(task='CHANGE_OBJECT',
                                                      project_id=gcp.project_id,
                                                      bucket=bucket_specification,
