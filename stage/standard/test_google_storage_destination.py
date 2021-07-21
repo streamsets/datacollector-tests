@@ -245,8 +245,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, gcp):
 
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
 
+    # From SDC 4.1.0 onwards, Dev Data Generator has a new configuration called 'records_to_be_generated', which could be
+    # used to guarantee that we generate exactly batch_size * num_batches records, but it is not used right now in order for
+    # this test to be backwards compatible.
     dev_data_generator.set_attributes(batch_size=batch_size,
-                                      records_to_be_generated=batch_size * batches,
                                       fields_to_generate=[
                                           {'field': 'text', 'type': 'LONG_SEQUENCE'}])
 
@@ -275,7 +277,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, gcp):
         records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
         logger.info(f"Detected {records} output records")
         # Sanity check
-        assert records == batch_size * batches, "Check that no records have been lost/duplicated"
+        assert records >= batch_size * batches, "Check that at least the required number of records have been generated"
 
         # GCS creates writes each batch in a different blob. Therefore, there should be 10 blobs, with 100 records each
         blob_iter = created_bucket.list_blobs(prefix='gcs-test')
@@ -288,8 +290,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, gcp):
             contents = blob.download_as_string().decode('ascii')
             # Strip out the lines which are empty (essentially the last line)
             lines = [line for line in contents.split('\n') if len(line) > 0]
-            # Each blob should have one batch of elements
-            assert len(lines) == batch_size, "Every blob must have a full batch"
             result.extend(lines)
 
         result.sort(key=float)
