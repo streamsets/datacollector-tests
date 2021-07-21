@@ -254,13 +254,19 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
 
         logger.info('Inserting data into %s', table_name)
         input_values = list(range(max_batch_size * batches))
+
+        transaction = connection.begin()
         for val in input_values:
             connection.execute(f"INSERT INTO {table_name} VALUES ({val})")
+        transaction.commit()
         connection.execute(f'TRUNCATE TABLE {table_name}')
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=420)
 
         output_values = [rec.field['ID'].value for rec in wiretap.output_records]
+
+        output_values.sort(key=float)
+
         assert input_values == output_values
 
     finally:
