@@ -119,7 +119,7 @@ def test_google_cloud_storage_executor_create_object(sdc_builder, sdc_executor, 
                 'This execution mode was not expected to produce error records'
             assert len(wiretap.output_records) == 1, \
                 'Only one input record, so exactly one output even record was expected'
-            assert wiretap.output_records[0].header.values['sdc.event.type'] == 'gcs_object_created', \
+            assert wiretap.output_records[0].header.values['sdc.event.type'] == 'gcs-object-created', \
                 'It was expected an event record signaling the object creation'
 
             existing_blob = bucket.get_blob(object_name)
@@ -261,7 +261,7 @@ def test_google_cloud_storage_executor_copy_object(sdc_builder, sdc_executor, gc
                 'This execution mode was not expected to produce error records'
             assert len(wiretap.output_records) == 1, \
                 'Only one input record, so exactly one output even record was expected'
-            assert wiretap.output_records[0].header.values['sdc.event.type'] == 'gcs_object_copied', \
+            assert wiretap.output_records[0].header.values['sdc.event.type'] == 'gcs-object-copied', \
                 'It was expected an event record signaling the object creation'
 
             existing_source_blob = source_bucket.get_blob(source_object_name)
@@ -415,7 +415,7 @@ def test_google_cloud_storage_executor_move_object(sdc_builder, sdc_executor, gc
                 'This execution mode was not expected to produce error records'
             assert len(wiretap.output_records) == 1, \
                 'Only one input record, so exactly one output even record was expected'
-            assert wiretap.output_records[0].header.values['sdc.event.type'] == 'gcs_object_moved', \
+            assert wiretap.output_records[0].header.values['sdc.event.type'] == 'gcs-object-moved', \
                 'It was expected an event record signaling the object creation'
 
             existing_source_blob = source_bucket.get_blob(source_object_name)
@@ -550,7 +550,7 @@ def test_google_cloud_storage_executor_change_object(sdc_builder, sdc_executor, 
                 'This execution mode was not expected to produce error records'
             assert len(wiretap.output_records) == 1, \
                 'Only one input record, so exactly one output even record was expected'
-            assert wiretap.output_records[0].header.values['sdc.event.type'] == 'gcs_object_changed', \
+            assert wiretap.output_records[0].header.values['sdc.event.type'] == 'gcs-object-changed', \
                 'It was expected an event record signaling the object creation'
 
             existing_blob = bucket.get_blob(object_name)
