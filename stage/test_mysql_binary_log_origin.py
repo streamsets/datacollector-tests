@@ -182,33 +182,6 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
                 connection.close()
 
 
-def _get_server_id():
-    server_id = str(random.randint(1, 2147483647))
-    logger.info(f"Generated server id {server_id}")
-    return server_id
-
-
-def _get_initial_offset(database):
-    """Return current position of the bin log that can be used for Initial Offset configuration."""
-    connection = database.engine.connect()
-    rs = None
-
-    try:
-        rs = connection.execute("SHOW MASTER STATUS")
-        rows = [row for row in rs]
-
-        assert len(rows) == 1
-        offset = f"{rows[0][0]}:{rows[0][1]}"
-        logger.info(f"Generated starting offset: {offset}")
-        return offset
-    finally:
-        if rs is not None:
-            rs.close()
-
-        if connection is not None:
-            connection.close()
-
-
 @pytest.mark.parametrize('total_records', [512])
 @pytest.mark.parametrize('commit_rate', [8])
 @pytest.mark.parametrize('time_to_sleep_before_disconnect', [8, 64])
@@ -376,17 +349,11 @@ def test_auto_recovery_from_lost_connectivity(sdc_builder,
 
         if not keep_data:
             logger.info(f'Dropping table {table_name} in %{database.type} database...')
-            try:
-                table.drop(database.engine)
-            finally:
-                pass
+            table.drop(database.engine)
 
         if pipeline is not None:
-            try:
-                logger.info(f'Stopping pipeline {pipeline_title}')
-                sdc_executor.stop_pipeline(pipeline, force=True)
-            finally:
-                pass
+            logger.info(f'Stopping pipeline {pipeline_title}')
+            sdc_executor.stop_pipeline(pipeline, force=True)
 
 
 def _get_server_id():

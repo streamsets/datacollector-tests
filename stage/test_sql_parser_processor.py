@@ -460,7 +460,7 @@ def test_sql_parser_dual_parser(sdc_builder,
                          f'{"DOCUMENT" in record.field["columns"]} - '\
                          f'{("oracle.pseudocolumn.ROWID" in record.header.values)} - '\
                          f'{("oracle.cdc.rowId" in record.header.values)} - '\
-                         f'{("jdbc.Id.precision" in record.header.values)} - ' \
+                         f'{("jdbc.Id.precision" in record.header.values)} - '\
                          f'{("jdbc.Id.scale" in record.header.values)} - '\
                          f'{"ROWID" in record.field["columns"]}'
 

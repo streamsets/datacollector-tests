@@ -131,6 +131,7 @@ def test_google_cloud_storage_executor_create_object(sdc_builder, sdc_executor, 
             assert existing_object_metadata == injected_object_metadata, 'Correct object but with unexpected metadata'
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
             assert len(wiretap.error_records) == 1, \
                 'This execution mode was expected to produce error records'
             assert len(wiretap.output_records) == 0, \
@@ -142,6 +143,7 @@ def test_google_cloud_storage_executor_create_object(sdc_builder, sdc_executor, 
             logger.info(f'Deleting temporary bucket {bucket_name}')
             gcp.retry_429(bucket.delete)(force=True)
             logger.info(f'Temporary bucket {bucket_name} successfully deleted')
+
 
 @gcp
 @sdc_min_version('4.1.0')
@@ -281,6 +283,7 @@ def test_google_cloud_storage_executor_copy_object(sdc_builder, sdc_executor, gc
             assert existing_target_object_metadata == injected_target_object_metadata, 'Correct target object but with unexpected metadata'
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
             assert len(wiretap.error_records) == 1, \
                 'This execution mode was expected to produce error records'
             assert len(wiretap.output_records) == 0, \
@@ -296,6 +299,7 @@ def test_google_cloud_storage_executor_copy_object(sdc_builder, sdc_executor, gc
             logger.info(f'Deleting temporary target bucket {target_bucket_name}')
             gcp.retry_429(target_bucket.delete)(force=True)
             logger.info(f'Temporary target bucket {target_bucket_name} successfully deleted')
+
 
 @gcp
 @sdc_min_version('4.1.0')
@@ -430,6 +434,7 @@ def test_google_cloud_storage_executor_move_object(sdc_builder, sdc_executor, gc
             assert existing_target_object_metadata == injected_target_object_metadata, 'Correct target object but with unexpected metadata'
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
             assert len(wiretap.error_records) == 1, \
                 'This execution mode was expected to produce error records'
             assert len(wiretap.output_records) == 0, \
@@ -445,6 +450,7 @@ def test_google_cloud_storage_executor_move_object(sdc_builder, sdc_executor, gc
             logger.info(f'Deleting temporary target bucket {target_bucket_name}')
             gcp.retry_429(target_bucket.delete)(force=True)
             logger.info(f'Temporary target bucket {target_bucket_name} successfully deleted')
+
 
 @gcp
 @sdc_min_version('4.1.0')
@@ -562,6 +568,7 @@ def test_google_cloud_storage_executor_change_object(sdc_builder, sdc_executor, 
             assert existing_object_metadata == injected_object_metadata, 'Correct object but with unexpected metadata'
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
             assert len(wiretap.error_records) == 1, \
                 'This execution mode was expected to produce error records'
             assert len(wiretap.output_records) == 0, \
