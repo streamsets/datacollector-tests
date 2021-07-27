@@ -316,18 +316,22 @@ def test_auto_recovery_from_lost_connectivity(sdc_builder,
 
         logger.info(f'SDC is running on a container')
 
-        logger.info(f'Waiting {time_to_sleep_before_disconnect} seconds to disconnect the network...')
-        time.sleep(time_to_sleep_before_disconnect)
-        logger.info(f'Waited {time_to_sleep_before_disconnect} seconds to disconnect the network!')
-        logger.info(f'Disconnecting the network...')
-        sdc_executor.container.network_disconnect()
-        logger.info(f'Network disconnected!')
-        logger.info(f'Keeping the network disconnected for {time_to_sleep_after_disconnect} seconds...')
-        time.sleep(time_to_sleep_after_disconnect)
-        logger.info(f'Kept the network disconnected for {time_to_sleep_before_disconnect} seconds!')
-        logger.info(f'Reconnecting the network...')
-        sdc_executor.container.network_reconnect()
-        logger.info(f'Network reconnected!')
+        # TODO
+        # For the time being the following comment block cannot be migrated to Next. We are in conversations with
+        # EP (Dima & Kirti) to decide which would be the good way to do this test in the new platform.
+
+        # logger.info(f'Waiting {time_to_sleep_before_disconnect} seconds to disconnect the network...')
+        # time.sleep(time_to_sleep_before_disconnect)
+        # logger.info(f'Waited {time_to_sleep_before_disconnect} seconds to disconnect the network!')
+        # logger.info(f'Disconnecting the network...')
+        # sdc_executor.container.network_disconnect()
+        # logger.info(f'Network disconnected!')
+        # logger.info(f'Keeping the network disconnected for {time_to_sleep_after_disconnect} seconds...')
+        # time.sleep(time_to_sleep_after_disconnect)
+        # logger.info(f'Kept the network disconnected for {time_to_sleep_before_disconnect} seconds!')
+        # logger.info(f'Reconnecting the network...')
+        # sdc_executor.container.network_reconnect()
+        # logger.info(f'Network reconnected!')
 
         logger.info(f'Waiting for the pipeline to output all the expected records...')
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', table_records)
