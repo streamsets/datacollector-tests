@@ -16,7 +16,6 @@ import json
 import logging
 import string
 
-from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import couchbase, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -32,7 +31,6 @@ def test_couchbase_destination(sdc_builder, sdc_executor, couchbase):
     The pipeline looks like:
         dev_raw_data_source >> couchbase_destination
     """
-    couchbase_host = f'{couchbase.hostname}:{couchbase.port}'
     bucket_name = get_random_string(string.ascii_letters, 10)
     document_key_field = 'mydocname'
     raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
@@ -43,14 +41,9 @@ def test_couchbase_destination(sdc_builder, sdc_executor, couchbase):
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     couchbase_destination = builder.add_stage('Couchbase', type='destination')
-    if Version(sdc_builder.version) < Version('3.9.0'):
-        couchbase_destination.set_attributes(database_version='VERSION5', unique_document_key_field=document_key_field,
-                                             bucket=bucket_name, couchbase_user_name=couchbase.username,
-                                             couchbase_user_password=couchbase.password, url=couchbase_host)
-    else:
-        couchbase_destination.set_attributes(authentication_mode='USER', document_key="${record:value('/" + document_key_field + "')}",
-                                             bucket=bucket_name, user_name=couchbase.username,
-                                             password=couchbase.password, node_list=couchbase_host)
+    couchbase_destination.set_attributes(authentication_mode='USER',
+                                         document_key="${record:value('/" + document_key_field + "')}",
+                                         bucket=bucket_name)
 
     dev_raw_data_source >> couchbase_destination
     pipeline = builder.build(title='Couchbase Destination pipeline').configure_for_environment(couchbase)
