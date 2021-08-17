@@ -16,11 +16,12 @@ import base64
 import copy
 import json
 import logging
+import math
 import string
 import time
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from json.decoder import JSONDecodeError
-from operator import itemgetter
 from time import sleep
 from uuid import uuid4
 from xml.sax.saxutils import escape
@@ -34,9 +35,9 @@ from streamsets.testframework.utils import get_random_string, Version
 from .utils.utils_salesforce import (insert_data_and_verify_using_wiretap, verify_wiretap_data, ACCOUNTS_FOR_SUBQUERY,
                                      add_custom_field_to_contact, CASE_SUBJECT, clean_up, CONTACTS_FOR_NO_MORE_DATA,
                                      CONTACTS_FOR_SUBQUERY, create_push_topic, delete_custom_field_from_contact,
-                                     find_dataset, find_dataset_include_timestamp, FOLDER_NAME,
                                      get_cdc_wiretap_records, get_dev_raw_data_source, get_ids, set_up_random,
-                                     TEST_DATA, TIMEOUT)
+                                     FOLDER_NAME, TEST_DATA, TIMEOUT, verify_analytics_data,
+                                     MULTIPLE_UPLOADS_PER_BATCH_SCRIPT, MULTIPLE_UPLOADS_BATCH_SIZE)
 
 CONTACT = 'Contact'
 ACCOUNT = 'Account'
@@ -1896,7 +1897,7 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
 @salesforce
 @pytest.mark.parametrize('multiple_data', [False, True])
 def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce, multiple_data):
-    """Basic test for Einstein Analytics destination. Write some data and check that it's there
+    """Basic test for Tableau CRM destination. Write some data and check that it's there
 
     The pipeline looks like:
         dev_raw_data_source >> delay >> einstein_analytics_destination
@@ -1908,83 +1909,154 @@ def test_einstein_analytics_destination(sdc_builder, sdc_executor, salesforce, m
     """
     client = salesforce.client
 
-    identifier = None
-    current_version_id = None
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
+    records_per_batch = len(TEST_DATA['DATA_TO_INSERT'])
+    minimum_total_records = 2 * records_per_batch
+    if multiple_data:
+        dev_raw_data_source.set_attributes(stop_after_first_batch=False)
+
+    # Delay so that we can stop the pipeline after a single batch is processed
+    delay = pipeline_builder.add_stage('Delay')
+    delay.delay_between_batches = 5 * 1000
+
+    # Name change for COLLECTOR-225
     try:
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, TEST_DATA['CSV_DATA_TO_INSERT'])
-        if multiple_data:
-            dev_raw_data_source.set_attributes(stop_after_first_batch=False)
-
-        # Delay so that we can stop the pipeline after a single batch is processed
-        delay = pipeline_builder.add_stage('Delay')
-        delay.delay_between_batches = 5 * 1000
-
+        analytics_destination = pipeline_builder.add_stage('Tableau CRM', type='destination')
+    except:
         analytics_destination = pipeline_builder.add_stage('Einstein Analytics', type='destination')
-        edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
-        # Explicitly set auth credentials since Salesforce environment doesn't know about Einstein Analytics destination
-        analytics_destination.set_attributes(edgemart_alias=edgemart_alias)
-        if multiple_data:
-            analytics_destination.set_attributes(append_timestamp_to_alias=True)
 
-        dev_raw_data_source >> delay >> analytics_destination
+    edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
+    analytics_destination.set_attributes(edgemart_alias=edgemart_alias,
+                                         dataset_wait_time_in_secs=60)
 
-        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
-        sdc_executor.add_pipeline(pipeline)
+    dev_raw_data_source >> delay >> analytics_destination
 
-        # Now the pipeline will write data to Einstein Analytics
-        logger.info('Starting Einstein Analytics destination pipeline and waiting for it to produce records ...')
-        if multiple_data:
-            sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(6)
-            sdc_executor.stop_pipeline(pipeline)
-        else:
-            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
 
-        # Einstein Analytics data load is asynchronous, so poll until it's done
-        logger.info('Looking for dataset in Einstein Analytics')
-        end_time = datetime.now() + timedelta(seconds=120)
-        while identifier is None and datetime.now() < end_time:
-            sleep(5)
-            if multiple_data:
-                identifier, current_version_id = find_dataset_include_timestamp(client, edgemart_alias)
-            else:
-                identifier, current_version_id = find_dataset(client, edgemart_alias)
+    # Now the pipeline will write data to Tableau CRM
+    logger.info('Starting Tableau CRM destination pipeline and waiting for it to produce records ...')
+    if multiple_data:
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(minimum_total_records)
+        sdc_executor.stop_pipeline(pipeline)
+    else:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        # Make sure we found a dataset and didn't time out!
-        assert identifier is not None
+    verify_analytics_data(client, edgemart_alias, TEST_DATA['DATA_TO_INSERT'], 'Email', multiple_data)
 
-        # Now query the data from Einstein Analytics using SAQL
 
-        # Build the load statement
-        load = f'q = load \"{identifier}/{current_version_id}\";'
+@salesforce
+@sdc_min_version('4.2.0')
+def test_recover_analytics_partial_upload(sdc_builder, sdc_executor, salesforce):
+    """COLLECTOR-225. Create InsightsExternalData and an InsightsExternalDataPart to
+    simulate a partial upload, then have SDC recover the data
 
-        # Build the identity projection - e.g.
-        # q = foreach q generate Email as Email, FirstName as FirstName, LastName as LastName, LeadSource as LeadSource;
-        field_list = []
-        for key in TEST_DATA['DATA_TO_INSERT'][0]:
-            field_list.append(f'{key} as {key}')
-        projection = 'q = foreach q generate ' + ', '.join(field_list) + ';'
+    The pipeline looks like:
+        dev_raw_data_source >> einstein_analytics_destination
 
-        # Ensure consistent ordering
-        order_key = 'Email'
-        ordering = f'q = order q by {order_key};'
+    Don't actually send any data through the pipeline - we're only interested in
+    the recovery
+    """
+    client = salesforce.client
 
-        logger.info('Querying Einstein Analytics')
-        response = client.restful('wave/query', method='POST', json={'query': load + projection + ordering})
+    edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
 
-        assert sorted(TEST_DATA['DATA_TO_INSERT'], key=itemgetter(order_key)) == response['results']['records']
+    insights_external_data = {
+        'Format': 'Csv',
+        'EdgemartAlias': edgemart_alias,
+        'Action': 'None'
+    }
+    insights_external_data = client.InsightsExternalData.create(insights_external_data)
+    assert insights_external_data['success']
 
-    finally:
-        if identifier:
-            # simple_salesforce assumes there will be a JSON response,
-            # but DELETE returns 204 with no response
-            # See https://github.com/simple-salesforce/simple-salesforce/issues/327
-            try:
-                logger.info('Deleting dataset in Einstein Analytics')
-                client.restful(f'wave/datasets/{identifier}', method='DELETE')
-            except JSONDecodeError:
-                pass
+    logger.info("Created InsightsExternalData for %s with id %s", edgemart_alias, insights_external_data['id'])
 
+    csv_data = '\n'.join(TEST_DATA['CSV_DATA_TO_INSERT'])
+    logger.info("Test data:\n%s", csv_data)
+
+    insights_external_data_part = {
+        'DataFile': base64.b64encode(csv_data.encode("utf-8")).decode("ascii"),
+        'InsightsExternalDataId': insights_external_data['id'],
+        'PartNumber': 1
+    }
+    insights_external_data_part = client.InsightsExternalDataPart.create(insights_external_data_part)
+
+    assert insights_external_data_part['success']
+    logger.info("Uploaded test data in InsightsExternalDataPart %s", insights_external_data_part['id'])
+
+    # Now create the pipeline, start it, let it run for a little while, and stop it
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Just use CSV headers - we don't want to feed any actual data through
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, [TEST_DATA['CSV_DATA_TO_INSERT'][0]])
+    dev_raw_data_source.set_attributes(stop_after_first_batch=True)
+
+    analytics_destination = pipeline_builder.add_stage('Tableau CRM', type='destination')
+    analytics_destination.set_attributes(edgemart_alias=edgemart_alias,
+                                         dataset_wait_time_in_secs=60)
+
+    dev_raw_data_source >> analytics_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Now the pipeline will recover the partial upload
+    logger.info('Starting Tableau CRM destination pipeline and waiting for it to produce records ...')
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    verify_analytics_data(client, edgemart_alias, TEST_DATA['DATA_TO_INSERT'], 'Email')
+
+
+@salesforce
+@sdc_min_version('4.2.0')
+def test_multiple_uploads_per_batch(sdc_builder, sdc_executor, salesforce):
+    """
+    COLLECTOR-225. Create a batch with more than 10MB of data to make the destination perform
+    multiple uploads.
+
+    The pipeline looks like:
+        scripting_origin >> einstein_analytics_destination
+    """
+
+    client = salesforce.client
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    scripting_origin = pipeline_builder.add_stage('Jython Scripting', type='origin')
+    scripting_origin.set_attributes(user_script=MULTIPLE_UPLOADS_PER_BATCH_SCRIPT,
+                                    batch_size=MULTIPLE_UPLOADS_BATCH_SIZE)
+
+    analytics_destination = pipeline_builder.add_stage('Tableau CRM', type='destination')
+    edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
+    analytics_destination.set_attributes(edgemart_alias=edgemart_alias,
+                                         dataset_wait_time_in_secs=0)
+
+    scripting_origin >> analytics_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Now the pipeline will write data to Tableau CRM
+    logger.info('Starting Tableau CRM destination pipeline and waiting for it to produce records ...')
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # Math copied from the script!
+    # With the default batch size of 1000 records, record_size is 26,214.4 bytes
+    record_size = 25.0 * 1024.0 * 1024.0 / float(MULTIPLE_UPLOADS_BATCH_SIZE)
+    # Default maximum length of a text value. Need to create metadata for more (up to 32,000 characters)
+    field_size  = 255
+    # With the default batch size, field_count is 103, giving an actual batch size of 103 * 255 * 1000 ~= 25MB
+    field_count = int(math.ceil(record_size / field_size))
+
+    expected_data = []
+    for offset in range (MULTIPLE_UPLOADS_BATCH_SIZE):
+        record = OrderedDict()
+        for f in range(field_count):
+            # Need to subtract width of numeric prefix (3) from field_size
+            record['field' + str(f).zfill(3)] = str(offset).zfill(3) + ("x" * (field_size - 3))
+        expected_data.append(record)
+
+    verify_analytics_data(client, edgemart_alias, expected_data, list(expected_data[0].keys())[0])
 
 @salesforce
 @pytest.mark.parametrize('subscription_type', [PUSH_TOPIC, CDC])

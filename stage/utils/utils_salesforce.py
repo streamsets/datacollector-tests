@@ -19,6 +19,7 @@ import string
 from datetime import datetime, timedelta
 from io import BytesIO
 from json import JSONDecodeError
+from operator import itemgetter
 from string import Template
 from time import sleep
 from zipfile import ZipFile
@@ -104,6 +105,62 @@ TIMEOUT = 300
 
 TEST_DATA = {}
 
+MULTIPLE_UPLOADS_BATCH_SIZE = 1000
+
+MULTIPLE_UPLOADS_PER_BATCH_SCRIPT = """# Script to test a batch that spans multiple uploads in Salesforce Analytics destination
+try:
+    sdc.importLock()
+    import math
+    import sys
+    import time
+finally:
+    sdc.importUnlock()
+
+entityName = ''
+offset = 0
+prefix = ''
+
+cur_batch = sdc.createBatch()
+
+# We want a ~25 MB batch to generate three uploads, so do the math...
+# Note:
+#   Maximum number of fields in a dataset: 5,000
+#   Maximum number of characters in a field without creating metadata: 255
+# Limits are documented at https://help.salesforce.com/s/articleView?id=sf.bi_limits.htm&type=5
+
+# With the default batch size of 1000 records, record_size is 26,214.4 bytes
+record_size = float(25 * 1024 * 1024) / float(sdc.batchSize)
+field_size  = 255
+# With the default batch size, field_count is 103, giving an actual batch size of 103 * 255 * 1000 ~= 25MB
+field_count = int(math.ceil(record_size / field_size))
+
+hasNext = True
+while hasNext:
+    try:
+        record = sdc.createRecord('record offset ' + str(offset))
+
+        record.value = sdc.createMap(True)
+        for f in range(field_count):
+            # Need to subtract width of numeric prefix (3) from field_size
+            record.value['field' + str(f).zfill(3)] = str(offset).zfill(3) + ("x" * (field_size - 3))
+
+        cur_batch.add(record)
+
+        # if the batch is full, process it and end the script
+        if cur_batch.size() >= sdc.batchSize:
+            # blocks until all records are written to all destinations
+            # (or failure) and updates offset
+            # in accordance with delivery guarantee
+            cur_batch.process(entityName, str(offset))
+            hasNext = False
+
+        offset = offset + 1
+
+    except Exception as e:
+        cur_batch.addError(record, str(e))
+        cur_batch.process(entityName, str(offset))
+        hasNext = False
+"""
 
 def set_up_random(salesforce):
     """" This function is used to generate unique set of values for each test.
@@ -382,3 +439,67 @@ def create_push_topic(client, last_name):
                                       'NotifyForOperationDelete': True,
                                       'NotifyForFields': 'All'})
     return result['id'], push_topic_name
+
+def verify_analytics_data(client, edgemart_alias, test_data, order_key, multiple_data = False):
+    records_per_batch = len(test_data)
+    minimum_total_records = 2 * records_per_batch
+    identifier = None
+    current_version_id = None
+    try:
+        # Einstein Analytics data load is asynchronous, so poll until it's done
+        logger.info('Looking for dataset in Einstein Analytics')
+        end_time = datetime.now() + timedelta(seconds=120)
+        while identifier is None and datetime.now() < end_time:
+            sleep(5)
+            identifier, current_version_id = find_dataset(client, edgemart_alias)
+
+        # Make sure we found a dataset and didn't time out!
+        assert identifier is not None
+
+        # Now query the data from Einstein Analytics using SAQL
+
+        # Build the load statement
+        load = f'q = load \"{identifier}/{current_version_id}\";'
+
+        # Build the identity projection - e.g.
+        # q = foreach q generate Email as Email, FirstName as FirstName, LastName as LastName, LeadSource as LeadSource;
+        field_list = []
+        for key in test_data[0]:
+            field_list.append(f'{key} as {key}')
+        projection = 'q = foreach q generate ' + ', '.join(field_list) + ';'
+
+        # Ensure consistent ordering
+        ordering = f'q = order q by {order_key};'
+
+        query = load + projection + ordering
+
+        logger.info('Querying Einstein Analytics: %s', query)
+        response = client.restful('wave/query', method='POST', json={'query': query})
+
+        sorted_input_data = sorted(test_data, key=itemgetter(order_key))
+        returned_records_count = len(response['results']['records'])
+
+        if multiple_data:
+            # It's possible for the pipeline to process more than the minimum number of records
+            assert minimum_total_records <= returned_records_count
+            # The returned number of records must be a multiple of the batch size
+            assert returned_records_count % records_per_batch == 0
+            batch_count = returned_records_count // records_per_batch
+            # The returned data comprises batch_count copies of each input record
+            for i in range(records_per_batch):
+                for j in range(batch_count):
+                    assert sorted_input_data[i] == response['results']['records'][(i * batch_count) + j]
+        else:
+            assert records_per_batch == returned_records_count
+            assert sorted_input_data == response['results']['records']
+
+    finally:
+        if identifier:
+            # simple_salesforce assumes there will be a JSON response,
+            # but DELETE returns 204 with no response
+            # See https://github.com/simple-salesforce/simple-salesforce/issues/327
+            try:
+                logger.info('Deleting dataset in Einstein Analytics')
+                client.restful(f'wave/datasets/{identifier}', method='DELETE')
+            except JSONDecodeError:
+                pass
