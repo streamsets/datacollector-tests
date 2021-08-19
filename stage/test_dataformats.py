@@ -338,6 +338,166 @@ def test_avro_decimal_field_attributes_for_typed_null(sdc_builder, sdc_executor)
     assert wiretap.output_records[1].get_field_data('/decimal').attributes['scale'] == '2'
 
 
+# COLLECTOR-164 Avro complex schema UNION types not working
+# COLLECTOR-204: Avro complex schema UNION types working for first schema match only
+@sdc_min_version('4.2.0')
+@pytest.mark.parametrize('union_type', [1, 2])
+def test_avro_complex_union(sdc_builder, sdc_executor, union_type):
+    """Ensure this type of schema works for both union types"""
+    union_type_1_data = """
+        {
+            "directmessageId": "b7615b58-ad6e-47b9-8702-50d3d5fb4331",
+            "timestamp": "2020-07-27T21:16:58Z",
+            "domaindata": {
+                "domaindata_1": {
+                    "npiid": "1619964335",
+                    "patient": {
+                        "identifier": "<identifier>",
+                        "name": {
+                            "family": "Bing",
+                            "given": "Chandler Muriel"
+                        },
+                        "birthDate": "1969-04-01"
+                    },
+                    "directmessagemetadata": {
+                        "fromaddress": "webmail@address.net",
+                        "message": "<<A new message has been received>>"
+                    }
+                }
+            }
+        }"""
+
+    union_type_2_data = """
+        {
+          "directmessageId": "b7615b58-ad6e-47b9-8702-50d3d5fb4332",
+          "timestamp": "2020-07-27T21:16:59Z",
+          "domaindata": {
+            "domaindata_2": {
+              "npiid": "1619964336"
+            }
+          }
+        }"""
+
+    schema = """
+        {
+            "type": "record",
+            "name": "directmessage",
+            "fields": [{
+                "name": "directmessageId",
+                "type": "string"
+            }, {
+                "name": "timestamp",
+                "type": "string"
+            }, {
+                "name": "domaindata",
+                "type": [{
+                    "type": "record",
+                    "name": "domaindata_1",
+                    "fields": [{
+                        "name": "npiid",
+                        "type": "string"
+                    }, {
+                        "name": "patient",
+                        "type": {
+                            "type": "record",
+                            "name": "patient",
+                            "fields": [{
+                                "name": "identifier",
+                                "type": "string"
+                            }, {
+                                "name": "name",
+                                "type": {
+                                    "type": "record",
+                                    "name": "name",
+                                    "fields": [{
+                                        "name": "given",
+                                        "type": "string"
+                                    }, {
+                                        "name": "family",
+                                        "type": "string"
+                                    }]
+                                }
+                            }, {
+                                "name": "birthDate",
+                                "type": "string"
+                            }]
+                        }
+                    }, {
+                        "name": "directmessagemetadata",
+                        "type": {
+                            "type": "record",
+                            "name": "directmessagemetadata",
+                            "fields": [{
+                                "name": "fromaddress",
+                                "type": "string"
+                            }, {
+                                "name": "message",
+                                "type": "string"
+                            }]
+                        }
+                    }]
+                }, {
+                    "type": "record",
+                    "name": "domaindata_2",
+                    "fields": [{
+                        "name": "npiid",
+                        "type": "string"
+                    }]
+                }]
+            }]
+        }"""
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    # Check union type union_type
+    if union_type == 1:
+        source.raw_data = union_type_1_data
+    elif union_type == 2:
+        source.raw_data = union_type_2_data
+
+    generator = builder.add_stage('Data Generator')
+    generator.data_format = 'AVRO'
+    generator.avro_schema_location = 'INLINE'
+    generator.avro_schema = schema
+
+    parser = builder.add_stage('Data Parser')
+    parser.field_to_parse = '/'
+    parser.target_field = '/'
+    parser.data_format = 'AVRO'
+    parser.avro_schema_location = 'SOURCE'
+
+    wiretap = builder.add_wiretap()
+
+    source >> generator >> parser >> wiretap.destination
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    output = wiretap.output_records[0]
+
+    if union_type == 1:
+        assert output.get_field_data('/directmessageId') == 'b7615b58-ad6e-47b9-8702-50d3d5fb4331'
+        assert output.get_field_data('/timestamp') == '2020-07-27T21:16:58Z'
+        assert output.get_field_data('/domaindata/npiid') == '1619964335'
+        assert output.get_field_data('/domaindata/patient/identifier') == '<identifier>'
+        assert output.get_field_data('/domaindata/patient/name/given') == 'Chandler Muriel'
+        assert output.get_field_data('/domaindata/patient/name/family') == 'Bing'
+        assert output.get_field_data('/domaindata/patient/birthDate') == '1969-04-01'
+        assert output.get_field_data('/domaindata/directmessagemetadata/fromaddress') == 'webmail@address.net'
+        assert output.get_field_data('/domaindata/directmessagemetadata/message') == \
+               '<<A new message has been received>>'
+
+    elif union_type == 2:
+        assert output.get_field_data('/directmessageId') == 'b7615b58-ad6e-47b9-8702-50d3d5fb4332'
+        assert output.get_field_data('/timestamp') == '2020-07-27T21:16:59Z'
+        assert output.get_field_data('/domaindata/npiid') == '1619964336'
+
+
 # SDC-11869: Add ability to specify quote mode when generating CSV data
 @sdc_min_version('3.10.0')
 @pytest.mark.parametrize('quote_mode,expected', [
