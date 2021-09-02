@@ -37,6 +37,7 @@ PRIMARY_KEY = 'ID'
 OTHER_COLUMN = 'NAME'
 BATCH_SIZE = 10  # Max limit imposed
 Operations = namedtuple('Operations', ['rows', 'cdc_op_types', 'sdc_op_types', 'change_count'])
+LAST_NON_MULTITENANT_ORACLE_VERSION = 11
 
 
 # pylint: disable=pointless-statement, too-many-locals
@@ -2528,44 +2529,51 @@ def _setup_table(database, table_name, create_primary_key=True):
     return table
 
 
-@sdc_min_version('3.22.0')
+@sdc_min_version('4.2.0')
 @database('oracle')
-@pytest.mark.parametrize('action', ['TO_ERROR', 'DISCARD'])
-def test_jdbc_52_error_format(sdc_builder, sdc_executor, database, action):
-    """Basic test to check the proper formatting of error JDBC_52.
+@pytest.mark.parametrize('permission_to_test', ['select_on_views', 'select_on_table', 'role_execute_catalog',
+                                                'privilege_alter_session', 'privilege_select_any_transaction',
+                                                'privilege_select_any_table', 'privilege_logmining',
+                                                'privilege_set_container'])
+@pytest.mark.parametrize('has_permission', [True, False])
+def test_user_configuration_checks(sdc_builder,
+                                   sdc_executor,
+                                   database,
+                                   permission_to_test,
+                                   has_permission):
+    """Simple test to check the user configuration permissions.
 
-    The test creates a user guest/guest with just CONNECT privileges. This is enough to force an error when starting the Oracle Log Miner.
-    Whw compare then the produced error with the expected one. The test finishes removing the guest user to reset the database state.
+    The test creates a user guest/guest that lacks the input permission if has_permission is False. If the user does
+    not have enough privileges for the current database version the pipeline outputs an error when starting. We compare
+    the produced error with the expected one. The test finishes removing the guest user to reset the database state.
 
     Pipeline: oracle_cdc >> wiretap
 
     """
+    engine = database.engine
+    connection = engine.connect()
+
+    guest_username = f"C##_GUEST_{get_random_string(string.ascii_uppercase, 16)}"
+    guest_password = f"C##_guest_{get_random_string(string.ascii_uppercase, 16)}"
+    src_table_name = get_random_string(string.ascii_uppercase, 9)
+
+    # Skip tests not relevant for the current Oracle DB version
+    db_version = _get_oracle_db_version(connection)[0]
+    logger.info(f"Oracle DB version is {db_version}")
+    db_multitenant = _is_db_multitenant(connection)
+    logger.info(f"Oracle DB is multitenant") if db_multitenant else logger.info(f"Oracle DB is not multitenant")
+    if permission_to_test == 'privilege_select_any_transaction' and db_version > LAST_NON_MULTITENANT_ORACLE_VERSION:
+        pytest.skip(f"Skipping test as Oracle DB version > {LAST_NON_MULTITENANT_ORACLE_VERSION}")
+    if permission_to_test == 'privilege_select_any_table' and db_version > LAST_NON_MULTITENANT_ORACLE_VERSION:
+        pytest.skip(f"Skipping test as Oracle DB version > {LAST_NON_MULTITENANT_ORACLE_VERSION}")
+    if permission_to_test == 'privilege_logmining' and db_version <= LAST_NON_MULTITENANT_ORACLE_VERSION:
+        pytest.skip(f"Skipping test as Oracle DB version <= {LAST_NON_MULTITENANT_ORACLE_VERSION}")
+    if permission_to_test == 'privilege_set_container' and not db_multitenant:
+        pytest.skip(f"Skipping test as Oracle DB is not multitenant")
 
     try:
-        logger.info("Starting test for JDBC_52 error")
-
-        expected_message = "JDBC_52 - Error starting LogMiner: Action: Start generator thread - Message:"
-
-        engine = database.engine
-        connection = engine.connect()
-        table = None
-        pipeline = None
-
-        # As the Oracle 19 environment is a multitenant container database, Oracle mandates to have the user name start with C##
-        # https://community.oracle.com/tech/developers/discussion/4288833/ora-65096-invalid-common-user-or-role-name
-        guest_username = f"C##_GUEST_{get_random_string(string.ascii_uppercase, 16)}"
-        guest_password = f"C##_guest_{get_random_string(string.ascii_uppercase, 16)}"
-
-        # Create guest user
-        logger.info(f"Creating user {guest_username} in database...")
-        connection.execute(f"CREATE USER {guest_username} IDENTIFIED BY {guest_password}")
-        connection.execute(f"GRANT CONNECT TO {guest_username}")
-        connection.execute(f"GRANT SELECT_CATALOG_ROLE TO {guest_username}")
-
         # Create source table
-        src_table_name = get_random_string(string.ascii_uppercase, 9)
         logger.info("Using source table name %s", src_table_name)
-
         table = sqlalchemy.Table(src_table_name,
                                  sqlalchemy.MetaData(),
                                  sqlalchemy.Column(PRIMARY_KEY,
@@ -2585,53 +2593,102 @@ def test_jdbc_52_error_format(sdc_builder, sdc_executor, database, action):
                                                           src_table_name=src_table_name)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
-        pipeline = pipeline_builder.build("Oracle CDC: JDBC_52 error format").configure_for_environment(database)
+        pipeline = pipeline_builder.build().configure_for_environment(database)
         pipeline.configuration["shouldRetry"] = False
 
-        # Assign a non privileged user to the pipeline
+        # Create guest user
+        logger.info(f"Creating user {guest_username} in database...")
+        connection.execute(f"CREATE USER {guest_username} IDENTIFIED BY {guest_password}")
+        connection.execute(f"GRANT CONNECT TO {guest_username}")
+
+        # Give permissions to guest user and select expected error message
+        expected_error_message = ""
+        if permission_to_test == 'select_on_views' and not has_permission:
+            expected_error_message = "JDBC_613 - Not enough permissions to access the following tables:"
+        else:
+            connection.execute(f"GRANT SELECT_CATALOG_ROLE TO {guest_username}")
+            logger.info(f"Given permission SELECT_CATALOG_ROLE to {guest_username}")
+        if permission_to_test == 'select_on_table' and not has_permission:
+            expected_error_message = "JDBC_613 - Not enough permissions to access the following tables:"
+        else:
+            connection.execute(f"GRANT SELECT ON {src_table_name} TO {guest_username}")
+            logger.info(f"Given permission SELECT ON {src_table_name} to {guest_username}")
+        if permission_to_test == 'role_execute_catalog' and not has_permission:
+            expected_error_message = "JDBC_618 - User does not have the role EXECUTE_CATALOG_ROLE"
+        else:
+            connection.execute(f"GRANT EXECUTE_CATALOG_ROLE TO {guest_username}")
+            logger.info(f"Given permission EXECUTE_CATALOG_ROLE to {guest_username}")
+        if permission_to_test == 'privilege_alter_session' and not has_permission:
+            expected_error_message = "JDBC_619 - User does not have the alter session privilege"
+        else:
+            connection.execute(f"GRANT ALTER SESSION TO {guest_username}")
+            logger.info(f"Given permission ALTER SESSION to {guest_username}")
+        if permission_to_test == 'privilege_select_any_transaction' and not has_permission:
+            expected_error_message = "JDBC_623 - User does not have the select any transaction privilege"
+        elif db_version <= LAST_NON_MULTITENANT_ORACLE_VERSION:
+            connection.execute(f"GRANT SELECT ANY TRANSACTION TO {guest_username}")
+            logger.info(f"Given permission SELECT ANY TRANSACTION to {guest_username}")
+        if permission_to_test == 'privilege_select_any_table' and not has_permission:
+            expected_error_message = "JDBC_624 - User does not have the select any table privilege"
+        elif db_version <= LAST_NON_MULTITENANT_ORACLE_VERSION:
+            connection.execute(f"GRANT SELECT ANY TABLE TO {guest_username}")
+            logger.info(f"Given permission SELECT ANY TABLE to {guest_username}")
+        if permission_to_test == 'privilege_logmining' and not has_permission:
+            expected_error_message = "JDBC_621 - User does not have the logmining privilege"
+        elif db_version > LAST_NON_MULTITENANT_ORACLE_VERSION:
+            connection.execute(f"GRANT LOGMINING TO {guest_username}")
+            logger.info(f"Given permission LOGMINING to {guest_username}")
+        if permission_to_test == 'privilege_set_container' and not has_permission:
+            expected_error_message = "JDBC_622 - User does not have the set container privilege"
+        elif db_multitenant:
+            connection.execute(f"GRANT SET CONTAINER TO {guest_username}")
+            logger.info(f"Given permission SET CONTAINER to {guest_username}")
+        logger.info(f"Expected error message is: {expected_error_message}")
+
+        # Assign the guest user to the pipeline
         oracle_cdc_client.set_attributes(username=guest_username,
                                          password=guest_password)
 
         # Create the pipeline
         sdc_executor.add_pipeline(pipeline)
 
-        # Execute the pipeline (it should stop with StageExcception)
-        with pytest.raises(Exception):
+        # Execute the pipeline
+        if has_permission:
+            # It should execute and stop normally
             sdc_executor.start_pipeline(pipeline)
-            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
-            if pipeline is not None:
-                if sdc_executor.get_pipeline_status(pipeline).response.json().get("status") == "RUNNING":
-                    sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
+            status = sdc_executor.get_pipeline_status(pipeline).response.json().get("status")
+            logger.info(f"Status after stopping the pipeline when no error should occur: {status}")
+            assert "STOPPED" == status
+        else:
+            # It should stop with StageExcception
+            with pytest.raises(Exception):
+                sdc_executor.start_pipeline(pipeline)
+                sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
+            status = sdc_executor.get_pipeline_status(pipeline).response.json().get("status")
+            message = sdc_executor.get_pipeline_status(pipeline).response.json().get("message")
+            logger.info(f"Status after stopping the pipeline when starting error should occur: {status}")
+            logger.info(f"Message after stopping the pipeline when starting error should occur: {message}")
+            assert "START_ERROR" == status
+            assert expected_error_message in message, f"Expected error message is not in message, expected error" \
+                                                      f"message is: {expected_error_message} and message is: {message}"
 
-        status = sdc_executor.get_pipeline_status(pipeline).response.json().get("status")
-        message = sdc_executor.get_pipeline_status(pipeline).response.json().get("message")
-
-        assert "RUN_ERROR" == status
-        assert message.startswith(expected_message)
     finally:
-        # Drop guest user
+        # Stop pipeline
         try:
-            logger.info(f"Dropping user {guest_username} in database...")
-            connection.execute(f"DROP USER {guest_username}")
+            if sdc_executor.get_pipeline_status(pipeline).response.json().get("status") == "RUNNING":
+                sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
         finally:
-            # In an Oracle multitenant container databse (CDB), the user or table will not be created dur
-            # to enforced named constraints. This is not a real problem as we just want to fire somre
-            # internal error starting CDC
             pass
 
-        # Stop pipeline
-        if pipeline is not None:
-            if sdc_executor.get_pipeline_status(pipeline).response.json().get("status") == "RUNNING":
-                sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        # Drop guest user
+        logger.info(f"Dropping user {guest_username} in database...")
+        connection.execute(f"DROP USER {guest_username}")
 
         # Drop source table
-        if table is not None:
-            try:
-                logger.info("Dropping source table table %s", src_table_name)
-                table.drop(engine)
-            finally:
-                # Pass for the same reasons above
-                pass
+        logger.info("Dropping source table table %s", src_table_name)
+        table.drop(engine)
+
 
 def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder, buffer_locally,
                                   src_table_name=None, batch_size=BATCH_SIZE, **kwargs):
@@ -2679,6 +2736,16 @@ def _get_oracle_db_version(connection):
     str_version_list = db_version.split(".")
     version_list = [int(i) for i in str_version_list]
     return version_list
+
+
+def _is_db_multitenant(connection):
+    """Returns a boolean indicating whether the database is multitenant"""
+    db_version = _get_oracle_db_version(connection)[0]
+    if db_version > LAST_NON_MULTITENANT_ORACLE_VERSION:
+        cdb_list = connection.execute("SELECT CDB FROM V$DATABASE").fetchall()
+        if len(cdb_list) > 0 and len(cdb_list[0]) > 0 and cdb_list[0][0] == "YES":
+            return True
+    return False
 
 
 def _get_current_oracle_time(connection):
