@@ -15,12 +15,10 @@ import string
 
 import pytest
 from streamsets.sdk.exceptions import ValidationError
-
 from streamsets.testframework.decorators import stub
-
 from streamsets.testframework.markers import salesforce, sdc_min_version
-from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.utils import get_random_string
+
 
 @salesforce
 @sdc_min_version('4.0.0')
@@ -34,7 +32,12 @@ def test_api_version(sdc_builder, sdc_executor, salesforce):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    analytics_destination = pipeline_builder.add_stage('Einstein Analytics', type='destination')
+
+    # Name change for COLLECTOR-225
+    try:
+        analytics_destination = pipeline_builder.add_stage('Tableau CRM', type='destination')
+    except:
+        analytics_destination = pipeline_builder.add_stage('Einstein Analytics', type='destination')
 
     edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
 
@@ -51,7 +54,6 @@ def test_api_version(sdc_builder, sdc_executor, salesforce):
     except ValidationError as error:
         assert error.issues['issueCount'] == 1
         assert 'FORCE_51' in error.issues['stageIssues']['EinsteinAnalytics_01'][0]['message']
-
 
 
 @stub
