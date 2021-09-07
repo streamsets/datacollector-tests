@@ -204,7 +204,6 @@ def test_influxdb2_time_format(sdc_builder, sdc_executor, influxdb2, date_format
             for record in table.records:
                 print(record)
                 result_records.append(record)
-                # result_records.append({f"'butterflies': {record['_value']}, 'location': '{record['location']}', 'scientist':  '{record['scientist']}', 'time': {round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)}"})
 
         assert len(raw_records) == len(result_records)
         assert [influx_record in raw_records for influx_record in result_records]
