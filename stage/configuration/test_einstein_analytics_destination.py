@@ -36,8 +36,10 @@ def test_api_version(sdc_builder, sdc_executor, salesforce):
     # Name change for COLLECTOR-225
     try:
         analytics_destination = pipeline_builder.add_stage('Tableau CRM', type='destination')
+        stage_name = 'TableauCRM_01'
     except:
         analytics_destination = pipeline_builder.add_stage('Einstein Analytics', type='destination')
+        stage_name = 'EinsteinAnalytics_01'
 
     edgemart_alias = get_random_string(string.ascii_letters, 10).lower()
 
@@ -53,7 +55,7 @@ def test_api_version(sdc_builder, sdc_executor, salesforce):
         pytest.fail('This point should not be reached')
     except ValidationError as error:
         assert error.issues['issueCount'] == 1
-        assert 'FORCE_51' in error.issues['stageIssues']['EinsteinAnalytics_01'][0]['message']
+        assert 'FORCE_51' in error.issues['stageIssues'][stage_name][0]['message']
 
 
 @stub
