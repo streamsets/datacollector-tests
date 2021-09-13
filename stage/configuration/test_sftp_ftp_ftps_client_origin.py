@@ -1116,8 +1116,8 @@ def test_quote_character(sdc_builder, sdc_executor, stage_attributes):
 def test_rate_per_second(sdc_builder, sdc_executor, stage_attributes, sftp, shell_executor, keep_data):
     """Test if SFTP/FTP/FTPS origin honors "Rate Per Second" configuration.
 
-    Pipeline will be run four times with configuration set to different values
-    and the expected proportionality of the value and the pipeline throughput checked.
+    Pipeline will be run three times with configuration set to different values
+    and the expected proportionality of the value and the pipeline runtime duration checked.
     """
     try:
         DATA = 'a' * 10 * 1024 * 1024  # 10 MB file.
@@ -1133,23 +1133,24 @@ def test_rate_per_second(sdc_builder, sdc_executor, stage_attributes, sftp, shel
         local_fs = pipeline_builder.add_stage('Local FS').set_attributes(data_format='WHOLE_FILE',
                                                                          directory_template='/tmp',
                                                                          file_name_expression=file_name,
+                                                                         file_exists='OVERWRITE',
                                                                          file_type='WHOLE_FILE',
                                                                          files_prefix='')
         sftp_ftp_ftps_client >> local_fs
         pipeline = pipeline_builder.build().configure_for_environment(sftp)
-        pipeline_throughputs = []
-        for rate_per_second in ['${10 * MB}', '${5 * MB}', '${1 * MB}', '${500 * KB}']:
+        pipeline_durations = []
+        for rate_per_second in ['${10 * MB}', '${1 * MB}', '${100 * KB}']:
             sftp_ftp_ftps_client.rate_per_second = rate_per_second
             benchmark_data = sdc_executor.benchmark_pipeline(pipeline, record_count=1, runs=1)
-            throughput = benchmark_data['throughput_mean']
-            logger.info('Pipeline with rate per second of %s had mean throughput of %s records/s',
+            test_duration_secs = benchmark_data.metrics['test_duration_secs']['mean']
+            logger.info('Pipeline with rate per second of %s had mean test duration of %s seconds',
                         rate_per_second,
-                        throughput)
-            pipeline_throughputs.append(throughput)
+                        test_duration_secs)
+            pipeline_durations.append(test_duration_secs)
             shell_executor(f"rm {os.path.join('/tmp', file_name)}")
 
-        # The rate_per_second we iterate over should result in monotonically decreasing throughput values.
-        assert pipeline_throughputs[0] > pipeline_throughputs[1] > pipeline_throughputs[2] > pipeline_throughputs[3]
+        # The rate_per_second we iterate over should result in monotonically increasing test duration times.
+        assert pipeline_durations[0] < pipeline_durations[1] < pipeline_durations[2]
 
     finally:
         if not keep_data:
