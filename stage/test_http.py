@@ -2541,3 +2541,542 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
     finally:
 
         http_mock_server.delete_mock()
+
+
+@http
+@pytest.mark.parametrize('run_mode',
+                         [
+                             'correct',
+                             'timeout_error',
+                             'status_error',
+                             'with_pagination'
+                         ])
+@sdc_min_version("4.2.0")
+def test_http_origin_metrics(sdc_builder, sdc_executor, http_client, run_mode):
+    """ Test Metrics timers and gauge. Test the metrics in different type of Http Client origin configuration.
+        The pipeline looks like:
+        http_client_origin >> wiretap """
+    mock_path = get_random_string(string.ascii_letters, 10)
+    mock_wrong_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+    method = 'GET'
+
+    # Times:
+    one_millisecond = 1000
+    wait_seconds = 10
+    short_time = 1
+    long_time = (one_millisecond * wait_seconds)
+
+    try:
+        if run_mode == 'correct':
+            expected_data = json.dumps({'A': 1})
+            pagination_mode = 'NONE'
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = long_time
+        elif run_mode == 'timeout_error':
+            expected_data = json.dumps({'A': 1})
+            pagination_mode = 'NONE'
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = short_time
+        elif run_mode == 'status_error':
+            expected_data = json.dumps({'A': 1})
+            pagination_mode = 'NONE'
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_wrong_path}'
+            timeout_time = long_time
+        elif run_mode == 'with_pagination':
+            expected_data = json.dumps({'metadata': 'Example', 'next_page': 2, 'data': [
+                {'id': 0, 'name': "INDURAIN"}, {'id': 1, 'name': "PANTANI"}, {'id': 2, 'name': "ULRICH"}]})
+            pagination_mode = 'LINK_FIELD'
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = long_time
+        else:
+            expected_data = json.dumps({'A': 1})
+            pagination_mode = 'NONE'
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = long_time
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('HTTP Client', type='origin')
+        origin.set_attributes(data_format='JSON', http_method=method,
+                              resource_url=resource_url,
+                              read_timeout=timeout_time,
+                              request_body="{'something': 'here'}",
+                              pagination_mode=pagination_mode,
+                              next_page_link_field="/next_page",
+                              stop_condition="${record:value('/next_page') == 2 }",
+                              result_field_path="/data")
+
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
+        pipeline = builder.build('Http Client Origin Metrics')
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+        time.sleep(2)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = wiretap.output_records
+        if run_mode != 'with_pagination':
+            assert records[0].field['A'] == 1
+        else:
+            assert records == expected_data
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        metrics = _get_metrics(history, run_mode)
+
+        if run_mode == 'correct':
+            # Right correlation between mean time for every step of process
+            assert metrics['records_processed_mean'] >= metrics['success_requests_mean']
+            assert metrics['success_requests_mean'] >= metrics['requests_mean']
+
+            # Same amount of records processed than successful request
+            assert metrics['records_processed_count'] <= metrics['success_requests_count']
+            assert metrics['requests_count'] == metrics['success_requests_count']
+            # Same amount of status response OK (200) than successful request
+            assert metrics['status']['200'] == metrics['success_requests_count']
+        elif run_mode == 'with_pagination':
+            # Same amount of status response OK (200) than successful request
+            assert metrics['status']['200'] == metrics['success_requests_count']
+            # Same amount of successful request than records processed
+            assert metrics['records_processed_count'] == metrics['initial_page']
+        else:
+            raise Exception('The pipeline should have failed')
+    except Exception as e:
+        history = sdc_executor.get_pipeline_history(pipeline)
+        metrics = _get_metrics(history, run_mode)
+        if run_mode == 'timeout_error':
+            # Same amount of timeout's than retries
+            assert metrics['errors']['Timeout Read'] == metrics['retries']['Retries for timeout']
+        elif run_mode == 'status_error':
+            # Same amount of status errors than 404 status
+            assert metrics['status']['404'] == metrics['errors']['Http status']
+        else:
+            logger.error(f"Http Client Origin failed: {e}")
+
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@pytest.mark.parametrize('run_mode',
+                         [
+                             'correct',
+                             'timeout_error',
+                             'status_error'
+                         ])
+@sdc_min_version("4.2.0")
+def test_http_target_metrics(sdc_builder, sdc_executor, http_client, run_mode):
+    """ Test Metrics timers and gauge. Test the metrics in different type of Http Client destination configuration.
+        The pipeline looks like:
+        dev_raw_data_source >> http_client_target """
+    mock_path = get_random_string(string.ascii_letters, 10)
+    mock_path_wrong = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+    method = 'GET'
+    raw_data = [{'A': i, 'C': i + 1, 'G': i + 2, 'T': i + 3} for i in range(10)]
+    expected_data = json.dumps(raw_data)
+
+    # Times:
+    one_millisecond = 1000
+    wait_seconds = 10
+    short_time = 1
+    long_time = (one_millisecond * wait_seconds)
+
+    try:
+        if run_mode == 'correct':
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = long_time
+        elif run_mode == 'timeout_error':
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = short_time
+        elif run_mode == 'status_error':
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path_wrong}'
+            timeout_time = long_time
+        else:
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = long_time
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=expected_data, stop_after_first_batch=True)
+
+        http_client_target = builder.add_stage('HTTP Client', type='destination')
+        http_client_target.set_attributes(data_format='JSON',
+                                          http_method=method,
+                                          resource_url=resource_url,
+                                          read_timeout=timeout_time)
+
+        dev_raw_data_source >> http_client_target
+        pipeline = builder.build('Http Client Destination Metrics')
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        metrics = _get_metrics(history, run_mode)
+
+        # Check that the HTTP server got the expected data
+        result = json.loads(http_mock.get_request(0).body.decode("utf-8"))
+        assert raw_data == result
+
+        if run_mode == 'correct':
+            # Right correlation between mean time for every step of process
+            assert metrics['records_processed_mean'] >= metrics['success_requests_mean']
+            assert metrics['success_requests_mean'] >= metrics['requests_mean']
+
+            # Same amount of records processed than successful request
+            assert metrics['records_processed_count'] == metrics['success_requests_count']
+            assert metrics['requests_count'] == metrics['success_requests_count']
+            # Same amount of status response OK (200) than successful request
+            assert metrics['status']['200'] == metrics['success_requests_count']
+        else:
+            raise Exception('The pipeline should have failed')
+    except Exception as e:
+        history = sdc_executor.get_pipeline_history(pipeline)
+        metrics = _get_metrics(history, run_mode)
+        if run_mode == 'timeout_error':
+            # Same amount of timeout's than retries
+            assert metrics['errors']['Timeout Read'] == 1
+        elif run_mode == 'status_error':
+            # Same amount of status errors than 404 status
+            assert metrics['status']['404'] == metrics['errors']['Http status']
+        else:
+            logger.error(f"Http Client Destination failed: {e}")
+
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@pytest.mark.parametrize('run_mode',
+                         [
+                             'correct',
+                             'timeout_error',
+                             'status_error'
+                         ])
+@sdc_min_version("4.2.0")
+def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode):
+    expected_data = json.dumps({'A': 1})
+    mock_path = get_random_string(string.ascii_letters, 10)
+    mock_wrong_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+    method = 'GET'
+
+    # Times:
+    one_millisecond = 1000
+    wait_seconds = 10
+    short_time = 1
+    long_time = (one_millisecond * wait_seconds)
+
+    try:
+        if run_mode == 'correct':
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = long_time
+        elif run_mode == 'timeout_error':
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = short_time
+        elif run_mode == 'status_error':
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_wrong_path}'
+            timeout_time = long_time
+        elif run_mode == 'with_pagination':
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = long_time
+        else:
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            resource_url = f'{http_mock.pretend_url}/{mock_path}'
+            timeout_time = long_time
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('Dev Raw Data Source')
+        origin.set_attributes(data_format='TEXT', raw_data='dummy')
+        origin.stop_after_first_batch = True
+
+        processor = builder.add_stage('HTTP Client', type='processor')
+        processor.set_attributes(data_format='JSON', http_method=method,
+                                 resource_url=resource_url,
+                                 read_timeout=timeout_time,
+                                 output_field='/result',
+                                 request_data="{'something': 'here'}",
+                                 multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS')
+
+        wiretap = builder.add_wiretap()
+
+        origin >> processor >> wiretap.destination
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        metrics = _get_metrics(history, run_mode)
+
+        if run_mode == 'correct':
+            records = wiretap.output_records
+            assert len(records) == 1
+            # The mock server won't return body on HEAD (rightfully so), but we can still send body to it though
+            assert records[0].field['result'] == {'A': 1}
+            # Finally, check that only one request has been made
+            assert len(http_mock.get_request()) == 1
+
+            # Right correlation between mean time for every step of process
+            assert metrics['records_processed_mean'] >= metrics['success_requests_mean']
+            assert metrics['success_requests_mean'] >= metrics['requests_mean']
+
+            # Same amount of records processed than successful request
+            assert metrics['records_processed_count'] <= metrics['success_requests_count']
+            assert metrics['requests_count'] == metrics['success_requests_count']
+            # Same amount of status response OK (200) than successful request
+            assert metrics['status']['200'] == metrics['success_requests_count']
+        else:
+            raise Exception('The pipeline should have failed')
+    except Exception as e:
+        history = sdc_executor.get_pipeline_history(pipeline)
+        metrics = _get_metrics(history, run_mode)
+        if run_mode == 'timeout_error':
+            # Same amount of timeout's than retries
+            assert metrics['errors']['Timeout Read'] >= metrics['retries']['Retries for timeout']
+        elif run_mode == 'status_error':
+            # Same amount of status errors than 404 status
+            assert metrics['status']['404'] == metrics['errors']['Http status']
+        else:
+            logger.error(f"Http Client Processor failed: {e}")
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.2.0")
+def test_http_processor_pagination_metrics(sdc_builder, sdc_executor, http_client):
+    pagination_mode='BY_PAGE'
+
+    try:
+        record_output_field = 'oteai'
+        one_millisecond = 1000
+        wait_seconds = 1
+        retries = 10
+        interval = 2000
+        no_time = 0
+        short_time = 5000
+        long_time = (one_millisecond * wait_seconds * (retries + 2)) * 300
+
+        condition = '${record:value(\'/current_page\') == 4}'
+
+        http_mock_content = dict(type='tournaments', mode='verbose')
+        http_mock_data = json.dumps(http_mock_content)
+
+        http_mock_server = http_client.mock()
+        http_mock_path = get_random_string(string.ascii_letters, 10)
+        http_mock_url = f'{http_mock_server.pretend_url}/{http_mock_path}?page=${{startAt}}&offset=${{startAt}}'
+        http_mock_simple_url = f'{http_mock_server.pretend_url}/{http_mock_path}?page=1&offset=1'
+        http_mock_content_01 = \
+            {
+                'tournaments':
+                    [
+                        {'title': 'Kisei', 'player': 'Kobayashi Koichi'},
+                        {'title': 'Meijin', 'player': 'Ishida Yoshio'},
+                        {'title': 'Honinbo', 'player': 'Takemiya Masaki'}
+                    ],
+                'current_page': 1,
+                'next_page': http_mock_simple_url
+            }
+        http_mock_content_02 = \
+            {
+                'tournaments':
+                    [
+                        {'title': 'Judan', 'player': 'Otake Hideo'},
+                        {'title': 'Tengen', 'player': 'Rin Kaiho'},
+                        {'title': 'Gosei', 'player': 'Cho Chikun'}
+                    ],
+                'current_page': 2,
+                'next_page': http_mock_simple_url
+            }
+
+        http_mock_content_03 = \
+            {
+                'tournaments':
+                    [
+                        {'title': 'Oza', 'player': 'Kato Masao'},
+                        {'title': 'NHK Cup', 'player': 'Go Seigen'},
+                        {'title': 'NEC Cup', 'player': 'Kitani Minoru'}
+                    ],
+                'current_page': 3,
+                'next_page': http_mock_simple_url
+            }
+
+        http_mock_content_04 = \
+            {
+                'tournaments':
+                    [
+                    ]
+            }
+        http_mock_data_04 = json.dumps(http_mock_content_04)
+
+        http_mock_data_01 = json.dumps(http_mock_content_01)
+        http_mock_data_02 = json.dumps(http_mock_content_02)
+        http_mock_data_03 = json.dumps(http_mock_content_03)
+
+        header_content_type_value = f'application/json'
+        header_link_value = f'<{http_mock_simple_url}>; rel=next'
+
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data_01,
+                                                                   status=200,
+                                                                   headers={'Content-Type': header_content_type_value,
+                                                                            'Link': header_link_value},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data_02,
+                                                                   status=200,
+                                                                   headers={'Content-Type': header_content_type_value,
+                                                                            'Link': header_link_value},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data_03,
+                                                                   status=200,
+                                                                   headers={'Content-Type': header_content_type_value,
+                                                                            'Link': header_link_value},
+                                                                   times=1)
+        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                                   body=http_mock_data_04,
+                                                                   status=200,
+                                                                   headers={'Content-Type': header_content_type_value},
+                                                                   times=1)
+
+        resource_url = http_mock_url
+        connect_timeout = long_time
+        read_timeout = long_time
+        maximum_request_time_in_sec = long_time
+        batch_wait_time_in_ms = long_time
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source_origin = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source_origin.set_attributes(data_format='JSON',
+                                                  raw_data=http_mock_data,
+                                                  stop_after_first_batch=True)
+
+        http_client_processor = pipeline_builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             resource_url=resource_url,
+                                             http_method='GET',
+                                             default_request_content_type='application/json',
+                                             request_data='token',
+                                             output_field=f'/{record_output_field}',
+                                             connect_timeout=connect_timeout,
+                                             read_timeout=read_timeout,
+                                             maximum_request_time_in_sec=maximum_request_time_in_sec,
+                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
+                                             base_backoff_interval_in_ms=interval,
+                                             max_retries=retries,
+                                             pass_record=False,
+                                             action_for_timeout='RETRY_IMMEDIATELY',
+                                             records_for_remaining_statuses=False,
+                                             missing_values_behavior='SEND_TO_ERROR',
+                                             pagination_mode=pagination_mode,
+                                             result_field_path='/tournaments',
+                                             multiple_values_behavior='ALL_AS_LIST',
+                                             next_page_link_field='/next_page',
+                                             stop_condition=f'{condition}')
+
+        # Must do it like this because the attribute name has the '/' char
+        setattr(http_client_processor, 'initial_page/offset', 1)
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        dev_raw_data_source_origin >> http_client_processor >> wiretap.destination
+
+        pipeline = pipeline_builder.build('Http Client Processor Metrics')
+        pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        metrics = _get_metrics(history, 'with_pagination')
+
+        assert len(wiretap.output_records) == 1
+
+        # Right correlation between mean time for every step of process
+        assert metrics['records_processed_mean'] >= metrics['success_requests_mean']
+        assert metrics['success_requests_mean'] >= metrics['requests_mean']
+
+        # Same amount of records processed than successful request for each page (4)
+        assert metrics['records_processed_count'] == metrics['success_requests_count']/4
+        assert metrics['requests_count'] == metrics['success_requests_count']
+        # Same amount of status response OK (200) than successful request
+        assert metrics['status']['200'] == metrics['success_requests_count']
+
+        # Same amount of successful request than pages processed
+        assert metrics['initial_page'] + metrics['subsequent_pages'] == metrics['success_requests_count']
+
+    finally:
+        http_mock_server.delete_mock()
+
+
+def _get_metrics(history, run_mode):
+    # Timers
+    record_processing_counter_from_metrics = history.latest.metrics.timer(
+        'custom.HTTPClient_01.Record Processing.0.timer').count
+    record_processing_timers_from_metrics = history.latest.metrics.timer(
+        'custom.HTTPClient_01.Record Processing.0.timer')._data.get('mean')
+
+    request_counter_from_metrics = history.latest.metrics.timer(
+        'custom.HTTPClient_01.Request.0.timer').count
+    request_timers_from_metrics = history.latest.metrics.timer(
+        'custom.HTTPClient_01.Request.0.timer')._data.get('mean')
+
+    request_successful_counters_from_metrics = history.latest.metrics.timer(
+        'custom.HTTPClient_01.Successful Request.0.timer').count
+    request_successful_timers_from_metrics = history.latest.metrics.timer(
+        'custom.HTTPClient_01.Successful Request.0.timer')._data.get('mean')
+
+    metrics = {'records_processed_count': record_processing_counter_from_metrics,
+               'records_processed_mean': record_processing_timers_from_metrics,
+               'requests_count': request_counter_from_metrics,
+               'requests_mean': request_timers_from_metrics,
+               'success_requests_count': request_successful_counters_from_metrics,
+               'success_requests_mean': request_successful_timers_from_metrics}
+
+    # Counters
+
+    if run_mode == 'timeout_error':
+        metrics['errors'] = history.latest.metrics.gauge(
+            'custom.HTTPClient_01.Communication Errors.0.gauge').value
+        try:
+            metrics['retries'] = history.latest.metrics.gauge(
+                'custom.HTTPClient_01.Retries.0.gauge').value
+        except:
+            logger.info('No retry option')
+    elif run_mode == 'status_error':
+        metrics['errors'] = history.latest.metrics.gauge(
+            'custom.HTTPClient_01.Communication Errors.0.gauge').value
+        metrics['status'] = history.latest.metrics.gauge(
+            'custom.HTTPClient_01.Http Status.0.gauge').value
+    else:
+        metrics['status'] = history.latest.metrics.gauge(
+            'custom.HTTPClient_01.Http Status.0.gauge').value
+
+    if run_mode == 'with_pagination':
+        metrics['initial_page'] = history.latest.metrics.timer(
+            'custom.HTTPClient_01.Initial Page Resolution.0.timer').count
+        metrics['subsequent_pages'] = history.latest.metrics.timer(
+            'custom.HTTPClient_01.Subsequent Pages Resolution.0.timer').count
+
+    return metrics
