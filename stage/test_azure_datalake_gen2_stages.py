@@ -24,8 +24,8 @@ from operator import itemgetter
 
 import avro
 import avro.schema
-from avro.datafile import DataFileWriter
-from avro.io import DatumWriter
+from avro.datafile import DataFileWriter, DataFileReader
+from avro.io import DatumWriter, DatumReader
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -113,6 +113,89 @@ def test_datalake_destination(sdc_builder, sdc_executor, azure):
         result_list = [json.loads(line) for line in dl_file_contents.split('\n')]
 
         assert raw_list == result_list
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
+
+
+@azure('datalake')
+@sdc_min_version('3.9.0')
+def test_datalake_destination_avro(sdc_builder, sdc_executor, azure):
+    """Test for Data Lake Store target stage. We do so by running a dev raw data source generator to Data Lake Store
+    destination with its provided account FQDN and then reading Data Lake Store using STF client to assert data
+    between the client to what has been ingested by the pipeline. We use a record deduplicator processor in
+    between dev raw data source origin and Data Lake Store destination in order to determine exactly what has
+    been ingested.
+    The pipeline looks like:
+
+    Data Lake Store Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> azure_data_lake_store_destination
+                                                   >> to_error
+    """
+    directory_name = get_random_string(string.ascii_letters, 10)
+    files_prefix = get_random_string(string.ascii_letters, 10)
+    files_suffix = get_random_string(string.ascii_letters, 10)
+    avro_schema = {
+        'namespace': 'example.avro',
+        'type': 'record',
+        'name': 'Employee',
+        'fields': [
+            {'name': 'name', 'type': 'string'},
+            {'name': 'phone', 'type': 'int'},
+            {'name': 'zip_code', 'type': 'int'}
+        ]
+    }
+    raw_list = [dict(name='Jane Smith', phone=2124050000, zip_code=27023),
+                dict(name='San', phone=2120998998, zip_code=14305)]
+    raw_data = json.dumps(raw_list)
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data)
+
+    record_deduplicator = builder.add_stage('Record Deduplicator')
+    to_error = builder.add_stage('To Error')
+
+    azure_data_lake_store_destination = builder.add_stage(name=TARGET_STAGE_NAME)
+    azure_data_lake_store_destination.set_attributes(data_format='AVRO',
+                                                     avro_schema_location='INLINE',
+                                                     avro_schema=json.dumps(avro_schema),
+                                                     directory_template=f'/{directory_name}',
+                                                     files_prefix=files_prefix,
+                                                     files_suffix=files_suffix)
+
+    dev_raw_data_source >> record_deduplicator >> azure_data_lake_store_destination
+    record_deduplicator >> to_error
+
+    datalake_dest_pipeline = builder.build().configure_for_environment(azure)
+    sdc_executor.add_pipeline(datalake_dest_pipeline)
+    dl_fs = azure.datalake.file_system
+    try:
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(datalake_dest_pipeline).wait_for_pipeline_output_records_count(2)
+        sdc_executor.stop_pipeline(datalake_dest_pipeline)
+
+        paths = dl_fs.ls(directory_name).response.json()['paths']
+        dl_files = [item['name'] for item in paths] if paths else []
+
+        # assert Data Lake files generated
+        assert len(dl_files) == 1
+
+        # assert file prefix and suffix
+        dl_file_name = dl_files[0].split('/')[-1]
+        assert dl_file_name.startswith(files_prefix) and dl_file_name.endswith(files_suffix)
+
+        # Assert Avro file content.
+        dl_file_response = dl_fs.cat(dl_files[0]).response
+
+        with io.BytesIO(dl_file_response.content) as avro_file:
+            with DataFileReader(avro_file, DatumReader()) as reader:
+                schema_from_file = json.loads(reader.meta['avro.schema'])
+                employees = [employee for employee in reader]
+
+        assert schema_from_file == avro_schema
+        assert employees == raw_list
     finally:
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
         dl_fs.rmdir(directory_name, recursive=True)
