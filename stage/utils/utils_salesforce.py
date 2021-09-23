@@ -178,6 +178,9 @@ def set_up_random(salesforce):
         {'FirstName': 'Test3', 'LastName': TEST_DATA['STR_15_RANDOM'], 'Email': 'xtest3@example.com',
          'LeadSource': 'Web'}]
 
+    TEST_DATA['QUOTED_DATA_TO_INSERT'] = [
+        {'FirstName': 'Matthew', 'LastName': 'O\' Smith', 'Email': 'matthewsmith@example.com'}]
+
     # For testing of SDC-7548
     # Since email is used in WHERE clause in lookup processory query,
     # create data containing 'from' word in emails to verify the bug is fixed.

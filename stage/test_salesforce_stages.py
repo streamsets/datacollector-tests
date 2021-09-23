@@ -512,6 +512,51 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
 
 
 @salesforce
+def test_salesforce_lookup_processor_single_quote_escaping(sdc_builder, sdc_executor, salesforce):
+    """Simple Salesforce Lookup processor test - retrieve by record id rather than query
+    Pipeline will enrich records with the 'FirstName' of contacts by adding a field as 'surName'.
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_lookup >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    lookup_data = ['surName'] + [row['LastName'] for row in TEST_DATA['QUOTED_DATA_TO_INSERT']]
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
+
+    salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
+    # Changing " with ' and vice versa in following string makes the query execution fail.
+    query_str = \
+        """SELECT FirstName, Email FROM Contact WHERE LastName = 
+        '${str:replaceAll(record:value('/surName'),"'","\\\\\\\\'")}'"""
+
+    salesforce_lookup.set_attributes(soql_query=query_str)
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> salesforce_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = salesforce.client
+    inserted_ids = None
+    try:
+        # Using Salesforce client, create rows in Contact.
+        logger.info('Creating rows using Salesforce client ...')
+        inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['QUOTED_DATA_TO_INSERT']), 'id')
+
+        logger.info('Starting pipeline')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # We need to look for surName field instead of LastName
+        lookup_expected_data = copy.deepcopy(TEST_DATA['QUOTED_DATA_TO_INSERT'])
+        for record in lookup_expected_data:
+            record['surName'] = record.pop('LastName')
+        verify_wiretap_data(wiretap, lookup_expected_data)
+    finally:
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
+
+
+@salesforce
 @sdc_min_version('3.14.0')
 @pytest.mark.parametrize('missing_values_behavior', ['SEND_TO_ERROR', 'PASS_RECORD_ON'])
 def test_salesforce_retrieve_deleted_record(sdc_builder, sdc_executor, salesforce, missing_values_behavior):
