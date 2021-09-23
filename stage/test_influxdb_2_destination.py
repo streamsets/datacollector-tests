@@ -85,11 +85,12 @@ def test_influxdb2_bucket_creation(sdc_builder, sdc_executor, influxdb2, auto_cr
         result_records = []
         for table in result:
             for record in table.records:
-                result_records.append({
-                    f"'butterflies': {record['_value']}, 'location': '{record['location']}', 'scientist':  '{record['scientist']}', 'time': {round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)}"})
+                result_records.append({'butterflies': int(record['_value']), 'location': record['location'],
+                                       'scientist': record['scientist'],
+                                       'time': round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)})
 
         assert len(raw_records) == len(result_records)
-        assert [influx_record in raw_records for influx_record in result_records]
+        assert all([influx_record in raw_records for influx_record in result_records])
     finally:
         influxdb2.drop_bucket(bucket_name)
 
@@ -131,6 +132,9 @@ def test_influxdb2_write_precision(sdc_builder, sdc_executor, influxdb2, write_p
 
         # read data from InfluxDB and assert to what pipeline ingested
         raw_records = [item['record'] for item in RAW_DATA]
+        if write_precision == 'S':
+            for record in raw_records:
+                record['time'] = int(record['time']/1000) * 1000
 
         query = f'from(bucket: "{bucket_name}") |> range(start: -1d)'
 
@@ -139,11 +143,11 @@ def test_influxdb2_write_precision(sdc_builder, sdc_executor, influxdb2, write_p
         result_records = []
         for table in result:
             for record in table.records:
-                result_records.append({
-                    f"'butterflies': {record['_value']}, 'location': '{record['location']}', 'scientist':  '{record['scientist']}', 'time': {round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)}"})
+                result_records.append({'butterflies': int(record['_value']), 'location': record['location'],
+                                       'scientist': record['scientist'],
+                                       'time': round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)})
 
-        assert len(raw_records) == len(result_records)
-        assert [influx_record in raw_records for influx_record in result_records]
+        assert all([influx_record in raw_records for influx_record in result_records])
     finally:
         influxdb2.drop_bucket(bucket_name)
 
@@ -193,7 +197,7 @@ def test_influxdb2_time_format(sdc_builder, sdc_executor, influxdb2, date_format
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # read data from InfluxDB and assert to what pipeline ingested
-        raw_records = wiretap.output_records
+        raw_records = [record.field for record in wiretap.output_records]
 
         query = f'from(bucket: "{bucket_name}") |> range(start: -100y)'
 
@@ -202,11 +206,14 @@ def test_influxdb2_time_format(sdc_builder, sdc_executor, influxdb2, date_format
         result_records = []
         for table in result:
             for record in table.records:
-                print(record)
-                result_records.append(record)
+                record_aux = {'measurement': record.get_measurement(),
+                              'time': record.get_time().replace(tzinfo=None),
+                              'butterflies': int(record.get_value()),
+                              'scientist': record.values.get("scientist")}
+                result_records.append(record_aux)
 
         assert len(raw_records) == len(result_records)
-        assert [influx_record in raw_records for influx_record in result_records]
+        assert all([influx_record in raw_records for influx_record in result_records])
     finally:
         influxdb2.drop_bucket(bucket_name)
 
@@ -249,12 +256,18 @@ def test_influxdb2_retention_time(sdc_builder, sdc_executor, influxdb2, retentio
             with pytest.raises(sdc_api.StartError) as exception:
                 sdc_executor.start_pipeline(pipeline)
 
-            assert f'INFLUX_03 - Retention time should be either 0 (infinite) or bigger than 1h. Current value: {retention_time} seconds' in f'{exception.value}'
+            assert f'INFLUX_03 - Retention time should be either 0 (infinite) or bigger than 1h. ' \
+                   f'Current value: {retention_time} seconds' in f'{exception.value}'
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
             # read data from InfluxDB and assert to what pipeline ingested
-            raw_records = [item['record'] for item in RAW_DATA]
+            raw_records = []
+            for record in RAW_DATA:
+                raw_records.append({'measurement': record['measurement'],
+                                    'butterflies': record['record']['butterflies'],
+                                    'scientist': record['record']['scientist'],
+                                    'time': record['record']['time']})
 
             query = f'from(bucket: "{bucket_name}") |> range(start: -1d)'
 
@@ -263,11 +276,14 @@ def test_influxdb2_retention_time(sdc_builder, sdc_executor, influxdb2, retentio
             result_records = []
             for table in result:
                 for record in table.records:
-                    result_records.append({
-                        f"'butterflies': {record['_value']}, 'location': '{record['location']}', 'scientist':  '{record['scientist']}', 'time': {round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)}"})
+                    record_aux = {'measurement': record.get_measurement(),
+                                  'time': round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000),
+                                  'butterflies': int(record.get_value()),
+                                  'scientist': record.values.get("scientist")}
+                    result_records.append(record_aux)
 
             assert len(raw_records) == len(result_records)
-            assert [influx_record in raw_records for influx_record in result_records]
+            assert all([influx_record in raw_records for influx_record in result_records])
     finally:
         if retention_time != 1:
             influxdb2.drop_bucket(bucket_name)
@@ -461,8 +477,11 @@ def test_influxdb2_missing_value_field(sdc_builder, sdc_executor, influxdb2):
         result_records = []
         for table in result:
             for record in table.records:
-                result_records.append({
-                    f"time': {round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)}"})
+                record_aux = {'measurement': record.get_measurement(),
+                              'time': record.get_time().replace(tzinfo=None),
+                              'butterflies': int(record.get_value()),
+                              'scientist': record.values.get("scientist")}
+                result_records.append(record_aux)
 
         assert 0 == len(result_records)
     finally:
@@ -513,7 +532,7 @@ def test_influxdb2_missing_time_field(sdc_builder, sdc_executor, influxdb2):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # read data from InfluxDB and assert to what pipeline ingested
-        raw_records = [item['record'] for item in RAW_DATA]
+        raw_records = [item['record'] for item in raw_data]
 
         query = f'from(bucket: "{bucket_name}") |> range(start: -1d)'
 
@@ -522,11 +541,13 @@ def test_influxdb2_missing_time_field(sdc_builder, sdc_executor, influxdb2):
         result_records = []
         for table in result:
             for record in table.records:
-                result_records.append({
-                    f"'butterflies': {record['_value']}, 'location': '{record['location']}', 'scientist':  '{record['scientist']}', 'time': {round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)}"})
+                    record_aux = {'location' : record['location'],
+                                  'butterflies': int(record.get_value()),
+                                  'scientist': record.values.get("scientist")}
+                    result_records.append(record_aux)
 
         assert len(raw_records) == len(result_records)
-        assert [influx_record in raw_records for influx_record in result_records]
+        assert all([influx_record in raw_records for influx_record in result_records])
     finally:
         influxdb2.drop_bucket(bucket_name)
 
@@ -565,7 +586,11 @@ def test_influxdb2_missing_tag_field(sdc_builder, sdc_executor, influxdb2):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # read data from InfluxDB and assert to what pipeline ingested
-        raw_records = [item['record'] for item in RAW_DATA]
+        raw_records = []
+        for record in RAW_DATA:
+            raw_records.append({'butterflies': record['record']['butterflies'],
+                                'scientist': None,
+                                'time': record['record']['time']})
 
         query = f'from(bucket: "{bucket_name}") |> range(start: -1d)'
 
@@ -574,10 +599,12 @@ def test_influxdb2_missing_tag_field(sdc_builder, sdc_executor, influxdb2):
         result_records = []
         for table in result:
             for record in table.records:
-                result_records.append({
-                    f"'butterflies': {record['_value']}', 'time': {round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)}"})
+                record_aux = {'time': round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000),
+                              'butterflies': int(record.get_value()),
+                              'scientist': record.values.get("scientist")}
+                result_records.append(record_aux)
 
         assert len(raw_records) == len(result_records)
-        assert [influx_record in raw_records for influx_record in result_records]
+        assert all([influx_record in raw_records for influx_record in result_records])
     finally:
         influxdb2.drop_bucket(bucket_name)

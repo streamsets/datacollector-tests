@@ -141,11 +141,12 @@ def test_bucket_names_topic(sdc_builder, sdc_executor, influxdb2, test_name, buc
         result_records = []
         for table in result:
             for record in table.records:
-                result_records.append({
-                    f"'butterflies': {record['_value']}, 'location': '{record['location']}', 'scientist':  '{record['scientist']}', 'time': {round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)}"})
+                result_records.append({'butterflies': int(record['_value']), 'location': record['location'],
+                                       'scientist': record['scientist'],
+                                       'time': round(record['_time'].replace(tzinfo=timezone.utc).timestamp() * 1000)})
 
         assert len(raw_records) == len(result_records)
-        assert [influx_record in raw_records for influx_record in result_records]
+        assert all([influx_record in raw_records for influx_record in result_records])
     finally:
         influxdb2.drop_bucket(bucket_name)
 
@@ -190,7 +191,7 @@ def test_multiple_batch(sdc_builder, sdc_executor, influxdb2):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # read data from InfluxDB and assert to what pipeline ingested
-        raw_records = wiretap.output_records
+        raw_records = [record.field for record in wiretap.output_records]
 
         query = f'from(bucket: "{bucket_name}") |> range(start: -100y)'
 
@@ -199,11 +200,14 @@ def test_multiple_batch(sdc_builder, sdc_executor, influxdb2):
         result_records = []
         for table in result:
             for record in table.records:
-                print(record)
-                result_records.append(record)
+                record_aux = {'measurement': record.get_measurement(),
+                              'time': record.get_time().replace(tzinfo=None),
+                              'butterflies': int(record.get_value()),
+                              'scientist': record.values.get("scientist")}
+                result_records.append(record_aux)
 
         assert len(raw_records) == len(result_records)
-        assert [influx_record in raw_records for influx_record in result_records]
+        assert all([influx_record in raw_records for influx_record in result_records])
 
         history = sdc_executor.get_pipeline_history(pipeline)
         assert history.latest.metrics.counter('pipeline.batchCount.counter').count == 5
