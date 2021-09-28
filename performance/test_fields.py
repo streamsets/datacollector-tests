@@ -1,4 +1,4 @@
-# Copyright 2017 StreamSets Inc.
+# Copyright 2021 StreamSets Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,26 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-The tests in this module are for running high-volume pipelines, for the purpose of performance testing.
-They will generate records from a raw source, run them through one or more processors, with a trash destination.
-Output values will not be validated since the purpose of this test is to test performance and not correctness.
-"""
-
 import json
-import logging
-import uuid
-
-import pytest
-
-logger = logging.getLogger(__name__)
 
 
-@pytest.mark.parametrize('number_of_records', (50_000, 100_000))
-def test_field_path_stress_pipeline(sdc_builder, sdc_executor, benchmark, number_of_records):
-    """
-    Runs a pipeline with many field processor stages, which runs for a large number of records.
-    """
+def test_many_field_processor_stages(sdc_builder, sdc_executor):
+    """Benchmark a pipeline with many field processor stages"""
+
     raw_data = """
     {
       "first": {
@@ -65,88 +51,61 @@ def test_field_path_stress_pipeline(sdc_builder, sdc_executor, benchmark, number
     """
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
+    benchmark_stages = pipeline_builder.add_benchmark_stages()
 
-    source = pipeline_builder.add_stage('Dev Raw Data Source')
-    source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
 
-    remover = pipeline_builder.add_stage('Field Remover')
-    remover.set_attributes(fields=['/second/f'], action='REMOVE')
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.set_attributes(fields=['/second/f'], action='REMOVE')
 
     value_replacer = pipeline_builder.add_stage('Value Replacer', type='processor')
-    value_replacer.set_attributes(replace_null_values=[{
-        'fields': ['/*/*/*2'],
-        'newValue': '42.0'
-    }])
+    value_replacer.set_attributes(replace_null_values=[{'fields': ['/*/*/*2'],
+                                                        'newValue': '42.0'}])
 
-    type_converter_configs = [{
-        'fields': ['/*/*/*2'],
-        'targetType': 'DOUBLE',
-        'dataLocale': 'en,US'
-    }]
-    type_converter = pipeline_builder.add_stage('Field Type Converter')
-    type_converter.set_attributes(conversion_method='BY_FIELD',
-                                  field_type_converter_configs=type_converter_configs)
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter.set_attributes(conversion_method='BY_FIELD',
+                                        field_type_converter_configs=[{'fields': ['/*/*/*2'],
+                                                                       'targetType': 'DOUBLE',
+                                                                       'dataLocale': 'en,US'}])
 
-    hasher_target_configs = [{
-       'sourceFieldsToHash': ['/third/h*', '/third/g'],
-       'hashType': 'MD5',
-       'targetField': '/thirdHash'
-    }]
-    hasher = pipeline_builder.add_stage('Field Hasher')
-    hasher.set_attributes(hash_to_target=hasher_target_configs,
-                          hash_entire_record=False)
+    field_hasher = pipeline_builder.add_stage('Field Hasher')
+    field_hasher.set_attributes(hash_entire_record=False,
+                                hash_to_target=[{'sourceFieldsToHash': ['/third/h*', '/third/g'],
+                                                 'hashType': 'MD5',
+                                                 'targetField': '/thirdHash'}])
 
-    masker_configs = [{
-        'fields': ['/second/d'],
-        'maskType': 'FIXED_LENGTH',
-        'regex': '(.*)',
-        'groupsToShow': '1'
-    }]
+    field_masker = pipeline_builder.add_stage('Field Masker')
+    field_masker.set_attributes(field_mask_configs=[{'fields': ['/second/d'],
+                                                     'maskType': 'FIXED_LENGTH',
+                                                     'regex': '(.*)',
+                                                     'groupsToShow': '1'}])
 
-    masker = pipeline_builder.add_stage('Field Masker')
-    masker.set_attributes(field_mask_configs=masker_configs)
+    dev_raw_data_source >> field_remover >> value_replacer >> field_type_converter >> field_hasher
+    field_hasher >> field_masker >> benchmark_stages.destination
 
-    trash = pipeline_builder.add_stage('Trash')
+    pipeline = pipeline_builder.build()
 
-    source >> remover >> value_replacer >> type_converter >> hasher >> masker >> trash
-    pipeline = pipeline_builder.build('Field Path Stress Test Pipeline - Many Stages')
-
-    def benchmark_pipeline(executor, pipeline):
-        pipeline.id = str(uuid.uuid4())
-        executor.add_pipeline(pipeline)
-        executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(number_of_records)
-        executor.stop_pipeline(pipeline)
-        executor.remove_pipeline(pipeline)
-
-    benchmark.pedantic(benchmark_pipeline, args=(sdc_executor, pipeline), rounds=2)
+    sdc_executor.benchmark_pipeline(pipeline, record_count=100_000)
 
 
-@pytest.mark.parametrize('number_of_records', (50_000, 100_000))
-def test_large_number_of_fields_stress_pipeline(sdc_builder, sdc_executor, benchmark, number_of_records):
-    """
-    Runs a pipeline with one processor that removes many fields from records that have a large number of fields.
-    """
+def test_large_number_of_fields(sdc_builder, sdc_executor):
+    """Benchmark a pipeline with one processor that removes many fields from records with a large number of fields"""
+
     raw_data_obj = {f'field{i}': i for i in range(1, 250)}
     raw_data = json.dumps(raw_data_obj)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
+    benchmark_stages = pipeline_builder.add_benchmark_stages()
 
-    source = pipeline_builder.add_stage('Dev Raw Data Source')
-    source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
 
-    remover = pipeline_builder.add_stage('Field Remover')
-    remover.set_attributes(fields=['/field1*'], action='REMOVE')
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.set_attributes(fields=['/field1*'], action='REMOVE')
 
-    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> field_remover >> benchmark_stages.destination
 
-    source >> remover >> trash
-    pipeline = pipeline_builder.build('Field Path Stress Test Pipeline - Many Fields')
+    pipeline = pipeline_builder.build()
 
-    def benchmark_pipeline(executor, pipeline):
-        pipeline.id = str(uuid.uuid4())
-        executor.add_pipeline(pipeline)
-        executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(number_of_records)
-        executor.stop_pipeline(pipeline)
-        executor.remove_pipeline(pipeline)
-
-    benchmark.pedantic(benchmark_pipeline, args=(sdc_executor, pipeline), rounds=2)
+    sdc_executor.benchmark_pipeline(pipeline, record_count=100_000)
