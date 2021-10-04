@@ -385,3 +385,74 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
             if anonymous:
                 logger.info(f'Deleting bucket {s3_bucket}')
                 aws.s3.delete_bucket(Bucket=s3_bucket)
+
+
+@aws('s3')
+@sdc_min_version('4.2.0')
+def test_s3_multithreading_multiple_batches(sdc_builder, sdc_executor, aws):
+    """Test for S3 target stage. Data loss scenario happened when multiple threads try writing within the same
+    millisecond. We just add the runnerId in the file name, if the option is specified (true by default):
+
+    S3 Destination pipeline:
+        dev_data_generator >> s3_destination
+        dev_data_generator >> wiretap.destination
+    """
+    number_of_records = 100
+    batch_size = 1
+    delay_between_batches = 1
+    number_of_threads = 10
+    try:
+        s3_bucket = aws.s3_bucket_name
+
+        s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+        # Build the pipeline
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_data_generator = builder.add_stage('Dev Data Generator')
+        dev_data_generator.fields_to_generate = [
+            {'field': 'id', 'type': 'POKEMON'},
+        ]
+        dev_data_generator.set_attributes(delay_between_batches=delay_between_batches,
+                                          batch_size=batch_size,
+                                          records_to_be_generated=number_of_records,
+                                          number_of_threads=number_of_threads)
+
+        s3_destination = builder.add_stage('Amazon S3', type='destination')
+        s3_destination.set_attributes(bucket=s3_bucket, data_format='JSON', partition_prefix=s3_key)
+
+        wiretap = builder.add_wiretap()
+
+        dev_data_generator >> [s3_destination, wiretap.destination]
+
+        s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+        sdc_executor.add_pipeline(s3_dest_pipeline)
+
+        client = aws.s3
+
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == number_of_records
+
+        records = []
+        for record in wiretap.output_records:
+            # We need to get every field inside each record
+            records = records + [record.field]
+
+        file_names = []
+        for i in range(0, number_of_records - 1):
+            # We just check each file in s3 contains ths same as wiretap
+            s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][i]['Key'])
+            s3_contents = s3_obj_key['Body'].read().decode().strip()
+            file_names = file_names + [list_s3_objs['Contents'][i]['Key']]
+            assert json.loads(s3_contents) in records
+
+        for i in range(0, number_of_threads - 1):
+            # We also check we have at least one file name (computed before) of each thread (from 000 to 009)
+            thread_number = '-' + str(i).zfill(3)
+            assert any(thread_number in file_name for file_name in file_names)
+    finally:
+        aws.delete_s3_data(s3_bucket, s3_key)
