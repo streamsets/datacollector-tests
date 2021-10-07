@@ -456,3 +456,116 @@ def test_s3_multithreading_multiple_batches(sdc_builder, sdc_executor, aws):
             assert any(thread_number in file_name for file_name in file_names)
     finally:
         aws.delete_s3_data(s3_bucket, s3_key)
+
+
+@aws('s3')
+@sdc_min_version('4.3.0')
+def test_s3_with_tags(sdc_builder, sdc_executor, aws):
+    """Test for tags on S3 destination.
+    We create a file and verify that the tags are correctly propagated to the object created in S3.
+
+        S3 Destination pipeline:
+            dev_raw_data_source >> s3_destination
+    """
+    s3_bucket = aws.s3_bucket_name
+
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+    # Bucket name is inside the record itself
+    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
+    s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key, add_tags=True,
+                                  tags=[{"key": "this-is-a-test-tag-key", "value": "this-is-a-test-tag-value"}])
+
+    dev_raw_data_source >> s3_destination
+
+    s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_dest_pipeline)
+
+    client = aws.s3
+    try:
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+
+        # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert json.loads(s3_contents) == json.loads(raw_str)
+
+        object_tagging = client.get_object_tagging(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+        assert object_tagging['TagSet'] == [{"Key": "this-is-a-test-tag-key", "Value": "this-is-a-test-tag-value"}]
+    finally:
+        aws.delete_s3_data(s3_bucket, s3_key)
+
+
+@aws('s3')
+@sdc_min_version('4.3.0')
+def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
+    """Test for tags on S3 destination using WHOLE_FILE_FORMAT..
+    We create a file and verify that the tags are correctly propagated to the object created in S3.
+
+        S3 Destination pipeline:
+            dev_raw_data_source >> s3_destination
+    """
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+    s3_dest_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+    data = 'Completely random string that is transfered as whole file format.'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
+                          prefix_pattern=f'{s3_key}/*',
+                          max_batch_size_in_records=100)
+
+    target = builder.add_stage('Amazon S3', type='destination')
+    target.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE', partition_prefix=s3_dest_key,
+                          file_name_expression='output.txt', add_tags=True,
+                          tags=[{"key": "this-is-a-test-tag-key", "value": "this-is-a-test-tag-value"}])
+
+    origin >> target
+
+    pipeline = builder.build().configure_for_environment(aws)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt', Body=data.encode('ascii'))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
+
+        # We should have exactly one file on the destination side
+        list_s3_objs = client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_dest_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # With our secret message
+        s3_obj_key = client.get_object(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert s3_contents == data
+
+        object_tagging = client.get_object_tagging(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
+        assert object_tagging['TagSet'] == [{"Key": "this-is-a-test-tag-key", "Value": "this-is-a-test-tag-value"}]
+    finally:
+        logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+        logger.info('Deleting output S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_dest_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_dest_key)
