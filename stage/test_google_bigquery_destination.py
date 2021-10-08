@@ -121,7 +121,7 @@ def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, g
 
     ]
     batch_size = 1000
-    dev_data_generator.set_attributes(delay_between_batches=0, batch_size=batch_size)
+    dev_data_generator.set_attributes(delay_between_batches=1000, batch_size=batch_size)
 
     dataset_name = get_random_string(ascii_letters, 5)
     table_name = get_random_string(ascii_letters, 5)
@@ -166,12 +166,20 @@ def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, g
         sdc_executor.stop_pipeline(pipeline)
 
         # Verify by reading records using Google BigQuery client
-        data_from_bigquery = [row for row in bigquery_client.list_rows(table)]
-        assert len(data_from_bigquery) > batch_size
+        data_from_bigquery = [{"field1" : row.values()[0],
+                               "field2" : row.values()[1].replace(microsecond = row.values()[1].microsecond * 1000),
+                               "field3" : row.values()[2],
+                               "field4" : row.values()[3],
+                               "field5" : row.values()[4]}
+                              for row in bigquery_client.list_rows(table)]
+
+        data_from_wiretap = [rec.field for rec in wiretap.output_records]
+        assert len(data_from_bigquery) >= batch_size
         assert len(wiretap.error_records) == 0
 
-        assert len(data_from_bigquery) == len(wiretap.output_records)
-        assert [element in data_from_bigquery for element in wiretap.output_records]
+        assert len(data_from_bigquery) == len(data_from_wiretap)
+        assert all([element in data_from_bigquery for element in data_from_wiretap])
+        
     finally:
         logger.info('Dropping table %s in Google Big Query database ...', table_name)
         bigquery_client.delete_dataset(dataset_ref, delete_contents=True)
