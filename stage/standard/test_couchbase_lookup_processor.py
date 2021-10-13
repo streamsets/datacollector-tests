@@ -18,7 +18,7 @@ import pytest
 import string
 
 from collections import Counter
-# from couchbase_core import FMT_JSON, FMT_BYTES
+from couchbase.management.buckets import CreateBucketSettings
 from streamsets.testframework.markers import couchbase
 from streamsets.testframework.utils import get_random_string
 
@@ -44,14 +44,17 @@ def test_data_types_kv(sdc_builder, sdc_executor, couchbase, input, test_name, e
     doc = {'id': key, 'data': input}
     raw_dict = dict(id=key)
     raw_data = json.dumps(raw_dict)
+    cluster = couchbase.cluster
 
     try:
         # populate the database
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         bucket.upsert(key, doc)
 
         # build the pipeline
@@ -83,7 +86,7 @@ def test_data_types_kv(sdc_builder, sdc_executor, couchbase, input, test_name, e
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -99,16 +102,19 @@ def test_data_types_query(sdc_builder, sdc_executor, couchbase, input, test_name
     raw_dict = dict(id=key)
     raw_data = json.dumps(raw_dict)
     query = f'SELECT data FROM {bucket_name} WHERE ' + 'id="${record:value("/id")}"'
+    cluster = couchbase.cluster
 
     try:
         # populate the database
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         bucket.upsert(key, doc)
-        bucket.n1ql_query(f"CREATE PRIMARY INDEX ON {bucket_name}").execute()
+        cluster.query(f'CREATE PRIMARY INDEX ON `{bucket_name}`').execute()
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -121,7 +127,7 @@ def test_data_types_query(sdc_builder, sdc_executor, couchbase, input, test_name
         lookup = builder.add_stage('Couchbase Lookup')
         lookup.set_attributes(authentication_mode='USER', bucket=bucket_name,
                               lookup_type='N1QL', n1ql_query=query,
-                              property_mappings=[dict(property='data', sdcField='/output')],
+                              n1ql_mappings=[dict(property='data', sdcField='/output')],
                               missing_value_behavior='ERROR')
 
         wiretap = builder.add_wiretap()
@@ -141,7 +147,7 @@ def test_data_types_query(sdc_builder, sdc_executor, couchbase, input, test_name
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -168,14 +174,17 @@ def test_object_names_bucket_kv(sdc_builder, sdc_executor, couchbase, test_name,
     doc = {"data": "hello", document_key_field: key}
     raw_dict = dict(id=key)
     raw_data = json.dumps(raw_dict)
+    cluster = couchbase.cluster
 
     try:
         # populate the database
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name.replace('%', '%25'))
+        bucket = cluster.bucket(bucket_name.replace('%', '%25'))
         bucket.upsert(key, doc)
 
         # build the pipeline
@@ -206,7 +215,7 @@ def test_object_names_bucket_kv(sdc_builder, sdc_executor, couchbase, test_name,
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -220,16 +229,19 @@ def test_object_names_bucket_query(sdc_builder, sdc_executor, couchbase, test_na
     raw_dict = dict(id=key)
     raw_data = json.dumps(raw_dict)
     query = f'SELECT * FROM `{bucket_name}` WHERE {document_key_field}=' + '"${record:value("/id")}"'
+    cluster = couchbase.cluster
 
     try:
         # populate the database
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name.replace('%', '%25'))
+        bucket = cluster.bucket(bucket_name)
         bucket.upsert(key, doc)
-        bucket.n1ql_query(f'CREATE PRIMARY INDEX ON `{bucket_name}`').execute()
+        cluster.query(f'CREATE PRIMARY INDEX ON `{bucket_name}`').execute()
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -242,7 +254,7 @@ def test_object_names_bucket_query(sdc_builder, sdc_executor, couchbase, test_na
         lookup = builder.add_stage('Couchbase Lookup')
         lookup.set_attributes(authentication_mode='USER', bucket=bucket_name,
                               lookup_type='N1QL', n1ql_query=query,
-                              property_mappings=[dict(property=bucket_name, sdcField='/output')],
+                              n1ql_mappings=[dict(property=bucket_name, sdcField='/output')],
                               missing_value_behavior='ERROR')
 
         wiretap = builder.add_wiretap()
@@ -260,7 +272,7 @@ def test_object_names_bucket_query(sdc_builder, sdc_executor, couchbase, test_na
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -273,13 +285,16 @@ def test_multiple_batches_kv(sdc_builder, sdc_executor, couchbase, batch_size):
             {"id": "2", "data": 20},
             {"id": "3", "data": 30}]
     batches = 3
+    cluster = couchbase.cluster
 
     # populate the database
     logger.info('Creating %s Couchbase bucket ...', bucket_name)
-    couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+    couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                bucket_type='couchbase',
+                                                                ram_quota_mb=256))
     couchbase.wait_for_healthy_bucket(bucket_name)
 
-    bucket = couchbase.cluster.open_bucket(bucket_name)
+    bucket = cluster.bucket(bucket_name)
     for doc in docs:
         bucket.upsert(doc["id"], doc)
 
@@ -338,7 +353,7 @@ def test_multiple_batches_kv(sdc_builder, sdc_executor, couchbase, batch_size):
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -352,16 +367,19 @@ def test_multiple_batches_query(sdc_builder, sdc_executor, couchbase, batch_size
             {"id": "3", "data": 30}]
     batches = 3
     query = f'SELECT data FROM {bucket_name} WHERE ' + 'id="${record:value("/lookup")}"'
+    cluster = couchbase.cluster
 
     # populate the database
     logger.info('Creating %s Couchbase bucket ...', bucket_name)
-    couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+    couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                bucket_type='couchbase',
+                                                                ram_quota_mb=256))
     couchbase.wait_for_healthy_bucket(bucket_name)
 
-    bucket = couchbase.cluster.open_bucket(bucket_name)
+    bucket = cluster.bucket(bucket_name)
     for doc in docs:
         bucket.upsert(doc["id"], doc)
-    bucket.n1ql_query(f"CREATE PRIMARY INDEX ON {bucket_name}").execute()
+    cluster.query(f'CREATE PRIMARY INDEX ON `{bucket_name}`').execute()
 
     # build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -381,7 +399,7 @@ def test_multiple_batches_query(sdc_builder, sdc_executor, couchbase, batch_size
     lookup = builder.add_stage('Couchbase Lookup')
     lookup.set_attributes(authentication_mode='USER', bucket=bucket_name,
                           lookup_type='N1QL', n1ql_query=query,
-                          property_mappings=[dict(property='data', sdcField='/output')],
+                          n1ql_mappings=[dict(property='data', sdcField='/output')],
                           missing_value_behavior='PASS')
 
     wiretap = builder.add_wiretap()
@@ -419,7 +437,7 @@ def test_multiple_batches_query(sdc_builder, sdc_executor, couchbase, batch_size
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -450,14 +468,17 @@ def test_lookup_kv(sdc_builder, sdc_executor, couchbase,
     doc = {'id': 'id1', 'data': 'hello'}
     raw_dict = dict(id=input)
     raw_data = json.dumps(raw_dict)
+    cluster = couchbase.cluster
 
     try:
         # populate the database
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         bucket.upsert(doc['id'], doc)
 
         # build the pipeline
@@ -494,7 +515,7 @@ def test_lookup_kv(sdc_builder, sdc_executor, couchbase,
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -520,17 +541,20 @@ def test_lookup_query(sdc_builder, sdc_executor, couchbase,
     raw_dict = dict(criteria=input)
     raw_data = json.dumps(raw_dict)
     query = f"SELECT id FROM {bucket_name} WHERE " + '${record:value("/criteria")}'
+    cluster = couchbase.cluster
 
     try:
         # populate the database
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         for doc in docs:
             bucket.upsert(doc['id'], doc)
-        bucket.n1ql_query(f"CREATE PRIMARY INDEX ON {bucket_name}").execute()
+        cluster.query(f'CREATE PRIMARY INDEX ON `{bucket_name}`').execute()
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -543,7 +567,7 @@ def test_lookup_query(sdc_builder, sdc_executor, couchbase,
         lookup = builder.add_stage('Couchbase Lookup')
         lookup.set_attributes(authentication_mode='USER', bucket=bucket_name,
                               lookup_type='N1QL', n1ql_query=query,
-                              property_mappings=[dict(property='id', sdcField='/output')],
+                              n1ql_mappings=[dict(property='id', sdcField='/output')],
                               multiple_value_behavior=multiple_value_behavior,
                               missing_value_behavior=missing_value_behavior)
 
@@ -577,6 +601,6 @@ def test_lookup_query(sdc_builder, sdc_executor, couchbase,
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")

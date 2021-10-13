@@ -19,6 +19,7 @@ import string
 
 from avro.datafile import DataFileReader
 from avro.io import DatumReader
+from couchbase.management.buckets import CreateBucketSettings
 from io import BytesIO
 from streamsets.testframework.markers import couchbase
 from streamsets.testframework.utils import get_random_string, sdc_value_reader
@@ -68,6 +69,7 @@ def test_data_types(sdc_builder, sdc_executor, couchbase, input, converter_type,
     document_key_field = 'mydocname'
     raw_dict = {"value": input, document_key_field: 'mydocid'}
     raw_data = json.dumps(raw_dict)
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -99,12 +101,14 @@ def test_data_types(sdc_builder, sdc_executor, couchbase, input, converter_type,
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         doc_value = bucket.get(raw_dict[document_key_field]).value
 
         assert len(doc_value) == len(raw_dict)
@@ -114,7 +118,7 @@ def test_data_types(sdc_builder, sdc_executor, couchbase, input, converter_type,
             sdc_executor.stop_pipeline(pipeline)
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -130,6 +134,7 @@ def test_object_names_bucket(sdc_builder, sdc_executor, couchbase, test_name, bu
     raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
     raw_dict[document_key_field] = 'mydocid'
     raw_data = json.dumps(raw_dict)
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -149,14 +154,16 @@ def test_object_names_bucket(sdc_builder, sdc_executor, couchbase, test_name, bu
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name.replace('%', '%25'))
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # if the bucket name contains a percent sign, it gets interpreted as an escape character in the HTTP call made
         # by the open_bucket() method, so the ascii for percent (i.e. %25) should be used instead
-        bucket = couchbase.cluster.open_bucket(bucket_name.replace('%', '%25'))
+        bucket = cluster.bucket(bucket_name.replace('%', '%25'))
         doc_value = bucket.get(raw_dict[document_key_field]).value
         assert doc_value == raw_dict
     finally:
@@ -164,7 +171,7 @@ def test_object_names_bucket(sdc_builder, sdc_executor, couchbase, test_name, bu
             sdc_executor.stop_pipeline(pipeline)
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -184,6 +191,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, couchbase, batch_size):
         "type": "LONG_SEQUENCE",
         "field": "seq"
     }]
+    cluster = couchbase.cluster
 
     destination = builder.add_stage('Couchbase', type='destination')
     destination.set_attributes(authentication_mode='USER', bucket=bucket_name, document_key='${record:value("/seq")}')
@@ -198,7 +206,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, couchbase, batch_size):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batches * batch_size)
@@ -209,14 +219,14 @@ def test_multiple_batches(sdc_builder, sdc_executor, couchbase, batch_size):
         logger.info(f"Wrote {num_records} records")
         assert num_records == len(wiretap.output_records)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         for i in range(num_records):
             assert bucket.get(str(i)).value == wiretap.output_records[i].field
 
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -239,6 +249,7 @@ def test_data_format_avro(sdc_builder, sdc_executor, couchbase):
                          {'name': 'age', 'type': 'int'},
                          {'name': 'emails', 'type': {'type': 'array', 'items': 'string'}},
                          {'name': 'boss', 'type': ['Employee', 'null']}]}
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -258,12 +269,14 @@ def test_data_format_avro(sdc_builder, sdc_executor, couchbase):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         doc_value = bucket.get(document_key).value
 
         # decode the bytes object returned by Couchbase
@@ -278,7 +291,7 @@ def test_data_format_avro(sdc_builder, sdc_executor, couchbase):
             sdc_executor.stop_pipeline(pipeline)
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -288,6 +301,7 @@ def test_data_format_binary(sdc_builder, sdc_executor, couchbase):
     bucket_name = get_random_string(string.ascii_letters, 10)
     document_key = 'id'
     batch_size = 1
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -312,7 +326,9 @@ def test_data_format_binary(sdc_builder, sdc_executor, couchbase):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batch_size)
@@ -323,13 +339,13 @@ def test_data_format_binary(sdc_builder, sdc_executor, couchbase):
         logger.info(f"Wrote {num_records} records")
         assert num_records == len(wiretap.output_records)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         assert bucket.get(document_key).value == wiretap.output_records[0].field['data']
 
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -340,6 +356,7 @@ def test_data_format_delimited(sdc_builder, sdc_executor, couchbase):
     document_key = 'id'
     raw_data = 'Alex,Xavi,Tucu,Martin'
     expected = 'Alex,Xavi,Tucu,Martin\r'
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -359,7 +376,9 @@ def test_data_format_delimited(sdc_builder, sdc_executor, couchbase):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -369,7 +388,7 @@ def test_data_format_delimited(sdc_builder, sdc_executor, couchbase):
         logger.info(f"Wrote {num_records} records")
         assert num_records == 1, 'Number of records stored should equal the number of records that entered the pipeline'
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         doc_value = bucket.get(document_key).value
         # Decode the bytes object returned by Couchbase and remove the empty final line
         contents = doc_value.decode('ascii').replace('\n', '')
@@ -379,7 +398,7 @@ def test_data_format_delimited(sdc_builder, sdc_executor, couchbase):
             sdc_executor.stop_pipeline(pipeline)
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -391,6 +410,7 @@ def test_data_format_json(sdc_builder, sdc_executor, couchbase):
     raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
     raw_dict[document_key_field] = 'mydocid'
     raw_data = json.dumps(raw_dict)
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -411,12 +431,14 @@ def test_data_format_json(sdc_builder, sdc_executor, couchbase):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         doc_value = bucket.get(raw_dict[document_key_field]).value
         assert doc_value == raw_dict
     finally:
@@ -424,7 +446,7 @@ def test_data_format_json(sdc_builder, sdc_executor, couchbase):
             sdc_executor.stop_pipeline(pipeline)
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -435,6 +457,7 @@ def test_data_format_protobuf(sdc_builder, sdc_executor, couchbase):
     document_key = 'id'
     raw_data = '{"first_name": "Martin","last_name": "Balzamo"}'
     expected = '\x11\x06Martin\x12\x07Balzamo'
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -455,7 +478,9 @@ def test_data_format_protobuf(sdc_builder, sdc_executor, couchbase):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -465,7 +490,7 @@ def test_data_format_protobuf(sdc_builder, sdc_executor, couchbase):
         logger.info(f"Wrote {num_records} records")
         assert num_records == 1, 'Number of records stored should equal the number of records that entered the pipeline'
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         doc_value = bucket.get(document_key).value
         # Decode the bytes object returned by Couchbase and remove any record separators (newline characters)
         contents = doc_value.decode('ascii').replace('\n', '')
@@ -475,7 +500,7 @@ def test_data_format_protobuf(sdc_builder, sdc_executor, couchbase):
             sdc_executor.stop_pipeline(pipeline)
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -487,6 +512,7 @@ def test_data_format_sdc_record(sdc_builder, sdc_executor, couchbase):
     json_data = [{"field1": "abc", "field2": "def", "field3": "ghi"},
                  {"field1": "jkl", "field2": "mno", "field3": "pqr"}]
     raw_data = ''.join(json.dumps(record) for record in json_data)
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -507,7 +533,9 @@ def test_data_format_sdc_record(sdc_builder, sdc_executor, couchbase):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -517,7 +545,7 @@ def test_data_format_sdc_record(sdc_builder, sdc_executor, couchbase):
         logger.info(f"Wrote {num_records} records")
         assert num_records == len(json_data)
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
 
         for i in range(len(json_data)):
             doc_value = bucket.get(json_data[i][document_key_field]).value
@@ -532,7 +560,7 @@ def test_data_format_sdc_record(sdc_builder, sdc_executor, couchbase):
             sdc_executor.stop_pipeline(pipeline)
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -542,6 +570,7 @@ def test_data_format_text(sdc_builder, sdc_executor, couchbase):
     bucket_name = get_random_string(string.ascii_letters, 10)
     document_key = 'id'
     raw_data = get_random_string(string.ascii_letters, length=100)
+    cluster = couchbase.cluster
 
     # Build the pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -561,7 +590,9 @@ def test_data_format_text(sdc_builder, sdc_executor, couchbase):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -571,7 +602,7 @@ def test_data_format_text(sdc_builder, sdc_executor, couchbase):
         logger.info(f"Wrote {num_records} records")
         assert num_records == 1, 'Number of records stored should equal the number of records that entered the pipeline'
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         doc_value = bucket.get(document_key).value
         # Decode the bytes object returned by Couchbase and remove any record separators (newline characters)
         contents = doc_value.decode('ascii').replace('\n', '')
@@ -581,7 +612,7 @@ def test_data_format_text(sdc_builder, sdc_executor, couchbase):
             sdc_executor.stop_pipeline(pipeline)
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.admin.bucket_delete(bucket_name)
+            couchbase.bucket_manager.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 

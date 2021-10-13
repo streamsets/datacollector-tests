@@ -16,6 +16,7 @@ import json
 import logging
 import string
 
+from couchbase.management.buckets import CreateBucketSettings
 from streamsets.testframework.markers import couchbase, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -36,6 +37,7 @@ def test_couchbase_destination(sdc_builder, sdc_executor, couchbase):
     raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
     raw_dict[document_key_field] = 'mydocid'
     raw_data = json.dumps(raw_dict)
+    cluster = couchbase.cluster
 
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
@@ -51,14 +53,16 @@ def test_couchbase_destination(sdc_builder, sdc_executor, couchbase):
 
     try:
         logger.info('Creating %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_create(name=bucket_name, bucket_type='couchbase', ram_quota=256)
+        couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
+                                                                    bucket_type='couchbase',
+                                                                    ram_quota_mb=256))
         couchbase.wait_for_healthy_bucket(bucket_name)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        bucket = couchbase.cluster.open_bucket(bucket_name)
+        bucket = cluster.bucket(bucket_name)
         doc_value = bucket.get(raw_dict[document_key_field]).value
         assert doc_value == raw_dict
     finally:
         logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.admin.bucket_delete(bucket_name)
+        couchbase.bucket_manager.drop_bucket(bucket_name)
