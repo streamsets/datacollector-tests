@@ -28,6 +28,7 @@ from xml.sax.saxutils import escape
 
 import pytest
 import requests
+from sdk.sdc_api import RunError
 from streamsets.sdk.utils import wait_for_condition
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
@@ -37,7 +38,9 @@ from .utils.utils_salesforce import (insert_data_and_verify_using_wiretap, verif
                                      CONTACTS_FOR_SUBQUERY, create_push_topic, delete_custom_field_from_contact,
                                      get_cdc_wiretap_records, get_dev_raw_data_source, get_ids, set_up_random,
                                      FOLDER_NAME, TEST_DATA, TIMEOUT, verify_analytics_data,
-                                     MULTIPLE_UPLOADS_PER_BATCH_SCRIPT, MULTIPLE_UPLOADS_BATCH_SIZE)
+                                     MULTIPLE_UPLOADS_PER_BATCH_SCRIPT, MULTIPLE_UPLOADS_BATCH_SIZE,
+                                     assign_hard_delete, revoke_hard_delete, verify_result_ids,
+                                     FORCE_13_HARD_DELETE_PERMISSION)
 
 CONTACT = 'Contact'
 ACCOUNT = 'Account'
@@ -2293,3 +2296,112 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
             except:
                 sdc_executor.stop_pipeline(pipeline, force=True)
                 raise
+
+
+@salesforce
+@sdc_min_version('4.2.0')
+@pytest.mark.parametrize('api', ['soap', 'bulk'])
+@pytest.mark.parametrize('delete_type', ['soft', 'hard'])
+@pytest.mark.parametrize('set_permission', [True, False])
+def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, api, delete_type, set_permission):
+    """Insert records into Salesforce and try to delete them.
+
+    The pipeline looks like:
+        dev_raw_data_source >> salesforce_destination
+
+    Args:
+        sdc_builder (:py:class:`streamsets.testframework.Platform`): Platform instance
+        sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
+        salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
+    """
+    if api == 'soap' and delete_type == 'hard':
+        pytest.skip('Skipping... Hard delete is not supported in the Salesforce SOAP API')
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    inserted_ids = None
+    user_id = None
+    permission_set_id = None
+    permission_set_assignment_id = None
+    client = salesforce.client
+    try:
+        # Ensure one test doesn't see records in the bin from another
+        test_data = copy.deepcopy(TEST_DATA['DATA_TO_INSERT'])
+        last_name = TEST_DATA   ['STR_15_RANDOM'] + api + delete_type
+        for item in test_data:
+            item['LastName'] = last_name
+
+        logger.info('Creating rows using Salesforce client ...')
+        inserted_ids = get_ids(client.bulk.Contact.insert(test_data), 'id')
+
+        # Make CSV list of record ids to delete
+        raw_data = [record['Id'] for record in inserted_ids]
+        raw_data.insert(0, 'Id')
+
+        dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, raw_data)
+
+        salesforce_destination = pipeline_builder.add_stage('Salesforce', type='destination')
+        salesforce_destination.set_attributes(default_operation='DELETE',
+                                              sobject_type=CONTACT,
+                                              use_bulk_api=(api == 'bulk'),
+                                              hard_delete_records=(delete_type == 'hard'))
+
+        dev_raw_data_source >> salesforce_destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        if set_permission:
+            assign_hard_delete(client)
+
+        logger.info('Starting Salesforce destination pipeline and waiting for it to delete records ...')
+        if set_permission or delete_type == 'soft':
+            # Start the pipeline as normal
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        else:
+            # Check hard delete fails if we didn't assign the permission
+            with pytest.raises(RunError) as run_error:
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert FORCE_13_HARD_DELETE_PERMISSION == str(run_error.value)
+
+        logger.info('Querying for records...')
+        query_str = (f"SELECT Id FROM Contact WHERE Lastname = '{last_name}'")
+        result = client.query(query_str)
+
+        if set_permission or delete_type == 'soft':
+            # Are the records gone?
+            assert 0 == len(result['records'])
+        else:
+            # Deletion failed as expected, records are still there
+            verify_result_ids(inserted_ids, result)
+
+        logger.info('Querying for deleted records...')
+        query_str = ("SELECT Id FROM Contact"
+                     f" WHERE LastName = '{last_name}' AND isDeleted = TRUE"
+                     " ORDER BY Id")
+        result = client.query(query_str, include_deleted=True)
+
+        if set_permission or delete_type == 'soft':
+            # Records should show up as deleted
+            verify_result_ids(inserted_ids, result)
+        else:
+            # Delete should have failed
+            assert 0 == len(result['records'])
+
+        logger.info('Querying the recycle bin...')
+        query_str = ("SELECT Record FROM DeleteEvent"
+                     f" WHERE SobjectName = 'Contact' AND RecordName LIKE '% {last_name}'"
+                     " ORDER BY Record")
+        result = client.query(query_str)
+
+        if delete_type == 'hard':
+            # Nothing should be in the recycle bin, no matter how permissions were set
+            assert 0 == len(result['records'])
+        else:
+            # Soft delete - our records should be in the bin
+            verify_result_ids(inserted_ids, result, 'Record')
+
+    finally:
+        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        if set_permission:
+            revoke_hard_delete(client)

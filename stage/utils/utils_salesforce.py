@@ -162,6 +162,8 @@ while hasNext:
         hasNext = False
 """
 
+FORCE_13_HARD_DELETE_PERMISSION = "FORCE_13 - Error writing to Salesforce: , FeatureNotEnabled : hardDelete operation requires special user profile permission, please contact your system administrator"
+
 def set_up_random(salesforce):
     """" This function is used to generate unique set of values for each test.
     Every time this function is used, generates a unique RANDOM string to
@@ -201,11 +203,11 @@ def set_up_random(salesforce):
     client = salesforce.client
     limits = client.limits()
     log_limits = f'Limits: DailyApiRequests: {limits["DailyApiRequests"]["Remaining"]}, ' \
-                 f'DailyBulkApiRequests: {limits["DailyBulkApiRequests"]["Remaining"]}, ' \
+                 f'DailyBulkApiBatches: {limits["DailyBulkApiBatches"]["Remaining"]}, ' \
                  f'DailyDurableStreamingApiEvents: {limits["DailyDurableStreamingApiEvents"]["Remaining"]}, ' \
                  f'HourlyPublishedStandardVolumePlatformEvents: ' \
                  f'{limits["HourlyPublishedStandardVolumePlatformEvents"]["Remaining"]}, ' \
-                 f'MonthlyPlatformEvents: {limits["MonthlyPlatformEvents"]["Remaining"]} '
+                 f'MonthlyPlatformEventsUsageEntitlement: {limits["MonthlyPlatformEventsUsageEntitlement"]["Remaining"]} '
 
     logger.info(log_limits)
 
@@ -506,3 +508,53 @@ def verify_analytics_data(client, edgemart_alias, test_data, order_key, multiple
                 client.restful(f'wave/datasets/{identifier}', method='DELETE')
             except JSONDecodeError:
                 pass
+
+
+def assign_hard_delete(client):
+    # Get Id of current user
+    result = client.restful('chatter/users/me')
+    user_id = result['id']
+
+    # Create a permission set to allow hard delete
+    result = client.PermissionSet.create({
+        'Label': f'Hard Delete Allowed {TEST_DATA["STR_15_RANDOM"]}',
+        'Name': f'Hard_Delete_Allowed_{TEST_DATA["STR_15_RANDOM"]}',
+        'PermissionsBulkApiHardDelete': True
+    })
+    assert result['success']
+    permission_set_id = result['id']
+
+    # Assign permission set to current user
+    result = client.PermissionSetAssignment.create({
+        'AssigneeId': user_id,
+        'PermissionSetId': permission_set_id
+    })
+    assert result['success']
+    permission_set_assignment_id = result['id']
+
+
+def revoke_hard_delete(client):
+    # Get Id of current user
+    result = client.restful('chatter/users/me')
+    user_id = result['id']
+
+    # Find permission set
+    result = client.query('SELECT Id FROM PermissionSet'
+                          f' WHERE Name = \'Hard_Delete_Allowed_{TEST_DATA["STR_15_RANDOM"]}\'')
+    if len(result['records']) == 1:
+        permission_set_id = result['records'][0]['Id']
+
+        # Find permission set assignment
+        result = client.query('SELECT Id FROM PermissionSetAssignment'
+                              f' WHERE AssigneeId = \'{user_id}\' AND PermissionSetId = \'{permission_set_id}\'')
+        if len(result['records']) == 1:
+            permission_set_assignment_id = result['records'][0]['Id']
+            client.PermissionSetAssignment.delete(permission_set_assignment_id)
+
+        client.PermissionSet.delete(permission_set_id)
+
+
+def verify_result_ids(expected_ids, result, result_key='Id'):
+    assert len(expected_ids) == len(result['records'])
+    for i in range(len(expected_ids)):
+        assert expected_ids[i]['Id'] == result['records'][i][result_key]
