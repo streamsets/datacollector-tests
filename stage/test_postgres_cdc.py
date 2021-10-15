@@ -1072,3 +1072,92 @@ def test_postgres_cdc_queue_buffering_metrics(sdc_builder, sdc_executor, databas
             t.drop(database.engine)
             logger.info('Table: %s dropped.', t.name)
         connection.close()
+
+
+@database('postgresql')
+@sdc_min_version('4.2.0')
+@pytest.mark.parametrize('ssl_mode', [
+    'REQUIRED',
+    'VERIFY_CA',
+    'VERIFY_FULL'
+])
+def test_postgres_cdc_ssl_enabled(sdc_builder, sdc_executor, database, ssl_mode):
+    """Basic test for SSL enabled that inserts/updates/deletes to a Postgres table,
+    and validates that they are read in the same order.
+
+    The pipeline looks like:
+        postgres_cdc_client >> wiretap
+    """
+
+    # skip the test if the postgreSQL CDC client isn't ssl enabled.
+    if not database.ca_certificate or not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC and SSL enabled.')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+    postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+                                       max_batch_size_in_records=1,
+                                       poll_interval=POLL_INTERVAL,
+                                       replication_slot=replication_slot_name,
+                                       ssl_mode=ssl_mode
+                                       )
+
+    if ssl_mode != 'REQUIRED':
+        postgres_cdc_client.set_attributes(ca_certificate_pem=database.ca_certificate_file_contents,
+                                           server_certificate_pem=database.server_certificate_file_contents
+                                           )
+
+    wiretap = pipeline_builder.add_wiretap()
+    postgres_cdc_client >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    table = None
+    try:
+        # Database operations done after pipeline start will be captured by CDC.
+        # Hence start the pipeline but do not wait for the capture to be finished.
+        sdc_executor.start_pipeline(pipeline)
+
+        # Create table and then perform insert, update and delete operations.
+        table = _create_table_in_database(table_name, database)
+        connection = database.engine.connect()
+        expected_operations_data = _insert(connection=connection, table=table)
+        expected_operations_data += _update(connection=connection, table=table)
+        expected_operations_data += _delete(connection=connection, table=table)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+    # Verify wiretap data is received in exact order as expected.
+        operation_index = 0
+        for record in wiretap.output_records:
+            # No need to worry about DDL related CDC records. e.g. table creation etc.
+            if record.get_field_data('/change'):
+                # Since we performed each operation (insert, update and delete) on 3 rows,
+                # each CDC  record change contains a list of 3 elements.
+                for i in range(3):
+                    expected = expected_operations_data[operation_index]
+                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                    # For delete operation there are no columnnames and columnvalues fields.
+                    if expected.kind != KIND_FOR_DELETE:
+                        assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                        assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+                    if expected.kind != KIND_FOR_INSERT:
+                        # For update and delete operations verify extra information about old keys.
+                        assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
+                    operation_index += 1
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        if table is not None:
+            table.drop(database.engine)
+            logger.info('Table: %s dropped.', table_name)
+        connection.close()
