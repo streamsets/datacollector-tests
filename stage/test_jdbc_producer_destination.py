@@ -1196,3 +1196,66 @@ def test_mssql_producer_decimal_precision(sdc_builder, sdc_executor, database):
         logger.info('Dropping tables in %s database ...', database.type)
         table_origin.drop(database.engine)
         table_dest.drop(database.engine)
+
+
+@sdc_min_version('4.2.0')
+@database
+def test_jdbc_producer_postgres_partitioned(sdc_builder, sdc_executor, database):
+    """
+    Make sure that PostgreSQL treats partitioned tables as expected.
+    """
+    if not isinstance(database, PostgreSqlDatabase):
+        pytest.skip('Partition test only supported for PostgreSQL')
+
+    table_name = get_random_string(string.ascii_lowercase, 15)
+    part_table_name = get_random_string(string.ascii_lowercase, 15)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    # Generate batch that will repeat the same primary key in the middle of the batch (on third row)
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = """{"id" : 1}\n{"id" : 2}\n{"id" : 3}\n{"id" : 4}"""
+
+    producer = builder.add_stage('JDBC Producer')
+    producer.table_name = table_name
+    producer.field_to_column_mapping = []
+    producer.default_operation = 'INSERT'
+    producer.use_multi_row_operation = True
+    producer.statement_parameter_limit = 4
+    if database.type == 'Oracle':
+        producer.enclose_object_names = True
+
+    source >> producer
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        postgresql_partition_by='RANGE (id)'
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+        database.engine.execute(f"CREATE TABLE {part_table_name} PARTITION OF {table_name} FOR VALUES FROM (1) TO (10)")
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 4
+        assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 0
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 4
+
+        # And similarly the database side should be empty as well
+        result = database.engine.execute(table.select())
+        data_from_database = result.fetchall()
+        result.close()
+        assert len(data_from_database) == 4
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
