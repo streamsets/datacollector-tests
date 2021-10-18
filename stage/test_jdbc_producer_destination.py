@@ -1259,3 +1259,76 @@ def test_jdbc_producer_postgres_partitioned(sdc_builder, sdc_executor, database)
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
+
+
+@sdc_min_version('4.2.0')
+@database
+@pytest.mark.parametrize('rollback_enabled', [True, False])
+def test_jdbc_producer_multirow_with_duplicates_error(sdc_builder, sdc_executor, database, rollback_enabled):
+    """
+    Make sure that when using Multi Row insert, data related errors are send to error stream and the rest of the batch
+    is processed properly.
+    """
+    if isinstance(database, OracleDatabase):
+        pytest.skip('multi_row is not supported on oracle databases')
+
+    table_name = get_random_string(string.ascii_lowercase, 15)
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    # Generate batch that will repeat the same primary key in the middle of the batch (on third row)
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = """{"id" : 1, "u": 1}\n{"id" : 2, "u": 2}\n{"id" : 3, "u": 3}\n{"id" : 4, "u": 4}\n
+    {"id" : 5, "u": 5}\n{"id" : 6, "u": 6}\n{"id" : 7, "u": 1}\n{"id" : 8, "u": 8}"""
+
+    producer = builder.add_stage('JDBC Producer')
+    producer.table_name = table_name
+    producer.field_to_column_mapping = []
+    producer.default_operation = 'INSERT'
+    producer.use_multi_row_operation = True
+    producer.statement_parameter_limit = 4
+    producer.rollback_batch_on_error = rollback_enabled
+    if database.type == 'Oracle':
+        producer.enclose_object_names = True
+
+    source >> producer
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False),
+        sqlalchemy.Column('u', sqlalchemy.Integer, primary_key=True, autoincrement=False)
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Since we are inserting duplicate primary key, the batch should fail
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 8
+        # We are inserting one bad record in 8 records, in 4 statements. This means we will have 2 error records,
+        # as one statement failed
+        assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 2
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 6
+
+        # And similarly the database side should be empty as well
+        result = database.engine.execute(table.select())
+        data_from_database = result.fetchall()
+        result.close()
+        if rollback_enabled or isinstance(database, PostgreSqlDatabase):
+            # When rollback enabled, the whole batch should be rolled back
+            assert len(data_from_database) == 0
+        else:
+            assert len(data_from_database) == 6
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
