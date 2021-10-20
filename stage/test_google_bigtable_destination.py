@@ -153,7 +153,7 @@ def test_google_bigtable_destination_multiple_types(sdc_builder, sdc_executor, g
     try:
         # Produce Google Bigtable records using pipeline.
         logger.info('Starting Big table pipeline and waiting for it to produce records ...')
-        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline, timeout_sec=240)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', batch_size)
 
         logger.info('Stopping Big table Destination pipeline and getting the count of records produced in total ...')
@@ -162,14 +162,21 @@ def test_google_bigtable_destination_multiple_types(sdc_builder, sdc_executor, g
         logger.info('Reading contents from table %s ...', table_name)
         partial_rows = table.read_rows()
         partial_rows.consume_all()
-        read_data = [row for row in partial_rows.rows.items()]
+
+        # https://cloud.google.com/bigtable/docs/overview#data-types Bigtable stores strings as bytechar arrays
+        # and integers are converted to signed bytes.
+        read_data = [(row.cells["cf"]["field1".encode()][0].value.decode(),
+                      int.from_bytes(row.cells["cf"]["field2".encode()][0].value, "big", signed=True))
+                     for row_key, row in partial_rows.rows.items()]
 
         # Verify no errors were generated
         assert len(wiretap.error_records) == 0
 
         # Verify quantity of records in both destinations
-        assert len(read_data) == len(wiretap.output_records)
+        wiretap_data = [(rec.field['field1'],rec.field['field2'])
+                         for rec in wiretap.output_records]
+        assert len(read_data) == len(wiretap_data)
+        assert all([element in read_data for element in wiretap_data])
 
-        assert [element in read_data for element in wiretap.output_records]
     finally:
         table.delete()
