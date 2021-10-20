@@ -24,6 +24,7 @@ import string
 import tempfile
 import time
 import urllib
+import pytest
 
 from collections import namedtuple
 from pretenders.common.constants import FOREVER
@@ -194,12 +195,20 @@ def test_http_client_target_wrong_host(sdc_executor, http_client_pipeline):
 
 @http
 @sdc_min_version("3.11.0")
-def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client, one_request_per_batch):
     """Test HTTP Lookup Processor for HTTP GET method and split the obtained result
     in different records:
 
         dev_raw_data_source >> http_client_processor >> wiretap
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
+
     # The data returned by the HTTP mock server
     data_array = [{'A': i, 'C': i + 1, 'G': i + 2, 'T': i + 3} for i in range(10)]
 
@@ -220,7 +229,9 @@ def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client)
         http_client_processor.set_attributes(data_format='JSON', http_method='GET',
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}',
-                                             multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS')
+                                             multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS',
+                                             **one_request_per_batch_option)
+
         wiretap = builder.add_wiretap()
 
         dev_raw_data_source >> http_client_processor >> wiretap.destination
@@ -243,12 +254,21 @@ def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client)
 
 @http
 @sdc_min_version("3.11.0")
-def test_http_processor_list(sdc_builder, sdc_executor, http_client):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_list(sdc_builder, sdc_executor, http_client, one_request_per_batch):
     """Test HTTP Lookup Processor for HTTP GET method and split the obtained result
     in different elements of the same list stored in just one record:
 
         dev_raw_data_source >> http_client_processor >> wiretap
     """
+
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
+
     # The data returned by the HTTP mock server
     data_array = [{'A': i, 'C': i + 1, 'G': i + 2, 'T': i + 3} for i in range(10)]
 
@@ -269,7 +289,8 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
         http_client_processor.set_attributes(data_format='JSON', http_method='GET',
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}',
-                                             multiple_values_behavior='ALL_AS_LIST')
+                                             multiple_values_behavior='ALL_AS_LIST',
+                                             **one_request_per_batch_option)
         wiretap = builder.add_wiretap()
 
         dev_raw_data_source >> http_client_processor >> wiretap.destination
@@ -295,7 +316,8 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client):
 
 @http
 @sdc_min_version("3.17.0")
-def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, http_client):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, http_client, one_request_per_batch):
     """
     Test when the http processor stage has the response action set up with the "Cause Stage to fail" option.
     To test this we force the URL to be a not available so we get a 404 response from the mock http server. An
@@ -305,6 +327,13 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
     dev_raw_data_source >> http_client_processor >> wiretap
 
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
+
     mock_path = get_random_string(string.ascii_letters, 10)
     fake_mock_path = get_random_string(string.ascii_letters, 10)
     raw_dict = dict(city='San Francisco')
@@ -328,7 +357,8 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                              http_method='GET', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}')
+                                             output_field=f'/{record_output_field}',
+                                             **one_request_per_batch_option)
         http_client_processor.per_status_actions = [
             {
               'statusCode': 404,
@@ -351,7 +381,8 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
 
 @http
 @sdc_min_version("3.17.0")
-def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, http_client):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, http_client, one_request_per_batch):
     """
     Test when the http processor stage has the response action set up with the "Generate Error Record" option.
     To test this we force the URL to be a not available so we get a 404 response from the mock http server. The output
@@ -360,6 +391,13 @@ def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, 
     We use the pipeline:
          dev_raw_data_source >> http_client_processor >> wiretap
 """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
+
     mock_path = get_random_string(string.ascii_letters, 10)
     fake_mock_path = get_random_string(string.ascii_letters, 10)
     raw_dict = dict(city='San Francisco')
@@ -383,7 +421,9 @@ def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, 
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                              http_method='GET', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}')
+                                             output_field=f'/{record_output_field}',
+                                             **one_request_per_batch_option)
+
         http_client_processor.per_status_actions = [
             {
                 'statusCode': 404,
@@ -405,7 +445,8 @@ def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, 
 
 @http
 @sdc_min_version("3.17.0")
-def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_client):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_client, one_request_per_batch):
     """
         Test when the http processor stage has the config option "Records for remaining statuses" set. To test this we
         force the URL to be a not available so we get a 404 response from the mock http server. The output should be
@@ -414,6 +455,13 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
         We use the pipeline:
              dev_raw_data_source >> http_client_processor >> wiretap
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
+
     mock_path = get_random_string(string.ascii_letters, 10)
     fake_mock_path = get_random_string(string.ascii_letters, 10)
     raw_dict = dict(city='San Francisco')
@@ -437,9 +485,11 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                              http_method='GET', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}')
+                                             output_field=f'/{record_output_field}',
+                                             **one_request_per_batch_option)
         http_client_processor.records_for_remaining_statuses = True
         http_client_processor.error_response_body_field = 'errorField'
+
         wiretap = builder.add_wiretap()
         dev_raw_data_source >> http_client_processor >> wiretap.destination
         pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions')
@@ -454,7 +504,8 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
 
 @http
 @sdc_min_version("3.17.0")
-def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, http_client):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, http_client, one_request_per_batch):
     """
         When the Batch Wait Time is not big enough and there is a retry action configured it can be the batch time
         expires before the number of retries is finished yet. In this case an stage error must be raised explaining
@@ -463,6 +514,13 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
         We use the pipeline:
              dev_raw_data_source >> http_client_processor >> trash
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
+
     mock_path = get_random_string(string.ascii_letters, 10)
     fake_mock_path = get_random_string(string.ascii_letters, 10)
     raw_dict = dict(city='San Francisco')
@@ -486,7 +544,9 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                              http_method='GET', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}')
+                                             output_field=f'/{record_output_field}',
+                                             **one_request_per_batch_option)
+
         http_client_processor.records_for_remaining_statuses = False
         http_client_processor.batch_wait_time_in_ms = 150
         http_client_processor.multiple_values_behavior = 'ALL_AS_LIST'
@@ -531,7 +591,9 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
     ('RETRY_IMMEDIATELY', 'LINK_FIELD'),
 ])
 @sdc_min_version("3.17.0")
-def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, http_client, retry_action, pagination_option):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, http_client, retry_action,
+                                                    pagination_option, one_request_per_batch):
     """
         Test when a pagination option is set up and a retry action is set up and the maximum number
         of retries is exhausted then the error saying the number of retries is exceeded is risen.
@@ -539,6 +601,13 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
         We use the pipeline:
              dev_raw_data_source >> http_client_processor >> trash
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
+
     rand_pipeline_name = get_random_string(string.ascii_letters, 10)
     mock_path = get_random_string(string.ascii_letters, 10)
     fake_mock_path = get_random_string(string.ascii_letters, 10)
@@ -563,7 +632,8 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                              http_method='GET', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}')
+                                             output_field=f'/{record_output_field}',
+                                             **one_request_per_batch_option)
 
         http_client_processor.records_for_remaining_statuses = False
         http_client_processor.batch_wait_time_in_ms = 500000
@@ -597,13 +667,20 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
         http_mock.delete_mock()
 
 
-def test_http_processor_wrong_url(sdc_builder, sdc_executor):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_wrong_url(sdc_builder, sdc_executor, one_request_per_batch):
     """Test HTTP Lookup Processor for a wrong URL. This should produce one
     error record. This test ensures there are no multiple error records created
     for each request. That is solved on SDC-16691
 
         dev_raw_data_source >> http_client_processor >> wiretap
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
     raw_dict = dict(city='San Francisco')
     raw_data = json.dumps(raw_dict)
@@ -619,7 +696,10 @@ def test_http_processor_wrong_url(sdc_builder, sdc_executor):
     http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
                                          http_method='GET',
                                          resource_url=mock_uri,
-                                         output_field=f'/result')
+                                         output_field=f'/result',
+                                         **one_request_per_batch_option)
+
+
     wiretap = builder.add_wiretap()
 
     dev_raw_data_source >> http_client_processor >> wiretap.destination
@@ -637,13 +717,21 @@ def test_http_processor_wrong_url(sdc_builder, sdc_executor):
     # Testing of SDC-10809
     'PATCH'
 ])
-def test_http_processor(sdc_builder, sdc_executor, http_client, method):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor(sdc_builder, sdc_executor, http_client, method, one_request_per_batch):
     """Test HTTP Lookup Processor for various HTTP methods. We do so by
     sending a request to a pre-defined HTTP server endpoint
     (testPostJsonEndpoint) and getting expected data. The pipeline looks like:
 
         dev_raw_data_source >> http_client_processor >> wiretap
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
+
     raw_dict = dict(city='San Francisco')
     raw_data = json.dumps(raw_dict)
     expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
@@ -678,7 +766,9 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method):
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                              http_method=method, request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}')
+                                             output_field=f'/{record_output_field}',
+                                             **one_request_per_batch_option)
+
         wiretap = builder.add_wiretap()
 
         dev_raw_data_source >> http_client_processor >> wiretap.destination
@@ -1228,7 +1318,8 @@ def test_http_server_remote_vault(sdc_builder, sdc_executor, http_client, creden
     'PASS_RECORD_ON',
     'SEND_TO_ERROR'
 ])
-def test_http_processor_response_json_empty(sdc_builder, sdc_executor, http_client, miss_val_bh):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_response_json_empty(sdc_builder, sdc_executor, http_client, miss_val_bh, one_request_per_batch):
     """
     Test when the http processor stage has as a response an empty JSON.
 
@@ -1237,6 +1328,13 @@ def test_http_processor_response_json_empty(sdc_builder, sdc_executor, http_clie
 
     Test for SDC-15335.
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
+
     raw_dict = dict(city='San Francisco')
     raw_data = json.dumps(raw_dict)
 
@@ -1265,7 +1363,9 @@ def test_http_processor_response_json_empty(sdc_builder, sdc_executor, http_clie
                                              http_method='POST', request_data="${record:value('/text')}",
                                              resource_url=mock_uri,
                                              output_field=f'/{record_output_field}',
-                                             missing_values_behavior=miss_val_bh)
+                                             missing_values_behavior=miss_val_bh,
+                                             **one_request_per_batch_option)
+
         wiretap = builder.add_wiretap()
 
         dev_raw_data_source >> http_client_processor >> wiretap.destination
@@ -1304,7 +1404,15 @@ def test_http_processor_response_json_empty(sdc_builder, sdc_executor, http_clie
     'HEAD',
     'PATCH'
 ])
-def test_http_processor_with_body(sdc_builder, sdc_executor, method, http_client, keep_data):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_with_body(sdc_builder, sdc_executor, method, http_client, keep_data, one_request_per_batch):
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
+
     expected_data = json.dumps({'A': 1})
     mock_path = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
@@ -1322,7 +1430,9 @@ def test_http_processor_with_body(sdc_builder, sdc_executor, method, http_client
         processor.set_attributes(data_format='JSON', http_method=method,
                                  resource_url=mock_uri,
                                  output_field='/result',
-                                 request_data="{'something': 'here'}")
+                                 request_data="{'something': 'here'}",
+                                 **one_request_per_batch_option)
+
         wiretap = builder.add_wiretap()
 
         origin >> processor >> wiretap.destination
@@ -1442,7 +1552,16 @@ def test_http_destination_with_body(sdc_builder, sdc_executor, method, http_clie
     'HEAD',
     'PATCH'
 ])
-def test_http_processor_duplicate_requests(sdc_builder, sdc_executor, method, http_client, keep_data):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_duplicate_requests(sdc_builder, sdc_executor, method, http_client, keep_data,
+                                           one_request_per_batch):
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
+
     expected_data = json.dumps({'A': 1})
     mock_path = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
@@ -1461,7 +1580,9 @@ def test_http_processor_duplicate_requests(sdc_builder, sdc_executor, method, ht
                                  resource_url=mock_uri,
                                  output_field='/result',
                                  request_data="{'something': 'here'}",
-                                 multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS')
+                                 multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS',
+                                 **one_request_per_batch_option)
+
         wiretap = builder.add_wiretap()
 
         origin >> processor >> wiretap.destination
@@ -1507,12 +1628,14 @@ def test_http_processor_duplicate_requests(sdc_builder, sdc_executor, method, ht
                              True,
                              False
                          ])
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
 def test_http_client_processor_timeout(sdc_builder,
                                        sdc_executor,
                                        http_client,
                                        timeout_mode,
                                        timeout_action,
-                                       pass_record):
+                                       pass_record,
+                                       one_request_per_batch):
     """
         Test timeout handling for HTTP Client Processor.
         We get a Connection Timeout using a non-routable IP in resource_url
@@ -1520,6 +1643,12 @@ def test_http_client_processor_timeout(sdc_builder,
         We get a Request Timeout using an extremely low maximum_request_time_in_sec
         We get a Record Processing Timeout using an extremely low batch_wait_time_in_ms
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
     try:
 
@@ -1604,7 +1733,9 @@ def test_http_client_processor_timeout(sdc_builder,
                                              max_retries=retries,
                                              pass_record=pass_record,
                                              records_for_remaining_statuses=False,
-                                             missing_values_behavior='SEND_TO_ERROR')
+                                             missing_values_behavior='SEND_TO_ERROR',
+                                             **one_request_per_batch_option)
+
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -1713,49 +1844,60 @@ def test_http_client_processor_timeout(sdc_builder,
                              True,
                              False
                          ])
+@pytest.mark.parametrize("one_request_per_batch",
+                         [
+                            True,
+                            False
+                         ])
 def test_http_client_processor_passthrough(sdc_builder,
                                            sdc_executor,
                                            http_client,
                                            http_status,
                                            exhausted_action,
                                            pass_record,
-                                           pass_record_other_status):
+                                           pass_record_other_status,
+                                           one_request_per_batch):
     """
         Test exhausted handling for HTTP Client Processor.
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
+
+    logger.info(f'Running test: {http_status} - {exhausted_action} - {pass_record} - {pass_record_other_status}')
+
+    record_output_field = 'oteai'
+    one_millisecond = 1000
+    wait_seconds = 1
+    retries = 2
+    interval = 2000
+    no_time = 0
+    short_time = 1
+    long_time = (one_millisecond * wait_seconds * (retries + 2)) * 10
+
+    http_mock_server = http_client.mock()
+    http_mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock_content = dict(kisei='Kobayashi Koichi', meijin='Ishida Yoshio', honinbo='Takemiya Masaki')
+    http_mock_data = json.dumps(http_mock_content)
+
+    http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
+                                                               body=http_mock_data,
+                                                               status=http_status,
+                                                               headers={'Content-Type': 'application/json'},
+                                                               times=FOREVER)
+
+    http_mock_url = f'{http_mock_server.pretend_url}/{http_mock_path}'
+
+    resource_url = http_mock_url
+    connect_timeout = long_time
+    read_timeout = long_time
+    maximum_request_time_in_sec = long_time
+    batch_wait_time_in_ms = long_time
 
     try:
-
-        logger.info(f'Running test: {http_status} - {exhausted_action} - {pass_record} - {pass_record_other_status}')
-
-        record_output_field = 'oteai'
-        one_millisecond = 1000
-        wait_seconds = 1
-        retries = 2
-        interval = 2000
-        no_time = 0
-        short_time = 1
-        long_time = (one_millisecond * wait_seconds * (retries + 2)) * 10
-
-        http_mock_server = http_client.mock()
-        http_mock_path = get_random_string(string.ascii_letters, 10)
-        http_mock_content = dict(kisei='Kobayashi Koichi', meijin='Ishida Yoshio', honinbo='Takemiya Masaki')
-        http_mock_data = json.dumps(http_mock_content)
-
-        http_mock_server.when(rule=f'GET /{http_mock_path}').reply(after=wait_seconds,
-                                                                   body=http_mock_data,
-                                                                   status=http_status,
-                                                                   headers={'Content-Type': 'application/json'},
-                                                                   times=FOREVER)
-
-        http_mock_url = f'{http_mock_server.pretend_url}/{http_mock_path}'
-
-        resource_url = http_mock_url
-        connect_timeout = long_time
-        read_timeout = long_time
-        maximum_request_time_in_sec = long_time
-        batch_wait_time_in_ms = long_time
-
         pipeline_name = f'{http_status} - {exhausted_action} - {pass_record} - {pass_record_other_status}' \
                         f' - {get_random_string(string.ascii_letters, 10)}'
         pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -1778,7 +1920,9 @@ def test_http_client_processor_passthrough(sdc_builder,
                                              batch_wait_time_in_ms=batch_wait_time_in_ms,
                                              action_for_timeout='STAGE_ERROR',
                                              records_for_remaining_statuses=pass_record_other_status,
-                                             missing_values_behavior='SEND_TO_ERROR')
+                                             missing_values_behavior='SEND_TO_ERROR',
+                                             **one_request_per_batch_option)
+
         http_client_processor.per_status_actions = [{
             'statusCode': 500,
             'action': exhausted_action,
@@ -1856,7 +2000,6 @@ def test_http_client_processor_passthrough(sdc_builder,
             assert pipeline_status == 'FINISHED'
 
     finally:
-
         http_mock_server.delete_mock()
 
 
@@ -1880,15 +2023,23 @@ def test_http_client_processor_passthrough(sdc_builder,
                              True,
                              False
                          ])
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
 def test_http_client_processor_alternating_status(sdc_builder,
                                                   sdc_executor,
                                                   http_client,
                                                   exhausted_action,
                                                   pass_record,
-                                                  pass_record_other_status):
+                                                  pass_record_other_status,
+                                                  one_request_per_batch):
     """
         Test exhausted handling for HTTP Client Processor with alternating status.
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
     try:
 
@@ -1979,7 +2130,8 @@ def test_http_client_processor_alternating_status(sdc_builder,
                                              batch_wait_time_in_ms=batch_wait_time_in_ms,
                                              action_for_timeout='STAGE_ERROR',
                                              records_for_remaining_statuses=pass_record_other_status,
-                                             missing_values_behavior='SEND_TO_ERROR')
+                                             missing_values_behavior='SEND_TO_ERROR',
+                                             **one_request_per_batch_option)
         http_client_processor.per_status_actions = [
             {
                 'statusCode': 404,
@@ -2076,15 +2228,23 @@ def test_http_client_processor_alternating_status(sdc_builder,
                              True,
                              False
                          ])
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
 def test_http_client_processor_alternating_status_timeout(sdc_builder,
                                                           sdc_executor,
                                                           http_client,
                                                           exhausted_action,
                                                           pass_record,
-                                                          pass_record_other_status):
+                                                          pass_record_other_status,
+                                                          one_request_per_batch):
     """
         Test exhausted handling for HTTP Client Processor with alternating status and timeout.
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
     try:
 
@@ -2179,7 +2339,8 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
                                              pass_record=pass_record,
                                              action_for_timeout='RETRY_IMMEDIATELY',
                                              records_for_remaining_statuses=pass_record_other_status,
-                                             missing_values_behavior='SEND_TO_ERROR')
+                                             missing_values_behavior='SEND_TO_ERROR',
+                                             **one_request_per_batch_option)
         http_client_processor.per_status_actions = [
             {
                 'statusCode': 500,
@@ -2279,15 +2440,23 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
                              'existence'
                          ])
 @sdc_min_version("4.0.0")
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
 def test_http_processor_pagination_with_empty_response(sdc_builder,
                                                        sdc_executor,
                                                        http_client,
                                                        pagination_mode,
                                                        pagination_end_mode,
-                                                       stop_condition):
+                                                       stop_condition,
+                                                       one_request_per_batch):
     """
         Test when a pagination option is set up and last page is empty.
     """
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
     try:
 
@@ -2482,7 +2651,8 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
                                              result_field_path='/tournaments',
                                              multiple_values_behavior='ALL_AS_LIST',
                                              next_page_link_field='/next_page',
-                                             stop_condition=f'{condition}')
+                                             stop_condition=f'{condition}',
+                                             **one_request_per_batch_option)
 
         # Must do it like this because the attribute name has the '/' char
         setattr(http_client_processor, 'initial_page/offset', 1)
@@ -2767,7 +2937,15 @@ def test_http_target_metrics(sdc_builder, sdc_executor, http_client, run_mode):
                              'status_error'
                          ])
 @sdc_min_version("4.2.0")
-def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode, one_request_per_batch):
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
+
     expected_data = json.dumps({'A': 1})
     mock_path = get_random_string(string.ascii_letters, 10)
     mock_wrong_path = get_random_string(string.ascii_letters, 10)
@@ -2814,7 +2992,8 @@ def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode
                                  read_timeout=timeout_time,
                                  output_field='/result',
                                  request_data="{'something': 'here'}",
-                                 multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS')
+                                 multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS',
+                                 **one_request_per_batch_option)
 
         wiretap = builder.add_wiretap()
 
@@ -2863,7 +3042,15 @@ def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode
 
 @http
 @sdc_min_version("4.2.0")
-def test_http_processor_pagination_metrics(sdc_builder, sdc_executor, http_client):
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_pagination_metrics(sdc_builder, sdc_executor, http_client, one_request_per_batch):
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
+
     pagination_mode='BY_PAGE'
 
     try:
@@ -2993,7 +3180,8 @@ def test_http_processor_pagination_metrics(sdc_builder, sdc_executor, http_clien
                                              result_field_path='/tournaments',
                                              multiple_values_behavior='ALL_AS_LIST',
                                              next_page_link_field='/next_page',
-                                             stop_condition=f'{condition}')
+                                             stop_condition=f'{condition}',
+                                             **one_request_per_batch_option)
 
         # Must do it like this because the attribute name has the '/' char
         setattr(http_client_processor, 'initial_page/offset', 1)
@@ -3080,3 +3268,603 @@ def _get_metrics(history, run_mode):
             'custom.HTTPClient_01.Subsequent Pages Resolution.0.timer').count
 
     return metrics
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_json(sdc_builder, sdc_executor, http_client):
+    """ Test that the batch is sent correctly and the response record is generated properly,
+    when the singleRequestPerBatch is set to true. """
+
+    expected_response = {"mocked_response": "ok"}
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(json.dumps(expected_response), times=FOREVER)
+
+    try:
+        record_output_field = 'result'
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             resource_url=mock_uri,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}')
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Ensure when there is a single request per batch and it works fine, only one response record is generated
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field[record_output_field] == expected_response
+
+        # Ensure the request was done with the entire batch
+        assert len(http_mock.get_request()) == 1
+
+        assert json.loads(http_mock.get_request(0).body.decode("utf-8")) == raw_data
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_multipage(sdc_builder, sdc_executor, http_client):
+    """ Test that when the singleRequestPerBatch is set to true and the stage should navigate through multiple pages,
+    it does correctly and send the whole same batch for every page. """
+
+    record_output_field = 'result'
+
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+
+    http_mock.when(f'POST /{mock_path}\\?p=[0-1]').reply(
+        headers={'Content-Type': 'application/json'},
+        body=json.dumps({"result": [{"status": "ok"}]}),
+        times=FOREVER)
+    http_mock.when(f'POST /{mock_path}\\?p=2').reply(
+        headers={'Content-Type': 'application/json'},
+        body=json.dumps({"result": []}),
+        times=FOREVER)
+
+    try:
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        resource_url = f"{mock_uri}?p=${{startAt}}"
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             pagination_mode="BY_PAGE",
+                                             result_field_path="/result",  # pagination result field path
+                                             multiple_values_behavior="SPLIT_INTO_MULTIPLE_RECORDS",
+                                             resource_url=resource_url,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}')
+        setattr(http_client_processor, 'initial_page/offset', 0)
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # There is one response per page, so two records because we set the configuration to split results into
+        # multiple records.
+        assert len(wiretap.output_records) == 2
+        assert wiretap.output_records[0].field[record_output_field] == {"status": "ok"}
+
+        # Should be in total 3 request. The last response is void and so it stops paginating
+        assert len(http_mock.get_request()) == 3
+
+        # All requests should be with the whole batch even the last one that does not provide any more data
+        for i in range(3):
+            assert json.loads(http_mock.get_request(i).body.decode("utf-8")) == raw_data
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_action_retry(sdc_builder, sdc_executor, http_client):
+    """ Test the stage produce the output record properly when there is a retry action and the first request fails and
+    the singleRequestPerBatch is true. """
+
+    expected_response = {"mocked_response": "ok"}
+    record_output_field = 'result'
+
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(status=500,
+                                               body=json.dumps(expected_response),
+                                               headers={'Content-Type': 'application/json'},
+                                               times=1)
+    http_mock.when(f'POST /{mock_path}').reply(status=200,
+                                               body=json.dumps(expected_response),
+                                               headers={'Content-Type': 'application/json'},
+                                               times=1)
+
+    try:
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             resource_url=mock_uri,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}',
+                                             per_status_actions=[
+                                                 {
+                                                     "statusCode": 500,
+                                                     "action": "RETRY_IMMEDIATELY",
+                                                     "backoffInterval": 1,
+                                                     "passRecord": False,
+                                                     "maxNumRetries": 1
+                                                 }
+                                             ])
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Ensure both requests was done with the entire batch
+        assert len(http_mock.get_request()) == 2
+        for i in range(2):
+            assert json.loads(http_mock.get_request(i).body.decode("utf-8")) == raw_data
+
+        # Ensure when there is a single request per batch and it works fine, only one response record is generated
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field[record_output_field] == expected_response
+
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_response_204(sdc_builder, sdc_executor, http_client):
+    """ Test that when there is a 204 response and the response body is null and the singleRequestPerBatch is true, the
+    output record contains all the input records data as a string analogously with what happens when the
+    singleRequestPerBatch option is set to false. """
+
+    record_output_field = 'result'
+
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(status=204,
+                                               body="",
+                                               times=FOREVER)
+    try:
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             resource_url=mock_uri,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}')
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # When there is a 204 the response body can be void, in this case the stage returns all the records
+        # data in the same response record as a list of fields.
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field[record_output_field] == raw_data
+
+        # Ensure the request was done with the entire batch
+        assert len(http_mock.get_request()) == 1
+        assert json.loads(http_mock.get_request(0).body.decode("utf-8")) == raw_data
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_action_passthrough(sdc_builder, sdc_executor, http_client):
+    """ Test that the records in the batch are sent correctly to the output when there is a retry action and it fails in
+    all its retries and passRecord is set to true and the singleRequestPerBatch is set to true. """
+
+    expected_response = {"mocked_response": "ok"}
+    record_output_field = 'result'
+
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(status=500,
+                                               body=json.dumps(expected_response),
+                                               headers={'Content-Type': 'application/json'},
+                                               times=FOREVER)
+
+    try:
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             resource_url=mock_uri,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}',
+                                             per_status_actions=[
+                                                 {
+                                                     "statusCode": 500,
+                                                     "action": "RETRY_IMMEDIATELY",
+                                                     "backoffInterval": 1,
+                                                     "passRecord": True,
+                                                     "maxNumRetries": 1
+                                                 }
+                                             ])
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Ensure both requests was done with the entire batch
+        # assert len(http_mock.get_request()) == 2 # To be fixed in COLLECTOR-398
+        for i in range(2):
+            assert json.loads(http_mock.get_request(i).body.decode("utf-8")) == raw_data
+
+        # Both requests failed but the records where passed to the next stage so that there are no error records
+        assert len(wiretap.error_records) == 0
+
+        # Ensure that those records were passed to the wiretap
+        assert len(wiretap.output_records) == len(raw_data)
+        assert wiretap.output_records[0].field == raw_data[0]
+        assert wiretap.output_records[1].field == raw_data[1]
+        assert wiretap.output_records[2].field == raw_data[2]
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_missing_values_behavior_to_error(sdc_builder, sdc_executor, http_client):
+    """ Test that all records in the batch are sent to error when it is configured to do so on missing values on the
+    response """
+    record_output_field = 'result'
+
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(status=200,
+                                               body=json.dumps([]),
+                                               headers={'Content-Type': 'application/json'},
+                                               times=FOREVER)
+
+    try:
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             resource_url=mock_uri,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}',
+                                             missing_values_behavior="SEND_TO_ERROR")
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Ensure all records in the batch are sent to error
+        assert len(wiretap.output_records) == 0
+        assert len(wiretap.error_records) == len(raw_data)
+        assert wiretap.error_records[0].field == raw_data[0]
+        assert wiretap.error_records[1].field == raw_data[1]
+        assert wiretap.error_records[2].field == raw_data[2]
+
+        # Ensure the request was done with the entire batch
+        assert len(http_mock.get_request()) == 1
+        assert json.loads(http_mock.get_request(0).body.decode("utf-8")) == raw_data
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_missing_values_behavior_passthrough(sdc_builder, sdc_executor, http_client):
+    """ Test that all records in the batch are sent to the next stage when it is configured to do so on missing
+    values on the response """
+    record_output_field = 'result'
+
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(status=200,
+                                               body=json.dumps([]),
+                                               headers={'Content-Type': 'application/json'},
+                                               times=FOREVER)
+
+    try:
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             resource_url=mock_uri,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}',
+                                             missing_values_behavior="PASS_RECORD_ON")
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Ensure all records in the batch are sent to the next stage instead of to the error
+        assert len(wiretap.error_records) == 0
+        assert len(wiretap.output_records) == len(raw_data)
+        assert wiretap.output_records[0].field == raw_data[0]
+        assert wiretap.output_records[1].field == raw_data[1]
+        assert wiretap.output_records[2].field == raw_data[2]
+
+        # Ensure the request was done with the entire batch
+        assert len(http_mock.get_request()) == 1
+        assert json.loads(http_mock.get_request(0).body.decode("utf-8")) == raw_data
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_error_passthrough(sdc_builder, sdc_executor, http_client):
+    """ Test that all records are sent to the next stage when the status code of the response indicates that has been
+     an error and there are no actions that handle it and the records_for_remaining_statuses is set to true"""
+    record_output_field = 'result'
+
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(status=500,
+                                               body="There is an error",
+                                               headers={'Content-Type': 'application/json'},
+                                               times=1)
+
+    try:
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             resource_url=mock_uri,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}',
+                                             records_for_remaining_statuses=True,
+                                             per_status_actions=[])
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Ensure all records in the batch are sent to the next stage instead of to the error
+        assert len(wiretap.error_records) == 0
+        assert len(wiretap.output_records) == len(raw_data)
+        assert wiretap.output_records[0].field == {**raw_data[0], "result": {"outErrorBody": "There is an error"}}
+        assert wiretap.output_records[1].field == {**raw_data[1], "result": {"outErrorBody": "There is an error"}}
+        assert wiretap.output_records[2].field == {**raw_data[2], "result": {"outErrorBody": "There is an error"}}
+
+        # TODO I would like to check out the headers. e.g. the 'HTTP-Status' one.
+
+        # Ensure the request was done with the entire batch
+        assert len(http_mock.get_request()) == 1
+        assert json.loads(http_mock.get_request(0).body.decode("utf-8")) == raw_data
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.3.0")
+def test_http_post_batch_error(sdc_builder, sdc_executor, http_client):
+    """ Test that all records are sent to error when the status code of the response indicates that has been
+     an error and there are no actions that handle it """
+    record_output_field = 'result'
+
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(status=500,
+                                               body="There is an error",
+                                               headers={'Content-Type': 'application/json'},
+                                               times=1)
+
+    try:
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+        raw_data = [
+            {"a": "dummy1"},
+            {"b": "dummy1"},
+            {"c": "dummy1"},
+        ]
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps(raw_data),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             request_data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             one_request_per_batch=True,
+                                             resource_url=mock_uri,
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field=f'/{record_output_field}',
+                                             records_for_remaining_statuses=False,
+                                             per_status_actions=[])
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Ensure all records in the batch are sent to the next stage instead of to the error
+        assert len(wiretap.output_records) == 0
+        assert len(wiretap.error_records) == len(raw_data)
+        assert wiretap.error_records[0].field == raw_data[0]
+        assert wiretap.error_records[1].field == raw_data[1]
+        assert wiretap.error_records[2].field == raw_data[2]
+
+        # Ensure the request was done with the entire batch
+        assert len(http_mock.get_request()) == 1
+        assert json.loads(http_mock.get_request(0).body.decode("utf-8")) == raw_data
+    finally:
+        http_mock.delete_mock()
