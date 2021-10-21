@@ -1235,7 +1235,7 @@ def test_jdbc_producer_postgres_partitioned(sdc_builder, sdc_executor, database)
     table = sqlalchemy.Table(
         table_name,
         metadata,
-        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False),
         postgresql_partition_by='RANGE (id)'
     )
     try:
