@@ -15,6 +15,7 @@
 # A module providing utils for working with Salesforce
 
 import logging
+import requests
 import string
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -163,6 +164,8 @@ while hasNext:
 """
 
 FORCE_13_HARD_DELETE_PERMISSION = "FORCE_13 - Error writing to Salesforce: , FeatureNotEnabled : hardDelete operation requires special user profile permission, please contact your system administrator"
+
+USERINFO_URL_FORMAT = "https://{}/services/oauth2/userinfo"
 
 def set_up_random(salesforce):
     """" This function is used to generate unique set of values for each test.
@@ -510,10 +513,16 @@ def verify_analytics_data(client, edgemart_alias, test_data, order_key, multiple
                 pass
 
 
+def get_current_user_id(client):
+    # Can't use simple_salesforce for userinfo service URL
+    userinfo_url = USERINFO_URL_FORMAT.format(client.sf_instance)
+    r = requests.get(userinfo_url, headers={'Authorization':  'Bearer ' + client.session_id})
+    assert r.status_code == 200
+    return r.json()['user_id']
+
 def assign_hard_delete(client):
     # Get Id of current user
-    result = client.restful('chatter/users/me')
-    user_id = result['id']
+    user_id = get_current_user_id(client)
 
     # Create a permission set to allow hard delete
     result = client.PermissionSet.create({
@@ -535,8 +544,7 @@ def assign_hard_delete(client):
 
 def revoke_hard_delete(client):
     # Get Id of current user
-    result = client.restful('chatter/users/me')
-    user_id = result['id']
+    user_id = get_current_user_id(client)
 
     # Find permission set
     result = client.query('SELECT Id FROM PermissionSet'
