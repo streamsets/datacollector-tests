@@ -19,6 +19,7 @@ import logging
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import Version
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +66,12 @@ def test_field_decrypt(sdc_builder, sdc_executor, aws):
                                         field_type_converter_configs=field_type_converter_configs)
 
     base64_decoder = pipeline_builder.add_stage('Base64 Field Decoder', type='processor')
-    base64_decoder.set_attributes(field_to_decode='/message',
-                                  target_field='/message')
+    if Version(sdc_builder.version) < Version("4.3.0"):
+        base64_decoder.set_attributes(field_to_decode='/message', target_field='/message')
+    else:
+        base64_decoder.set_attributes(
+            fields_to_decode=[{'originFieldPath': '/message', 'resultFieldPath': '/message'}]
+        )
 
     field_decrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
     field_decrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
