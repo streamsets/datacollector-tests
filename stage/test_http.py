@@ -2695,7 +2695,7 @@ def test_http_target_metrics(sdc_builder, sdc_executor, http_client, run_mode):
             resource_url = f'{http_mock.pretend_url}/{mock_path}'
             timeout_time = long_time
         elif run_mode == 'timeout_error':
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=short_time)
             resource_url = f'{http_mock.pretend_url}/{mock_path}'
             timeout_time = short_time
         elif run_mode == 'status_error':
