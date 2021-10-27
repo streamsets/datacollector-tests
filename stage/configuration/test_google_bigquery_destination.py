@@ -24,6 +24,8 @@ from streamsets.testframework.decorators import stub
 
 logger = logging.getLogger(__name__)
 
+DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_bigquery_destination_BigQueryDTarget'
+
 pytestmark = [pytest.mark.category('nonstandard')]
 
 
@@ -85,7 +87,7 @@ def test_on_record_error(sdc_builder, sdc_executor, gcp, stage_attributes):
 
     dataset = get_random_string(ascii_lowercase, 10)
     table_name = '${record:value(\'/table\')}'
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset,
                                    table_name=table_name,
                                    stage_on_record_error=stage_attributes['on_record_error'])

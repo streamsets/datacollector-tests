@@ -24,6 +24,8 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+name=DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_bigquery_destination_BigQueryDTarget'
+
 pytestmark = [pytest.mark.category('nonstandard')]
 
 ROWS_EXPECTED = [('Cristiano Ronaldo', 32),
@@ -61,7 +63,7 @@ def test_google_bigquery_destination(sdc_builder, sdc_executor, gcp):
 
     dataset_name = get_random_string(ascii_letters, 5)
     table_name = get_random_string(ascii_letters, 5)
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
                                    table_name=table_name)
 
@@ -125,7 +127,7 @@ def test_google_bigquery_destination_multiple_types(sdc_builder, sdc_executor, g
 
     dataset_name = get_random_string(ascii_letters, 5)
     table_name = get_random_string(ascii_letters, 5)
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
                                    table_name=table_name,
                                    stage_on_record_error='TO_ERROR')
@@ -208,7 +210,7 @@ def test_google_bigquery_destination_empty_table_name_error(sdc_builder, sdc_exe
     # Google BigQuery Destination
     dataset_name = 'dont_care'
     table_name = '${record:value(\'/table\')}'
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
                                    table_name=table_name,
                                    stage_on_record_error='TO_ERROR')

@@ -26,6 +26,8 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_bigquery_destination_BigQueryDTarget'
+
 pytestmark = [pytest.mark.category('standard')]
 
 bytes_column = base64.b64encode("dataAsBytes".encode('utf-8'))
@@ -137,7 +139,7 @@ def test_data_type(sdc_builder, sdc_executor, gcp, origin_data_type, gcp_data_ty
     dataset_name = get_random_string(string.ascii_letters, 5)
     table_name = get_random_string(string.ascii_letters, 5)
 
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
                                    table_name=table_name)
 
@@ -203,7 +205,7 @@ def test_object_names_tables(sdc_builder, sdc_executor, gcp, table_name):
     table_name = f'{table_name}_{get_random_string(string.ascii_letters, 5)}'
     dataset_name = get_random_string(string.ascii_letters, 5)
 
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
                                    table_name=table_name)
 
@@ -262,7 +264,7 @@ def test_object_names_datasets(sdc_builder, sdc_executor, gcp, dataset_name):
     # If tests fail for any reason, leftovers with equal names might lead to more errors
     dataset_name = f'{dataset_name}_{get_random_string(string.ascii_letters, 5)}'
 
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
                                    table_name=table_name)
 
@@ -325,7 +327,7 @@ def test_object_names_columns(sdc_builder, sdc_executor, gcp, column_name):
     dataset_name = get_random_string(string.ascii_letters, 5)
     table_name = get_random_string(string.ascii_letters, 5)
 
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
                                    table_name=table_name)
 
@@ -388,7 +390,7 @@ def test_multiple_batch(sdc_builder, sdc_executor, gcp, number_batches):
 
     dataset_name = get_random_string(string.ascii_letters, 5)
     table_name = get_random_string(string.ascii_letters, 5)
-    google_bigquery = pipeline_builder.add_stage('Google BigQuery', type='destination')
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
     google_bigquery.set_attributes(dataset=dataset_name,
                                    table_name=table_name)
 
