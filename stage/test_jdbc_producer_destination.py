@@ -21,7 +21,7 @@ import pytest
 import sqlalchemy
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -1206,6 +1206,9 @@ def test_jdbc_producer_postgres_partitioned(sdc_builder, sdc_executor, database)
     """
     if not isinstance(database, PostgreSqlDatabase):
         pytest.skip('Partition test only supported for PostgreSQL')
+    postgres_version = database.engine.execute("SELECT current_setting('server_version');").fetchall()[0][0]
+    if Version(postgres_version) < Version(10):
+        pytest.skip('Partition test only supported for PostgreSQL with version greater than 10')
 
     table_name = get_random_string(string.ascii_lowercase, 15)
     part_table_name = get_random_string(string.ascii_lowercase, 15)
