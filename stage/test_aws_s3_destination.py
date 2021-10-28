@@ -206,7 +206,7 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
     try:
         client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt', Body=data.encode('ascii'))
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
 
         # Validate event generation
         assert len(wiretap.output_records) == 1
@@ -223,6 +223,8 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
         s3_contents = s3_obj_key['Body'].read().decode().strip()
         assert s3_contents == data
     finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
         aws.delete_s3_data(aws.s3_bucket_name, s3_key)
 
