@@ -3598,7 +3598,7 @@ def test_http_post_batch_action_passthrough(sdc_builder, sdc_executor, http_clie
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Ensure both requests was done with the entire batch
-        # assert len(http_mock.get_request()) == 2 # To be fixed in COLLECTOR-398
+        assert len(http_mock.get_request()) == 2
         for i in range(2):
             assert json.loads(http_mock.get_request(i).body.decode("utf-8")) == raw_data
 
@@ -3866,5 +3866,56 @@ def test_http_post_batch_error(sdc_builder, sdc_executor, http_client):
         # Ensure the request was done with the entire batch
         assert len(http_mock.get_request()) == 1
         assert json.loads(http_mock.get_request(0).body.decode("utf-8")) == raw_data
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@pytest.mark.parametrize("max_num_retries, total_number_requests", [(1, 2), (10, 11)])
+def test_action_max_retries(sdc_builder, sdc_executor, http_client, max_num_retries, total_number_requests):
+    """ Test that the number of retries on error is at most, the maxRetriesCount """
+    http_mock = http_client.mock()
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock.when(f'POST /{mock_path}').reply(status=500,
+                                               body='{"error": 500}',
+                                               headers={'Content-Type': 'application/json'},
+                                               times=FOREVER)
+
+    try:
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           json_content='ARRAY_OBJECTS',
+                                           raw_data=json.dumps([{"a": "dummy1"}]),
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON',
+                                             json_content='ARRAY_OBJECTS',
+                                             http_method='POST',
+                                             resource_url=f'{http_mock.pretend_url}/{mock_path}',
+                                             headers=[{'key': 'Content-Type', 'value': 'application/json'}],
+                                             output_field='/result',
+                                             per_status_actions=[
+                                                 {
+                                                     "statusCode": 500,
+                                                     "action": "RETRY_IMMEDIATELY",
+                                                     "backoffInterval": 1,
+                                                     "passRecord": True,
+                                                     "maxNumRetries": max_num_retries
+                                                 }
+                                             ])
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Ensure the number of requests done
+        assert len(http_mock.get_request()) == total_number_requests
     finally:
         http_mock.delete_mock()
