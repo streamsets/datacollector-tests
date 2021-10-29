@@ -302,8 +302,11 @@ def test_dataflow_events_no_more_data(sdc_builder, sdc_executor, aws):
     trash = builder.add_stage('Trash')
     wiretap = builder.add_wiretap()
 
+    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
     s3_origin >> trash
-    s3_origin >= wiretap.destination
+    s3_origin >= [pipeline_finished_executor, wiretap.destination]
 
     s3_origin_pipeline = builder.build().configure_for_environment(aws)
     # This is not supposed to fail under any context
@@ -313,9 +316,7 @@ def test_dataflow_events_no_more_data(sdc_builder, sdc_executor, aws):
     sdc_executor.add_pipeline(s3_origin_pipeline)
 
     try:
-        sdc_executor.start_pipeline(s3_origin_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'output_record_count', 1)
-        sdc_executor.stop_pipeline(s3_origin_pipeline)
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
 
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
         # If we are here this means that a no-more-data was sent
@@ -324,8 +325,8 @@ def test_dataflow_events_no_more_data(sdc_builder, sdc_executor, aws):
         input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
         output_records = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
         assert input_records == 0, 'Observed %d input records (expected 0)' % input_records
-        # We expect 2 since wiretap duplicates it
-        assert output_records == 2, 'Observed %d output records (expected 2)' % output_records
+        # We expect 3 since wiretap duplicates it and the finisher counts another one
+        assert output_records == 3, 'Observed %d output records (expected 3)' % output_records
 
         # We have exactly one output record, check that it is a no-more-data event
         assert len(wiretap.output_records) == 1, 'Received %d event records (expected 1)' % len(wiretap.output_records)
