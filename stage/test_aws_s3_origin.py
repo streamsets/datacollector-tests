@@ -532,7 +532,7 @@ if (state['record-count'] >= 2):
         # Insert objects into S3, process them and add an additional file
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-1', Body=json.dumps(data))
         pipeline_cmd = sdc_executor.start_pipeline(s3_origin_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'data_batch_count', 1)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'data_batch_count', 1, timeout_sec=120)
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-2', Body=json.dumps(data2))
 
         pipeline_cmd.wait_for_finished()
@@ -1015,7 +1015,7 @@ def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheet
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
         sdc_executor.stop_pipeline(pipeline)
 
         if read_all_sheets:
@@ -1077,7 +1077,7 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
         sdc_executor.stop_pipeline(pipeline)
 
         output_records = [record.field for record in wiretap.output_records]
@@ -1141,7 +1141,7 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
         client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
         sdc_executor.stop_pipeline(pipeline)
 
         output_records = [record.field for record in wiretap.output_records]

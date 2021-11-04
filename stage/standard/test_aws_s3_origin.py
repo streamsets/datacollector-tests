@@ -262,7 +262,7 @@ def test_dataflow_events_new_file(sdc_builder, sdc_executor, aws):
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
 
         sdc_executor.start_pipeline(s3_origin_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'output_record_count', 1)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'output_record_count', 1, timeout_sec=120)
         sdc_executor.stop_pipeline(s3_origin_pipeline)
 
         output_records_values = [record.field for record in records_wiretap.output_records]
@@ -494,7 +494,7 @@ def test_data_format_delimited(sdc_builder, sdc_executor, aws, csv_parser):
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=DATA)
 
         sdc_executor.start_pipeline(s3_origin_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'output_record_count', 2)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'output_record_count', 2, timeout_sec=120)
         sdc_executor.stop_pipeline(s3_origin_pipeline)
 
         records = wiretap.output_records
