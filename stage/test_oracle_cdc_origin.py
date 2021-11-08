@@ -2658,15 +2658,15 @@ def test_user_configuration_checks(sdc_builder,
         if has_permission:
             # It should execute and stop normally
             sdc_executor.start_pipeline(pipeline)
-            sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
             status = sdc_executor.get_pipeline_status(pipeline).response.json().get("status")
             logger.info(f"Status after stopping the pipeline when no error should occur: {status}")
             assert "STOPPED" == status
         else:
-            # It should stop with StageExcception
+            # It should stop with StageException
             with pytest.raises(Exception):
                 sdc_executor.start_pipeline(pipeline)
-                sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
+                sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
             status = sdc_executor.get_pipeline_status(pipeline).response.json().get("status")
             message = sdc_executor.get_pipeline_status(pipeline).response.json().get("message")
             logger.info(f"Status after stopping the pipeline when starting error should occur: {status}")
@@ -2679,8 +2679,7 @@ def test_user_configuration_checks(sdc_builder,
         # Stop pipeline
         try:
             if sdc_executor.get_pipeline_status(pipeline).response.json().get("status") == "RUNNING":
-                sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
-                sdc_executor.get_pipeline_status(pipeline).wait_for_status('STOPPED')
+                sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         finally:
             pass
 
