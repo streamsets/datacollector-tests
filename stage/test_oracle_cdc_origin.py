@@ -2680,6 +2680,7 @@ def test_user_configuration_checks(sdc_builder,
         try:
             if sdc_executor.get_pipeline_status(pipeline).response.json().get("status") == "RUNNING":
                 sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
+                sdc_executor.get_pipeline_status(pipeline).wait_for_status('STOPPED')
         finally:
             pass
 
