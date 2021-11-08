@@ -13,6 +13,9 @@
 # limitations under the License.
 
 import pytest
+import os
+import tempfile
+from time import sleep
 
 import sqlalchemy
 import logging
@@ -23,6 +26,7 @@ from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
 
 def test_pipeline_downgrade(sdc_executor):
     """Ensure that when user tries to downgrade pipeline, we issue a proper error message."""
@@ -114,3 +118,41 @@ def test_pipeline_preview_with_test_stage(sdc_builder, sdc_executor, database):
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
+
+
+@sdc_min_version('4.2.0')
+def test_stage_errors_counter(sdc_builder, sdc_executor):
+    """This tests the accounting of stage errors happening outside of batch context in a pipeline level."""
+
+    raw_data_1 = 'Hello!'
+    raw_data_2 = 'Hello!Hello!'
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string())
+    sdc_executor.execute_shell(f'mkdir -p {tmp_directory}')
+
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='JSON', file_name_pattern='sdc*.txt', file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE', files_directory=tmp_directory, read_order='TIMESTAMP',
+                             number_of_threads=2)
+    trash = builder.add_stage(label='Trash')
+
+    directory >> trash
+    pipeline = builder.build()
+    try:
+        sdc_executor.write_file(os.path.join(tmp_directory, 'sdc1.txt'), raw_data_1)
+        sdc_executor.write_file(os.path.join(tmp_directory, 'sdc2.txt'), raw_data_2)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        # There is no metric to stop the pipeline, as we only have stage errors
+        sleep(30)
+        sdc_executor.stop_pipeline(pipeline)
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.Directory_01.stageErrors.counter').count == 2
+        # this counter will probably change after the errors have their own metric
+        assert history.latest.metrics.counter('pipeline.batchErrorMessages.counter').count == 2
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.execute_shell(f'rm -fr {tmp_directory}')
