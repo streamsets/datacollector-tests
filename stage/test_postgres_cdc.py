@@ -327,7 +327,7 @@ def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, 
 
         if start_from is 'DATE':
             postgresql_cdc_client.set_attributes(start_date=date.strftime('%m-%d-%Y %H:%M:%S'),
-                                                 db_time_zone=timezone)
+                                                 database_time_zone=timezone)
         else:
             postgresql_cdc_client.set_attributes(start_lsn=start_lsn)
 
