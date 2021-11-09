@@ -2684,8 +2684,20 @@ def test_user_configuration_checks(sdc_builder,
             pass
 
         # Drop guest user
-        logger.info(f"Dropping user {guest_username} in database...")
-        connection.execute(f"DROP USER {guest_username}")
+        for i in range(10):
+            user_sessions = connection.execute(f"select SID, SERIAL#, STATUS from V$SESSION where USERNAME='{guest_username}'").fetchall()
+            if len(user_sessions) > 0:
+                logger.info(f'Guest user {guest_username} still in use ({len(user_sessions)}). Waiting 5 seconds... {i}')
+                sleep(5)
+            else:
+                logger.info(f'Guest user {guest_username} not in use... {i}')
+                break
+        user_sessions = connection.execute(f"select SID, SERIAL#, STATUS from V$SESSION where USERNAME='{guest_username}'").fetchall()
+        for user_session in user_sessions:
+            logger.info(f"Killing guest user session {user_session}")
+            connection.execute(f"alter system kill session '{user_session[0]},{user_session[1]}' immediate")
+        logger.info(f"Dropping guest user {guest_username} in database...")
+        connection.execute(f"drop user {guest_username}")
 
         # Drop source table
         logger.info("Dropping source table table %s", src_table_name)
