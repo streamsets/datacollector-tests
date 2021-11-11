@@ -22,6 +22,7 @@ import tempfile
 import time
 import csv
 import textwrap
+import shutil
 
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -1757,3 +1758,153 @@ def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
 
     assert len(data_from_csv_files) == len(output_records_text_fields)
     assert sorted(data_from_csv_files) == sorted(output_records_text_fields)
+
+
+def _write_pipeline(sdc_executor, number_files, tmp_write_directory, tmp_in_directory):
+    """Pipeline to write.
+    The pipelines looks like:
+
+        directory >> wiretap
+
+    """
+    pipeline_builder = sdc_executor.get_pipeline_builder()
+
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format='WHOLE_FILE',
+                             file_name_pattern='^.*\.(pdf)$',
+                             file_name_pattern_mode='REGEX',
+                             file_post_processing='NONE',
+                             files_directory=tmp_write_directory,
+                             batch_size_in_recs=100,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP')
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='WHOLE_FILE',
+                            directory_template=os.path.join(tmp_in_directory),
+                            files_prefix='sdc-${sdc:id()}',
+                            files_suffix='pdf',
+                            max_records_in_file=1)
+
+    directory >> local_fs
+
+    files_pipeline = pipeline_builder.build('Write pipeline')
+
+    # run the 'Write pipeline' to create the directory and starting files
+    sdc_executor.add_pipeline(files_pipeline)
+    sdc_executor.start_pipeline(files_pipeline).wait_for_pipeline_batch_count(number_files)
+    sdc_executor.stop_pipeline(files_pipeline)
+
+    number_processed_files = int(sdc_executor.execute_shell(f'ls {tmp_in_directory} | wc -l').stdout)
+
+    return number_processed_files
+
+
+@sdc_min_version('4.3.0')
+def test_directory_origin_read_while_writing(sdc_builder, sdc_executor):
+    """Test Directory Origin. We run the pipeline to read files created, and at the same time, we write a large number
+    of files with the same timestamp. We test if we get all the files created.
+    The pipelines looks like:
+
+        directory >> wiretap
+
+    """
+    number_files = 1000
+    tmp_write_directory = os.path.join(tempfile.gettempdir(), get_random_string())
+    tmp_in_directory = os.path.join(tempfile.gettempdir(), get_random_string())
+    tmp_out_directory = os.path.join(tempfile.gettempdir(), get_random_string())
+    sdc_executor.execute_shell(f'mkdir {tmp_write_directory}')
+    sdc_executor.execute_shell(f'mkdir {tmp_in_directory}')
+    sdc_executor.execute_shell(f'mkdir {tmp_out_directory}')
+    raw_data = 'hello'
+
+    pipeline_builder = sdc_executor.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=False)
+
+    local_fs_create = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs_create.set_attributes(data_format='TEXT',
+                                   directory_template=os.path.join(tmp_write_directory),
+                                   files_suffix='txt',
+                                   max_records_in_file=1)
+
+    dev_raw_data_source >> local_fs_create
+
+    write_pipeline = pipeline_builder.build('Create files pipeline')
+
+    try:
+        # run the 'Create files pipeline' to create the directory and starting files
+        sdc_executor.add_pipeline(write_pipeline)
+        sdc_executor.start_pipeline(write_pipeline).wait_for_pipeline_batch_count(number_files)
+        sdc_executor.stop_pipeline(write_pipeline)
+
+        number_processed_files = int(sdc_executor.execute_shell(f'ls {tmp_write_directory} | wc -l').stdout)
+
+        # 2nd pipeline to read the files at the same time the 3rd pipeline write it.
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        directory = pipeline_builder.add_stage('Directory', type='origin')
+        directory.set_attributes(data_format='TEXT',
+                                 file_name_pattern='^.*\.(txt)$',
+                                 file_name_pattern_mode='REGEX',
+                                 file_post_processing='NONE',
+                                 files_directory=tmp_in_directory,
+                                 batch_size_in_recs=100,
+                                 process_subdirectories=True,
+                                 read_order='TIMESTAMP')
+
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='TEXT',
+                                directory_template=os.path.join(tmp_out_directory),
+                                files_suffix='txt',
+                                max_records_in_file=1)
+
+        directory >> local_fs
+
+        directory_pipeline = pipeline_builder.build('Directory Origin pipeline')
+        sdc_executor.add_pipeline(directory_pipeline)
+
+        # 3rd pipeline to read the files created and write to the directory "tmp_in_directory"
+        pipeline_builder = sdc_executor.get_pipeline_builder()
+
+        directory_write = pipeline_builder.add_stage('Directory', type='origin')
+        directory_write.set_attributes(data_format='TEXT',
+                                       file_name_pattern='^.*\.(txt)$',
+                                       file_name_pattern_mode='REGEX',
+                                       file_post_processing='NONE',
+                                       files_directory=tmp_write_directory,
+                                       batch_size_in_recs=100,
+                                       process_subdirectories=True,
+                                       read_order='TIMESTAMP')
+
+        local_fs_write = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs_write.set_attributes(data_format='TEXT',
+                                      directory_template=os.path.join(tmp_in_directory),
+                                      files_suffix='txt',
+                                      max_records_in_file=1)
+
+        directory_write >> local_fs_write
+
+        files_pipeline = pipeline_builder.build('Write pipeline')
+        sdc_executor.add_pipeline(files_pipeline)
+
+        # run the 2nd and the 3rd pipeline
+        cdm = sdc_executor.start_pipeline(directory_pipeline)
+        sdc_executor.start_pipeline(files_pipeline)
+
+        cdm.wait_for_pipeline_batch_count(number_processed_files)
+
+        sdc_executor.stop_pipeline(directory_pipeline)
+        sdc_executor.stop_pipeline(files_pipeline)
+
+        # assert it captured all the files write in the directory
+        history = sdc_executor.get_pipeline_history(directory_pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == number_processed_files
+
+    finally:
+        sdc_executor.execute_shell(f'rm -fr {tmp_write_directory}')
+        sdc_executor.execute_shell(f'rm -fr {tmp_in_directory}')
+        sdc_executor.execute_shell(f'rm -fr {tmp_out_directory}')
