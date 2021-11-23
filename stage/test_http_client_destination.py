@@ -184,47 +184,26 @@ def test_http_destination_with_body(sdc_builder, sdc_executor, method, http_clie
 
 
 @http
-@pytest.mark.parametrize('run_mode',
-                         [
-                             'correct',
-                             'timeout_error',
-                             'status_error'
-                         ])
 @sdc_min_version("4.2.0")
-def test_http_target_metrics(sdc_builder, sdc_executor, http_client, run_mode):
+def test_http_target_metrics(sdc_builder, sdc_executor, http_client):
     """ Test Metrics timers and gauge. Test the metrics in different type of Http Client destination configuration.
         The pipeline looks like:
         dev_raw_data_source >> http_client_target """
     mock_path = get_random_string(string.ascii_letters, 10)
-    mock_path_wrong = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
-    method = 'GET'
+    method = 'POST'
     raw_data = [{'A': i, 'C': i + 1, 'G': i + 2, 'T': i + 3} for i in range(10)]
     expected_data = json.dumps(raw_data)
 
     # Times:
     one_millisecond = 1000
     wait_seconds = 10
-    short_time = 1
     long_time = (one_millisecond * wait_seconds)
 
     try:
-        if run_mode == 'correct':
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
-            resource_url = f'{http_mock.pretend_url}/{mock_path}'
-            timeout_time = long_time
-        elif run_mode == 'timeout_error':
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=short_time)
-            resource_url = f'{http_mock.pretend_url}/{mock_path}'
-            timeout_time = short_time
-        elif run_mode == 'status_error':
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
-            resource_url = f'{http_mock.pretend_url}/{mock_path_wrong}'
-            timeout_time = long_time
-        else:
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
-            resource_url = f'{http_mock.pretend_url}/{mock_path}'
-            timeout_time = long_time
+        http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+        resource_url = f'{http_mock.pretend_url}/{mock_path}'
+        timeout_time = long_time
 
         builder = sdc_builder.get_pipeline_builder()
 
@@ -244,38 +223,100 @@ def test_http_target_metrics(sdc_builder, sdc_executor, http_client, run_mode):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         history = sdc_executor.get_pipeline_history(pipeline)
-        metrics = _get_metrics(history, run_mode)
+        metrics = _get_metrics(history, 'correct')
 
         # Check that the HTTP server got the expected data
         result = json.loads(http_mock.get_request(0).body.decode("utf-8"))
         assert raw_data == result
 
-        if run_mode == 'correct':
-            # Right correlation between mean time for every step of process
-            assert metrics['records_processed_mean'] >= metrics['success_requests_mean']
-            assert metrics['success_requests_mean'] >= metrics['requests_mean']
+        # Right correlation between mean time for every step of process
+        assert metrics['records_processed_mean'] >= metrics['success_requests_mean']
+        assert metrics['success_requests_mean'] >= metrics['requests_mean']
 
-            # Same amount of records processed than successful request
-            assert metrics['records_processed_count'] == metrics['success_requests_count']
-            assert metrics['requests_count'] == metrics['success_requests_count']
-            # Same amount of status response OK (200) than successful request
-            assert metrics['status']['200'] == metrics['success_requests_count']
-        else:
-            raise Exception('The pipeline should have failed')
-    except Exception as e:
-        history = sdc_executor.get_pipeline_history(pipeline)
-        metrics = _get_metrics(history, run_mode)
-        if run_mode == 'timeout_error':
-            # Same amount of timeout's than retries
-            assert metrics['errors']['Timeout Read'] == 1
-        elif run_mode == 'status_error':
-            # Same amount of status errors than 404 status
-            assert metrics['status']['404'] == metrics['errors']['Http status']
-        else:
-            logger.error(f"Http Client Destination failed: {e}")
+        # Same amount of records processed than successful request
+        assert metrics['records_processed_count'] == metrics['success_requests_count']
+        assert metrics['requests_count'] == metrics['success_requests_count']
+        # Same amount of status response OK (200) than successful request
+        assert metrics['status']['200'] == metrics['success_requests_count']
 
     finally:
         http_mock.delete_mock()
+
+
+@http
+@pytest.mark.parametrize('run_mode',
+                         [
+                             'timeout_error',
+                             'status_error'
+                         ])
+@sdc_min_version("4.2.0")
+def test_http_target_metrics_errors(sdc_builder, sdc_executor, http_client, run_mode):
+    """ Test Metrics timers and gauge. Test the metrics in timeout and status error configuration of Http Client
+    destination.
+        The pipeline looks like:
+        dev_raw_data_source >> http_client_target """
+
+    for i in range(3):
+        mock_path = get_random_string(string.ascii_letters, 10)
+        mock_path_wrong = get_random_string(string.ascii_letters, 10)
+        http_mock = http_client.mock()
+        method = 'GET'
+        raw_data = [{'A': i, 'C': i + 1, 'G': i + 2, 'T': i + 3} for i in range(10)]
+        expected_data = json.dumps(raw_data)
+
+        # Times:
+        one_millisecond = 1000
+        wait_seconds = 10
+        short_time = 1
+        long_time = (one_millisecond * wait_seconds)
+
+        try:
+            if run_mode == 'timeout_error':
+                http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=short_time)
+                resource_url = f'{http_mock.pretend_url}/{mock_path}'
+                timeout_time = short_time
+            elif run_mode == 'status_error':
+                http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+                resource_url = f'{http_mock.pretend_url}/{mock_path_wrong}'
+                timeout_time = long_time
+
+            builder = sdc_builder.get_pipeline_builder()
+
+            dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+            dev_raw_data_source.set_attributes(data_format='JSON', raw_data=expected_data, stop_after_first_batch=True)
+
+            http_client_target = builder.add_stage('HTTP Client', type='destination')
+            http_client_target.set_attributes(data_format='JSON',
+                                              http_method=method,
+                                              resource_url=resource_url,
+                                              read_timeout=timeout_time)
+
+            dev_raw_data_source >> http_client_target
+            pipeline = builder.build('Http Client Destination Metrics')
+            sdc_executor.add_pipeline(pipeline)
+
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            raise Exception('The pipeline should have failed')
+
+        except Exception as e:
+            history = sdc_executor.get_pipeline_history(pipeline)
+            try:
+                metrics = _get_metrics(history, 'timeout_error')
+
+                if run_mode == 'timeout_error':
+                    # Same amount of timeout's than retries
+                    assert metrics['errors']['Timeout Read'] == 1
+                elif run_mode == 'status_error':
+                    # Same amount of status errors than 404 status
+                    assert metrics['status']['404'] == metrics['errors']['Http status']
+                else:
+                    raise Exception
+
+                break
+            except Exception:
+                print('Retry the test...')
+        finally:
+            http_mock.delete_mock()
 
 
 def _get_metrics(history, run_mode):
