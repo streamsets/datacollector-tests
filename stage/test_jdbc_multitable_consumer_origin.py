@@ -24,6 +24,7 @@ from collections import OrderedDict
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -1229,6 +1230,84 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
         for table in tables:
             table.drop(database.engine)
 
+
+# COLLECTOR-333: JDBC Multitable Consumer cannot use wildcard (%) in Schema selection
+# COLLECTOR-534: Test new MySQL schema validator
+@database
+@sdc_min_version('4.4.0')
+@pytest.mark.parametrize('schema_value', ['', '%', '{database}'])
+def test_jdbc_schema_settings(sdc_builder, sdc_executor, database, schema_value):
+    """This test currently covers only the schema setting of table configs.  It was added
+    to verify the fix for COLLECTOR-333 where, for mysql, setting the schema to '%'
+    (wildcard) will now return a bespoke error message indicating that mysql does not
+    support multiple schemas and so doesn't support a wildcard for schema selection.
+    At the time of this writing, this is the only known jdbc database that doesn't
+    support a wildcard for schema selection - but as our docs recommend using a
+    wildcard for jdbc table configs, we want this test to run against all of our tested
+    databases to test this "default" case.
+    """
+
+    # At the time of this writing, only MySQL has the requirement that the schema be blank or
+    # the same as the database
+    dbs_with_this_behavior = {'MySQL'}
+
+    # only MySQL gives a default schema to a database - so the test case where the default
+    # schema name is automatically the database name is only applicable to MySQL
+    if schema_value == '{database}' and database.type not in dbs_with_this_behavior:
+        logger.info('skipping database as schema test for database type ' + database.type)
+        pytest.skip('database as schema test not valid for database type ' + database.type + ' ...skipping')
+
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('JDBC Multitable Consumer')
+    trash = builder.add_stage('Trash')
+    origin >> trash
+
+    # Set the schema config
+    if schema_value == '{database}':
+        # here, we assume that the schema name is exactly the same as the database name
+        origin.table_configs = [{'schema': database.database}]
+    else:
+        origin.table_configs = [{'schema': schema_value}]
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    # some sugar for debugging this test
+    if 'schema' in origin.table_configs[0].keys():
+        logger.info('DB: ' + database.type + "; Table config schema: '" + origin.table_configs[0]['schema'] + "'")
+    else:
+        logger.info('DB: ' + database.type + '; Table config schema: [empty]')
+
+    table_name = 'uniq_tablename_' + get_random_string(string.ascii_lowercase, 10)
+    rows_in_database = [{'id': row['id'], 'NAME': row['name']} for row in ROWS_IN_DATABASE]
+    columns = [
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32))
+    ]
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(table_name, metadata, *columns)
+        
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        sdc_executor.add_pipeline(pipeline)
+        logger.info('Validating pipeline configuration...')
+        if database.type in dbs_with_this_behavior and schema_value == '%':
+            with pytest.raises(ValidationError) as e:
+                sdc_executor.validate_pipeline(pipeline)
+            assert e is not None
+            assert e.value.issues is not None
+            assert e.value.issues['issueCount'] == 1
+            assert 'JDBC_104' in e.value.issues['stageIssues']['JDBCMultitableConsumer_01'][0]['message']
+            logger.info('Validation correctly failed for wildcard schema on ' + database.type + ' database')
+        else:
+            sdc_executor.validate_pipeline(pipeline)
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
 #
 # Auxiliary methods
 #
@@ -1261,3 +1340,4 @@ def _setup_delimited_file(sdc_executor, tmp_directory, csv_records):
 
 def _get_date_from_days(d):
     return datetime.date(1970, 1, 1) + datetime.timedelta(days=d)
+
