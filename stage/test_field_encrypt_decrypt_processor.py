@@ -66,7 +66,7 @@ def test_field_decrypt(sdc_builder, sdc_executor, aws):
                                         field_type_converter_configs=field_type_converter_configs)
 
     base64_decoder = pipeline_builder.add_stage('Base64 Field Decoder', type='processor')
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         base64_decoder.set_attributes(field_to_decode='/message', target_field='/message')
     else:
         base64_decoder.set_attributes(

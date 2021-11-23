@@ -461,7 +461,7 @@ def test_s3_multithreading_multiple_batches(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
-@sdc_min_version('4.3.0')
+@sdc_min_version('4.4.0')
 def test_s3_with_tags(sdc_builder, sdc_executor, aws):
     """Test for tags on S3 destination.
     We create a file and verify that the tags are correctly propagated to the object created in S3.
@@ -516,7 +516,7 @@ def test_s3_with_tags(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
-@sdc_min_version('4.3.0')
+@sdc_min_version('4.4.0')
 def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
     """Test for tags on S3 destination using WHOLE_FILE_FORMAT..
     We create a file and verify that the tags are correctly propagated to the object created in S3.

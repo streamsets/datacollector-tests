@@ -50,9 +50,9 @@ def test_http_processor_multiple_records(sdc_builder, sdc_executor, http_client,
         dev_raw_data_source >> http_client_processor >> wiretap
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
@@ -110,9 +110,9 @@ def test_http_processor_list(sdc_builder, sdc_executor, http_client, one_request
     """
 
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
@@ -175,9 +175,9 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
 
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
@@ -239,9 +239,9 @@ def test_http_processor_response_action_record_error(sdc_builder, sdc_executor, 
          dev_raw_data_source >> http_client_processor >> wiretap
 """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
@@ -303,9 +303,9 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
              dev_raw_data_source >> http_client_processor >> wiretap
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
@@ -362,9 +362,9 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
              dev_raw_data_source >> http_client_processor >> trash
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
@@ -449,9 +449,9 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
              dev_raw_data_source >> http_client_processor >> trash
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
@@ -523,9 +523,9 @@ def test_http_processor_wrong_url(sdc_builder, sdc_executor, one_request_per_bat
         dev_raw_data_source >> http_client_processor >> wiretap
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch}
 
@@ -573,9 +573,9 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method, one_requ
         dev_raw_data_source >> http_client_processor >> wiretap
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -650,9 +650,9 @@ def test_http_processor_response_json_empty(sdc_builder, sdc_executor, http_clie
     Test for SDC-15335.
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -728,9 +728,9 @@ def test_http_processor_response_json_empty(sdc_builder, sdc_executor, http_clie
 @pytest.mark.parametrize("one_request_per_batch", [True, False])
 def test_http_processor_with_body(sdc_builder, sdc_executor, method, http_client, keep_data, one_request_per_batch):
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -788,9 +788,9 @@ def test_http_processor_with_body(sdc_builder, sdc_executor, method, http_client
 def test_http_processor_duplicate_requests(sdc_builder, sdc_executor, method, http_client, keep_data,
                                            one_request_per_batch):
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -876,9 +876,9 @@ def test_http_client_processor_timeout(sdc_builder,
         We get a Record Processing Timeout using an extremely low batch_wait_time_in_ms
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -1093,9 +1093,9 @@ def test_http_client_processor_passthrough(sdc_builder,
         Test exhausted handling for HTTP Client Processor.
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -1267,9 +1267,9 @@ def test_http_client_processor_alternating_status(sdc_builder,
         Test exhausted handling for HTTP Client Processor with alternating status.
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -1472,9 +1472,9 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
         Test exhausted handling for HTTP Client Processor with alternating status and timeout.
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -1684,9 +1684,9 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
         Test when a pagination option is set up and last page is empty.
     """
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -1956,9 +1956,9 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
 @pytest.mark.parametrize("one_request_per_batch", [True, False])
 def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode, one_request_per_batch):
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -2061,9 +2061,9 @@ def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode
 @pytest.mark.parametrize("one_request_per_batch", [True, False])
 def test_http_processor_pagination_metrics(sdc_builder, sdc_executor, http_client, one_request_per_batch):
     one_request_per_batch_option = {}
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
-            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.3.0 version")
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -2287,7 +2287,7 @@ def _get_metrics(history, run_mode):
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_json(sdc_builder, sdc_executor, http_client):
     """ Test that the batch is sent correctly and the response record is generated properly,
     when the singleRequestPerBatch is set to true. """
@@ -2345,7 +2345,7 @@ def test_http_post_batch_json(sdc_builder, sdc_executor, http_client):
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_multipage(sdc_builder, sdc_executor, http_client):
     """ Test that when the singleRequestPerBatch is set to true and the stage should navigate through multiple pages,
     it does correctly and send the whole same batch for every page. """
@@ -2419,7 +2419,7 @@ def test_http_post_batch_multipage(sdc_builder, sdc_executor, http_client):
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_action_retry(sdc_builder, sdc_executor, http_client):
     """ Test the stage produce the output record properly when there is a retry action and the first request fails and
     the singleRequestPerBatch is true. """
@@ -2495,7 +2495,7 @@ def test_http_post_batch_action_retry(sdc_builder, sdc_executor, http_client):
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_response_204(sdc_builder, sdc_executor, http_client):
     """ Test that when there is a 204 response and the response body is null and the singleRequestPerBatch is true, the
     output record contains all the input records data as a string analogously with what happens when the
@@ -2555,7 +2555,7 @@ def test_http_post_batch_response_204(sdc_builder, sdc_executor, http_client):
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_action_passthrough(sdc_builder, sdc_executor, http_client):
     """ Test that the records in the batch are sent correctly to the output when there is a retry action and it fails in
     all its retries and passRecord is set to true and the singleRequestPerBatch is set to true. """
@@ -2631,7 +2631,7 @@ def test_http_post_batch_action_passthrough(sdc_builder, sdc_executor, http_clie
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_missing_values_behavior_to_error(sdc_builder, sdc_executor, http_client):
     """ Test that all records in the batch are sent to error when it is configured to do so on missing values on the
     response """
@@ -2694,7 +2694,7 @@ def test_http_post_batch_missing_values_behavior_to_error(sdc_builder, sdc_execu
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_missing_values_behavior_passthrough(sdc_builder, sdc_executor, http_client):
     """ Test that all records in the batch are sent to the next stage when it is configured to do so on missing
     values on the response """
@@ -2757,7 +2757,7 @@ def test_http_post_batch_missing_values_behavior_passthrough(sdc_builder, sdc_ex
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_error_passthrough(sdc_builder, sdc_executor, http_client):
     """ Test that all records are sent to the next stage when the status code of the response indicates that has been
      an error and there are no actions that handle it and the records_for_remaining_statuses is set to true"""
@@ -2823,7 +2823,7 @@ def test_http_post_batch_error_passthrough(sdc_builder, sdc_executor, http_clien
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_http_post_batch_error(sdc_builder, sdc_executor, http_client):
     """ Test that all records are sent to error when the status code of the response indicates that has been
      an error and there are no actions that handle it """
@@ -2887,7 +2887,7 @@ def test_http_post_batch_error(sdc_builder, sdc_executor, http_client):
 
 
 @http
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 @pytest.mark.parametrize("max_num_retries, total_number_requests", [(1, 2), (10, 11)])
 def test_action_max_retries(sdc_builder, sdc_executor, http_client, max_num_retries, total_number_requests):
     """ Test that the number of retries on error is at most, the maxRetriesCount """

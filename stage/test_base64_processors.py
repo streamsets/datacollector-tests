@@ -41,7 +41,7 @@ def test_base64_field_decoder(sdc_builder, sdc_executor):
                                         field_type_converter_configs=[{'fields': ['/text'],
                                                                        'targetType': 'BYTE_ARRAY'}])
     base64_field_decoder = pipeline_builder.add_stage('Base64 Field Decoder', type='processor')
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         base64_field_decoder.set_attributes(field_to_decode='/text', target_field='/result')
     else:
         base64_field_decoder.set_attributes(
@@ -78,7 +78,7 @@ def test_base64_field_encoder(sdc_builder, sdc_executor):
                                             {'fields': ['/text'], 'targetType': 'BYTE_ARRAY'}
                                         ])
     base64_field_encoder = pipeline_builder.add_stage('Base64 Field Encoder', type='processor')
-    if Version(sdc_builder.version) < Version("4.3.0"):
+    if Version(sdc_builder.version) < Version("4.4.0"):
         base64_field_encoder.set_attributes(field_to_encode='/text', target_field='/result', url_safe=True)
     else:
         base64_field_encoder.set_attributes(
@@ -99,7 +99,7 @@ def test_base64_field_encoder(sdc_builder, sdc_executor):
     assert base64.b64encode(raw_data.encode()) == result_data
 
 
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_base64_field_decoder_multiple_fields(sdc_builder, sdc_executor):
     """ Base64 encode multiple fields """
     f1_val = base64.b64encode('field_val1'.encode()).decode()
@@ -135,7 +135,7 @@ def test_base64_field_decoder_multiple_fields(sdc_builder, sdc_executor):
     assert "field_val2".encode() == wiretap.output_records[0].field['dec_f2'].value
 
 
-@sdc_min_version("4.3.0")
+@sdc_min_version("4.4.0")
 def test_base64_field_encoder_multiple_fields(sdc_builder, sdc_executor):
     """ Base64 decode multiple fields """
     raw_data = "{\"f1\": \"field_val1\", \"f2\": \"field_val2\"}"

@@ -23,7 +23,7 @@ STANDALONE_PIPELINE_PATH = Path(f'{dirname(__file__)}/resources/sdc-pipeline.jso
 BATCH_PIPELINE_PATH = Path(f'{dirname(__file__)}/resources/tx-pipeline.json')
 
 
-@sdc_min_version('4.3.0')
+@sdc_min_version('4.4.0')
 def test_import_standalone_pipeline(sdc_builder):
     """Test importing allowed pipeline execution mode."""
     with open(STANDALONE_PIPELINE_PATH) as f:
@@ -37,7 +37,7 @@ def test_import_standalone_pipeline(sdc_builder):
         pytest.fail(f'Should not reach here, pipeline should have been imported correctly. Error: {error.text}')
 
 
-@sdc_min_version('4.3.0')
+@sdc_min_version('4.4.0')
 def test_import_batch_pipeline(sdc_builder):
     """Test importing not allowed pipeline execution mode."""
     with open(BATCH_PIPELINE_PATH) as f:

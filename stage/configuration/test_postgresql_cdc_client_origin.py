@@ -85,7 +85,7 @@ def test_connection_timeout_in_seconds(sdc_builder, sdc_executor, database):
 
 
 @database('postgresql')
-@sdc_min_version('4.3.0')
+@sdc_min_version('4.4.0')
 @category('basic')
 @pytest.mark.parametrize('stage_attributes', [{'parse_datetimes': True, 'database_time_zone': 'UTC'},
                                               {'parse_datetimes': False}])
