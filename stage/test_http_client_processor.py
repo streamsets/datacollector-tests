@@ -2887,6 +2887,7 @@ def test_http_post_batch_error(sdc_builder, sdc_executor, http_client):
 
 
 @http
+@sdc_min_version("4.3.0")
 @pytest.mark.parametrize("max_num_retries, total_number_requests", [(1, 2), (10, 11)])
 def test_action_max_retries(sdc_builder, sdc_executor, http_client, max_num_retries, total_number_requests):
     """ Test that the number of retries on error is at most, the maxRetriesCount """
