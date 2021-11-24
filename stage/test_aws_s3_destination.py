@@ -571,3 +571,57 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
 
         logger.info('Deleting output S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_dest_key)
         aws.delete_s3_data(aws.s3_bucket_name, s3_dest_key)
+
+
+@aws('s3')
+def test_s3_region_other(sdc_builder, sdc_executor, aws):
+    """
+    Test that using a specific region and specifying the endpoint works as expected
+    We create a file and verify that the tags are correctly propagated to the object created in S3.
+
+        S3 Destination pipeline:
+            dev_raw_data_source >> s3_destination
+    """
+    s3_bucket = aws.s3_bucket_name
+
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+    # Bucket name is inside the record itself
+    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
+    s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key)
+
+    dev_raw_data_source >> s3_destination
+
+    s3_dest_pipeline = builder.build().configure_for_environment(aws)
+
+    s3_destination.set_attributes(use_specific_region=True, region='OTHER', endpoint=f's3.{aws.region}.amazonaws.com')
+
+    sdc_executor.add_pipeline(s3_dest_pipeline)
+
+    client = aws.s3
+    try:
+        # start pipeline and capture pipeline messages to assert
+        sdc_executor.start_pipeline(s3_dest_pipeline).wait_for_finished()
+
+        # assert record count to S3 the size of the objects put
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+        assert len(list_s3_objs['Contents']) == 1
+
+        # read data from S3 to assert it is what got ingested into the pipeline
+        s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+
+        # We're comparing the logic structure (JSON) rather than byte-to-byte to allow for different ordering, ...
+        s3_contents = s3_obj_key['Body'].read().decode().strip()
+        assert json.loads(s3_contents) == json.loads(raw_str)
+    finally:
+        aws.delete_s3_data(s3_bucket, s3_key)
