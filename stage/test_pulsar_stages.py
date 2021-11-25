@@ -741,3 +741,48 @@ def test_pulsar_origin_standalone_json_tls_mutual_auth(sdc_builder, sdc_executor
 
     assert len(wiretap.output_records) == 1
     assert [record.field for record in wiretap.output_records][0] == message
+
+
+@pulsar
+@sdc_min_version('4.4.0')
+def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar):
+    """Test for Pulsar consumer origin stage.
+    We verify that the output records contains a header with the topic
+
+    Pulsar Consumer pipeline:
+        pulsar_consumer >> wiretap
+    """
+    topic_name = get_random_string()
+    input_text = 'Hello World!'
+
+    builder = sdc_builder.get_pipeline_builder()
+    pulsar_consumer = builder.add_stage('Pulsar Consumer').set_attributes(subscription_name=get_random_string(),
+                                                                          consumer_name=get_random_string(),
+                                                                          topic=topic_name,
+                                                                          data_format='TEXT')
+    wiretap = builder.add_wiretap()
+
+    pulsar_consumer >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build().configure_for_environment(pulsar)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    client = pulsar.client
+    admin = pulsar.admin
+    try:
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+
+        producer = client.create_producer(topic_name)
+        producer.send(input_text.encode())
+
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        output_records = [record.field['text'] for record in wiretap.output_records]
+        assert 1 == len(output_records)
+        assert output_records == [input_text]
+        assert topic_name in wiretap.output_records[0].header.values
+    finally:
+        producer.close()
+        client.close()
+        admin.delete_topic(producer.topic())
