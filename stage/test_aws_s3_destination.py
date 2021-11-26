@@ -552,7 +552,7 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
     try:
         client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt', Body=data.encode('ascii'))
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
 
         # We should have exactly one file on the destination side
         list_s3_objs = client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_dest_key)
