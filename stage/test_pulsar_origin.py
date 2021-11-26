@@ -1,4 +1,4 @@
-# Copyright 2018 StreamSets Inc.
+# Copyright 2021 StreamSets Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@ import json
 import logging
 import string
 
-from pulsar import MessageId
 from streamsets.testframework.markers import pulsar, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -25,8 +24,7 @@ logger = logging.getLogger(__name__)
 
 def get_pulsar_consumer_stage(pipeline_builder, topic, initial_offset):
     """Create and return a Pulsar Consumer origin stage depending on execution mode for the pipeline."""
-    pulsar_consumer = pipeline_builder.add_stage('Pulsar Consumer',
-                                                 type='origin')
+    pulsar_consumer = pipeline_builder.add_stage('Pulsar Consumer', type='origin')
     pulsar_consumer.set_attributes(data_format='TEXT',
                                    batch_wait_time_in_ms=20000,
                                    topic=topic,
@@ -149,53 +147,6 @@ def test_pulsar_consumer_with_parameters(sdc_builder, sdc_executor, pulsar):
         producer.close()  # all producer/consumers need to be closed before topic can be deleted without force
         client.close()
         admin.delete_topic(producer.topic())
-
-
-@pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_producer(sdc_builder, sdc_executor, pulsar):
-    """Test for Pulsar producer target stage. We do so by publishing data to a test topic using Pulsar producer
-    stage and then read the data from that topic using Pulsar client. We assert the data from the client to what has
-    been injected by the producer pipeline. The pipeline looks like:
-
-    Pulsar Producer pipeline:
-        dev_raw_data_source >> pulsar_producer
-    """
-    topic_name = get_random_string(string.ascii_letters, 10)
-    input_text = 'Hello World!'
-
-    builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
-                                                                                  raw_data=input_text)
-    pulsar_producer = builder.add_stage('Pulsar Producer')
-    pulsar_producer.set_attributes(topic=topic_name, data_format='TEXT')
-
-    dev_raw_data_source >> pulsar_producer
-    producer_dest_pipeline = builder.build(title='Pulsar Producer pipeline').configure_for_environment(pulsar)
-
-    # add pipeline and capture pipeline messages to assert
-    sdc_executor.add_pipeline(producer_dest_pipeline)
-    sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(10)
-    sdc_executor.stop_pipeline(producer_dest_pipeline)
-
-    history = sdc_executor.get_pipeline_history(producer_dest_pipeline)
-    msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-    logger.debug('Number of messages ingested into the pipeline = %s', msgs_sent_count)
-
-    client = pulsar.client
-    admin = pulsar.admin
-    try:
-        reader = client.create_reader(topic_name, MessageId.earliest)
-        msgs_received = []
-        while reader.has_message_available():
-            msgs_received.append(reader.read_next().data().decode().strip()) # strip to remove newlines
-    finally:
-        reader.close()  # reader needs to be closed before topic can be deleted without force
-        client.close()
-        admin.delete_topic(reader.topic())
-
-    logger.debug('Number of messages received from Pulsar = %d', len(msgs_received))
-    assert msgs_received == [input_text] * msgs_sent_count
 
 
 @pulsar
@@ -781,7 +732,7 @@ def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar):
         output_records = [record.field['text'] for record in wiretap.output_records]
         assert 1 == len(output_records)
         assert output_records == [input_text]
-        assert topic_name in wiretap.output_records[0].header.values
+        assert topic_name in str(wiretap.output_records[0].header.values)
     finally:
         producer.close()
         client.close()
