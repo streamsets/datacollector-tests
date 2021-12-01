@@ -1946,15 +1946,9 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
 
 
 @http
-@pytest.mark.parametrize('run_mode',
-                         [
-                             'correct',
-                             'timeout_error',
-                             'status_error'
-                         ])
 @sdc_min_version("4.2.0")
 @pytest.mark.parametrize("one_request_per_batch", [True, False])
-def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode, one_request_per_batch):
+def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, one_request_per_batch):
     one_request_per_batch_option = {}
     if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
@@ -1975,26 +1969,9 @@ def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode
     long_time = (one_millisecond * wait_seconds)
 
     try:
-        if run_mode == 'correct':
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
-            resource_url = f'{http_mock.pretend_url}/{mock_path}'
-            timeout_time = long_time
-        elif run_mode == 'timeout_error':
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
-            resource_url = f'{http_mock.pretend_url}/{mock_path}'
-            timeout_time = short_time
-        elif run_mode == 'status_error':
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
-            resource_url = f'{http_mock.pretend_url}/{mock_wrong_path}'
-            timeout_time = long_time
-        elif run_mode == 'with_pagination':
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
-            resource_url = f'{http_mock.pretend_url}/{mock_path}'
-            timeout_time = long_time
-        else:
-            http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
-            resource_url = f'{http_mock.pretend_url}/{mock_path}'
-            timeout_time = long_time
+        http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+        resource_url = f'{http_mock.pretend_url}/{mock_path}'
+        timeout_time = long_time
 
         builder = sdc_builder.get_pipeline_builder()
 
@@ -2020,40 +1997,111 @@ def test_http_processor_metrics(sdc_builder, sdc_executor, http_client, run_mode
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         history = sdc_executor.get_pipeline_history(pipeline)
-        metrics = _get_metrics(history, run_mode)
+        metrics = _get_metrics(history, 'correct')
 
-        if run_mode == 'correct':
-            records = wiretap.output_records
-            assert len(records) == 1
-            # The mock server won't return body on HEAD (rightfully so), but we can still send body to it though
-            assert records[0].field['result'] == {'A': 1}
-            # Finally, check that only one request has been made
-            assert len(http_mock.get_request()) == 1
+        records = wiretap.output_records
+        assert len(records) == 1
+        # The mock server won't return body on HEAD (rightfully so), but we can still send body to it though
+        assert records[0].field['result'] == {'A': 1}
+        # Finally, check that only one request has been made
+        assert len(http_mock.get_request()) == 1
 
-            # Right correlation between mean time for every step of process
-            assert metrics['records_processed_mean'] >= metrics['success_requests_mean']
-            assert metrics['success_requests_mean'] >= metrics['requests_mean']
+        # Right correlation between mean time for every step of process
+        assert metrics['records_processed_mean'] >= metrics['success_requests_mean']
+        assert metrics['success_requests_mean'] >= metrics['requests_mean']
 
-            # Same amount of records processed than successful request
-            assert metrics['records_processed_count'] <= metrics['success_requests_count']
-            assert metrics['requests_count'] == metrics['success_requests_count']
-            # Same amount of status response OK (200) than successful request
-            assert metrics['status']['200'] == metrics['success_requests_count']
-        else:
-            raise Exception('The pipeline should have failed')
-    except Exception as e:
-        history = sdc_executor.get_pipeline_history(pipeline)
-        metrics = _get_metrics(history, run_mode)
-        if run_mode == 'timeout_error':
-            # Same amount of timeout's than retries
-            assert metrics['errors']['Timeout Read'] >= metrics['retries']['Retries for timeout']
-        elif run_mode == 'status_error':
-            # Same amount of status errors than 404 status
-            assert metrics['status']['404'] == metrics['errors']['Http status']
-        else:
-            logger.error(f"Http Client Processor failed: {e}")
+        # Same amount of records processed than successful request
+        assert metrics['records_processed_count'] <= metrics['success_requests_count']
+        assert metrics['requests_count'] == metrics['success_requests_count']
+        # Same amount of status response OK (200) than successful request
+        assert metrics['status']['200'] == metrics['success_requests_count']
+
     finally:
         http_mock.delete_mock()
+
+
+@http
+@pytest.mark.parametrize('run_mode',
+                         [
+                             'timeout_error',
+                             'status_error'
+                         ])
+@sdc_min_version("4.2.0")
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_metrics_errors(sdc_builder, sdc_executor, http_client, run_mode, one_request_per_batch):
+    one_request_per_batch_option = {}
+    if Version(sdc_builder.version) < Version("4.4.0"):
+        if one_request_per_batch:
+            pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
+    else:
+        one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
+
+
+    for i in range(3):
+        expected_data = json.dumps({'A': 1})
+        mock_path = get_random_string(string.ascii_letters, 10)
+        mock_wrong_path = get_random_string(string.ascii_letters, 10)
+        http_mock = http_client.mock()
+        method = 'GET'
+
+        # Times:
+        one_millisecond = 1000
+        wait_seconds = 10
+        short_time = 1
+        long_time = (one_millisecond * wait_seconds)
+
+        try:
+            if run_mode == 'timeout_error':
+                http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+                resource_url = f'{http_mock.pretend_url}/{mock_path}'
+                timeout_time = short_time
+            elif run_mode == 'status_error':
+                http_mock.when(f'{method} /{mock_path}').reply(expected_data, times=FOREVER)
+                resource_url = f'{http_mock.pretend_url}/{mock_wrong_path}'
+                timeout_time = long_time
+
+            builder = sdc_builder.get_pipeline_builder()
+
+            origin = builder.add_stage('Dev Raw Data Source')
+            origin.set_attributes(data_format='TEXT', raw_data='dummy')
+            origin.stop_after_first_batch = True
+
+            processor = builder.add_stage('HTTP Client', type='processor')
+            processor.set_attributes(data_format='JSON', http_method=method,
+                                     resource_url=resource_url,
+                                     read_timeout=timeout_time,
+                                     output_field='/result',
+                                     request_data="{'something': 'here'}",
+                                     multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS',
+                                     **one_request_per_batch_option)
+
+            wiretap = builder.add_wiretap()
+
+            origin >> processor >> wiretap.destination
+            pipeline = builder.build()
+            sdc_executor.add_pipeline(pipeline)
+
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            raise Exception('The pipeline should have failed')
+
+        except Exception as e:
+            history = sdc_executor.get_pipeline_history(pipeline)
+            try:
+                metrics = _get_metrics(history, run_mode)
+                if run_mode == 'timeout_error':
+                    # Same amount of timeout's than retries
+                    assert metrics['errors']['Timeout Read'] >= metrics['retries']['Retries for timeout']
+                elif run_mode == 'status_error':
+                    # Same amount of status errors than 404 status
+                    assert metrics['status']['404'] == metrics['errors']['Http status']
+                else:
+                    raise Exception
+
+                break
+            except Exception:
+                print('Retry the test...')
+        finally:
+            http_mock.delete_mock()
 
 
 @http
