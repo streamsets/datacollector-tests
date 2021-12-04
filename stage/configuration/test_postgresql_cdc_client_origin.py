@@ -157,7 +157,7 @@ def test_parse_datetimes(sdc_builder, sdc_executor, database, stage_attributes):
             assert record_data_test_datetime == [('test_datetime', datetime.strptime(row['test_datetime'], date_time_format))
                                                 for row in INSERT_ROWS]
             assert record_data_test_datetime_tz == [('test_datetime_tz', datetime.strptime(row['test_datetime_tz']
-                                                      , date_time_format).replace(tzinfo=pytz.utc).astimezone().isoformat())
+                                                      , date_time_format).replace(tzinfo=pytz.utc).isoformat().replace('+00:00', 'Z'))
                                                     for row in INSERT_ROWS]
             assert record_data_test_time == [('test_time', datetime.strptime(row['test_time'], time_format).replace(year=1970))
                                               for row in INSERT_ROWS]
@@ -172,7 +172,7 @@ def test_parse_datetimes(sdc_builder, sdc_executor, database, stage_attributes):
                                                   for row in INSERT_ROWS]
             assert record_data_test_datetime_tz == [('test_datetime_tz', datetime.strptime(row['test_datetime_tz']
                                                     , db_date_time_input_format)
-                                                    .replace(tzinfo=pytz.utc).astimezone().strftime(db_date_time_tz_output_format)[0:22])
+                                                    .replace(tzinfo=pytz.utc).strftime(db_date_time_tz_output_format)[0:22])
                                                     for row in INSERT_ROWS]
             assert record_data_test_time == [('test_time', datetime.strptime(row['test_time'], time_format)
                                             .replace(year=1970).strftime(db_time_output_format))
