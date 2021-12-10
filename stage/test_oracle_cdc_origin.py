@@ -2552,6 +2552,9 @@ def test_user_configuration_checks(sdc_builder,
     Pipeline: oracle_cdc >> wiretap
 
     """
+
+    pytest.skip(f"Skipping test as current implementation is not 100% reliable and has been disabled")
+
     engine = database.engine
     connection = engine.connect()
 
