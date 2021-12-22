@@ -603,3 +603,113 @@ def generate_streams_producer(sdc_builder, topic_name, value, cluster):
     producer_pipeline.configuration['executionMode'] = 'STANDALONE'
     producer_pipeline.configuration['shouldRetry'] = False
     return producer_pipeline
+
+
+@cluster('mapr')
+@sdc_min_version('4.4.0')
+@pytest.mark.parametrize('input_records', [2000])
+def test_mapr_db_cdc_origin_preview(sdc_builder, sdc_executor, cluster, input_records):
+    """We had an issue in which preview pipeline committed records read from streams, which made actual runs not
+    read those records. This test will preview the pipeline and then assert we have the expected number of records.
+
+    dev_data_generator >> expression evaluator >> field_remover >> mapr_db_json
+    mapr_db_cdc_consumer >> wiretap
+    """
+    if not cluster.version[len('mapr'):].startswith('6'):
+        pytest.skip('MapR CDC test only runs against cluster with MapR version 6.')
+    if cluster.mep_version == "4.0":
+        pytest.skip('MapR CDC test are written only for MEP 5 and above.')
+
+    table_name = get_random_string(string.ascii_letters, 10)
+    topic_name = f'{table_name}-topic'
+    table_path = f'/user/sdc/{table_name}'
+    stream_name = f'/{get_random_string(string.ascii_letters, 10)}'
+
+    # Build the MapR JSON DB pipeline.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(records_to_be_generated=input_records)
+    dev_data_generator.fields_to_generate = [
+        {'field': '_id', 'type': 'STRING'},
+        {'field': 'name', 'type': 'STRING'},
+        {'field': 'address', 'type': 'STRING'},
+        {'field': 'mail', 'type': 'STRING'},
+    ]
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    header_attribute_expressions = ("${record:value('/operation')=='insert'?1:"
+                                    "record:value('/operation')=='update'?3:"
+                                    "record:value('/operation')=='delete'?2:1}")
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {'attributeToSet': 'sdc.operation.type',
+         'headerAttributeExpression': header_attribute_expressions}
+    ])
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.set_attributes(fields=['/operation'])
+    mapr_db_json_destination = pipeline_builder.add_stage('MapR DB JSON', type='destination')
+    mapr_db_json_destination.set_attributes(table_name=table_path, row_key='/_id')
+
+    dev_data_generator >> expression_evaluator >> field_remover >> mapr_db_json_destination
+    json_db_destination_pipeline = pipeline_builder.build('MapR Json DB Destination').configure_for_environment(cluster)
+
+    # Build the MapR DB CDC Consumer pipeline.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    mapr_db_cdc_consumer = pipeline_builder.add_stage('MapR DB CDC Consumer', type='origin')
+    mapr_db_cdc_consumer.set_attributes(mapr_streams_configuration=[dict(key='auto.offset.reset',
+                                                                         value='earliest')],
+                                        number_of_threads=1,
+                                        topic_list=[dict(key=f'{stream_name}:{topic_name}',
+                                                         value=f'{table_path}')])
+
+    wiretap_cdc = pipeline_builder.add_wiretap()
+    mapr_db_cdc_consumer >> wiretap_cdc.destination
+    cdc_pipeline = pipeline_builder.build('MapR DB CDC Consumer').configure_for_environment(cluster)
+
+    try:
+        logger.info('Creating MapR-DB table %s ...', table_path)
+        cluster.execute_command('table', 'create', http_request_method='POST',
+                                data={'path': table_path,
+                                      'defaultreadperm': 'p',
+                                      'tabletype': 'json',
+                                      'defaultwriteperm': 'p'})
+
+        logger.info('Creating MapR stream %s ...', stream_name)
+        cluster.execute_command('stream', 'create', http_request_method='POST',
+                                data={'path': stream_name,
+                                      'ischangelog': 'true',
+                                      'consumeperm': 'p',
+                                      'defaultpartitions': 1})
+
+        changelog = f'{stream_name}:{topic_name}'
+        logger.info('Creating MapR-DB table changelog %s ...', changelog)
+        cluster.execute_command('table', 'changelog', 'add', http_request_method='POST',
+                                data={'path': table_path,
+                                      'changelog': changelog})
+
+        sdc_executor.add_pipeline(json_db_destination_pipeline, cdc_pipeline)
+        sdc_executor.start_pipeline(json_db_destination_pipeline).wait_for_finished()
+
+        preview = sdc_executor.run_pipeline_preview(cdc_pipeline, timeout=30000).preview
+        assert preview is not None
+        assert preview.issues.issues_count == 0
+
+        # We first assert preview has the default 10 records
+        assert len(preview[mapr_db_cdc_consumer].output) == 10
+
+        sdc_executor.start_pipeline(cdc_pipeline)
+        sdc_executor.wait_for_pipeline_metric(cdc_pipeline, 'input_record_count', input_records, timeout_sec=90)
+
+        actual_cdc = [record.field for record in wiretap_cdc.output_records]
+
+        # And second that we actually consumed the input_records records, and not 10 less
+        assert len(actual_cdc) == input_records
+    finally:
+        if sdc_executor.get_pipeline_status(cdc_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(cdc_pipeline)
+        logger.info('Deleting MapR-DB table changelog %s ...', f'{stream_name}:{topic_name}')
+        cluster.execute_command('table', 'changelog', 'remove', http_request_method='POST',
+                                data={'path': table_path, 'changelog': f'{stream_name}:{topic_name}'})
+        logger.info('Deleting MapR stream %s ...', stream_name)
+        cluster.execute_command('stream', 'delete', http_request_method='POST', data={'path': stream_name})
+        logger.info('Deleting MapR-DB table %s ...', table_path)
+        cluster.execute_command('table', 'delete', http_request_method='POST', data={'path': table_path})
