@@ -133,37 +133,39 @@ def test_http(sdc_executor, http_server_pipeline,  http_client_pipeline):
                                  'NEW_FIELD_NAME': 'javscriptField',
                                  'NEW_FIELD_VALUE': 5000}
 
-    sdc_executor.start_pipeline(http_server_pipeline.pipeline, server_runtime_parameters)
-    pipeline_status = sdc_executor.get_pipeline_status(http_server_pipeline.pipeline).response.json()
-    attributes = pipeline_status.get('attributes')
-    assert attributes.get('RUNTIME_PARAMETERS').get('APPLICATION_ID') == 'HTTP_APPLICATION_ID'
+    try:
+        sdc_executor.start_pipeline(http_server_pipeline.pipeline, server_runtime_parameters)
+        pipeline_status = sdc_executor.get_pipeline_status(http_server_pipeline.pipeline).response.json()
+        attributes = pipeline_status.get('attributes')
+        assert attributes.get('RUNTIME_PARAMETERS').get('APPLICATION_ID') == 'HTTP_APPLICATION_ID'
 
-    # Start HTTP Client pipeline.
-    client_runtime_parameters = {'RAW_DATA': '{"f1": "abc"}{"f1": "xyz"}',
-                                 'RESOURCE_URL': 'http://localhost:9999',
-                                 'APPLICATION_ID': 'HTTP_APPLICATION_ID'}
+        # Start HTTP Client pipeline.
+        client_runtime_parameters = {'RAW_DATA': '{"f1": "abc"}{"f1": "xyz"}',
+                                     'RESOURCE_URL': 'http://localhost:9999',
+                                     'APPLICATION_ID': 'HTTP_APPLICATION_ID'}
 
-    sdc_executor.start_pipeline(http_client_pipeline.pipeline, client_runtime_parameters).wait_for_finished()
-    origin_data = http_client_pipeline.wiretap_data_source.output_records
-    processor_data = http_client_pipeline.wiretap_expression_evaluator.output_records
-    assert len(origin_data) == 2
-    assert len(processor_data) == 2
-    assert origin_data[0].field['f1'] == 'abc'
-    assert origin_data[1].field['f1'] == 'xyz'
+        sdc_executor.start_pipeline(http_client_pipeline.pipeline, client_runtime_parameters).wait_for_finished()
+        origin_data = http_client_pipeline.wiretap_data_source.output_records
+        processor_data = http_client_pipeline.wiretap_expression_evaluator.output_records
+        assert len(origin_data) == 2
+        assert len(processor_data) == 2
+        assert origin_data[0].field['f1'] == 'abc'
+        assert origin_data[1].field['f1'] == 'xyz'
 
-    origin_data = http_server_pipeline.wiretap_http_server.output_records
-    processor_data = http_server_pipeline.wiretap_javscript_evaluator.output_records
-    assert len(origin_data) == 2
-    assert len(processor_data) == 2
-    assert origin_data[0].field['f1'] == 'abc'
-    assert origin_data[1].field['f1'] == 'xyz'
-    assert processor_data[0].field['f1'] == 'abc'
-    assert processor_data[0].field['javscriptField'] == 5000
-    assert processor_data[1].field['f1'] == 'xyz'
-    assert processor_data[1].field['javscriptField'] == 5000
+        origin_data = http_server_pipeline.wiretap_http_server.output_records
+        processor_data = http_server_pipeline.wiretap_javscript_evaluator.output_records
+        assert len(origin_data) == 2
+        assert len(processor_data) == 2
+        assert origin_data[0].field['f1'] == 'abc'
+        assert origin_data[1].field['f1'] == 'xyz'
+        assert processor_data[0].field['f1'] == 'abc'
+        assert processor_data[0].field['javscriptField'] == 5000
+        assert processor_data[1].field['f1'] == 'xyz'
+        assert processor_data[1].field['javscriptField'] == 5000
 
-    # Stop the pipelines.
-    sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
+    finally:
+        # Stop the pipelines.
+        sdc_executor.stop_pipeline(http_server_pipeline.pipeline)
 
 
 @http
