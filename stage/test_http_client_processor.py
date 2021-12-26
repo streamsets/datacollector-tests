@@ -634,6 +634,66 @@ def test_http_processor(sdc_builder, sdc_executor, http_client, method, one_requ
 
 
 @http
+@sdc_min_version("4.4.0")
+def test_http_additional_security_header(sdc_builder, sdc_executor, http_client):
+    """Test HTTP Lookup Processor using the new headers property. We do so by
+    sending a request to a pre-defined HTTP server endpoint
+    (testPostJsonEndpoint) and getting expected data. The pipeline looks like:
+
+        dev_raw_data_source >> http_client_processor >> wiretap
+    """
+
+    raw_dict = dict(city='San Francisco')
+    raw_data = json.dumps(raw_dict)
+    expected_dict = dict(latitude='37.7576948', longitude='-122.4726194')
+    # PATCH requests typically receive a 204 response with no body
+    method = 'POST'
+    expected_data = json.dumps(expected_dict)
+    expected_status = 200
+    record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(
+            rule=f'{method} /{mock_path}',
+            body=raw_data
+        ).reply(
+            body=expected_data,
+            status=expected_status,
+            times=FOREVER
+        )
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        # for POST/PATCH, we post 'raw_data' and expect 'expected_dict' as response data
+        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+                                             additional_security_headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method=method, request_data="${record:value('/text')}",
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+        pipeline = builder.build(title='test_http_additional_security_header')
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # ensure HTTP POST/PATCH result is only stored to one record and assert the data
+        assert len(wiretap.output_records) == 1
+        record = wiretap.output_records[0].field
+        if expected_data:
+            assert record[record_output_field]['latitude'] == expected_dict['latitude']
+            assert record[record_output_field]['longitude'] == expected_dict['longitude']
+    finally:
+        http_mock.delete_mock()
+
+
+@http
 @sdc_min_version("3.18.0")
 @pytest.mark.parametrize('miss_val_bh', [
     'PASS_RECORD_ON',
