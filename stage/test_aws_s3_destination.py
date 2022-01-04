@@ -574,6 +574,7 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
+@sdc_min_version('3.19.0')
 def test_s3_region_other(sdc_builder, sdc_executor, aws):
     """
     Test that using a specific region and specifying the endpoint works as expected
