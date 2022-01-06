@@ -1262,12 +1262,14 @@ def test_jdbc_schema_settings(sdc_builder, sdc_executor, database, schema_value)
     trash = builder.add_stage('Trash')
     origin >> trash
 
+    table_name = 'uniq_tablename_' + get_random_string(string.ascii_lowercase, 10)
+
     # Set the schema config
     if schema_value == '{database}':
         # here, we assume that the schema name is exactly the same as the database name
         origin.table_configs = [{'schema': database.database}]
     else:
-        origin.table_configs = [{'schema': schema_value}]
+        origin.table_configs = [{'schema': schema_value, 'tablePattern':f'{table_name}'}]
 
     pipeline = builder.build().configure_for_environment(database)
 
@@ -1277,7 +1279,6 @@ def test_jdbc_schema_settings(sdc_builder, sdc_executor, database, schema_value)
     else:
         logger.info('DB: ' + database.type + '; Table config schema: [empty]')
 
-    table_name = 'uniq_tablename_' + get_random_string(string.ascii_lowercase, 10)
     rows_in_database = [{'id': row['id'], 'NAME': row['name']} for row in ROWS_IN_DATABASE]
     columns = [
         sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
