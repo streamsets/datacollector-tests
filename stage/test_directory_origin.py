@@ -400,8 +400,8 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
 
     directory_pipeline = pipeline_builder.build(title='Directory Origin')
     sdc_executor.add_pipeline(directory_pipeline)
-    pipeline_start_command = sdc_executor.start_pipeline(directory_pipeline)
-    pipeline_start_command.wait_for_pipeline_batch_count(no_of_input_files)
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', no_of_input_files)
 
     # Send another round of records while the reading pipeline is running
     files_pipeline_2 = get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory_2, max_records_in_file, 2)
@@ -437,12 +437,12 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
 
     directory_pipeline_2 = pipeline_builder.build(title='tmp_directory to tmp_directory_2')
     sdc_executor.add_pipeline(directory_pipeline_2)
-    pipeline_start_command_2 = sdc_executor.start_pipeline(directory_pipeline_2)
-    pipeline_start_command_2.wait_for_pipeline_batch_count(no_of_input_files_2)
+    sdc_executor.start_pipeline(directory_pipeline_2)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline_2, 'input_record_count', no_of_input_files_2)
     sdc_executor.stop_pipeline(directory_pipeline_2)
 
     # Wait until the pipeline reads all the expected files
-    pipeline_start_command.wait_for_pipeline_batch_count(no_of_input_files + no_of_input_files_2)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', no_of_input_files + no_of_input_files_2)
 
     sdc_executor.stop_pipeline(directory_pipeline)
     directory_pipeline_history = sdc_executor.get_pipeline_history(directory_pipeline)
