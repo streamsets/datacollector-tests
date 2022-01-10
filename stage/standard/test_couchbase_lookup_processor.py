@@ -19,7 +19,7 @@ import string
 
 from collections import Counter
 from couchbase.management.buckets import CreateBucketSettings
-from streamsets.testframework.markers import couchbase
+from streamsets.testframework.markers import couchbase, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,7 @@ def test_data_types_kv(sdc_builder, sdc_executor, couchbase, input, test_name, e
 
 
 @couchbase
+@sdc_min_version('4.2.0')
 @pytest.mark.parametrize('input,test_name,expected_type,expected_value', DATA_TYPES, ids=[i[1] for i in DATA_TYPES])
 def test_data_types_query(sdc_builder, sdc_executor, couchbase, input, test_name, expected_type, expected_value):
     if input is None:
@@ -221,6 +222,7 @@ def test_object_names_bucket_kv(sdc_builder, sdc_executor, couchbase, test_name,
 
 
 @couchbase
+@sdc_min_version('4.2.0')
 @pytest.mark.parametrize('test_name,bucket_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
 def test_object_names_bucket_query(sdc_builder, sdc_executor, couchbase, test_name, bucket_name):
     document_key_field = 'mydocname'
@@ -359,6 +361,7 @@ def test_multiple_batches_kv(sdc_builder, sdc_executor, couchbase, batch_size):
 
 
 @couchbase
+@sdc_min_version('4.2.0')
 @pytest.mark.parametrize('batch_size', [1, 10])
 def test_multiple_batches_query(sdc_builder, sdc_executor, couchbase, batch_size):
     bucket_name = get_random_string(string.ascii_letters, 10).lower()
@@ -530,6 +533,7 @@ QUERIES = [
 
 
 @couchbase
+@sdc_min_version('4.2.0')
 @pytest.mark.parametrize('test_name,input,expected,multiple_value_behavior, missing_value_behavior',
                          QUERIES, ids=[i[0] for i in QUERIES])
 def test_lookup_query(sdc_builder, sdc_executor, couchbase,
