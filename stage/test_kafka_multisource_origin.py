@@ -25,9 +25,6 @@ from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
-# Specify a port for SDC RPC stages to use.
-SDC_RPC_LISTENING_PORT = 21512
-
 
 @pytest.fixture(autouse=True)
 def kafka_check(cluster):
@@ -329,17 +326,10 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     """Check that retrieving messages from Kafka using Kafka Multitopic Consumer respects both the Batch Max Wait Time
     and the Max Batch Size. Batches are sent when the first of the two conditions is met. This test is checking that
     the Batch Max Wait Time condition is first met.
-
-    Kafka Multitopic Consumer Origin pipeline with standalone connected to an rpc destination which is read in another
-    pipeline:
-        kafka_multitopic_consumer >> sdc_rpc_destination
-        sdc_rpc_origin >> trash
+        kafka_multitopic_consumer >> wiretap
     """
 
     messages = [f'message{i}' for i in range(10, 30)]
-    expected = [f'message{i}' for i in range(10, 30)]
-
-    sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     # Build the Kafka consumer pipeline with Standalone mode.
     builder = sdc_builder.get_pipeline_builder()
@@ -348,57 +338,35 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     produce_kafka_messages_list(kafka_multitopic_consumer.topic_list[0], cluster, messages, 'TEXT')
 
     kafka_multitopic_consumer.set_attributes(auto_offset_reset='EARLIEST',
-                                             max_batch_size_in_records=100,
-                                             batch_wait_time_in_ms=10)
-
-    sdc_rpc_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_sdcipc_SdcIpcDTarget')
-    sdc_rpc_destination.sdc_rpc_connection.append('{}:{}'.format(sdc_executor.server_host, SDC_RPC_LISTENING_PORT))
-    sdc_rpc_destination.sdc_rpc_id = sdc_rpc_id
-
-    kafka_multitopic_consumer >> sdc_rpc_destination
-
-    kafka_consumer_pipeline = builder.build(title='Kafka Multitopic pipeline Maximum batch wait time threshold') \
-        .configure_for_environment(cluster)
-    kafka_consumer_pipeline.configuration['shouldRetry'] = False
-    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
-
-    # Build the rpc origin pipeline.
-    builder = sdc_builder.get_pipeline_builder()
-    sdc_rpc_origin = builder.add_stage(name='com_streamsets_pipeline_stage_origin_sdcipc_SdcIpcDSource')
-    sdc_rpc_origin.sdc_rpc_listening_port = SDC_RPC_LISTENING_PORT
-    sdc_rpc_origin.sdc_rpc_id = sdc_rpc_id
+                                             max_batch_size_in_records=1000,
+                                             batch_wait_time_in_ms=60_000)
 
     wiretap = builder.add_wiretap()
 
-    sdc_rpc_origin >> wiretap.destination
+    kafka_multitopic_consumer >> wiretap.destination
 
-    rpc_origin_pipeline = builder.build('SDC RPC origin pipeline for kafka Max Batch Wait Time')
+    kafka_consumer_pipeline = builder.build().configure_for_environment(cluster)
+    kafka_consumer_pipeline.configuration['shouldRetry'] = False
+    kafka_consumer_pipeline.configuration['executionMode'] = 'STANDALONE'
 
-    sdc_executor.add_pipeline(rpc_origin_pipeline, kafka_consumer_pipeline)
+    sdc_executor.add_pipeline(kafka_consumer_pipeline)
 
     try:
-        sdc_executor.start_pipeline(rpc_origin_pipeline)
-        sdc_executor.get_pipeline_status(rpc_origin_pipeline).wait_for_status('RUNNING')
 
         start_kafka_pipeline_command = sdc_executor.start_pipeline(kafka_consumer_pipeline)
 
         start = time.time()
-        start_kafka_pipeline_command.wait_for_pipeline_output_records_count(20)
+        start_kafka_pipeline_command.wait_for_pipeline_output_records_count(len(messages))
         end = time.time()
         total_time = (end - start)
-        assert total_time < 5.0
+        assert 65.0 > total_time > 55.0  # Execution time is around 60s which is what we expect it to wait
 
-        sdc_executor.wait_for_pipeline_metric(rpc_origin_pipeline, 'input_record_count', 20)
-
-        assert len(expected) == len(wiretap.output_records)
-        assert expected == sorted([str(record.field['text']) for record in wiretap.output_records])
+        assert len(messages) == len(wiretap.output_records)
+        assert messages == sorted([str(record.field['text']) for record in wiretap.output_records])
     finally:
         status = sdc_executor.get_pipeline_status(kafka_consumer_pipeline).response.json().get('status')
         if status != 'STOPPED':
             sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-        status = sdc_executor.get_pipeline_status(rpc_origin_pipeline).response.json().get('status')
-        if status != 'STOPPED':
-            sdc_executor.stop_pipeline(rpc_origin_pipeline)
 
 
 # SDC-13819: Kafka Multi-Topic Consumer refuses to ingest malformed records, rather than sending them to pipeline
