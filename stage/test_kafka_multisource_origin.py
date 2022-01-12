@@ -55,17 +55,26 @@ def test_kafka_origin_including_timestamps(sdc_builder, sdc_executor, cluster):
     kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster)
     kafka_multitopic_consumer.set_attributes(include_timestamps=True)
     wiretap = pipeline_builder.add_wiretap()
-    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    kafka_multitopic_consumer >> [wiretap.destination, pipeline_finisher]
+    kafka_multitopic_consumer >> wiretap.destination
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     sdc_executor.add_pipeline(pipeline)
-    produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, INPUT_DATA.encode(), 'TEXT')
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    assert [INPUT_DATA] == [f'{record.field["text"]}' for record in wiretap.output_records]
-    assert all('timestamp' in record.header.values for record in wiretap.output_records)
-    assert all('timestampType' in record.header.values for record in wiretap.output_records)
+    producer = cluster.kafka.producer()
+    producer.send(kafka_multitopic_consumer.topic_list[0], INPUT_DATA.encode())
+    producer.flush()
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert [INPUT_DATA] == [f'{record.field["text"]}' for record in wiretap.output_records]
+        assert all('timestamp' in record.header.values for record in wiretap.output_records)
+        assert all('timestampType' in record.header.values for record in wiretap.output_records)
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @cluster('cdh', 'kafka')
@@ -100,8 +109,7 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
         producer.flush()
 
     kafka_multitopic_consumer.set_attributes(auto_offset_reset='TIMESTAMP',
-                                             auto_offset_reset_timestamp_in_ms=timestamp,
-                                             consumer_group=get_random_string())
+                                             auto_offset_reset_timestamp_in_ms=timestamp)
 
     wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
@@ -109,8 +117,12 @@ def test_kafka_origin_timestamp_offset_strategy(sdc_builder, sdc_executor, clust
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 # SDC-10501: Option to enable/disable Kafka auto commit Offsets
@@ -124,13 +136,9 @@ def test_kafka_origin_not_saving_offset(sdc_builder, sdc_executor, cluster):
        The pipeline reads from Kafka and uses delay processor to model longer processing time (so that Kafka's auto
        commit takes place) and then jython processor to generate pipeline failure (1/0).
     """
-    topic = get_random_string(string.ascii_letters, 10)
-
     builder = sdc_builder.get_pipeline_builder()
 
     origin = get_kafka_multitopic_consumer_stage(builder, cluster)
-    origin.topic_list = [topic]
-    origin.consumer_group = get_random_string(string.ascii_letters, 10)
     origin.batch_wait_time_in_ms = 100
 
     if Version(sdc_builder.version) < Version('3.7.0'):
@@ -163,7 +171,7 @@ for record in sdc.records:
 
     # Produce one message
     producer = cluster.kafka.producer()
-    producer.send(topic, 'Super Secret Message'.encode())
+    producer.send(origin.topic_list[0], 'Super Secret Message'.encode())
     producer.flush()
 
     try:
@@ -174,12 +182,14 @@ for record in sdc.records:
         # Adding second message so that the topic have at least one new message, so that getting an older
         # versions won't time out but returns immediately.
         producer = cluster.kafka.producer()
-        producer.send(topic, 'Not So Super Secret Message'.encode())
+        producer.send(origin.topic_list[0], 'Not So Super Secret Message'.encode())
         producer.flush()
+
+        assert len(wiretap.output_records) == 0
 
         # Now run the pipeline second time and it should succeed
         sdc_executor.start_pipeline(pipeline, runtime_parameters={'DIVISOR': 1})
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2, timeout_sec=120)
 
         # Now this should still read both records
         records = wiretap.output_records
@@ -200,14 +210,9 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
 
     Kafka Multitopic Origin >> Trash (Run twice)
     """
-    topic = get_random_string(string.ascii_letters, 10)
-
     builder = sdc_builder.get_pipeline_builder()
 
     kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(builder, cluster)
-    kafka_multitopic_consumer.topic_list = [topic]
-    kafka_multitopic_consumer.consumer_group = get_random_string(string.ascii_letters, 10)
-    kafka_multitopic_consumer.batch_wait_time_in_ms = 100
 
     if Version(sdc_builder.version) < Version('3.7.0'):
         kafka_multitopic_consumer.configuration_properties = [{'key': 'auto.offset.reset', 'value': 'earliest'}]
@@ -231,7 +236,7 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
     try:
         # Start the pipeline, read one batch and stop.
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 5)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 5, timeout_sec=120)
         sdc_executor.stop_pipeline(pipeline)
 
         # Check if the pipeline processed 5 records
@@ -277,7 +282,6 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
     expected = [f'message{i}' for i in range(1, 21)]
 
     num_batches = 2
-    kafka_consumer_group = get_random_string(string.ascii_letters, 10)
 
     # Build the Kafka consumer pipeline with Standalone mode.
     builder = sdc_builder.get_pipeline_builder()
@@ -290,9 +294,7 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
     else:
         kafka_multitopic_consumer.auto_offset_reset = 'EARLIEST'
 
-    kafka_multitopic_consumer.set_attributes(consumer_group=kafka_consumer_group,
-                                             max_batch_size_in_records=10,
-                                             batch_wait_time_in_ms=30000)
+    kafka_multitopic_consumer.set_attributes(batch_wait_time_in_ms=30000)
 
     wiretap = builder.add_wiretap()
     kafka_multitopic_consumer >> wiretap.destination
@@ -306,15 +308,18 @@ def test_kafka_origin_batch_max_size(sdc_builder, sdc_executor, cluster):
     # First test checking Max Batch Size is reached
     # Publish messages to Kafka and verify using wiretap if the same messages are received.
     # Start Pipeline.
+    try:
+        sdc_executor.start_pipeline(kafka_consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(kafka_consumer_pipeline,
+                                              'input_record_count',
+                                              num_batches * 10,
+                                              timeout_sec=300)
+        sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
-    sdc_executor.start_pipeline(kafka_consumer_pipeline)
-    sdc_executor.wait_for_pipeline_metric(kafka_consumer_pipeline,
-                                          'input_record_count',
-                                          num_batches * 10,
-                                          timeout_sec=60)
-    sdc_executor.stop_pipeline(kafka_consumer_pipeline)
-
-    assert sorted(expected) == sorted([str(record.field['text']) for record in wiretap.output_records])
+        assert sorted(expected) == sorted([str(record.field['text']) for record in wiretap.output_records])
+    finally:
+        if sdc_executor.get_pipeline_status(kafka_consumer_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(kafka_consumer_pipeline)
 
 
 # SDC-10897: Kafka setting for Batch Wait Time and Max Batch Size not working in conjunction
@@ -334,8 +339,6 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     messages = [f'message{i}' for i in range(10, 30)]
     expected = [f'message{i}' for i in range(10, 30)]
 
-    kafka_consumer_group = get_random_string(string.ascii_letters, 10)
-
     sdc_rpc_id = get_random_string(string.ascii_letters, 10)
 
     # Build the Kafka consumer pipeline with Standalone mode.
@@ -345,7 +348,6 @@ def test_kafka_origin_batch_max_wait_time(sdc_builder, sdc_executor, cluster):
     produce_kafka_messages_list(kafka_multitopic_consumer.topic_list[0], cluster, messages, 'TEXT')
 
     kafka_multitopic_consumer.set_attributes(auto_offset_reset='EARLIEST',
-                                             consumer_group=kafka_consumer_group,
                                              max_batch_size_in_records=100,
                                              batch_wait_time_in_ms=10)
 
@@ -423,14 +425,18 @@ def test_kafka_origin_only_errors(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
     # Produce three text messages (e.g. no JSON)
     produce_kafka_messages_list(origin.topic_list[0], cluster, ["A", "B", "C"], 'TEXT')
-    sdc_executor.start_pipeline(pipeline)
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
-    sdc_executor.stop_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        sdc_executor.stop_pipeline(pipeline)
 
-    # No normal records should be read
-    assert len(wiretap.output_records) == 0
-    # But we should see the 3 errors
-    assert len(wiretap.error_records) == 3
+        # No normal records should be read
+        assert len(wiretap.output_records) == 0
+        # But we should see the 3 errors
+        assert len(wiretap.error_records) == 3
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 # SDC-14063: Kafka multitopic consumer commits offset in a preview mode
@@ -454,13 +460,15 @@ def test_kafka_preview_not_committing_offset(sdc_builder, sdc_executor, cluster)
         preview = sdc_executor.run_pipeline_preview(pipeline, timeout=30_000).wait_for_finished().preview
         assert [record.field['text'] for record in preview[origin].output] == ['A', 'B', 'C']
 
-        # Produce additional 3 messages and ensure that normal pipeline run can see all 6 records (e.g. no commit after preview)
+        # Produce additional 3 messages and ensure that normal pipeline run can see all 6 records
+        # (e.g. no commit after preview)
         produce_kafka_messages_list(origin.topic_list[0], cluster, ["D", "E", "F"], 'TEXT')
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         assert [record.field['text'] for record in wiretap.output_records] == ['A', 'B', 'C', 'D', 'E', 'F']
     finally:
-        sdc_executor.stop_pipeline(pipeline)
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @cluster('cdh', 'kafka')
@@ -485,7 +493,7 @@ def test_kafka_shift_offset(sdc_builder, sdc_executor, cluster):
         # Produce 1000 messages, size of a batch. With the previous 200 there will be a shift in the offset
         produce_kafka_messages_list(origin.topic_list[0], cluster, [f'{i}' for i in range(200, 1200)], 'TEXT')
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1200)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1200, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
 
         actual = sorted([f'{record.field["text"]}' for record in wiretap.output_records])
@@ -510,8 +518,13 @@ def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
 
     sdc_executor.add_pipeline(pipeline)
     produce_kafka_messages(kafka_multitopic_consumer.topic_list[0], cluster, INPUT_DATA.encode(), 'TEXT')
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert [INPUT_DATA] == [f'{record.field["text"]}' for record in wiretap.output_records]
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert [INPUT_DATA] == [f'{record.field["text"]}' for record in wiretap.output_records]
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 # SDC-16127: KafkaMultiConsumer: Does not handle Null message
@@ -542,15 +555,19 @@ def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
     producer.send(kafka_multitopic_consumer.topic_list[0], value=None, key='abc'.encode())
     producer.flush()
 
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    # Check the output records, there should be only 1 message, since the null should be discarded
-    output_records = [record.field for record in wiretap.output_records]
-    assert len(output_records) == 1
-    # Check that the null record did generate an error record
-    assert 1 == len(wiretap.error_records)
-    error_message = wiretap.error_records[0].header['errorMessage']
-    assert expected_error_message == error_message
+        # Check the output records, there should be only 1 message, since the null should be discarded
+        output_records = [record.field for record in wiretap.output_records]
+        assert len(output_records) == 1
+        # Check that the null record did generate an error record
+        assert 1 == len(wiretap.error_records)
+        error_message = wiretap.error_records[0].header['errorMessage']
+        assert expected_error_message == error_message
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 @cluster('cdh', 'kafka')
@@ -574,13 +591,17 @@ def test_kafka_origin_json_array_error(sdc_builder, sdc_executor, cluster):
     producer.flush()
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline)
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
-    sdc_executor.stop_pipeline(pipeline)
-    assert 1 == len(wiretap.error_records)
-    error_message = wiretap.error_records[0].header['errorMessage'].split("'")
-    received_error = error_message[0] + error_message[2]
-    assert expected_error_message == received_error
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+        assert 1 == len(wiretap.error_records)
+        error_message = wiretap.error_records[0].header['errorMessage'].split("'")
+        received_error = error_message[0] + error_message[2]
+        assert expected_error_message == received_error
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list=None):
@@ -604,6 +625,7 @@ def get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list=No
     # Default stage configuration.
     kafka_multitopic_consumer.set_attributes(data_format='TEXT',
                                              batch_wait_time_in_ms=20000,
+                                             consumer_group=get_random_string(string.ascii_letters, 10),
                                              topic_list=topic_list)
 
     return kafka_multitopic_consumer
