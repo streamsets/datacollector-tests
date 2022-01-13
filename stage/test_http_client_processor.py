@@ -29,6 +29,7 @@ import pytest
 from collections import namedtuple
 from pretenders.common.constants import FOREVER
 from requests_gssapi import HTTPSPNEGOAuth
+from streamsets.sdk.sdc_api import RunError
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.constants import (CREDENTIAL_STORE_EXPRESSION, CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION,
@@ -831,6 +832,71 @@ def test_http_processor_with_body(sdc_builder, sdc_executor, method, http_client
     finally:
         if not keep_data:
             http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("4.4.0")
+@pytest.mark.parametrize("one_request_per_batch", [True, False])
+def test_http_processor_oauth2_token_retry(sdc_builder, sdc_executor, http_client, keep_data, one_request_per_batch):
+    """
+    Test the error when the http processor stage has more than the allowed number of consecutive invalid oauth2 tokens
+    (1 for now, but test is suitable for any number as we just mock infinite invalid tokens).
+    There are similar tests for origin and destination.
+
+    We use the pipeline:
+        dev_raw_data_source >> http_client_processor >> wiretap
+
+    """
+    mock_oauth_token = {
+        "access_token": "MTQ0NjJkZmQ5OTM2NDE1ZTZjNGZmZjI3",
+        "token_type": "Bearer",
+        "expires_in": 100,
+        "refresh_token": "IwOGYzYTlmM2YxOTQ5MGE3YmNmMDFkNTVk",
+        "scope": "create"
+    }
+    mock_oauth_token_data = json.dumps(mock_oauth_token)
+    mock_path = get_random_string(string.ascii_letters, 10)
+    oauth_mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+    oauth_http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'POST /{mock_path}').reply(status=403, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        oauth_http_mock.when(f'POST /{oauth_mock_path}').reply(mock_oauth_token_data, times=FOREVER)
+        oauth_mock_uri = f'{oauth_http_mock.pretend_url}/{oauth_mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy')
+        dev_raw_data_source.stop_after_first_batch = True
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', http_method='POST',
+                                             resource_url=mock_uri,
+                                             output_field='/result',
+                                             request_data="{'something': 'here'}",
+                                             use_oauth_2=True,
+                                             credentials_grant_type='CLIENT_CREDENTIALS',
+                                             token_url=oauth_mock_uri,
+                                             client_id='-',
+                                             client_secret='-')
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        pytest.fail('Test should have raised an Exception with HTTP_32 - HTTP_38 exception, but did not')
+    except RunError as e:
+        assert 'HTTP_38' in e.message
+    finally:
+        if not keep_data:
+            http_mock.delete_mock()
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 
 # SDC-16431:  Allow sending body with DELETE and other HTTP methods in HTTP components
