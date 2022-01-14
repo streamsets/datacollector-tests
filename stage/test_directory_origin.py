@@ -1800,7 +1800,6 @@ def _write_pipeline(sdc_executor, number_files, tmp_write_directory, tmp_in_dire
     return number_processed_files
 
 
-@sdc_min_version('4.4.0')
 def test_directory_origin_read_while_writing(sdc_builder, sdc_executor):
     """Test Directory Origin. We run the pipeline to read files created, and at the same time, we write a large number
     of files with the same timestamp. We test if we get all the files created.
