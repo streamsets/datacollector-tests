@@ -51,13 +51,15 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
     table_path = f'/user/sdc/{table_name}'
     stream_name = f'/{get_random_string(string.ascii_letters, 10)}'
 
-    # Generate some data.
+    # Generate some data, including null values.
     test_data = [dict(_id='1', name='Sachin Tendulkar', operation='insert',
                       average=53.79, is_alive=True, runs_bf=1592129437, innings=329),
                  dict(_id='2', name='Don Bradman', operation='insert',
                       average=53.79, is_alive=False, runs_bf=69969798, innings=80),
                  dict(_id='3', name='Gary Sobers', operation='insert',
                       average=57.78, is_alive=True, runs_bf=80323867, innings=160),
+                 dict(_id='4', name=None, operation='insert',
+                      average=58.23, is_alive=True, runs_bf=70323867, innings=140),
                  dict(_id='1', name='Sachin', operation='update'),
                  dict(_id='2', name='Don', operation='update'),
                  dict(_id='3', operation='delete')]
@@ -65,7 +67,8 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
 
     # Expected final data, field remover stage will have the operation field removed
     final_data = [dict(_id='1', name='Sachin', average=53.79, is_alive=True, runs_bf=1592129437, innings=329),
-                  dict(_id='2', name='Don', average=53.79, is_alive=False, runs_bf=69969798, innings=80)]
+                  dict(_id='2', name='Don', average=53.79, is_alive=False, runs_bf=69969798, innings=80),
+                  dict(_id='4', name=None, average=58.23, is_alive=True, runs_bf=70323867, innings=140)]
 
     # Build the MapR JSON DB pipeline.
     pipeline_builder = sdc_builder.get_pipeline_builder()
