@@ -40,6 +40,8 @@ def setup_table(connection, schema_name, table_name, sample_data=None, capture_i
                        f'@capture_instance=\'{capture_instance_name}\', '
                        f'@supports_net_changes=1, @role_name=NULL')
 
+    _wait_until_is_tracked_by_cdc(connection, table_name, 1)
+
     if sample_data is not None:
         add_data_to_table(connection, table, sample_data)
 
