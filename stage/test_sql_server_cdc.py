@@ -789,9 +789,7 @@ def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
             connection.execute(f'ALTER TABLE {table_name} ADD new_column INT')
 
             _disable_cdc(connection, schema_name, table_name)
-            sleep(1)
             _enable_cdc(connection, schema_name, table_name, f"{schema_name}_{table_name}_2")
-            sleep(1)
 
         # Reset record accumulation
         wiretap.reset()
@@ -838,6 +836,8 @@ def _enable_cdc(connection, schema_name, table_name, capture_instance=None):
                        f'@role_name = NULL, '
                        f'@capture_instance={capture_instance}')
 
+    _wait_until_is_tracked_by_cdc(connection, table_name, 1)
+
 
 def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
     if capture_instance is None:
@@ -849,3 +849,15 @@ def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
         f'@source_schema=N\'{schema_name}\', '
         f'@source_name=N\'{table_name}\','
         f'@capture_instance={capture_instance}')
+
+    _wait_until_is_tracked_by_cdc(connection, table_name, 0)
+
+
+def _wait_until_is_tracked_by_cdc(connection, table_name, is_tracked_by_cdc):
+    while True:
+        cursor = connection.execute(f"select name from sys.tables where is_tracked_by_cdc = {is_tracked_by_cdc} and name = '{table_name}'")
+        if len(cursor.fetchall()) > 0:
+            break
+        else:
+            logger.info(f'Waiting until CDC is enabled/disabled for the table {table_name}')
+            sleep(1)
