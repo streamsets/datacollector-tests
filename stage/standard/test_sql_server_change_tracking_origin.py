@@ -67,10 +67,15 @@ DATA_TYPES_SQLSERVER = [
 #    ('GEOMETRY',"geometry::STGeomFromText('LINESTRING (100 100, 20 180, 180 180)', 0)", 'BYTE_ARRAY', 'AAAAAAEEAwAAAAAAAAAAAFlAAAAAAAAAWUAAAAAAAAA0QAAAAAAAgGZAAAAAAACAZkAAAAAAAIBmQAEAAAABAAAAAAEAAAD/////AAAAAAI='), # Not supported
     ('XML', "'<a></a>'", 'STRING', '<a/>')
 ]
+
+UNSUPPORTED_DATA_TYPES_SQLSERVER_AS_PRIMARY_KEY = ["TEXT", "NTEXT", "IMAGE", "XML"]
+
+
 @sdc_min_version('3.0.0.0')
 @database('sqlserver')
+@pytest.mark.parametrize('fetch_size', [0, 1])
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_SQLSERVER, ids=[i[0] for i in DATA_TYPES_SQLSERVER])
-def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
+def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data, fetch_size):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
 
@@ -94,7 +99,7 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         builder = sdc_builder.get_pipeline_builder()
 
         origin = builder.add_stage('SQL Server Change Tracking Client')
-        origin.fetch_size = 1
+        origin.fetch_size = fetch_size
         origin.table_configs = [{'initialOffset': 0, 'schema': 'dbo', 'tablePattern': f'{table_name}'}]
 
         wiretap = builder.add_wiretap()
@@ -134,6 +139,81 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
 
         assert record.field['data_column']._data['value'] == expected_value
         assert null_record.field['data_column'] == None
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
+            connection.execute(f"DROP TABLE {table_name}")
+
+        if connection is not None:
+            connection.close()
+
+
+@sdc_min_version('3.0.0.0')
+@database('sqlserver')
+@pytest.mark.parametrize('fetch_size', [0, 1])
+@pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_SQLSERVER, ids=[i[0] for i in DATA_TYPES_SQLSERVER])
+def test_data_types_as_primary_keys(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data, fetch_size):
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if sql_type in UNSUPPORTED_DATA_TYPES_SQLSERVER_AS_PRIMARY_KEY:
+        pytest.skip('Test only runs against valid SQL Server Primary Key.')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                id int,
+                data_column {sql_type} primary key
+            )
+        """)
+        connection.execute(f'ALTER TABLE [{table_name}] ENABLE change_tracking WITH (track_columns_updated = on)')
+
+        # And insert a row with actual value
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('SQL Server Change Tracking Client')
+        origin.fetch_size = fetch_size
+        origin.table_configs = [{'initialOffset': 0, 'schema': 'dbo', 'tablePattern': f'{table_name}'}]
+
+        wiretap = builder.add_wiretap()
+
+        # As a part of SDC-10125, DATETIMEOFFSET is natively supported in SDC, and is converted into ZONED_DATETIME
+        if sql_type == 'DATETIMEOFFSET':
+            if Version(sdc_executor.version) >= Version('3.14.0'):
+                expected_type = 'ZONED_DATETIME'
+                expected_value = '2004-05-23T14:25:10.3456-08:00'
+            else:
+                expected_type = 'STRING'
+                expected_value = '2004-05-23 14:25:10.3456 -08:00'
+                # This unknown_type_action setting is required, otherwise DATETIMEOFFSET tests for SDC < 3.14 will fail.
+                origin.on_unknown_type = 'CONVERT_TO_STRING'
+
+        origin >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(2)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = wiretap.output_records
+        assert len(records) == 1
+
+        record = records[0]
+
+        # Since we are controlling types, we want to check explicit values inside the record rather the the python
+        # wrappers.
+        # TLKT-177: Add ability for field to return raw value
+
+        assert record.field['data_column'].type == expected_type
+
+        assert record.field['data_column']._data['value'] == expected_value
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
