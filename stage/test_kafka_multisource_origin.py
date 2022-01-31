@@ -495,7 +495,8 @@ def test_kafka_topic_with_hyphen(sdc_builder, sdc_executor, cluster):
             sdc_executor.stop_pipeline(pipeline)
 
 
-# SDC-16127: KafkaMultiConsumer: Does not handle Null message
+
+# SDC-16127: KafkaMultiConsumer: Does not handle messages with null payload
 @cluster('cdh', 'kafka')
 def test_kafka_multiconsumer_null_payload(sdc_builder, sdc_executor, cluster):
     """Check that retrieving a message with null payload from Kafka using Kafka Multitopic Consumer does not return anything.
@@ -567,6 +568,79 @@ def test_kafka_origin_json_array_error(sdc_builder, sdc_executor, cluster):
         error_message = wiretap.error_records[0].header['errorMessage'].split("'")
         received_error = error_message[0] + error_message[2]
         assert expected_error_message == received_error
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@cluster('cdh', 'kafka')
+@sdc_min_version('4.5.0')
+def test_kafka_topic_with_pattern(sdc_builder, sdc_executor, cluster):
+    topic_data_1 = 'Info from Topic 1'
+    topic_data_2 = 'Info from Topic 2'
+    topic_prefix = f'{get_random_string(string.ascii_lowercase, 5)}'
+    topic_1 = f'{topic_prefix}_1'
+    topic_2 = f'{topic_prefix}_2'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, [topic_1, topic_2])
+    kafka_multitopic_consumer.set_attributes(topic_subscription_type="PATTERN", topic_pattern=f'{topic_prefix}.*')
+    wiretap = pipeline_builder.add_wiretap()
+    kafka_multitopic_consumer >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+    produce_kafka_messages(topic_1, cluster, topic_data_1.encode(), 'TEXT')
+    produce_kafka_messages(topic_2, cluster, topic_data_2.encode(), 'TEXT')
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2, timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = [f'{record.field["text"]}' for record in wiretap.output_records]
+        assert len(output_records) == 2
+        assert topic_data_1 and topic_data_2 in output_records
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@cluster('cdh', 'kafka')
+@sdc_min_version('4.5.0')
+def test_kafka_topic_with_pattern_new_topic_during_pipeline_run(sdc_builder, sdc_executor, cluster):
+    topic_data_1 = 'Info from Topic 1'
+    topic_data_2 = 'Info from Topic 2'
+    topic_data_3 = 'Info from Topic 3'
+    topic_prefix = f'{get_random_string(string.ascii_lowercase, 5)}'
+    topic_1 = f'{topic_prefix}_1'
+    topic_2 = f'{topic_prefix}_2'
+    topic_3 = f'{topic_prefix}_3'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_multitopic_consumer = get_kafka_multitopic_consumer_stage(pipeline_builder, cluster,
+                                                                    [topic_1, topic_2, topic_3])
+    kafka_multitopic_consumer.set_attributes(topic_subscription_type="PATTERN", topic_pattern=f'{topic_prefix}.*',
+                                             metadata_refresh_time_in_ms=10_000)
+    wiretap = pipeline_builder.add_wiretap()
+    kafka_multitopic_consumer >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    sdc_executor.add_pipeline(pipeline)
+    produce_kafka_messages(topic_1, cluster, topic_data_1.encode(), 'TEXT')
+    produce_kafka_messages(topic_2, cluster, topic_data_2.encode(), 'TEXT')
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2, timeout_sec=120)
+        produce_kafka_messages(topic_3, cluster, topic_data_3.encode(), 'TEXT')
+        time.sleep(20)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = [f'{record.field["text"]}' for record in wiretap.output_records]
+        assert len(output_records) == 3
+        assert all(topic_data in output_records for topic_data in [topic_data_1, topic_data_2, topic_data_3])
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
