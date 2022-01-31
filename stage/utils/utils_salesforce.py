@@ -163,9 +163,215 @@ while hasNext:
         hasNext = False
 """
 
-FORCE_13_HARD_DELETE_PERMISSION = "FORCE_13 - Error writing to Salesforce: , FeatureNotEnabled : hardDelete operation requires special user profile permission, please contact your system administrator"
+FORCE_13 = 'FORCE_13'
+
+# Bulk API pipelines can take a minute or two just to process the query
+BULK_PIPELINE_TIMEOUT_SECONDS = 300
+SOAP_PIPELINE_TIMEOUT_SECONDS = 60
 
 USERINFO_URL_FORMAT = "https://{}/services/oauth2/userinfo"
+
+STANDARD_FIELDS = {'label': 'Value', 'fullName': 'Value__c', 'required': False}
+
+SAMPLE_EMAIL = 'user@example.com'
+SAMPLE_TEXT  = 'The quick brown fox jumps over the lazy dog'
+MASKED_TEXT  = 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
+SAMPLE_PHONE = '111-222-3333'
+LONG_SAMPLE_TEXT = SAMPLE_TEXT * 50
+SAMPLE_URL   = 'https://www.example.com/'
+SAMPLE_HTML  = 'The <i>quick</i> brown fox <u>jumps</u> over the <b>lazy</b> dog'
+SAMPLE_LOCATION = {'Value__Latitude__s': 12.345, 'Value__Longitude__s': 54.321}
+# Decimals appear in field._data['value'] as strings
+EXPECTED_LOCATION = {'Value__Latitude__s': '12.345', 'Value__Longitude__s': '54.321'}
+NULL_LOCATION = {'Value__Latitude__s': None, 'Value__Longitude__s': None}
+
+# https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_field_types.htm#meta_type_fieldtype
+DATA_TYPES = [
+    {
+        'metadata': {'type': 'AutoNumber', 'startingNumber': 1, 'displayFormat': 'A-{0000}'},
+        'expected_type': 'STRING',
+        'expected_value': 'A-0001',
+        'null_value': 'A-0002'
+    },
+    {
+        'metadata': {'type': 'Checkbox', 'defaultValue': False},
+        'data_to_insert': True,
+        'expected_type': 'BOOLEAN',
+        'expected_value': True,
+        'null_value': False
+    },
+    {
+        'metadata': {'type': 'Currency', 'precision': 5, 'scale': 2},
+        'data_to_insert': 123.45,
+        'expected_type': 'DECIMAL',
+        'expected_value': '123.45',
+    },
+    {
+        'metadata': {'type': 'Date'},
+        'data_to_insert': '2022-02-14',
+        'expected_type': 'DATETIME',
+        'expected_value': 1644796800000,
+    },
+    {
+        'metadata': {'type': 'DateTime'},
+        'data_to_insert': '2022-02-14T12:34:56Z',
+        'expected_type': 'DATETIME',
+        'expected_value': 1644842096000,
+    },
+    {
+        'metadata': {'type': 'Email'},
+        'data_to_insert': SAMPLE_EMAIL,
+        'expected_type': 'STRING',
+        'expected_value': SAMPLE_EMAIL,
+    },
+    {
+        'metadata': {'type': 'EncryptedText', 'length': 64, 'maskChar': 'X', 'maskType': 'all'},
+        'data_to_insert': SAMPLE_TEXT,
+        'expected_type': 'STRING',
+        'expected_value': MASKED_TEXT,
+    },
+    {
+        'metadata': {'type': 'Number', 'precision': 5, 'scale': 2},
+        'data_to_insert': 123.45,
+        'expected_type': 'DECIMAL',
+        'expected_value': '123.45',
+    },
+    {
+        'metadata': {'type': 'Percent', 'precision': 5, 'scale': 2},
+        'data_to_insert': 123.45,
+        'expected_type': 'DECIMAL',
+        'expected_value': '123.45',
+    },
+    {
+        'metadata': {'type': 'Phone'},
+        'data_to_insert': SAMPLE_PHONE,
+        'expected_type': 'STRING',
+        'expected_value': SAMPLE_PHONE,
+    },
+    {
+        'metadata': {
+            'type': 'Picklist',
+            'valueSet': {
+                'valueSetDefinition' : {
+                    'sorted': 'false',
+                    'value': [
+                        {
+                            'fullName': 'red',
+                            'default': 'true'
+                        },
+                        {
+                            'fullName': 'green',
+                            'default': 'false'
+                        },
+                        {
+                            'fullName': 'blue',
+                            'default': 'false'
+                        }
+                    ]
+                }
+            }
+        },
+        'data_to_insert': 'blue',
+        'expected_type': 'STRING',
+        'expected_value': 'blue',
+        'null_value': 'red'
+    },
+    {
+        'metadata': {
+            'type': 'MultiselectPicklist',
+            'valueSet': {
+                'valueSetDefinition' : {
+                    'sorted': 'false',
+                    'value': [
+                        {
+                            'fullName': 'red',
+                            'default': 'true'
+                        },
+                        {
+                            'fullName': 'green',
+                            'default': 'false'
+                        },
+                        {
+                            'fullName': 'blue',
+                            'default': 'false'
+                        }
+                    ]
+                }
+            },
+            'visibleLines': 3
+        },
+        'data_to_insert': 'blue;green',
+        'expected_type': 'STRING',
+        'expected_value': 'blue;green',
+        'null_value': 'red'
+    },
+    {
+        'metadata': {'type': 'Text', 'length': 64},
+        'data_to_insert': SAMPLE_TEXT,
+        'expected_type': 'STRING',
+        'expected_value': SAMPLE_TEXT,
+    },
+    {
+        'metadata': {'type': 'TextArea'},
+        'data_to_insert': SAMPLE_TEXT,
+        'expected_type': 'STRING',
+        'expected_value': SAMPLE_TEXT,
+    },
+    {
+        'metadata': {'type': 'LongTextArea', 'length': 32000, 'visibleLines': 12},
+        'data_to_insert': LONG_SAMPLE_TEXT,
+        'expected_type': 'STRING',
+        'expected_value': LONG_SAMPLE_TEXT,
+    },
+    {
+        'metadata': {'type': 'Url'},
+        'data_to_insert': SAMPLE_URL,
+        'expected_type': 'STRING',
+        'expected_value': SAMPLE_URL,
+    },
+    {
+        'metadata': {'type': 'Html', 'length': 32768, 'visibleLines': 12},
+        'data_to_insert': SAMPLE_HTML,
+        'expected_type': 'STRING',
+        'expected_value': SAMPLE_HTML,
+    },
+    {
+        'metadata': {'type': 'Location', 'scale': 3},
+        'data_to_insert': SAMPLE_LOCATION,
+        'expected_type': 'DECIMAL',
+        'expected_value': EXPECTED_LOCATION,
+        'compound_field': True,
+        'null_value': NULL_LOCATION
+    },
+    {
+        'metadata': {'type': 'Time'},
+        'data_to_insert': '12:34:56Z',
+        'expected_type': 'DATETIME',
+        'expected_value': 45296000,
+    },
+]
+
+
+# Max name length 40: https://help.salesforce.com/s/articleView?id=000313503&type=1
+# "This name can contain only underscores and alphanumeric characters, and must
+# be unique in your org. It must begin with a letter, not include spaces, not
+# end with an underscore, and not contain two consecutive underscores."
+# https://help.salesforce.com/s/articleView?id=sf.adding_fields.htm&type=5
+OBJECT_NAMES = [
+    ('keywords', 'object', 'field'),
+    ('lowercase', get_random_string(string.ascii_lowercase, 20), get_random_string(string.ascii_lowercase, 20)),
+    ('uppercase', get_random_string(string.ascii_uppercase, 20), get_random_string(string.ascii_uppercase, 20)),
+    ('mixedcase', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 20)),
+    ('max_object_name', get_random_string(string.ascii_letters, 40), get_random_string(string.ascii_letters, 20)),
+    ('max_field_name', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 40)),
+    ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
+    (
+        'special',
+        get_random_string(string.ascii_letters, 5) + "_" + get_random_string(string.ascii_letters, 5),
+        get_random_string(string.ascii_letters, 5) + "_" + get_random_string(string.ascii_letters, 5)
+    ),
+]
+
 
 def set_up_random(salesforce):
     """" This function is used to generate unique set of values for each test.
@@ -310,16 +516,31 @@ def get_ids(records, key):
     return [{'Id': record[key]} for record in records]
 
 
-def clean_up(sdc_executor, pipeline, client, contact_ids):
-    """Utility method to delete inserted contacts and stop the pipeline
+def check_ids(records):
+    """Utility method to verify that records were actually written to Salesforce.
+    Creation can fail due to errors such as STORAGE_LIMIT_EXCEEDED, resulting in an
+    Id of None. Bail early for clarity and speed!
+
+    Args:
+        records (:obj:`list`) of inserted record Ids in form [{'Id':'001000000000001'},...]
+
+    Returns:
+        The `records` argument, for easy chaining.
+    """
+    for record in records:
+        assert record['Id'], "Error creating Salesforce data"
+    return records
+
+def clean_up(sdc_executor, pipeline, client, record_ids, object_name='Contact'):
+    """Utility method to delete inserted records and stop the pipeline
 
     Args:
         sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
         pipeline (:py:class:`streamsets.sdk.sdc_models.Pipeline`): Pipeline instance to be stopped
         client (:py:class:`simple_salesforce.Salesforce`): Salesforce client
-        contact_ids (:obj:`list`): List of contacts to be deleted in form [{'Id':'001000000000001'},...]
+        record_ids (:obj:`list`): List of records to be deleted in form [{'Id':'001000000000001'},...]
     """
-    if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+    if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
         logger.info('Stopping pipeline ...')
         try:
             # Wait false is because no synchronization needed with the stop
@@ -327,11 +548,11 @@ def clean_up(sdc_executor, pipeline, client, contact_ids):
         except Exception:
             logger.error('Unable to stop the pipeline ...')
     try:
-        if contact_ids:
-            logger.info('Deleting Contact with id(s) %s ...', contact_ids)
-            client.bulk.Contact.delete(contact_ids)
+        if record_ids:
+            logger.info(f'Deleting {object_name}s with id(s) {record_ids} ...')
+            getattr(client.bulk, object_name).delete(record_ids)
     except Exception:
-        logger.error('Unable to delete Contacts ...')
+        logger.error(f'Unable to delete {object_name}s ...')
 
 
 def find_dataset(client, name):
@@ -364,13 +585,22 @@ def find_dataset_include_timestamp(client, name):
     return None, None
 
 
-def add_custom_field_to_contact(metadata, custom_field_name):
+def add_custom_field_to_contact(salesforce, custom_field_name):
     field_content = ADD_CUSTOM_FIELD_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name})
     permission_content = CUSTOM_FIELD_PERMISSION_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name})
-    deploy_metadata(metadata,
+    deploy_metadata(salesforce.metadata_client,
                     ADD_CUSTOM_FIELD_PACKAGE,
                     [{'name': 'objects/Contact.object', 'content': field_content},
                       {'name': 'profiles/Admin.profile', 'content': permission_content}])
+    # Salesforce orgs can have a namespace associated with them. The namespace
+    # is prepended to custom field names, breaking this test.
+    namespace = get_org_namespace_prefix(salesforce.client)
+    return namespace + "__" + custom_field_name if namespace else custom_field_name
+
+
+def get_org_namespace_prefix(client):
+    result = client.query("SELECT Id, NamespacePrefix FROM Organization")
+    return result['records'][0]['NamespacePrefix']
 
 
 def delete_custom_field_from_contact(metadata, custom_field_name):
@@ -566,3 +796,23 @@ def verify_result_ids(expected_ids, result, result_key='Id'):
     assert len(expected_ids) == len(result['records'])
     for i in range(len(expected_ids)):
         assert expected_ids[i]['Id'] == result['records'][i][result_key]
+
+
+def set_field_permissions(mdapi, object_name, field_name):
+    # By default, no one has permission to access a new custom field.
+    # Add field permission for the System Administrator
+    profile = mdapi.Profile()
+    profile.fullName = 'Admin'
+    profile.fieldPermissions = {
+        'field': f'{object_name}__c.{field_name}__c',
+        'readable': True,
+        'editable': True
+    }
+    mdapi.Profile.update(profile)
+
+
+def compare_values(expected, actual, object_type):
+    if object_type == 'MultiselectPicklist':
+        # Multiselect picklist values are returned in an arbitrary order
+        return (not expected and not actual) or set(expected.split(';')) == set(actual.split(';'))
+    return expected == actual

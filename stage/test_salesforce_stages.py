@@ -30,7 +30,7 @@ from xml.sax.saxutils import escape
 
 import pytest
 import requests
-from sdk.sdc_api import RunError
+from streamsets.sdk.sdc_api import StatusError
 from streamsets.sdk.utils import wait_for_condition
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
@@ -41,8 +41,8 @@ from .utils.utils_salesforce import (insert_data_and_verify_using_wiretap, verif
                                      get_cdc_wiretap_records, get_dev_raw_data_source, get_ids, set_up_random,
                                      FOLDER_NAME, TEST_DATA, TIMEOUT, verify_analytics_data,
                                      MULTIPLE_UPLOADS_PER_BATCH_SCRIPT, MULTIPLE_UPLOADS_BATCH_SIZE,
-                                     assign_hard_delete, revoke_hard_delete, verify_result_ids,
-                                     FORCE_13_HARD_DELETE_PERMISSION)
+                                     assign_hard_delete, revoke_hard_delete, verify_result_ids, FORCE_13,
+                                     BULK_PIPELINE_TIMEOUT_SECONDS, SOAP_PIPELINE_TIMEOUT_SECONDS)
 
 CONTACT = 'Contact'
 ACCOUNT = 'Account'
@@ -98,7 +98,6 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Using Salesforce connection, read the contents in the Salesforce destination.
-        # Changing " with ' and vice versa in following string makes the query execution fail.
         query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
                      f"FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = '{TEST_DATA['STR_15_RANDOM']}'"
                      " ORDER BY Id")
@@ -161,7 +160,6 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Using Salesforce connection, read the contents in the Salesforce destination.
-        # Changing " with ' and vice versa in following string makes the query execution fail.
         query_str = ("SELECT Id, FirstName, LastName, Email, LeadSource "
                      f"FROM Contact WHERE Email LIKE \'xtest%\' and Lastname = '{TEST_DATA['STR_15_RANDOM']}'"
                      " ORDER BY Id")
@@ -274,7 +272,6 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, api, prefixed_
                  " ORDER BY Id")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
-    # Changing " with ' and vice versa in following string makes the query execution fail.
     salesforce_origin.set_attributes(soql_query=query,
                                      use_bulk_api=(api == 'bulk'),
                                      subscribe_for_notifications=False)
@@ -354,7 +351,6 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
              " ORDER BY SystemModstamp")
 
     salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
-    # Changing " with ' and vice versa in following string makes the query execution fail.
     salesforce_origin.set_attributes(soql_query=query,
                                      use_bulk_api=(api == 'bulk'),
                                      subscribe_for_notifications=False,
@@ -377,16 +373,22 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
 
         logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        timeout_sec = BULK_PIPELINE_TIMEOUT_SECONDS if api == 'bulk' else SOAP_PIPELINE_TIMEOUT_SECONDS
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              3,
+                                              timeout_sec=timeout_sec)
         sdc_executor.stop_pipeline(pipeline)
 
         verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
         wiretap.reset()
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 0)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              0,
+                                              timeout_sec=timeout_sec)
         sdc_executor.stop_pipeline(pipeline)
-
 
         assert len([record.value['value'] for record in wiretap.output_records]) == 0
     finally:
@@ -468,7 +470,6 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, api,
     dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
 
     salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
-    # Changing " with ' and vice versa in following string makes the query execution fail.
     query_str = ("SELECT Id, FirstName, LastName, LeadSource FROM Contact "
                  "WHERE Email = '${record:value(\"/Email\")}' AND "
                  f"Lastname = '{TEST_DATA['STR_15_RANDOM']}'")
@@ -572,7 +573,6 @@ def test_salesforce_lookup_processor_single_quote_escaping(sdc_builder, sdc_exec
     dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
 
     salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
-    # Changing " with ' and vice versa in following string makes the query execution fail.
     query_str = \
         """SELECT FirstName, Email FROM Contact WHERE LastName = 
         '${str:replaceAll(record:value('/surName'),"'","\\\\\\\\'")}'"""
@@ -909,7 +909,6 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
     dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, lookup_data)
 
     salesforce_lookup = pipeline_builder.add_stage('Salesforce Lookup')
-    # Changing " with ' and vice versa in following string makes the query execution fail.
     query_str = ("SELECT COUNT() FROM Contact "
                  "WHERE FirstName LIKE '${record:value(\"/prefix\")}%' "
                  f"AND LastName= '{TEST_DATA['STR_15_RANDOM']}'")
@@ -1040,7 +1039,11 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
 
         logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        timeout_sec = BULK_PIPELINE_TIMEOUT_SECONDS if api == 'bulk' else SOAP_PIPELINE_TIMEOUT_SECONDS
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              3,
+                                              timeout_sec=timeout_sec)
         verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
         logger.info('Revoking Salesforce session')
@@ -1054,7 +1057,10 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
 
         logger.info('Capturing another wiretap')
         wiretap.reset()
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              3,
+                                              timeout_sec=timeout_sec)
         verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
     finally:
@@ -1498,7 +1504,8 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
     custom_field_name = '{}__c'.format(get_random_string(string.ascii_letters, 10))
 
     logger.info('Adding custom field %s to Contact object ...', custom_field_name)
-    add_custom_field_to_contact(metadata_client, custom_field_name)
+    # If the Salesforce org has a namespace, it is prepended to the custom field name
+    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name)
     custom_field_deleted = False
 
     pipeline = None
@@ -1641,7 +1648,10 @@ def test_salesforce_streaming_api_buffer(sdc_builder, sdc_executor, salesforce, 
         client.Contact.update(contact_id, test_data)
 
         if enough_buffer_size:
-            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+            sdc_executor.wait_for_pipeline_metric(pipeline,
+                                                  'input_record_count',
+                                                  1,
+                                                  timeout_sec=SOAP_PIPELINE_TIMEOUT_SECONDS)
             verify_wiretap_data(wiretap, [test_data])
             logger.info('Stopping pipeline after success ...')
             sdc_executor.stop_pipeline(pipeline)
@@ -1978,7 +1988,10 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
 
         logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              3,
+                                              timeout_sec=SOAP_PIPELINE_TIMEOUT_SECONDS)
 
         verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
@@ -2209,7 +2222,11 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
 
         sdc_executor.start_pipeline(pipeline).wait_for_status('RUNNING')
         time.sleep(10) # Give the pipeline time to connect to the Streaming API
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(test_data))
+        timeout_sec = BULK_PIPELINE_TIMEOUT_SECONDS if api == 'bulk' else SOAP_PIPELINE_TIMEOUT_SECONDS
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              len(test_data),
+                                              timeout_sec=timeout_sec)
 
         if subscription_type == PUSH_TOPIC:
             verify_wiretap_data(wiretap, test_data)
@@ -2227,7 +2244,10 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
 
         logger.info('Capturing second batch of data ...')
         wiretap.reset()
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(test_data) + 1)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              len(test_data) + 1,
+                                              timeout_sec=timeout_sec)
 
         if subscription_type == PUSH_TOPIC:
             verify_wiretap_data(wiretap, [test_data[0]])
@@ -2404,9 +2424,9 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, ap
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
         else:
             # Check hard delete fails if we didn't assign the permission
-            with pytest.raises(RunError) as run_error:
+            with pytest.raises(StatusError) as e:
                 sdc_executor.start_pipeline(pipeline).wait_for_finished()
-            assert FORCE_13_HARD_DELETE_PERMISSION == str(run_error.value)
+            assert FORCE_13 in str(run_error.value)
 
         logger.info('Querying for records...')
         query_str = (f"SELECT Id FROM Contact WHERE Lastname = '{last_name}'")
