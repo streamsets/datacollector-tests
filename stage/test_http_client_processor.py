@@ -1103,7 +1103,6 @@ def test_http_client_processor_timeout(sdc_builder,
         pipeline = pipeline_builder.build(title=pipeline_title)
         pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.validate_pipeline(pipeline)
 
         if timeout_action == 'STAGE_ERROR':
             if timeout_mode == 'record':
@@ -1139,6 +1138,7 @@ def test_http_client_processor_timeout(sdc_builder,
             else:
                 if expected_output == 0:
                     expected_error = 1
+                    expected_error_code = 'HTTP_102'
                     expected_message = 0
                 else:
                     expected_error = 0
@@ -1160,6 +1160,8 @@ def test_http_client_processor_timeout(sdc_builder,
 
         assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
         assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        if (expected_error > 0):
+            assert expected_error_code in wiretap.error_records[0].header['errorMessage']
         assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
@@ -1232,8 +1234,6 @@ def test_http_client_processor_passthrough(sdc_builder,
     wait_seconds = 1
     retries = 2
     interval = 2000
-    no_time = 0
-    short_time = 1
     long_time = (one_millisecond * wait_seconds * (retries + 2)) * 10
 
     http_mock_server = http_client.mock()
@@ -1297,7 +1297,6 @@ def test_http_client_processor_passthrough(sdc_builder,
         pipeline = pipeline_builder.build(title=pipeline_title)
         pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.validate_pipeline(pipeline)
 
         if exhausted_action == 'STAGE_ERROR' and http_status == 500:
             with pytest.raises(Exception) as exception:
@@ -1317,6 +1316,7 @@ def test_http_client_processor_passthrough(sdc_builder,
             else:
                 expected_output = 0
                 expected_error = 1
+                expected_error_code = 'HTTP_01'
                 expected_message = 0
         elif http_status == 500:
             if exhausted_action == 'STAGE_ERROR':
@@ -1331,6 +1331,7 @@ def test_http_client_processor_passthrough(sdc_builder,
                 else:
                     expected_output = 0
                     expected_error = 1
+                    expected_error_code = 'HTTP_101'
                     expected_message = 0
 
         try:
@@ -1349,6 +1350,8 @@ def test_http_client_processor_passthrough(sdc_builder,
 
         assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
         assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        if (expected_error > 0):
+            assert expected_error_code in wiretap.error_records[0].header['errorMessage']
         assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
@@ -1408,8 +1411,6 @@ def test_http_client_processor_alternating_status(sdc_builder,
         wait_seconds = 1
         retries = 2
         interval = 2000
-        no_time = 0
-        short_time = 1
         long_time = (one_millisecond * wait_seconds * (retries + 2)) * 100
 
         http_mock_server = http_client.mock()
@@ -1515,7 +1516,6 @@ def test_http_client_processor_alternating_status(sdc_builder,
         pipeline = pipeline_builder.build(title=pipeline_title)
         pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.validate_pipeline(pipeline)
 
         if exhausted_action == 'STAGE_ERROR':
             with pytest.raises(Exception) as exception:
@@ -1535,6 +1535,7 @@ def test_http_client_processor_alternating_status(sdc_builder,
             else:
                 expected_output = 0
                 expected_error = 1
+                expected_error_code = 'HTTP_101'
                 expected_message = 0
 
         try:
@@ -1553,6 +1554,8 @@ def test_http_client_processor_alternating_status(sdc_builder,
 
         assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
         assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        if (expected_error > 0):
+            assert expected_error_code in wiretap.error_records[0].header['errorMessage']
         assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
@@ -1614,7 +1617,6 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
         wait_seconds_ko = 10
         retries = 2
         interval = 2000
-        no_time = 0
         short_time = 5000
         long_time = (one_millisecond * wait_seconds_ko * (retries + 2)) * 300
 
@@ -1724,7 +1726,6 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
         pipeline = pipeline_builder.build(title=pipeline_title)
         pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.validate_pipeline(pipeline)
 
         if exhausted_action == 'STAGE_ERROR':
             with pytest.raises(Exception) as exception:
@@ -1745,6 +1746,10 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
                 expected_output = 0
                 expected_error = 1
                 expected_message = 0
+                if exhausted_action == 'ERROR_RECORD':
+                    expected_error_code = 'HTTP_101'
+                else:
+                    expected_error_code = 'HTTP_102'
 
         try:
             pipeline_metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
@@ -1762,6 +1767,8 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
 
         assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
         assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        if (expected_error > 0):
+            assert expected_error_code in wiretap.error_records[0].header['errorMessage']
         assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
@@ -1825,8 +1832,6 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
         wait_seconds = 1
         retries = 10
         interval = 2000
-        no_time = 0
-        short_time = 5000
         long_time = (one_millisecond * wait_seconds * (retries + 2)) * 300
 
         if stop_condition == 'value':
@@ -2023,7 +2028,6 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
         pipeline = pipeline_builder.build(title=pipeline_title)
         pipeline.configuration['errorRecordPolicy'] = 'STAGE_RECORD'
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.validate_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
@@ -2031,10 +2035,16 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
             expected_output = 0
             expected_error = 1
             expected_message = 0
+            if pagination_end_mode == 'null' and (pagination_mode != 'LINK_FIELD' or
+                                                  pagination_mode == 'LINK_FIELD' and stop_condition == 'existence'):
+                expected_error_code = 'HTTP_34'
+            else:
+                expected_error_code = 'HTTP_00'
         elif pagination_end_mode == 'vacuum':
             if pagination_mode == 'LINK_FIELD' and stop_condition == 'value':
                 expected_output = 0
                 expected_error = 1
+                expected_error_code = 'HTTP_00'
                 expected_message = 0
             else:
                 expected_output = 1
@@ -2061,6 +2071,8 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
 
         assert len(wiretap.output_records) == expected_output, 'Unexpected number of output records'
         assert len(wiretap.error_records) == expected_error, 'Unexpected number of error records'
+        if (expected_error > 0):
+            assert expected_error_code in wiretap.error_records[0].header['errorMessage']
         assert error_counter == expected_message, 'Unexpected number of stage errors'
 
         pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
