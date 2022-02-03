@@ -141,3 +141,53 @@ def test_file_event_filepath_when_whole_file_mode_enabled(sdc_builder, sdc_execu
 
     finally:
         sdc_executor.execute_shell(f'rm -fr {base_folder}')
+
+
+@sdc_min_version('4.5.0')
+def test_file_ref_from_event(sdc_builder, sdc_executor):
+    """Test that Whole File Transformer is able to process file reference in a CLOSED_FILE event as a serialized FileRef.
+    """
+
+    pipeline_name = f'FileRef in Event - {get_random_string(string.ascii_letters, 10)}'
+
+    directory_template = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 16))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(stop_after_first_batch=True,
+                                       data_format='JSON',
+                                       raw_data='{"text": "In a hole in the ground there lived a hobbit."}')
+
+    schema_generator = pipeline_builder.add_stage('Schema Generator')
+    schema_generator.set_attributes(schema_name='tolkien')
+
+    local_fs_main = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs_main.set_attributes(data_format='AVRO',
+                                 avro_schema_location = 'HEADER')
+
+    whole_file_transformer = pipeline_builder.add_stage('Whole File Transformer')
+    whole_file_transformer.set_attributes(job_type='AVRO_PARQUET')
+
+    local_fs_event = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs_event.set_attributes(directory_template=directory_template,
+                                  data_format='WHOLE_FILE',
+                                  file_name_expression='${record:value(\'/fileInfo/filename\')}',
+                                  file_exists='OVERWRITE')
+
+    dev_raw_data_source >> schema_generator >> local_fs_main >= whole_file_transformer
+    whole_file_transformer >> local_fs_event
+
+    pipeline = pipeline_builder.build(pipeline_name)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline).wait_for_status('FINISHED')
+
+    local_fs_destination_created_files_count = sdc_executor.execute_shell(f'ls {directory_template} | wc -l').stdout
+    if local_fs_destination_created_files_count is None:
+        raise Exception('Void records count. Probably your Log4J layout is not standard.')
+    if local_fs_destination_created_files_count == '':
+        raise Exception('Empty records count. Probably your Log4J layout is not standard.')
+    local_fs_destination_created_files_total = int(local_fs_destination_created_files_count)
+    assert local_fs_destination_created_files_total == 1, f'Expected 1 file, and counted {local_fs_destination_created_files_total}'
