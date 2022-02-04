@@ -1240,7 +1240,8 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database):
 
         # Check there is no data loss.
         sdc_records = [record.field for record in wiretap.output_records]
-        assert sdc_records == input_data
+        assert set([tuple(el.items()) for el in sdc_records]) == set([tuple(el.items()) for el in input_data]), \
+            f'Generated records and gathered records do not match: {input_data} @@@ {sdc_records}'
 
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
