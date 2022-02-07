@@ -394,8 +394,8 @@ def test_stopping_pipeline_on_error(sdc_builder, sdc_executor):
     assert 'Failed to run pipeline1 due to random error' in status.get('message')
 
 
-@pytest.mark.parametrize('propagate', [True, False])
 @sdc_min_version('4.0.0')
+@pytest.mark.parametrize('propagate', [True, False])
 def test_start_pipeline_origin_propagate_runtime_parameters(sdc_builder, sdc_executor, propagate):
 
     group = get_random_string(string.ascii_lowercase, 8)
@@ -468,8 +468,10 @@ def test_start_pipeline_origin_propagate_runtime_parameters(sdc_builder, sdc_exe
         else:
             assert pipeline01_records[0].field['f6'] == 'ValueFromTriggeredPipeline01'
     finally:
-        sdc_builder.remove_pipeline(pipeline02)
-        sdc_builder.remove_pipeline(pipeline01)
+        if sdc_executor.get_pipeline_status(pipeline01).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline01)
+        if sdc_executor.get_pipeline_status(pipeline02).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline02)
     # Actual execution - End
 
 
