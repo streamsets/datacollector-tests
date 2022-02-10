@@ -19,6 +19,8 @@ import logging
 import math
 import string
 import time
+import json
+from urllib.parse import urljoin
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from json.decoder import JSONDecodeError
@@ -390,6 +392,48 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids)
 
+@salesforce
+def test_salesforce_origin_platform_events(sdc_builder, sdc_executor, salesforce):
+    pipeline = None
+    # We define a platform event in the same way we define a custom object
+    # https://developer.salesforce.com/docs/atlas.en-us.platform_events.meta/platform_events/platform_events_define.htm
+    salesforce_platform_event_name = "Test_event__e"
+    salesforce_push_event_url = urljoin(salesforce.client.base_url, f'sobjects/{salesforce_platform_event_name}')
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        salesforce_origin = pipeline_builder.add_stage('Salesforce', type='origin')
+        salesforce_origin.set_attributes(api_version="43.0",
+                                         query_existing_data=False,
+                                         max_batch_size_in_records=1,
+                                         subscribe_for_notifications=True,
+                                         subscription_type="PLATFORM_EVENT",
+                                         replay_option="NEW_EVENTS",
+                                         platform_event_api_name=salesforce_platform_event_name)
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        salesforce_origin >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd.wait_for_status('RUNNING')
+        sleep(10)
+        # Publish platform event
+        # https://developer.salesforce.com/docs/atlas.en-us.platform_events.meta/platform_events/platform_events_publish_api.htm
+        for i in range(4):
+            salesforce.client._call_salesforce('POST', salesforce_push_event_url, data=json.dumps({"test_text__c": f"Example {i}"}))
+
+        sleep(10)
+        pipeline_cmd.wait_for_pipeline_output_records_count(4)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(wiretap.output_records) == 4
+        for i in range(4):
+            assert wiretap.output_records[i].field["test_text__c"] == f"Example {i}"
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
 
 @salesforce
 @pytest.mark.parametrize('api', ['soap', 'bulk'])
