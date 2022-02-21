@@ -362,14 +362,12 @@ def test_dataflow_events(sdc_builder, sdc_executor, database):
                        event.field)
                       for event in wiretap.output_records]
 
-        # Check all the expected events have been generated. Events are expected to be sorted accordingly to
-        # the database transaction order, except for STARTUP events. These will be the first events generated,
-        # but the order of the STARTUP events is undefined and implementation-dependent. We address this with
-        # the following sequence of asserts.
         assert len(sdc_events) == len(expected_events)
-        assert sdc_events[0] in expected_events[:2]
-        assert sdc_events[1] in expected_events[:2]
-        assert sdc_events[2:] == expected_events[2:]
+        for _event in sdc_events:
+            logger.info(f'Read event: {_event}')
+
+        for _event in sdc_events:
+            assert _event in expected_events[0:len(expected_events)], 'fMissing event: {_event}'
 
     finally:
         logger.info('Dropping table %s in %s database ...', sports_table, database.type)
