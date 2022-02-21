@@ -14,6 +14,7 @@
 
 import logging
 import os
+import pytest
 import string
 
 from streamsets.testframework.markers import cluster, azure, sdc_min_version
@@ -21,6 +22,12 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+@pytest.fixture(scope='module')
+def sdc_common_hook():
+    def hook(data_collector):
+        data_collector.add_stage_lib('streamsets-datacollector-wholefile-transformer-lib')
+
+    return hook
 
 @sdc_min_version("3.19.0")
 def test_file_event_filepath_when_whole_file_mode_disabled(sdc_builder, sdc_executor):
