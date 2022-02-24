@@ -3122,3 +3122,47 @@ def test_action_max_retries(sdc_builder, sdc_executor, http_client, max_num_retr
         assert len(http_mock.get_request()) == total_number_requests
     finally:
         http_mock.delete_mock()
+
+@http
+@sdc_min_version("3.11.0")
+def test_http_processor_overwrite_field(sdc_builder, sdc_executor, http_client):
+    """Test HTTP Lookup Processor for HTTP GET method that check out whether an existing record field is
+    overwritten if specified as output field. It has no sense to test this with the one_request_per_batch
+    option set since no input record is propagated.
+
+        dev_raw_data_source >> http_client_processor >> wiretap
+    """
+
+    # The data returned by the HTTP mock server
+    data_array = {'A': 1, 'C': 2, 'G': 3, 'T': 4}
+
+    expected_data = json.dumps(data_array)
+    record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply(expected_data, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data='{"field": "value", "result": "value"}',
+                                           stop_after_first_batch=True)
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='JSON', http_method='GET',
+                                             resource_url=mock_uri,
+                                             output_field=f'/{record_output_field}')
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+        pipeline = builder.build(title='HTTP Lookup GET Processor Split Multiple Records pipeline')
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # ensure HTTP GET result has 10 different records
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field == {"field": "value", "result": data_array}
+    finally:
+        http_mock.delete_mock()
