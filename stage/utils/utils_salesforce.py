@@ -163,7 +163,7 @@ while hasNext:
         hasNext = False
 """
 
-FORCE_13 = 'FORCE_13'
+FORCE_60 = 'FORCE_60'
 
 # Bulk API pipelines can take a minute or two just to process the query
 BULK_PIPELINE_TIMEOUT_SECONDS = 300

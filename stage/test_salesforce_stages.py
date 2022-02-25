@@ -41,7 +41,7 @@ from .utils.utils_salesforce import (insert_data_and_verify_using_wiretap, verif
                                      get_cdc_wiretap_records, get_dev_raw_data_source, get_ids, set_up_random,
                                      FOLDER_NAME, TEST_DATA, TIMEOUT, verify_analytics_data,
                                      MULTIPLE_UPLOADS_PER_BATCH_SCRIPT, MULTIPLE_UPLOADS_BATCH_SIZE,
-                                     assign_hard_delete, revoke_hard_delete, verify_result_ids, FORCE_13,
+                                     assign_hard_delete, revoke_hard_delete, verify_result_ids, FORCE_60,
                                      BULK_PIPELINE_TIMEOUT_SECONDS, SOAP_PIPELINE_TIMEOUT_SECONDS)
 
 CONTACT = 'Contact'
@@ -2426,7 +2426,7 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, ap
             # Check hard delete fails if we didn't assign the permission
             with pytest.raises(StatusError) as e:
                 sdc_executor.start_pipeline(pipeline).wait_for_finished()
-            assert FORCE_13 in str(run_error.value)
+            assert FORCE_60 in str(run_error.value)
 
         logger.info('Querying for records...')
         query_str = (f"SELECT Id FROM Contact WHERE Lastname = '{last_name}'")
