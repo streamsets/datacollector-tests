@@ -177,7 +177,7 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
         # wait for data captured by cdc jobs in sql server before starting the pipeline
         for table_config in table_configs:
             ct_table_name = f'{table_config.get("capture_instance")}_CT'
-            wait_for_data_in_ct_table(ct_table_name, no_of_records, database)
+            wait_for_data_in_ct_table(ct_table_name, no_of_records, database, timeout_sec=120)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(no_of_records * no_of_threads)
         sdc_executor.stop_pipeline(pipeline)
