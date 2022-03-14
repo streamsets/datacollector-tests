@@ -24,11 +24,10 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-
 DATA_TYPES = [
     ('true', 'BOOLEAN', True),
     ('a', 'CHAR', 'a'),
-#   ('a', 'BYTE', None), # Not supported today
+    #   ('a', 'BYTE', None), # Not supported today
     (120, 'SHORT', 120),
     (120, 'INTEGER', 120),
     (120, 'LONG', 120),
@@ -40,8 +39,10 @@ DATA_TYPES = [
     ('2020-01-01 10:00:00', 'DATETIME', 1577872800000),
     ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', '2020-01-01T10:00:00Z'),
     ('string', 'STRING', 'string'),
-#   ('string', 'BYTE_ARRAY', 'string') # Not supported today
+    #   ('string', 'BYTE_ARRAY', 'string') # Not supported today
 ]
+
+
 @azure('iot')
 @pytest.mark.parametrize('input,converter_type,expected', DATA_TYPES, ids=[i[1] for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, expected):
@@ -66,13 +67,13 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
         converter = pipeline_builder.add_stage('Field Type Converter')
         converter.set_attributes(conversion_method='BY_FIELD',
                                  field_type_converter_configs=[{
-                                    'fields': ['/value'],
-                                    'targetType': converter_type,
-                                    'dataLocale': 'en,US',
-                                    'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
-                                    'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
-                                    'scale': 2
-                                  }])
+                                     'fields': ['/value'],
+                                     'targetType': converter_type,
+                                     'dataLocale': 'en,US',
+                                     'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
+                                     'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
+                                     'scale': 2
+                                 }])
 
         azure_iot_hub_producer = pipeline_builder.add_stage('Azure IoT Hub Producer')
         azure_iot_hub_producer.set_attributes(data_format='JSON',
@@ -118,27 +119,34 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
         iot_hub.delete_device_id(device_id)
 
 
-# Reference http://tinyurl.com/ya9y9mm6
+# Referencehttps://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-devguide-identity-registry
 IOT_HUB_DEVICE_NAMES = [
-    ('minsize', lambda: get_random_string(string.ascii_lowercase, 1)),
-    ('maxsize', lambda: get_random_string(string.ascii_lowercase, 1024)),
-    ('lowercase', lambda: get_random_string(string.ascii_lowercase)),
-    ('uppercase', lambda: get_random_string(string.ascii_uppercase)),
-    ('hypen', lambda: get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
-    ('period', lambda: get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
-    ('start_period', lambda: get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
-    ('forward_slash', lambda: get_random_string(string.ascii_lowercase) + '/' + get_random_string(string.ascii_lowercase)),
-    ('start_forward_slash', lambda: get_random_string(string.ascii_lowercase) + '/' + get_random_string(string.ascii_lowercase)),
-    ('digits', lambda: get_random_string(string.digits)),
-    ('hexadecimal', lambda: get_random_string(string.hexdigits).lower())
+    ('minsize', get_random_string(string.ascii_lowercase, 1)),
+    ('maxsize', get_random_string(string.ascii_lowercase, 128)),
+    ('lowercase', get_random_string(string.ascii_lowercase)),
+    ('uppercase', get_random_string(string.ascii_uppercase)),
+    ('dot', get_random_string(string.ascii_lowercase, 2) + '.' + get_random_string(string.ascii_lowercase, 2)),
+    ('coma', get_random_string(string.ascii_lowercase, 2) + ',' + get_random_string(string.ascii_lowercase, 2)),
+    ('hyphen', get_random_string(string.ascii_lowercase, 2) + '-' + get_random_string(string.ascii_lowercase, 2)),
+    ('underscored', get_random_string(string.ascii_lowercase, 2) + '_' + get_random_string(string.ascii_lowercase, 2)),
+    ('asterisk', get_random_string(string.ascii_lowercase, 2) + '*' + get_random_string(string.ascii_lowercase, 2)),
+    ('exclamation', get_random_string(string.ascii_lowercase, 2) + '!' + get_random_string(string.ascii_lowercase, 2)),
+    ('parentesis', get_random_string(string.ascii_lowercase, 2) + '(' + get_random_string(string.ascii_lowercase, 2)),
+    ('colon', get_random_string(string.ascii_lowercase, 2) + ':' + get_random_string(string.ascii_lowercase, 2)),
+    ('equal', get_random_string(string.ascii_lowercase, 2) + '=' + get_random_string(string.ascii_lowercase, 2)),
+    ('atsign', get_random_string(string.ascii_lowercase, 2) + '@' + get_random_string(string.ascii_lowercase, 2)),
+    ('dollar', get_random_string(string.ascii_lowercase, 2) + '$' + get_random_string(string.ascii_lowercase, 2)),
+    ('digits', get_random_string(string.digits)),
+    ('hexadecimal', get_random_string(string.hexdigits).lower())
 ]
 @azure('iot')
-@pytest.mark.parametrize('device_name_category, index', IOT_HUB_DEVICE_NAMES, ids=[i[0] for i in IOT_HUB_DEVICE_NAMES])
-def test_object_names_device(sdc_builder, sdc_executor, azure, device_name_category, index):
+@pytest.mark.parametrize('device_name_category, device_name', IOT_HUB_DEVICE_NAMES,
+                         ids=[i[0] for i in IOT_HUB_DEVICE_NAMES])
+def test_object_names_device(sdc_builder, sdc_executor, azure, device_name_category, device_name):
     """
     Verify that we can respect all the documented containers names possible
     """
-    device_id = device_name_category
+    device_id = device_name
     raw_records = [{'Body': f'Hello {msg}'} for msg in range(10)]
 
     try:
