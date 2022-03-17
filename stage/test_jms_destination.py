@@ -192,3 +192,72 @@ def test_jms_producer_custom_header(sdc_builder, sdc_executor, jms):
     finally:
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
         connection.disconnect()
+
+
+@jms('activemq')
+@sdc_min_version("4.5.0")
+@pytest.mark.parametrize('remove_header_prefix', [True, False])
+def test_jms_producer_prefix_header(sdc_builder, sdc_executor, jms, remove_header_prefix):
+    """
+    Verify that customer headers are made available in the destination JMS toggling on and of the prefix
+    JMS Producer pipeline:
+           dev_raw_data_source >> jms_producer
+    """
+    expected_message = 'Hello World!\n'  # JMS adds a new line at the end of the string
+    header_name = "customHeader"
+    prefixed_header_name = "jms.header.customHeader"
+    custom_header = 'This is my custom header'
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = get_dev_raw_data_source_stage_text_input(pipeline_builder)
+    dev_raw_data_source.set_attributes(stop_after_first_batch=True)
+
+    # Configure the jms_producer stage.
+    jms_producer = pipeline_builder.add_stage('JMS Producer', type='destination')
+    destination_name = get_random_string(ascii_letters, 5)
+    jms_producer.set_attributes(data_format='TEXT',
+                                jms_destination_name=destination_name,
+                                jms_destination_type=JMS_DESTINATION_TYPE,
+                                jms_initial_context_factory=JMS_INITIAL_CONTEXT_FACTORY,
+                                jndi_connection_factory=JNDI_CONNECTION_FACTORY,
+                                password=DEFAULT_PASSWORD,
+                                username=DEFAULT_USERNAME,
+                                include_headers=True,
+                                remove_header_prefix=remove_header_prefix)
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {
+            "attributeToSet": prefixed_header_name,
+            "headerAttributeExpression": custom_header
+        }
+    ])
+
+    pipeline_builder.add_error_stage('Discard')
+    dev_raw_data_source >> expression_evaluator >> jms_producer
+    pipeline = pipeline_builder.build().configure_for_environment(jms)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = jms.client_connection
+    try:
+        logger.info('Subscribing to queue ...')
+        listener = _TestListener()
+        connection.set_listener('', listener)
+        connection.start()
+        connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
+        connection.subscribe(destination=f'/queue/{destination_name}', id=destination_name)
+
+        # Send messages using pipeline to JMS Destination.
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify messages received using python client.
+        msgs_received = listener.message_list[0]
+        assert msgs_received[1] == expected_message
+        if remove_header_prefix:
+            assert header_name in str(msgs_received)
+            assert prefixed_header_name not in str(msgs_received)
+        else:
+            assert prefixed_header_name in str(msgs_received)
+        assert custom_header in str(msgs_received)
+    finally:
+        connection.send(destination_name, 'SHUTDOWN', persistent='false')
+        connection.disconnect()
