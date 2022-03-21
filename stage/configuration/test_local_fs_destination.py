@@ -17,6 +17,7 @@ import string
 import logging
 import json
 from datetime import datetime, timedelta
+from math import ceil, inf
 
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.utils import get_random_string
@@ -411,13 +412,15 @@ def test_late_record_time_limit_in_secs(sdc_builder, sdc_executor, late_records_
 def test_lookup_schema_by(sdc_builder, sdc_executor, stage_attributes):
     pass
 
+@pytest.mark.parametrize('max_file_size', [0, 1])
+def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size):
+    """Test Max File Size in MB. The pipeline writes many records to files, none of which must exceed
+    the maximum file size. The Local FS stage does sometimes exceed the maximum file size by some bytes
+    due to its design, but that error margin must always be strictly less than 1MB. This is to say,
+    the actual file size < max_file_size + 1.
 
-@pytest.mark.parametrize('max_file_size, expected_num_files', [(0, 1), (1, 2)])
-def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_num_files):
-    """Test Max File Size in MB. The pipeline test how many files are created when we write 15k records (more than 1MB)
-     if the Max File Size are lower and higher than the number of records.
-    Pipeline looks like:
-        dev_data_generator >> local_fs
+    The pipeline looks like the following:
+            dev_data_generator >> local_fs
     """
     tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
 
@@ -444,12 +447,27 @@ def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size, expected_
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(10)
         sdc_executor.stop_pipeline(pipeline)
 
-        num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
-        assert num_created_files == expected_num_files
+        if max_file_size == 0:
+            max_file_size_bytes = inf
+        else:
+            # The stage is not very precise with file sizes, so we'll give it some arbitrary
+            # error margin, let's say 1MB.
+            max_file_size_bytes = (max_file_size + 1) * 1024 * 1024
+
+        # Get the size in bytes of each file. Each line has the file size in bytes and the file name.
+        # Exclude the last line, which contains the total number of bytes.
+        file_sizes = sdc_executor.execute_shell(f"wc -c {tmp_directory}/sdc-*").stdout.split('\n')[:-1]
+        # Extract the first element (the file size) as an integer.
+        file_sizes = [int(line.split()[0]) for line in file_sizes if line]
+        file_sizes = file_sizes[:-1]
+
+        # Assert no file is greater than max_file_size
+        for file_size in file_sizes:
+            assert file_size < max_file_size_bytes
 
     finally:
         logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
-        sdc_executor.execute_shell(f'rm -R {tmp_directory} ')
+        sdc_executor.execute_shell(f'rm -R {tmp_directory}')
 
 
 @pytest.mark.parametrize('max_records_in_file, expected_num_files', [(10, 10), (100, 1)])
