@@ -3037,7 +3037,7 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
         if target_table is not None:
             target_table.drop(database.engine)
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('oracle')
 def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
                                                 sdc_executor,

@@ -36,7 +36,7 @@ def _set_up_random(salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('prefixed_query', [True, False])  # Testing of SDC-9067
 def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, prefixed_query):
     """Create data using Salesforce client and then check if Salesforce origin
@@ -80,7 +80,7 @@ def test_salesforce_origin(sdc_builder, sdc_executor, salesforce, prefixed_query
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_origin_nulls(sdc_builder, sdc_executor, salesforce):
     """Create data using Salesforce client and then check if Salesforce origin
     receives them using wiretap. This test checks that nulls are correctly
@@ -121,7 +121,7 @@ def test_salesforce_origin_nulls(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
     """Create data using Salesforce client and then check if Salesforce origin
     receives them using wiretap. This test checks that datetime fields can
@@ -185,7 +185,7 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce):
     """Test that Salesforce origin correctly handles a session timing out while the pipeline
     is running
@@ -252,7 +252,7 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce):
     """Test for SDC-12418 - Salesforce origin should only generate no-more-data if query returns zero rows. Queries with
     a LIMIT clause were generating a no-more-data event after a single query ran, instead of repeating the query
@@ -325,7 +325,7 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_origin_datetime_in_history(sdc_builder, sdc_executor, salesforce):
     """Test SDC-12334 - field history data is untyped in the Salesforce schema, since OldValue and NewValue depend on
     the field that changed. For some datatypes, the XML holds type information in an xmltype attribute. We were using
@@ -387,7 +387,7 @@ def test_salesforce_origin_datetime_in_history(sdc_builder, sdc_executor, salesf
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('threading', ['multithread', 'single_thread'])
 @pytest.mark.parametrize('incremental_mode', ['incremental', 'full'])
 def test_salesforce_origin_threading(sdc_builder, sdc_executor, salesforce, threading, incremental_mode):

@@ -47,7 +47,7 @@ DATA_TYPES_AURORA = [
     ('BOOLEAN', "'TRUE'", 'BOOLEAN', True),
     ('XML', "'<a></a>'", 'XML', '<a></a>'),
 ]
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 @pytest.mark.parametrize('data_type, insert_fragment, expected_type, expected_value', DATA_TYPES_AURORA,
                          ids=[i[0] for i in DATA_TYPES_AURORA])
@@ -121,7 +121,7 @@ def test_data_types(sdc_builder, sdc_executor, database, data_type, insert_fragm
         connection.close()
 
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 @pytest.mark.parametrize('data_type, insert_fragment, expected_type, expected_value', DATA_TYPES_AURORA,
                          ids=[i[0] for i in DATA_TYPES_AURORA])
@@ -194,7 +194,7 @@ SERIAL_DATA_TYPES_AURORA = [
     ('BIGSERIAL', 'DEFAULT', 'BIGINT', 3),
     ('SMALLSERIAL', 'DEFAULT', 'SMALLINT', 3)
 ]
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 @pytest.mark.parametrize('data_type, insert_fragment, expected_type, expected_value', SERIAL_DATA_TYPES_AURORA,
                          ids=[i[0] for i in SERIAL_DATA_TYPES_AURORA])
@@ -285,7 +285,7 @@ OBJECT_NAMES_POSTGRES = [
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
     ('special', get_random_string(string.ascii_letters, 5) + "!@#$^&*()_+=-?<>", get_random_string(string.ascii_letters, 5) + "!@#$^&*()_+=-?<>"),  # '%' not supported
 ]
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_POSTGRES,
                          ids=[i[0] for i in OBJECT_NAMES_POSTGRES])
@@ -351,7 +351,7 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
         connection.close()
 
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
     if not database.is_cdc_enabled:
@@ -423,19 +423,19 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
         connection.close()
 
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("No events supported in PostgreSQL CDC Aurora origin at this time.")
 
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 def test_data_format(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("PostgreSQL CDC Aurora Client doesn't deal with data formats")
 
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     if not database.is_cdc_enabled:

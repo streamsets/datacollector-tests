@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('type_data', DATA_TYPES, ids=[datatype['metadata']['type'] for datatype in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     object_name = get_random_string(string.ascii_lowercase, 20)
@@ -141,7 +141,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('test_name,object_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
 def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_name, field_name):
     client = salesforce.client
@@ -230,7 +230,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('number_of_threads', [1, 10])
 def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threads):
     # Cap at 1000 records so we stay within Salesforce Developer Edition data limits
@@ -313,7 +313,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
     object_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -415,13 +415,13 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_data_format(sdc_builder, sdc_executor, salesforce):
     pytest.skip("Salesforce Bulk 2.0 Origin doesn't deal with data formats")
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_resume_offset(sdc_builder, sdc_executor, salesforce):
     iterations = 3
     records_per_iteration = 10

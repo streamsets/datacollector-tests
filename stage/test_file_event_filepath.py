@@ -150,7 +150,7 @@ def test_file_event_filepath_when_whole_file_mode_enabled(sdc_builder, sdc_execu
         sdc_executor.execute_shell(f'rm -fr {base_folder}')
 
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_file_ref_from_event(sdc_builder, sdc_executor):
     """Test that Whole File Transformer is able to process file reference in a CLOSED_FILE event as a serialized FileRef.
     """

@@ -630,7 +630,7 @@ def test_s3_region_other(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_s3_vpc_endpoint_and_region(sdc_builder, sdc_executor, aws):
     """
     Test that using a specific VPC endpoint and region and specifying works as expected

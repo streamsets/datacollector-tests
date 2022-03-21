@@ -196,7 +196,7 @@ DATA_TYPES = [
     ('https://streamsets.com/', 'STRING', {'type': 'Url'}, 'https://streamsets.com/'),
 ]
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES, ids=[f"{i[1]}-{i[2]['type']}" for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type, database_type, expected):
     object_name = get_random_string(string.ascii_lowercase, 20)
@@ -295,7 +295,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('test_name,object_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
 def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_name, field_name):
     client = salesforce.client
@@ -367,7 +367,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     object_name = get_random_string(string.ascii_lowercase, 20)
     # Cap at 1000 records so we stay within Salesforce Developer Edition data limits
@@ -455,19 +455,19 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
     pytest.skip("No events supported in Salesforce Bulk API 2.0 destination at this time.")
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_data_format(sdc_builder, sdc_executor, salesforce):
     pytest.skip("Salesforce Bulk API 2.0 doesn't deal with data formats")
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_push_pull(sdc_builder, sdc_executor, salesforce):
     pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is part of "
                 "test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")

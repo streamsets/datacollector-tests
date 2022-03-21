@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('type_data', DATA_TYPES, ids=[datatype['metadata']['type'] for datatype in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     object_name = get_random_string(string.ascii_lowercase, 20)
@@ -143,7 +143,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_object_names(sdc_builder, sdc_executor, salesforce):
     pytest.skip("The Salesforce Bulk 2.0 Lookup Processor doesn't generate queries - it only takes user "
                 "input, thus user is responsible to properly escape or enclose names and therefore there "
@@ -151,7 +151,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     # TODO - RAISE BACK TO 1000!
     batch_size = 40
@@ -260,12 +260,12 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_data_format(sdc_builder, sdc_executor, salesforce):
     pytest.skip("Salesforce Bulk 2.0 Lookup Processor doesn't deal with data formats")
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
     pytest.skip("Salesforce Bulk 2.0 Lookup processor does not support events today")

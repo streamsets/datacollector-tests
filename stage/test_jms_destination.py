@@ -195,7 +195,7 @@ def test_jms_producer_custom_header(sdc_builder, sdc_executor, jms):
 
 
 @jms('activemq')
-@sdc_min_version("4.5.0")
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('remove_header_prefix', [True, False])
 def test_jms_producer_prefix_header(sdc_builder, sdc_executor, jms, remove_header_prefix):
     """

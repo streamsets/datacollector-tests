@@ -30,7 +30,7 @@ def _set_up_random(salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('data_with_from_email', [False, True])  # Testing of SDC-7548
 @pytest.mark.parametrize('query_with_time', [True, False])  # Testing of SDC-10207
 def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data_with_from_email, query_with_time):

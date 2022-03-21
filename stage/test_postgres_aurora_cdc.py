@@ -150,7 +150,7 @@ def _get_wal_sender_status(connection):
     return wal_sender_statuses[0] if len(wal_sender_statuses) > 0 else None
 
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 @pytest.mark.parametrize('poll_interval', ["${1 * SECONDS}", "${5 * SECONDS}"])
 def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
@@ -263,7 +263,7 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
         database.engine.connect().close()
 
 
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 @pytest.mark.parametrize('start_from', ['DATE', 'LSN'])
 @pytest.mark.parametrize('create_slot', [True, False])
@@ -403,7 +403,7 @@ def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, 
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_postgres_cdc_aurora_client_basic(sdc_builder, sdc_executor, database):
     """Basic test that inserts/updates/deletes to a Postgres table,
     and validates that they are read in the same order.
@@ -484,7 +484,7 @@ def test_postgres_cdc_aurora_client_basic(sdc_builder, sdc_executor, database):
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_postgres_cdc_aurora_max_poll_attempts(sdc_builder, sdc_executor, database):
     """Test the delivery of a batch when the maximum poll attempts is reached.
 
@@ -557,7 +557,7 @@ def test_postgres_cdc_aurora_max_poll_attempts(sdc_builder, sdc_executor, databa
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_postgres_cdc_aurora_client_filtering_table(sdc_builder, sdc_executor, database):
     """
         Test filtering for inserts/updates/deletes to a Postgres table
@@ -654,7 +654,7 @@ def test_postgres_cdc_aurora_client_filtering_table(sdc_builder, sdc_executor, d
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_postgres_cdc_aurora_client_remove_replication_slot(sdc_builder, sdc_executor, database):
     """
         Test the 'Remove replication slot on close' functionality
@@ -721,7 +721,7 @@ def test_postgres_cdc_aurora_client_remove_replication_slot(sdc_builder, sdc_exe
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('batch_size', [1, 10, 100, 1000])
 def test_postgres_cdc_aurora_client_multiple_concurrent_operations(sdc_builder, sdc_executor, database, batch_size):
     """Basic test that inserts/update/delete to a Postgres table with multiple threads,
@@ -861,7 +861,7 @@ def test_postgres_cdc_aurora_client_multiple_concurrent_operations(sdc_builder, 
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_postgres_cdc_aurora_client_filtering_multiple_tables(sdc_builder, sdc_executor, database):
     """
     Test filtering for inserts/updates/deletes to multiple Postgres table
@@ -961,7 +961,7 @@ def test_postgres_cdc_aurora_client_filtering_multiple_tables(sdc_builder, sdc_e
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_postgres_cdc_aurora_wal_sender_status_metrics(sdc_builder, sdc_executor, database):
     """
     Test Wal Sender Status gauge. Test whether after pipeline stop the metrics captured
@@ -1034,7 +1034,7 @@ def test_postgres_cdc_aurora_wal_sender_status_metrics(sdc_builder, sdc_executor
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, database):
     """
     Test Queue buffering Metrics are proper. Produce multiple batches and
@@ -1116,7 +1116,7 @@ def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, 
 
 
 @database('postgresqlaurora')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('ssl_mode', [
     'REQUIRED',
     'VERIFY_CA',

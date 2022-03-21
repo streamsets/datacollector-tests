@@ -38,7 +38,7 @@ def _set_up_random(salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
     """Send text to Salesforce destination from Dev Raw Data Source and confirm
     that Salesforce destination successfully reads them using Salesforce client.
@@ -94,7 +94,7 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, salesforce):
     """Send text to Salesforce destination from Dev Raw Data Source and confirm
     that Salesforce destination successfully reads them using Salesforce client.
@@ -155,7 +155,7 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_destination_datetime(sdc_builder, sdc_executor, salesforce):
     """Test that datetimes are correctly written to Salesforce (SDC-12193).
     Create an Event record as this is one of the few standard objects with a
@@ -231,7 +231,7 @@ def test_salesforce_destination_datetime(sdc_builder, sdc_executor, salesforce):
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('separator', [COLON, PERIOD])
 def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesforce, separator):
     """Test that we can write to related external ID fields (SDC-12636).
@@ -294,7 +294,7 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_salesforce_destination_polymorphic(sdc_builder, sdc_executor, salesforce):
     """Test that we can write to polymorphic external ID fields (SDC-13117).
     Create a case, since its owner can be a user or a group.
@@ -359,7 +359,7 @@ def test_salesforce_destination_polymorphic(sdc_builder, sdc_executor, salesforc
 
 
 @salesforce
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('delete_type', ['soft', 'hard'])
 @pytest.mark.parametrize('set_permission', [True, False])
 def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, delete_type, set_permission):

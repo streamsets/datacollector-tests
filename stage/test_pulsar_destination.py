@@ -78,7 +78,7 @@ def test_pulsar_producer_with_no_schema(sdc_builder, sdc_executor, pulsar):
 
 
 @pulsar
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize("data, topic_type_pipeline, topic_type_pulsar, error_code", [
     ("just a string", "STRING", "STRING", None),
     #("just a string", "STRING", "INT32", "PULSAR_21"), # Incompatible schemas. Working from Pulsar 2.9.x
@@ -146,7 +146,7 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
 
 
 @pulsar
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize("input_data_json, input_data_avro, topic_type_pipeline, topic_type_pulsar, error_code", [
     (
         {"name": "Fran", "age": 32}, 
@@ -227,7 +227,7 @@ def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, inp
         sdc_executor.remove_pipeline(pipeline)
 
 @pulsar
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize("input_data_json, input_data_avro, topic_type_pulsar, error_code", [
     (
         {"name": "Fran", "age": 32}, 
@@ -300,7 +300,7 @@ def test_pulsar_producer_schema_avro_processor(sdc_builder, sdc_executor, pulsar
 
 
 @pulsar
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize("input_data_json, input_data_avro, topic_type_pulsar, error_code", [
     (
         {"name": "Fran", "age": 32}, 
@@ -364,7 +364,7 @@ def test_pulsar_producer_schema_auto_schema(sdc_builder, sdc_executor, pulsar, i
         sdc_executor.remove_pipeline(pipeline)
 
 @pulsar
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_pulsar_producer_schema_topic_in_record(sdc_builder, sdc_executor, pulsar):
     # Creating the topics with schema
     topic1_avro_schema = '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"topic","type":"string"}]}'

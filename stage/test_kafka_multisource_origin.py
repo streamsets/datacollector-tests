@@ -574,7 +574,7 @@ def test_kafka_origin_json_array_error(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh', 'kafka')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_kafka_topic_with_pattern(sdc_builder, sdc_executor, cluster):
     topic_data_1 = 'Info from Topic 1'
     topic_data_2 = 'Info from Topic 2'
@@ -607,7 +607,7 @@ def test_kafka_topic_with_pattern(sdc_builder, sdc_executor, cluster):
 
 
 @cluster('cdh', 'kafka')
-@sdc_min_version('4.5.0')
+@sdc_min_version('5.0.0')
 def test_kafka_topic_with_pattern_new_topic_during_pipeline_run(sdc_builder, sdc_executor, cluster):
     topic_data_1 = 'Info from Topic 1'
     topic_data_2 = 'Info from Topic 2'
