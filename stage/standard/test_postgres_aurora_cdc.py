@@ -54,14 +54,14 @@ DATA_TYPES_AURORA = [
 def test_data_types(sdc_builder, sdc_executor, database, data_type, insert_fragment, expected_type, expected_value,
                     keep_data):
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
 
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('PostgreSQL CDC Aurora Client')
+    origin = builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
@@ -128,7 +128,7 @@ def test_data_types(sdc_builder, sdc_executor, database, data_type, insert_fragm
 def test_data_types_as_primary_keys(sdc_builder, sdc_executor, database, data_type, insert_fragment, expected_type,
                                     expected_value, keep_data):
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     # XML data type can't be a primary key
     if data_type == 'XML':
@@ -139,7 +139,7 @@ def test_data_types_as_primary_keys(sdc_builder, sdc_executor, database, data_ty
 
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('PostgreSQL CDC Aurora Client')
+    origin = builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
@@ -200,6 +200,9 @@ SERIAL_DATA_TYPES_AURORA = [
                          ids=[i[0] for i in SERIAL_DATA_TYPES_AURORA])
 def test_data_types_as_primary_keys_serial_numeric(sdc_builder, sdc_executor, database, data_type, insert_fragment,
                                                    expected_type, expected_value, keep_data):
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+
     raw_data = ['The Hobbit', 'Tolkien', 'The Community']
     table_name = get_random_string(string.ascii_lowercase, 20)
     sequence_name = get_random_string(string.ascii_lowercase, 5)
@@ -207,7 +210,7 @@ def test_data_types_as_primary_keys_serial_numeric(sdc_builder, sdc_executor, da
 
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('PostgreSQL CDC Aurora Client')
+    origin = builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
@@ -291,12 +294,12 @@ OBJECT_NAMES_POSTGRES = [
                          ids=[i[0] for i in OBJECT_NAMES_POSTGRES])
 def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, offset_name, keep_data):
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     connection = database.engine.connect()
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('PostgreSQL CDC Aurora Client')
+    origin = builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
@@ -310,7 +313,7 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
 
     pipeline = builder.build().configure_for_environment(database)
 
-    # For make PostgreSQL Aurora case-sensitive, the objects names should be between double-quotes
+    # For make Aurora PostgreSQL case-sensitive, the objects names should be between double-quotes
     table_name_quotes = '"' + table_name + '"'
     offset_name_quotes = '"' + offset_name + '"'
 
@@ -355,7 +358,7 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
 @database('postgresqlaurora')
 def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     connection = database.engine.connect()
     max_batch_size = 50
@@ -373,7 +376,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
 
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('PostgreSQL CDC Aurora Client')
+    origin = builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=max_batch_size,
@@ -426,20 +429,20 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
 @sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
-    pytest.skip("No events supported in PostgreSQL CDC Aurora origin at this time.")
+    pytest.skip("No events supported in Aurora PostgreSQL CDC origin at this time.")
 
 
 @sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 def test_data_format(sdc_builder, sdc_executor, database, keep_data):
-    pytest.skip("PostgreSQL CDC Aurora Client doesn't deal with data formats")
+    pytest.skip("Aurora PostgreSQL CDC Client doesn't deal with data formats")
 
 
 @sdc_min_version('5.0.0')
 @database('postgresqlaurora')
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     iterations = 3
     records_per_iteration = 10
@@ -452,7 +455,7 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
 
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('PostgreSQL CDC Aurora Client')
+    origin = builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,

@@ -161,10 +161,10 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
     Runs with two poll intervals to verify that the Batch Wait Time (ms) configuration is respected.
 
     The pipeline looks like:
-        postgresql_cdc_aurora_client >> [wiretap.destination, pipeline_finisher]
+        aurora_postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
     """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     connection = database.engine.connect().execution_options(autocommit=True)
 
@@ -182,8 +182,8 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
 
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        postgresql_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
-        postgresql_cdc_aurora_client.set_attributes(batch_wait_time_in_ms=10000,
+        aurora_postgresql_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
+        aurora_postgresql_cdc_client.set_attributes(batch_wait_time_in_ms=10000,
                                                     max_batch_size_in_records=10,
                                                     poll_interval=poll_interval,
                                                     replication_slot=replication_slot)
@@ -199,7 +199,7 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
             " or record:value('/change[0]/columnvalues[0]') == 39}"
         ])
 
-        postgresql_cdc_aurora_client >> [wiretap.destination, pipeline_finisher]
+        aurora_postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
 
         pipeline = pipeline_builder.build(title='test_stop_start').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
@@ -280,11 +280,11 @@ def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, 
     inserted and processed.
 
     The pipeline looks like:
-        postgresql_cdc_aurora_client >> [wiretap.destination, pipeline_finisher]
+        aurora_postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
     """
 
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     if start_from is 'LSN' and database.database_server_version.major < 10:
         pytest.skip('LSN test cannot be executed in versions < 10.')
@@ -332,16 +332,16 @@ def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, 
                 connection.execute(table.insert(), row)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        postgresql_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
-        postgresql_cdc_aurora_client.set_attributes(replication_slot=replication_slot,
+        aurora_postgresql_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
+        aurora_postgresql_cdc_client.set_attributes(replication_slot=replication_slot,
                                                     initial_change=start_from,
                                                     poll_interval=1)
 
         if start_from is 'DATE':
-            postgresql_cdc_aurora_client.set_attributes(start_date=date.strftime('%m-%d-%Y %H:%M:%S'),
+            aurora_postgresql_cdc_client.set_attributes(start_date=date.strftime('%m-%d-%Y %H:%M:%S'),
                                                         database_time_zone=timezone)
         else:
-            postgresql_cdc_aurora_client.set_attributes(start_lsn=start_lsn)
+            aurora_postgresql_cdc_client.set_attributes(start_lsn=start_lsn)
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -351,7 +351,7 @@ def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, 
             " or record:value('/change[0]/columnvalues[0]') == 319"
             " or record:value('/change[0]/columnvalues[0]') == 419}"])
 
-        postgresql_cdc_aurora_client >> [wiretap.destination, pipeline_finisher]
+        aurora_postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
 
         pipeline = pipeline_builder.build(title='test_start_not_from_latest').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
@@ -411,24 +411,24 @@ def test_postgres_cdc_aurora_client_basic(sdc_builder, sdc_executor, database):
     With this, the origin processes all changes that occur after pipeline is started.
 
     The pipeline looks like:
-        postgresql_cdc_aurora_client >> wiretap
+        aurora_postgresql_cdc_client >> wiretap
     """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgresql_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
+    aurora_postgresql_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    postgresql_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgresql_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                                 max_batch_size_in_records=1,
                                                 poll_interval=POLL_INTERVAL,
                                                 replication_slot=replication_slot_name
                                                 )
     wiretap = pipeline_builder.add_wiretap()
 
-    postgresql_cdc_aurora_client >> wiretap.destination
+    aurora_postgresql_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build(title='test_postgres_cdc_aurora_client_basic').configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -488,29 +488,29 @@ def test_postgres_cdc_aurora_client_basic(sdc_builder, sdc_executor, database):
 def test_postgres_cdc_aurora_max_poll_attempts(sdc_builder, sdc_executor, database):
     """Test the delivery of a batch when the maximum poll attempts is reached.
 
-    The condition to generate a new batch in PostgreSQL CDC Aurora Origin is a) to reach the maximum batch size; or b) to
-    reach the maximum attempts to poll data from CDC. This test set a max batch size of 100 records and check a new
+    The condition to generate a new batch in Aurora PostgreSQL CDC Client is a) to reach the maximum batch size; or b)
+    to reach the maximum attempts to poll data from CDC. This test set a max batch size of 100 records and check a new
     batch is generated with only a few records because of hitting the max poll attempts.
 
     Pipeline:
-        postgres_cdc_aurora_client >> wiretap
+        aurora_postgres_cdc_client >> wiretap
     """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgres_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    postgres_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                               max_batch_size_in_records=100,
                                               poll_interval=POLL_INTERVAL,
                                               replication_slot=replication_slot_name)
 
     wiretap = pipeline_builder.add_wiretap()
 
-    postgres_cdc_aurora_client >> wiretap.destination
+    aurora_postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build(title='test_postgres_cdc_aurora_max_poll_attempts').configure_for_environment(
         database)
@@ -568,18 +568,18 @@ def test_postgres_cdc_aurora_client_filtering_table(sdc_builder, sdc_executor, d
         4. Should see updates for "table_allow" only
 
         The pipeline looks like:
-            postgres_cdc_aurora_client >> wiretap
+            aurora_postgres_cdc_client >> wiretap
     """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_name_allow = get_random_string(string.ascii_lowercase, 20)
     table_name_deny = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgres_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    postgres_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                               replication_slot=replication_slot_name,
                                               poll_interval=POLL_INTERVAL,
                                               tables=[{'schema': 'public',
@@ -588,7 +588,7 @@ def test_postgres_cdc_aurora_client_filtering_table(sdc_builder, sdc_executor, d
 
     wiretap = pipeline_builder.add_wiretap()
 
-    postgres_cdc_aurora_client >> wiretap.destination
+    aurora_postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build(
         title='test_postgres_cdc_aurora_client_filtering_table').configure_for_environment(database)
@@ -665,24 +665,24 @@ def test_postgres_cdc_aurora_client_remove_replication_slot(sdc_builder, sdc_exe
         4.  Query postgres database for replication slots, checking removal
 
         The pipeline looks like:
-            postgres_cdc_aurora_client >> wiretap
+            aurora_postgres_cdc_client >> wiretap
     """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     replication_slot = get_random_string(string.ascii_lowercase, 10)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgres_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
-    postgres_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
+    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                               max_batch_size_in_records=1,
                                               poll_interval=POLL_INTERVAL,
                                               replication_slot=replication_slot)
 
     wiretap = pipeline_builder.add_wiretap()
 
-    postgres_cdc_aurora_client >> wiretap.destination
+    aurora_postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build(
         title='test_postgres_cdc_aurora_client_remove_replication_slot').configure_for_environment(database)
@@ -730,17 +730,17 @@ def test_postgres_cdc_aurora_client_multiple_concurrent_operations(sdc_builder, 
     With this, the origin processes all changes that occur after pipeline is started.
 
     The pipeline looks like:
-        postgres_cdc_aurora_client >> [pipeline_finesher, wiretap]
+        aurora_postgres_cdc_client >> [pipeline_finesher, wiretap]
     """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgres_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    postgres_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=False,
+    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
                                               max_batch_size_in_records=batch_size,
                                               poll_interval=POLL_INTERVAL,
                                               replication_slot=replication_slot_name,
@@ -754,7 +754,7 @@ def test_postgres_cdc_aurora_client_multiple_concurrent_operations(sdc_builder, 
         "${record:value('/change[0]/columnvalues[0]') == -1}"
     ])
 
-    postgres_cdc_aurora_client >> [wiretap.destination, pipeline_finisher]
+    aurora_postgres_cdc_client >> [wiretap.destination, pipeline_finisher]
 
     pipeline = pipeline_builder.build(
         title='test_postgres_cdc_aurora_client_multiple_concurrent_operations').configure_for_environment(database)
@@ -871,18 +871,18 @@ def test_postgres_cdc_aurora_client_filtering_multiple_tables(sdc_builder, sdc_e
         4. Should see updates for "table[1], [2] and [3]" only
 
         The pipeline looks like:
-            postgres_cdc_aurora_client >> wiretap
+            aurora_postgres_cdc_client >> wiretap
     """
 
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_name = [get_random_string(string.ascii_lowercase, 20) for _ in range(4)]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgres_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    postgres_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                               replication_slot=replication_slot_name,
                                               max_batch_size_in_records=1,
                                               poll_interval=POLL_INTERVAL,
@@ -892,7 +892,7 @@ def test_postgres_cdc_aurora_client_filtering_multiple_tables(sdc_builder, sdc_e
                                                       ])
     wiretap = pipeline_builder.add_wiretap()
 
-    postgres_cdc_aurora_client >> wiretap.destination
+    aurora_postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build(
         title='test_postgres_cdc_aurora_client_filtering_multiple_tables').configure_for_environment(database)
@@ -968,18 +968,18 @@ def test_postgres_cdc_aurora_wal_sender_status_metrics(sdc_builder, sdc_executor
          has the right information from the database
 
         The pipeline looks like:
-            postgres_cdc_aurora_client >> trash
+            aurora_postgres_cdc_client >> trash
     """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgres_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
 
-    postgres_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                               replication_slot=replication_slot_name,
                                               max_batch_size_in_records=1,
                                               poll_interval=POLL_INTERVAL,
@@ -988,7 +988,7 @@ def test_postgres_cdc_aurora_wal_sender_status_metrics(sdc_builder, sdc_executor
                                                        'table': table_name}])
     trash = pipeline_builder.add_stage('Trash')
 
-    postgres_cdc_aurora_client >> trash
+    aurora_postgres_cdc_client >> trash
 
     pipeline = pipeline_builder.build(
         title='test_postgres_cdc_aurora_wal_sender_status_metrics').configure_for_environment(database)
@@ -1017,7 +1017,7 @@ def test_postgres_cdc_aurora_wal_sender_status_metrics(sdc_builder, sdc_executor
 
         history = sdc_executor.get_pipeline_history(pipeline)
         wal_sender_status_from_metrics = history.latest.metrics.gauge(
-            'custom.PostgreSQLCDCAuroraClient_01.Wal Sender Status.0.gauge').value
+            'custom.AuroraPostgreSQLCDCClient_01.Wal Sender Status.0.gauge').value
 
         # Black listed fields should not be available in metrics
         assert all([k not in wal_sender_status_from_metrics for k in BLACKLISTED_WAL_SENDER_COLUMNS])
@@ -1041,18 +1041,18 @@ def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, 
         assert the question size metrics are proper.
 
         The pipeline looks like:
-            postgres_cdc_aurora_client >> delay >> wiretap.destination
+            aurora_postgres_cdc_client >> delay >> wiretap.destination
     """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(9)]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgres_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     queue_size = 6
-    postgres_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                               replication_slot=replication_slot_name,
                                               max_batch_size_in_records=1,
                                               cdc_generator_queue_size=queue_size,
@@ -1065,7 +1065,7 @@ def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, 
 
     wiretap = pipeline_builder.add_wiretap()
 
-    postgres_cdc_aurora_client >> delay >> wiretap.destination
+    aurora_postgres_cdc_client >> delay >> wiretap.destination
 
     pipeline = pipeline_builder.build(
         title='test_postgres_cdc_aurora_queue_buffering_metrics').configure_for_environment(database)
@@ -1083,9 +1083,9 @@ def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, 
 
         def condition():
             pipeline_metrics = sdc_executor.get_pipeline_metrics(pipeline)
-            queue_metrics = pipeline_metrics.gauge('custom.PostgreSQLCDCAuroraClient_01.CDC Metrics.0.gauge').value
+            queue_metrics = pipeline_metrics.gauge('custom.AuroraPostgreSQLCDCClient_01.CDC Metrics.0.gauge').value
             output_records_from_origin = pipeline_metrics.counter(
-                'stage.PostgreSQLCDCAuroraClient_01.outputRecords.counter').count
+                'stage.AuroraPostgreSQLCDCClient_01.outputRecords.counter').count
             if 0 < output_records_from_origin < len(expected_operations_data):
                 assert 0 < queue_metrics['Queue Size'] <= queue_size
             assert queue_metrics['Queue Capacity'] == queue_size - queue_metrics['Queue Size']
@@ -1094,7 +1094,7 @@ def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, 
         def failure(timeout):
             pipeline_metrics = sdc_executor.get_pipeline_metrics(pipeline)
             output_records_from_origin = pipeline_metrics.counter(
-                'stage.PostgreSQLCDCAuroraClient_01.outputRecords.counter').count
+                'stage.AuroraPostgreSQLCDCClient_01.outputRecords.counter').count
             raise Exception('Timed out after `{}` seconds waiting for Output record metrics `{}` to reach `{}` '.format(
                 timeout, output_records_from_origin, len(expected_operations_data)))
 
@@ -1128,19 +1128,19 @@ def test_postgres_cdc_ssl_enabled(sdc_builder, sdc_executor, database, ssl_mode)
     and validates that they are read in the same order.
 
     The pipeline looks like:
-        postgres_cdc_aurora_client >> wiretap
+        aurora_postgres_cdc_client >> wiretap
     """
 
-    # skip the test if the PostgreSQL Aurora CDC client isn't ssl enabled.
+    # skip the test if the Aurora PostgreSQL CDC client isn't ssl enabled.
     if not database.ca_certificate or not database.is_cdc_enabled:
-        pytest.skip('Test only runs against PostgreSQL Aurora with CDC and SSL enabled.')
+        pytest.skip('Test only runs against Aurora PostgreSQL with CDC and SSL enabled.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    postgres_cdc_aurora_client = pipeline_builder.add_stage('PostgreSQL CDC Aurora Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    postgres_cdc_aurora_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
                                               max_batch_size_in_records=1,
                                               poll_interval=POLL_INTERVAL,
                                               replication_slot=replication_slot_name,
@@ -1148,13 +1148,13 @@ def test_postgres_cdc_ssl_enabled(sdc_builder, sdc_executor, database, ssl_mode)
                                               )
 
     if ssl_mode != 'REQUIRED':
-        postgres_cdc_aurora_client.set_attributes(ca_certificate_pem=database.ca_certificate_file_contents,
+        aurora_postgres_cdc_client.set_attributes(ca_certificate_pem=database.ca_certificate_file_contents,
                                                   server_certificate_pem=database.server_certificate_file_contents
                                                   )
 
     wiretap = pipeline_builder.add_wiretap()
 
-    postgres_cdc_aurora_client >> wiretap.destination
+    aurora_postgres_cdc_client >> wiretap.destination
 
     pipeline = pipeline_builder.build(title='test_postgres_cdc_ssl_enabled').configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
