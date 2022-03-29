@@ -19,6 +19,7 @@ import os
 import string
 import tempfile
 import textwrap
+import time
 from collections import OrderedDict
 
 import pytest
@@ -2085,8 +2086,13 @@ def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor, sh
     file_content_2 = get_text_file_content(1, 1)
 
     try:
-        files_directory = create_file_and_directory(file_name_1, file_content_1, shell_executor, file_writer)
-        file_writer(os.path.join(files_directory, file_name_2), file_content_2)
+        files_directory = os.path.join('/tmp', get_random_string())
+        logger.info('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        file_path_1 = os.path.join(files_directory, file_name_1)
+        shell_executor(f'echo "{file_content_1}" > {file_path_1}')
+        file_path_2 = os.path.join(files_directory, file_name_2)
+        shell_executor(f'echo "{file_content_2}" > {file_path_2}')
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         directory = pipeline_builder.add_stage('Directory')
@@ -2095,17 +2101,18 @@ def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor, sh
                                  file_name_pattern='*.txt',
                                  file_name_pattern_mode='GLOB',
                                  read_order=read_order)
+
         wiretap = pipeline_builder.add_wiretap()
         directory >> wiretap.destination
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline)
 
-        records = [record.field for record in wiretap.output_records]
-        processed_data = '\n'.join(str(r['text']) for r in records)
+        processed_data = f"{wiretap.output_records[0].field['text']}\n{wiretap.output_records[1].field['text']}"
 
         if read_order == "LEXICOGRAPHICAL":
             raw_data = '{}\n{}'.format(file_content_2, file_content_1)
