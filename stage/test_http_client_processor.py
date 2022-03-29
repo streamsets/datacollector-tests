@@ -3166,3 +3166,125 @@ def test_http_processor_overwrite_field(sdc_builder, sdc_executor, http_client):
         assert wiretap.output_records[0].field == {"field": "value", "result": data_array}
     finally:
         http_mock.delete_mock()
+@http
+@sdc_min_version("5.0.0")
+def test_http_processor_pagination_next_page_link_prefix_el(sdc_builder, sdc_executor, http_client):
+    """
+       Test Next Page Link Prefix EL record:value for Http Processor pagination mode: Link in Response Field.
+
+       We use the pipeline:
+       dev_raw_data_source >> http_client_processor >> wiretap
+
+       Test for COLLECTOR-898.
+       """
+
+    record_output_field = 'results'
+
+    number_records = 5
+    number_pages = 5
+
+    # Id values to be evaluate by the El Expression
+    id_value = "\n".join([f'{{"id_value":"{i}"}}' for i in range(number_records)])
+
+    http_mock = http_client.mock()
+    http_mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock_url = f'{http_mock.pretend_url}/{http_mock_path}'
+    http_mock_url_simple = http_mock.pretend_url
+
+    http_mock_content_01 = \
+        {
+            'bands':
+                [
+                    {'band': 'Death', 'singer': 'Chuck Schuldiner'},
+                    {'band': 'Morbid Angel', 'singer': 'Trey Azagthoth'},
+                    {'band': 'Possessed', 'singer': 'Jeff Becerra'}
+                ],
+            'current_page': 1,
+            'next_page': http_mock_path
+        }
+
+    http_initial_content = json.dumps(http_mock_content_01)
+
+    try:
+
+        http_mock.when(rule=f'GET /{http_mock_path}').reply(body=http_initial_content,
+                                                            status=200,
+                                                            headers={'Content-Type': 'application/json'},
+                                                            times=FOREVER)
+
+        total_elements = []
+        record_fields = []
+
+        for i in range(number_records):
+            # Clear elements each time new records come in to match with the record output
+            record_fields.clear()
+            for x in range(number_pages):
+                http_data = {'bands': [{'band': F'Death_{x}', 'singer': 'Chuck Schuldiner'},
+                                       {'band': F'Morbid Angel_{x}', 'singer': 'Trey Azagthoth;'},
+                                       {'band': F'Possessed_{x}', 'singer': 'Jeff Becerra'}],
+                             'current_page': x + 2,
+                             'next_page': http_mock_path}
+                if x == number_pages - 1:
+                    http_data = {'bands': [{'band': F'Death_{x}', 'singer': 'Chuck Schuldiner'},
+                                           {'band': F'Morbid Angel_{x}', 'singer': 'Trey Azagthoth;'},
+                                           {'band': F'Possessed_{x}', 'singer': 'Jeff Becerra'}],
+                                 'current_page': x + 2,
+                                 'next_page': 'null'}
+
+                # Concatenate record fields between pages
+                record_fields += http_data['bands']
+                http_data_pagination = json.dumps(http_data)
+                http_mock.when(F'GET /to_id={i}-after={http_mock_path}').reply(body=http_data_pagination,
+                                                                               headers={
+                                                                                   'Content-Type': 'application/json'},
+                                                                               times=1)
+            # Add the initial records to the total of elements
+            total_elements.append(http_mock_content_01['bands'] + record_fields)
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+
+        dev_raw_data_source.set_attributes(data_format='JSON',
+                                           raw_data=f'{id_value}',
+                                           stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+
+        http_client_processor.set_attributes(data_format='JSON',
+                                             http_method='GET',
+                                             resource_url=http_mock_url,
+                                             output_field=f'/{record_output_field}',
+                                             default_request_content_type='application/json',
+                                             missing_values_behavior='SEND_TO_ERROR',
+                                             multiple_values_behavior='ALL_AS_LIST',
+                                             pagination_mode='LINK_FIELD',
+                                             next_page_link_prefix=http_mock_url_simple + "/to_id=${record:value('/id_value')}-after=",
+                                             next_page_link_field="/next_page",
+                                             stop_condition="${record:value('/next_page') == 'null' }",
+                                             result_field_path="/bands",
+                                             keep_all_fields=True)
+
+        print(http_client_processor.next_page_link_prefix)
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+
+        pipeline = builder.build(title='HTTP Processor EL in LinkFieldPrefix')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        output_records = []
+        # Assert for the content generated by the initial content
+        for i in range(number_records):
+            for j in http_mock_content_01['bands']:
+                assert j in wiretap.output_records[i].field['results'][0]['bands']
+        # Assert contents generated by the pagination
+        for i in wiretap.output_records:
+            output_records.append(i.field['results'][0]['bands'])
+        assert total_elements == output_records
+
+    finally:
+        http_mock.delete_mock()
