@@ -84,9 +84,7 @@ def test_additional_properties(sdc_builder, sdc_executor, elasticsearch, test_da
     target.index = index
     # Main config change for this test
     target.additional_properties = '{\"routing\":${record:value(\'/shard\')}}'
-
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        target.mapping = mapping
+    target.mapping = mapping
 
     source >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -168,9 +166,7 @@ def test_document_id(sdc_builder, sdc_executor, elasticsearch, test_data):
     target.index = index
     # Main config change for this test
     target.document_id = '${record:value(\'/doc_id\')}'
-
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        target.mapping = mapping
+    target.mapping = mapping
 
     source >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -218,8 +214,7 @@ def test_index(sdc_builder, sdc_executor, elasticsearch, test_data):
     target.default_operation = 'INDEX'
     # For this test, we set index to EL
     target.index = '${record:value(\'/index\')}'
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        target.mapping = mapping
+    target.mapping = mapping
 
     source >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -370,9 +365,7 @@ def test_routing(sdc_builder, sdc_executor, elasticsearch, test_data):
     target.index = index
     # We send dynamic routing based on the records itself, this is the main change in this test
     target.routing = '${record:value(\'/shard\')}'
-
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        target.mapping = mapping
+    target.mapping = mapping
 
     source >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)

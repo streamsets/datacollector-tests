@@ -69,10 +69,9 @@ def test_data_types(sdc_builder, sdc_executor, elasticsearch, input, converter_t
     }]
 
     target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
-                                                                                   document_id=doc_id, index=index)
-
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        target.mapping = mapping
+                                                                                   document_id=doc_id,
+                                                                                   index=index,
+                                                                                   mapping=mapping)
 
     origin >> converter >> target
 
@@ -126,9 +125,8 @@ def test_object_names(sdc_builder, sdc_executor, elasticsearch, name_category, i
                                                                      raw_data='Hi!')
 
     target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
-                                                                                   document_id=doc_id, index=index)
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        target.mapping = mapping
+                                                                                   document_id=doc_id, index=index,
+                                                                                   mapping=mapping)
 
     origin >> target
 
@@ -173,11 +171,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, elasticsearch):
         "field": "seq"
     }]
 
-    target = builder.add_stage('Elasticsearch', type='destination')
-    target.default_operation = 'INDEX'
-    target.document_id = '${record:value("/seq")}'
-    target.index = index
-    target.mapping = mapping
+    target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
+                                                                                   document_id='${record:value("/seq")}',
+                                                                                   index=index,
+                                                                                   mapping=mapping)
 
     origin >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)

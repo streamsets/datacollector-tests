@@ -49,10 +49,8 @@ def test_dev_data_generator_to_elastic_search(sdc_builder, sdc_executor, elastic
 
     target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
                                                                                    document_id="${record:value('/doc_id')}",
-                                                                                   index=es_index)
-
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        target.set_attributes(mapping=es_mapping)
+                                                                                   index=es_index,
+                                                                                   mapping=es_mapping)
 
     wiretap = builder.add_wiretap()
 
@@ -114,10 +112,8 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, creden
 
     target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
                                                                                    document_id="${record:value('/doc_id')}",
-                                                                                   index=es_index)
-
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        target.set_attributes(mapping=es_mapping)
+                                                                                   index=es_index,
+                                                                                   mapping=es_mapping)
 
     wiretap = builder.add_wiretap()
 

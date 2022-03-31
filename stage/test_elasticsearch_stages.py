@@ -44,13 +44,10 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
     elastic_to_error = builder.add_error_stage('Write to Elasticsearch')
-    elastic_to_error.set_attributes(document_id=es_doc_id, index=es_index)
+    elastic_to_error.set_attributes(document_id=es_doc_id, index=es_index, mapping=es_mapping)
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
                                                                                   stop_after_first_batch=True,
                                                                                   raw_data=raw_str)
-
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        elastic_to_error.set_attributes(mapping=es_mapping)
 
     error_target = builder.add_stage('To Error')
 
@@ -160,10 +157,7 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
                                                                                   raw_data=raw_str)
     es_target = builder.add_stage('Elasticsearch', type='destination')
     es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index,
-                             use_security=True, user_name=username, password=password)
-
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        es_target.set_attributes(mapping=es_mapping)
+                             use_security=True, user_name=username, password=password, mapping=es_mapping)
 
     dev_raw_data_source >> es_target
     es_target_pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -205,6 +199,8 @@ def test_index_and_template_with_plus_get_encoded(sdc_builder, sdc_executor, ela
     This same test should pass for all Elasticsearch versions.
     This test will fail for SDC version less than 3.19.0 which is expected.
     """
+    if elasticsearch.major_version >= ELASTICSEARCH_VERSION_8:
+        pytest.skip("doc types are not available in ES 8.x+")
 
     doc_id = get_random_string(string.ascii_lowercase)
     doc_index = f'{doc_id}id+x'
@@ -214,13 +210,10 @@ def test_index_and_template_with_plus_get_encoded(sdc_builder, sdc_executor, ela
     builder = sdc_builder.get_pipeline_builder()
 
     es = builder.add_stage('Elasticsearch', type='origin').set_attributes(index=doc_index,
-                                                                          query="{'query': {'match_all': {}}}")
+                                                                          query="{'query': {'match_all': {}}}",
+                                                                          mapping=doc_type)
 
-    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-        elasticsearch.client.client.create(index=doc_index, doc_type=doc_type, id=doc_id, body=doc)
-        es.set_attributes(mapping=doc_type)
-    else:
-        elasticsearch.client.create_document(index=doc_index, id=doc_id, body=doc)
+    elasticsearch.client.client.create(index=doc_index, doc_type=doc_type, id=doc_id, body=doc)
 
     wiretap = builder.add_wiretap()
     pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
@@ -238,7 +231,6 @@ def test_index_and_template_with_plus_get_encoded(sdc_builder, sdc_executor, ela
         assert output_data[0]['_index'] == doc_index
         assert output_data[0]['_id'] == doc_id
         assert output_data[0]['_source'] == doc
-        if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
-            assert output_data[0]['_type'] == doc_type
+        assert output_data[0]['_type'] == doc_type
     finally:
         elasticsearch.client.delete_index(doc_index)
