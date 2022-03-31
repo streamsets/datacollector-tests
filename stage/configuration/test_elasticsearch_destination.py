@@ -23,6 +23,8 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+ELASTICSEARCH_VERSION_8 = 8
+
 
 @pytest.fixture(scope='function')
 def test_data():
@@ -80,9 +82,11 @@ def test_additional_properties(sdc_builder, sdc_executor, elasticsearch, test_da
     target = builder.add_stage('Elasticsearch', type='destination')
     target.default_operation = 'INDEX'
     target.index = index
-    target.mapping = mapping
     # Main config change for this test
-    target.additional_properties='{\"routing\":${record:value(\'/shard\')}}'
+    target.additional_properties = '{\"routing\":${record:value(\'/shard\')}}'
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        target.mapping = mapping
 
     source >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -100,8 +104,9 @@ def test_additional_properties(sdc_builder, sdc_executor, elasticsearch, test_da
 
         for i in range(4):
             assert hits[i]['_index'] == index
-            assert hits[i]['_type'] == mapping
             assert hits[i]['_source']['text'] == test_data[i]['text']
+            if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                assert hits[i]['_type'] == mapping
 
             # First three records have the value "shard" filled whereas the last record (id=3) does not and thus that
             # piece of metadata should never made it ElasticSearch.
@@ -156,14 +161,16 @@ def test_document_id(sdc_builder, sdc_executor, elasticsearch, test_data):
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'JSON'
     source.stop_after_first_batch = True
-    source.raw_data='\n'.join(json.dumps(rec) for rec in test_data)
+    source.raw_data = '\n'.join(json.dumps(rec) for rec in test_data)
 
     target = builder.add_stage('Elasticsearch', type='destination')
     target.default_operation = 'INDEX'
     target.index = index
-    target.mapping = mapping
     # Main config change for this test
-    target.document_id='${record:value(\'/doc_id\')}'
+    target.document_id = '${record:value(\'/doc_id\')}'
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        target.mapping = mapping
 
     source >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -181,9 +188,10 @@ def test_document_id(sdc_builder, sdc_executor, elasticsearch, test_data):
 
         for i in range(4):
             assert hits[i]['_index'] == index
-            assert hits[i]['_type'] == mapping
             assert hits[i]['_id'] == test_data[i]['doc_id']
             assert hits[i]['_source']['text'] == test_data[i]['text']
+            if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                assert hits[i]['_type'] == mapping
     finally:
         # Clean up test data in ES
         elasticsearch.client.delete_index(index)
@@ -204,13 +212,14 @@ def test_index(sdc_builder, sdc_executor, elasticsearch, test_data):
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'JSON'
     source.stop_after_first_batch = True
-    source.raw_data='\n'.join(json.dumps(rec) for rec in test_data)
+    source.raw_data = '\n'.join(json.dumps(rec) for rec in test_data)
 
     target = builder.add_stage('Elasticsearch', type='destination')
     target.default_operation = 'INDEX'
     # For this test, we set index to EL
-    target.index='${record:value(\'/index\')}'
-    target.mapping = mapping
+    target.index = '${record:value(\'/index\')}'
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        target.mapping = mapping
 
     source >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -229,15 +238,16 @@ def test_index(sdc_builder, sdc_executor, elasticsearch, test_data):
 
         for i in range(4):
             assert hits[i]['_index'] == test_data[i]['index']
-            assert hits[i]['_type'] == mapping
             assert hits[i]['_source']['text'] == test_data[i]['text']
+            if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                assert hits[i]['_type'] == mapping
     finally:
         # Clean up test data in ES
         for entry in test_data:
             elasticsearch.client.delete_index(entry['index'])
 
 
-# Mappings were removed in 6 and thus ELs are only supported in 5
+# Mappings were removed in 6 and thus ELs are only supported in 5 and totally removed in 8
 # https://www.elastic.co/guide/en/elasticsearch/reference/6.0/removal-of-types.html
 @elasticsearch
 def test_mapping(sdc_builder, sdc_executor, elasticsearch, test_data):
@@ -249,15 +259,17 @@ def test_mapping(sdc_builder, sdc_executor, elasticsearch, test_data):
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'JSON'
     source.stop_after_first_batch = True
-    source.raw_data='\n'.join(json.dumps(rec) for rec in test_data)
+    source.raw_data = '\n'.join(json.dumps(rec) for rec in test_data)
 
     target = builder.add_stage('Elasticsearch', type='destination')
     target.default_operation = 'INDEX'
     target.index = index
+
     # For this test, we set mapping to EL
+
     if elasticsearch.major_version == 5:
         target.mapping = '${record:value(\'/mapping\')}'
-    else:
+    elif elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
         target.mapping = mapping
 
     source >> target
@@ -280,7 +292,7 @@ def test_mapping(sdc_builder, sdc_executor, elasticsearch, test_data):
 
             if elasticsearch.major_version == 5:
                 assert hits[i]['_type'] == test_data[i]['mapping']
-            else:
+            elif elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
                 assert hits[i]['_type'] == mapping
     finally:
         elasticsearch.client.delete_index(index)
@@ -351,14 +363,16 @@ def test_routing(sdc_builder, sdc_executor, elasticsearch, test_data):
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'JSON'
     source.stop_after_first_batch = True
-    source.raw_data='\n'.join(json.dumps(rec) for rec in test_data)
+    source.raw_data = '\n'.join(json.dumps(rec) for rec in test_data)
 
     target = builder.add_stage('Elasticsearch', type='destination')
     target.default_operation = 'INDEX'
     target.index = index
-    target.mapping = mapping
     # We send dynamic routing based on the records itself, this is the main change in this test
     target.routing = '${record:value(\'/shard\')}'
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        target.mapping = mapping
 
     source >> target
     pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -374,8 +388,9 @@ def test_routing(sdc_builder, sdc_executor, elasticsearch, test_data):
 
         for i in range(4):
             assert hits[i]['_index'] == index
-            assert hits[i]['_type'] == mapping
             assert hits[i]['_source']['text'] == test_data[i]['text']
+            if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                assert hits[i]['_type'] == mapping
 
             # First three records have the value "shard" filled whereas the last record (id=3) does not and thus that
             # piece of metadata should never made it ElasticSearch.

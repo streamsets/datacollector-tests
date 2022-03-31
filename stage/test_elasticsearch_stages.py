@@ -14,16 +14,20 @@
 
 import logging
 import string
-import pytest
 
+import pytest
 from streamsets.testframework.markers import elasticsearch, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+raw_str = 'Hello World!'
+
+ELASTICSEARCH_VERSION_8 = 8
+
 
 @elasticsearch
-@sdc_min_version('3.0.0.0') # stop_after_first_batch
+@sdc_min_version('3.0.0.0')
 def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch):
     """Test for a pipeline's error records being pumped to Elasticsearch. We do so by making a Dev Raw Data source
     target to Error stage which would send records to the pipeline configured Elasticsearch error records handling.
@@ -36,15 +40,18 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
     es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
     es_mapping = get_random_string(string.ascii_letters, 10)
     es_doc_id = get_random_string(string.ascii_letters, 10)
-    raw_str = 'Hello World!'
 
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
-    errstg = builder.add_error_stage('Write to Elasticsearch')
-    errstg.set_attributes(document_id=es_doc_id, index=es_index, mapping=es_mapping)
+    elastic_to_error = builder.add_error_stage('Write to Elasticsearch')
+    elastic_to_error.set_attributes(document_id=es_doc_id, index=es_index)
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
                                                                                   stop_after_first_batch=True,
                                                                                   raw_data=raw_str)
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        elastic_to_error.set_attributes(mapping=es_mapping)
+
     error_target = builder.add_stage('To Error')
 
     dev_raw_data_source >> error_target
@@ -63,8 +70,9 @@ def test_elasticsearch_pipeline_errors(sdc_builder, sdc_executor, elasticsearch)
         response = responses[0]
         assert response['_index'] == es_index
         assert response['_id'] == es_doc_id
-        assert response['_type'] == es_mapping
         assert response['_source'] == {'text': raw_str}
+        if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+            assert response['_type'] == es_mapping
     finally:
         # Clean up test data in ES
         elasticsearch.client.delete_index(es_index)
@@ -79,7 +87,6 @@ def test_offset_upgrade(sdc_builder, sdc_executor, elasticsearch):
     """
     es_index = get_random_string(string.ascii_letters, 10).lower()
     es_doc_id = get_random_string(string.ascii_letters, 10)
-    raw_str = 'Hello World!'
     raw = {'body': raw_str}
 
     builder = sdc_builder.get_pipeline_builder()
@@ -138,7 +145,6 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
     es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
     es_mapping = get_random_string(string.ascii_letters, 10)
     es_doc_id = get_random_string(string.ascii_letters, 10)
-    raw_str = 'Hello World!'
 
     if join_credentials:
         username = elasticsearch.username + ':' + elasticsearch.password
@@ -153,8 +159,11 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
                                                                                   stop_after_first_batch=True,
                                                                                   raw_data=raw_str)
     es_target = builder.add_stage('Elasticsearch', type='destination')
-    es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index, mapping=es_mapping,
+    es_target.set_attributes(default_operation='INDEX', document_id=es_doc_id, index=es_index,
                              use_security=True, user_name=username, password=password)
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        es_target.set_attributes(mapping=es_mapping)
 
     dev_raw_data_source >> es_target
     es_target_pipeline = builder.build().configure_for_environment(elasticsearch)
@@ -173,8 +182,9 @@ def test_elasticsearch_credentials_format(sdc_builder, sdc_executor, elasticsear
         assert len(response) == 1
         assert response[0]['_index'] == es_index
         assert response[0]['_id'] == es_doc_id
-        assert response[0]['_type'] == es_mapping
         assert response[0]['_source'] == {'text': raw_str}
+        if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+            assert response[0]['_type'] == es_mapping
     finally:
         # Clean up test data in ES
         elasticsearch.client.delete_index(es_index)
@@ -201,32 +211,34 @@ def test_index_and_template_with_plus_get_encoded(sdc_builder, sdc_executor, ela
     doc_type = f'{doc_id}tp+y'
     doc = {"data": "DATA"}
 
-    client = elasticsearch.client.client
-    client.create(index=doc_index, doc_type=doc_type, id=doc_id, body=doc)
+    builder = sdc_builder.get_pipeline_builder()
+
+    es = builder.add_stage('Elasticsearch', type='origin').set_attributes(index=doc_index,
+                                                                          query="{'query': {'match_all': {}}}")
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        elasticsearch.client.client.create(index=doc_index, doc_type=doc_type, id=doc_id, body=doc)
+        es.set_attributes(mapping=doc_type)
+    else:
+        elasticsearch.client.create_document(index=doc_index, id=doc_id, body=doc)
+
+    wiretap = builder.add_wiretap()
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    es >> [wiretap.destination, pipeline_finisher]
+
+    pipeline = builder.build().configure_for_environment(elasticsearch)
+    pipeline.configuration["shouldRetry"] = False
+    sdc_executor.add_pipeline(pipeline)
 
     try:
-        builder = sdc_builder.get_pipeline_builder()
-
-        es = builder.add_stage('Elasticsearch', type='origin')
-        es.index = doc_index
-        es.mapping = doc_type
-        es.query = "{'query': {'match_all': {}}}"
-
-        wiretap = builder.add_wiretap()
-        pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
-        es >> [wiretap.destination, pipeline_finisher]
-
-        pipeline = builder.build().configure_for_environment(elasticsearch)
-        pipeline.configuration["shouldRetry"] = False
-        sdc_executor.add_pipeline(pipeline)
-
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         output_data = [record.field for record in wiretap.output_records]
 
         assert len(output_data) == 1
         assert output_data[0]['_index'] == doc_index
         assert output_data[0]['_id'] == doc_id
-        assert output_data[0]['_type'] == doc_type
         assert output_data[0]['_source'] == doc
+        if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+            assert output_data[0]['_type'] == doc_type
     finally:
         elasticsearch.client.delete_index(doc_index)

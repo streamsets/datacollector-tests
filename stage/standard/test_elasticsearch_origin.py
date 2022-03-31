@@ -21,6 +21,8 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+ELASTICSEARCH_VERSION_8 = 8
+
 
 @elasticsearch
 def test_data_types(sdc_builder, sdc_executor, elasticsearch):
@@ -98,11 +100,17 @@ def test_multiple_batches(sdc_builder, sdc_executor, elasticsearch, incremental)
     try:
         def generator():
             for i in range(1, max_batch_size * batches + 1):
-                yield {
-                    "_index": index,
-                    "_type": "data",
-                    "_source": {"number": i}
-                }
+                if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                    yield {
+                        "_index": index,
+                        "_type": "data",
+                        "_source": {"number": i}
+                    }
+                else:
+                    yield {
+                        "_index": index,
+                        "_source": {"number": i}
+                    }
 
         elasticsearch.client.bulk(generator())
 
@@ -150,13 +158,9 @@ def test_resume_offset(sdc_builder, sdc_executor, elasticsearch):
     index = get_random_string(string.ascii_lowercase, 10)
 
     builder = sdc_builder.get_pipeline_builder()
-    origin = builder.add_stage('Elasticsearch', type='origin')
-    origin.index = index
-    origin.query = "{'sort': [{'number': {'order': 'asc'}}], 'query': {'range': {'number': {'gt': ${OFFSET}}}}}"
-    origin.incremental_mode = True
-    origin.query_interval = "${0}"
-    origin.offset_field = "number"
-    origin.initial_offset = "${0}"
+    origin = builder.add_stage('Elasticsearch', type='origin').set_attributes(
+        query="{'sort': [{'number': {'order': 'asc'}}], 'query': {'range': {'number': {'gt': ${OFFSET}}}}}",
+        index=index, incremental_mode=True, query_interval="${0}", offset_field="number", initial_offset="${0}")
 
     wiretap = builder.add_wiretap()
 
@@ -172,11 +176,17 @@ def test_resume_offset(sdc_builder, sdc_executor, elasticsearch):
 
             def generator():
                 for i in range(1, records_per_iteration + 1):
-                    yield {
-                        "_index": index,
-                        "_type": "data",
-                        "_source": {"number": iteration * records_per_iteration + i}
-                    }
+                    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                        yield {
+                            "_index": index,
+                            "_type": "data",
+                            "_source": {"number": iteration * records_per_iteration + i}
+                        }
+                    else:
+                        yield {
+                            "_index": index,
+                            "_source": {"number": iteration * records_per_iteration + i}
+                        }
 
             elasticsearch.client.bulk(generator())
             sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(records_per_iteration)

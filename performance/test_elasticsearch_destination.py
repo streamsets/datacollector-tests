@@ -14,6 +14,8 @@
 
 from streamsets.testframework.markers import elasticsearch
 
+ELASTICSEARCH_VERSION_8 = 8
+
 
 @elasticsearch
 def test_defaults(sdc_builder, sdc_executor, elasticsearch, elasticsearch_destination_index):
@@ -23,8 +25,10 @@ def test_defaults(sdc_builder, sdc_executor, elasticsearch, elasticsearch_destin
     benchmark_stages = pipeline_builder.add_benchmark_stages()
 
     elasticsearch_destination = pipeline_builder.add_stage('Elasticsearch', type='destination')
-    elasticsearch_destination.set_attributes(default_operation='INDEX', index=elasticsearch_destination_index,
-                                             mapping='mapping')
+    elasticsearch_destination.set_attributes(default_operation='INDEX', index=elasticsearch_destination_index)
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        elasticsearch_destination.set_attributes(mapping='mapping')
 
     benchmark_stages.origin >> elasticsearch_destination
     pipeline = pipeline_builder.build().configure_for_environment(elasticsearch)

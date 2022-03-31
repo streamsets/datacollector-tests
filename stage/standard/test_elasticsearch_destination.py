@@ -22,11 +22,12 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+ELASTICSEARCH_VERSION_8 = 8
 
 DATA_TYPES = [
     ('true', 'BOOLEAN', True),
     ('a', 'CHAR', 'a'),
-#    ('a', 'BYTE', None), # Not supported today
+    # ('a', 'BYTE', None), # Not supported today
     (120, 'SHORT', 120),
     (120, 'INTEGER', 120),
     (120, 'LONG', 120),
@@ -38,8 +39,10 @@ DATA_TYPES = [
     ('2020-01-01 10:00:00', 'DATETIME', 1577872800000),
     ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', '2020-01-01T10:00:00Z'),
     ('string', 'STRING', 'string'),
-#     ('string', 'BYTE_ARRAY', 'string'), # Not supported today
+    # ('string', 'BYTE_ARRAY', 'string'), # Not supported today
 ]
+
+
 @elasticsearch
 @pytest.mark.parametrize('input,converter_type,expected', DATA_TYPES, ids=[i[1] for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, elasticsearch, input, converter_type, expected):
@@ -52,7 +55,7 @@ def test_data_types(sdc_builder, sdc_executor, elasticsearch, input, converter_t
     origin = builder.add_stage('Dev Raw Data Source')
     origin.data_format = 'JSON'
     origin.stop_after_first_batch = True
-    origin.raw_data = json.dumps({"value": input })
+    origin.raw_data = json.dumps({"value": input})
 
     converter = builder.add_stage('Field Type Converter')
     converter.conversion_method = 'BY_FIELD'
@@ -65,11 +68,11 @@ def test_data_types(sdc_builder, sdc_executor, elasticsearch, input, converter_t
         'scale': 2
     }]
 
-    target = builder.add_stage('Elasticsearch', type='destination')
-    target.default_operation='INDEX'
-    target.document_id = doc_id
-    target.index = index
-    target.mapping = mapping
+    target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
+                                                                                   document_id=doc_id, index=index)
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        target.mapping = mapping
 
     origin >> converter >> target
 
@@ -89,8 +92,9 @@ def test_data_types(sdc_builder, sdc_executor, elasticsearch, input, converter_t
         response = responses[0]
         assert response['_index'] == index
         assert response['_id'] == doc_id
-        assert response['_type'] == mapping
         assert response['_source'] == {'value': expected}
+        if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+            assert response['_type'] == mapping
     finally:
         # Clean up test data in ES
         elasticsearch.client.delete_index(index)
@@ -98,12 +102,15 @@ def test_data_types(sdc_builder, sdc_executor, elasticsearch, input, converter_t
 
 INDEX_NAMES = [
     ('max_size', get_random_string(string.ascii_letters, 255).lower(), []),
-    ('underscore', get_random_string(string.ascii_letters, 10).lower() + '_' + get_random_string(string.ascii_letters, 10).lower(), []),
-    ('hyphen', get_random_string(string.ascii_letters, 10).lower() + '-' + get_random_string(string.ascii_letters, 10).lower(), []),
-    ('plus', get_random_string(string.ascii_letters, 10).lower() + '+' + get_random_string(string.ascii_letters, 10).lower(), [5]),
-    ('dot', get_random_string(string.ascii_letters, 10).lower() + '.' + get_random_string(string.ascii_letters, 10).lower(), []),
-    ('numbers', get_random_string(string.ascii_letters, 10).lower() + '1234567890', []),
+    ('underscore', get_random_string(string.ascii_lowercase, 10) + '_' + get_random_string(string.ascii_lowercase, 10),
+     []),
+    ('hyphen', get_random_string(string.ascii_lowercase, 10) + '-' + get_random_string(string.ascii_lowercase, 10), []),
+    ('plus', get_random_string(string.ascii_lowercase, 10) + '+' + get_random_string(string.ascii_lowercase, 10), [5]),
+    ('dot', get_random_string(string.ascii_lowercase, 10) + '.' + get_random_string(string.ascii_lowercase, 10), []),
+    ('numbers', get_random_string(string.ascii_lowercase, 10) + '1234567890', []),
 ]
+
+
 @elasticsearch
 @pytest.mark.parametrize('name_category,index, skip_versions', INDEX_NAMES, ids=[i[0] for i in INDEX_NAMES])
 def test_object_names(sdc_builder, sdc_executor, elasticsearch, name_category, index, skip_versions):
@@ -115,16 +122,13 @@ def test_object_names(sdc_builder, sdc_executor, elasticsearch, name_category, i
 
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
-    origin = builder.add_stage('Dev Raw Data Source')
-    origin.data_format = 'TEXT'
-    origin.stop_after_first_batch = True
-    origin.raw_data = 'Hi!'
+    origin = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT', stop_after_first_batch=True,
+                                                                     raw_data='Hi!')
 
-    target = builder.add_stage('Elasticsearch', type='destination')
-    target.default_operation='INDEX'
-    target.document_id = doc_id
-    target.index = index
-    target.mapping = mapping
+    target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
+                                                                                   document_id=doc_id, index=index)
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        target.mapping = mapping
 
     origin >> target
 
@@ -144,8 +148,9 @@ def test_object_names(sdc_builder, sdc_executor, elasticsearch, name_category, i
         response = responses[0]
         assert response['_index'] == index
         assert response['_id'] == doc_id
-        assert response['_type'] == mapping
         assert response['_source'] == {'text': 'Hi!'}
+        if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+            assert response['_type'] == mapping
     finally:
         # Clean up test data in ES
         elasticsearch.client.delete_index(index)
@@ -164,12 +169,12 @@ def test_multiple_batches(sdc_builder, sdc_executor, elasticsearch):
     origin = builder.add_stage('Dev Data Generator')
     origin.batch_size = batch_size
     origin.fields_to_generate = [{
-        "type" : "LONG_SEQUENCE",
-        "field" : "seq"
+        "type": "LONG_SEQUENCE",
+        "field": "seq"
     }]
 
     target = builder.add_stage('Elasticsearch', type='destination')
-    target.default_operation='INDEX'
+    target.default_operation = 'INDEX'
     target.document_id = '${record:value("/seq")}'
     target.index = index
     target.mapping = mapping
@@ -200,8 +205,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, elasticsearch):
         for i in range(0, records):
             assert responses[i]['_index'] == index
             assert responses[i]['_id'] == str(i)
-            assert responses[i]['_type'] == mapping
             assert responses[i]['_source'] == {'seq': i}
+            if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                assert responses[i]['_type'] == mapping
 
     finally:
         # Clean up test data in ES
@@ -220,4 +226,5 @@ def test_data_format(sdc_builder, sdc_executor, elasticsearch, keep_data):
 
 @elasticsearch
 def test_push_pull(sdc_builder, sdc_executor, elasticsearch):
-    pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is art of test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")
+    pytest.skip(
+        "We haven't re-implemented this test since Dev Data Generator (push) is art of test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")

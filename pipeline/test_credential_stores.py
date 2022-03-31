@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import http.client as httpclient
+import json
 import logging
 import string
 import time
 
-import pytest
-import sqlalchemy
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import elasticsearch
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+ELASTICSEARCH_VERSION_8 = 8
 
 
 @elasticsearch
@@ -47,11 +47,12 @@ def test_dev_data_generator_to_elastic_search(sdc_builder, sdc_executor, elastic
         fields_to_generate=[{"type": "STRING", "field": "doc_id"}],
         batch_size=1, number_of_threads=5, delay_between_batches=10)
 
-    target = builder.add_stage('Elasticsearch', type='destination')
-    target.default_operation = 'INDEX'
-    target.document_id = "${record:value('/doc_id')}"
-    target.index = es_index
-    target.mapping = es_mapping
+    target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
+                                                                                   document_id="${record:value('/doc_id')}",
+                                                                                   index=es_index)
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        target.set_attributes(mapping=es_mapping)
 
     wiretap = builder.add_wiretap()
 
@@ -74,7 +75,9 @@ def test_dev_data_generator_to_elastic_search(sdc_builder, sdc_executor, elastic
 
         for response in responses:
             assert response['_index'] == es_index
-            assert response['_type'] == es_mapping
+            if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                assert response['_type'] == es_mapping
+
         assert set([response['_id'] for response in responses]) == set([r.field['doc_id'] for r in output_records])
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -109,11 +112,12 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, creden
     else:
         http_server.application_id = 'admin'
 
-    target = builder.add_stage('Elasticsearch', type='destination')
-    target.default_operation = 'INDEX'
-    target.document_id = "${record:value('/doc_id')}"
-    target.index = es_index
-    target.mapping = es_mapping
+    target = builder.add_stage('Elasticsearch', type='destination').set_attributes(default_operation='INDEX',
+                                                                                   document_id="${record:value('/doc_id')}",
+                                                                                   index=es_index)
+
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        target.set_attributes(mapping=es_mapping)
 
     wiretap = builder.add_wiretap()
 
@@ -154,7 +158,9 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, creden
 
         for response in responses:
             assert response['_index'] == es_index
-            assert response['_type'] == es_mapping
+            if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                assert response['_type'] == es_mapping
+
         assert set([response['_id'] for response in responses]) == set([r.field['doc_id'] for r in output_records])
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
