@@ -25,6 +25,8 @@ from streamsets.testframework.utils import get_random_string, Version
 logger = logging.getLogger(__name__)
 
 
+ELASTICSEARCH_VERSION_8 = 8
+
 @stub
 @pytest.mark.parametrize('stage_attributes', [{'mode': 'AWSSIGV4', 'use_security': True}])
 def test_access_key_id(sdc_builder, sdc_executor, stage_attributes):
@@ -188,11 +190,17 @@ def test_query(sdc_builder, sdc_executor, elasticsearch, test_data):
 
     def generator():
         for i in range(0, doc_count):
-            yield {
-                "_index": index,
-                "_type": "data",
-                "_source": {"number": i + 1}
-            }
+            if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+                yield {
+                    "_index": index,
+                    "_type": "data",
+                    "_source": {"number": i + 1}
+                }
+            else:
+                yield {
+                    "_index": index,
+                    "_source": {"number": i + 1}
+                }
 
     elasticsearch.client.bulk(generator())
 
