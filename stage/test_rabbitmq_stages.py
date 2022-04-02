@@ -386,3 +386,73 @@ def test_rabbitmq_rabbitmq_consumer_quorum_queue(sdc_builder, sdc_executor, rabb
                       for record in wiretap.output_records]
 
     assert set(output_records) == expected_messages
+
+
+@rabbitmq
+def test_rabbitmq_producer_target_no_queue(sdc_builder, sdc_executor, rabbitmq):
+    """Test for RabbitMQ producer target stage where user wants to connect to Exchange only. This is achieved by
+    specifying only the configuration for the Exchange. The Exchange is configured on the RabbitMQ side to bind to a
+    queue. We test by publishing data using RabbitMQ producer to a test Exchange that is bound to a specific queue
+    and then read the data from that queue using RabbitMQ client. We assert the data from the client to what has
+    been injected by the producer pipeline. The pipeline looks like:
+
+    RabbitMQ Producer pipeline:
+        dev_raw_data_source >> rabbitmq_producer
+    """
+    # build producer pipeline
+    queue_name = get_random_string(string.ascii_letters, 10)
+    exchange_name = get_random_string(string.ascii_letters, 10)
+    raw_str = 'Hello World!'
+
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
+                                                                                  raw_data=raw_str)
+
+    rabbitmq_producer = builder.add_stage('RabbitMQ Producer')
+    rabbitmq_producer.set_attributes(data_format='TEXT',
+                                     durable=True, auto_delete=False,
+                                     bindings=[dict(name=exchange_name,
+                                                    type='DIRECT',
+                                                    durable=True,
+                                                    autoDelete=False)])
+
+    dev_raw_data_source >> rabbitmq_producer
+
+    producer_dest_pipeline = builder.build(title='RabbitMQ Producer pipeline').configure_for_environment(rabbitmq)
+    producer_dest_pipeline.rate_limit = 1
+
+    try:
+        # Declare a queue and an exchange and bind the queue to the exchange
+        connection = rabbitmq.blocking_connection
+        channel = connection.channel()
+        channel.queue_declare(queue=queue_name, durable=True, auto_delete=False)
+        channel.exchange_declare(exchange=exchange_name, durable=True, auto_delete=False)
+        channel.queue_bind(queue=queue_name, exchange=exchange_name, routing_key="")
+
+        # add pipeline and capture pipeline messages to assert
+        sdc_executor.add_pipeline(producer_dest_pipeline)
+        sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(10)
+        sdc_executor.stop_pipeline(producer_dest_pipeline)
+
+        history = sdc_executor.get_pipeline_history(producer_dest_pipeline)
+        msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+        logger.debug('Number of messages ingested into the pipeline = %s', msgs_sent_count)
+
+        # Get one message at a time from RabbitMQ.
+        # Returns a sequence with the method frame, message properties, and body.
+        msgs_received = [channel.basic_get(queue_name, False)[2].decode().replace('\n', '')
+                         for _ in range(msgs_sent_count)]
+
+        logger.debug('Number of messages received from RabbitMQ = %d', (len(msgs_received)))
+        assert msgs_received == [raw_str] * msgs_sent_count
+
+    finally:
+        # Unbind the queue to the exchange and delete the queue and the exchange
+        channel.queue_unbind(queue_name, exchange_name)
+        channel.queue_delete(queue_name)
+        channel.exchange_delete(exchange_name)
+        # Close the connection
+        channel.close()
+        connection.close()
