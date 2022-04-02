@@ -1031,6 +1031,7 @@ def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder, sdc_
     Test for SDC-8418.  Pipeline should stop with RUN ERROR when there is no archived log files.
     Runs oracle_cdc_client >> trash
     """
+
     db_engine = database.engine
     src_table_name = get_random_string(string.ascii_uppercase, 9)
 
@@ -1067,6 +1068,16 @@ def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder, sdc_
         # Pipeline should stop with StageExcception
         with pytest.raises(Exception):
             sdc_executor.start_pipeline(pipeline)
+            if Version(sdc_builder.version) >= Version('5.0.0'):
+                # 330 seconds is what takes one pipeline to fail when init goes fine but then everything fails
+                # in a "normal" wal. (1 + 2) 3 tries for produce, having each one 6 tries (5 + 1) to start the
+                # generator thread, having each one 6 (5 + 1) tries to start a LogMiner session. Please check
+                # enum  OracleCDCConstants.RetryPolicy to check the current retry policies values.
+                sleep_time = 330
+            else:
+                sleep_time = 10
+            logger.info(f'Waiting {sleep_time} seconds before stopping the pipeline')
+            sleep(sleep_time)
             sdc_executor.stop_pipeline(pipeline)
 
         status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
