@@ -2065,8 +2065,10 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(sports_data2))
         sdc_executor.stop_pipeline(pipeline)
 
+        records = sorted(wiretap.output_records,
+                         key=lambda rec: rec.field['ID'].value)
         sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
-                       for record in wiretap.output_records]
+                       for record in records]
 
         assert sdc_records == sports_data2
 
