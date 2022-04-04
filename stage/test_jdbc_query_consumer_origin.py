@@ -266,3 +266,52 @@ def test_stored_procedure_sqlserver(sdc_builder, sdc_executor, database, keep_da
             logger.info('Dropping table %s in %s database...', table_name, database.type)
             connection.execute(f"DROP TABLE IF EXISTS {table_name}")
             connection.execute(f"DROP PROCEDURE IF EXISTS {procedure_name}")
+
+
+@sdc_min_version('5.0.0')
+@database('oracle')
+def test_jdbc_consumer_read_timestamp_with_local_timezone(sdc_builder, sdc_executor, database):
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                hold_id int,
+                creation_date TIMESTAMP WITH LOCAL TIME ZONE
+            )
+        """)
+
+        sql_query = f"SELECT HOLD_ID, CURRENT_TIMESTAMP as KFK_INS_DTSZ FROM {table_name} WHERE " \
+                    f"HOLD_ID > ${{OFFSET}} ORDER BY HOLD_ID"
+
+        connection.execute(f"INSERT INTO {table_name} VALUES(0, CURRENT_TIMESTAMP)")
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, CURRENT_TIMESTAMP)")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('JDBC Query Consumer')
+        origin.sql_query = sql_query
+        origin.offset_column = 'HOLD_ID'
+        origin.incremental_mode = True
+        origin.on_unknown_type = 'STOP_PIPELINE'
+
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        record = wiretap.output_records
+        assert len(record) == 1
+        assert record[0].field['HOLD_ID'] == 1
+
+    finally:
+        logger.info('Dropping table %s in %s database ...', table_name, database.type)
+        connection.execute(f"DROP TABLE {table_name}")
