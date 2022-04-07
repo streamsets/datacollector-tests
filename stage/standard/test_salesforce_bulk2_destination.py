@@ -105,12 +105,12 @@ DATA_TYPES = [
     (120, 'DECIMAL', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120.00'),
     (120, 'DECIMAL', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120.00'),
     # Date
-    ('2020-01-01', 'DATE', {'type': 'Date'}, '2020-01-01'),
-    ('2020-01-01', 'DATE', {'type': 'Text', 'length': 30}, '2020-01-01'),
-    ('2020-01-01', 'DATE', {'type': 'EncryptedText', 'length': 30, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXXXXXXX'),
-    ('2020-01-01', 'DATE', {'type': 'TextArea'}, '2020-01-01'),
-    ('2020-01-01', 'DATE', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01'),
-    ('2020-01-01', 'DATE', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01'),
+    ('2020-01-01Z', 'DATE', {'type': 'Date'}, '2020-01-01'),
+    ('2020-01-01Z', 'DATE', {'type': 'Text', 'length': 30}, '2020-01-01'),
+    ('2020-01-01Z', 'DATE', {'type': 'EncryptedText', 'length': 30, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXXXXXXX'),
+    ('2020-01-01Z', 'DATE', {'type': 'TextArea'}, '2020-01-01'),
+    ('2020-01-01Z', 'DATE', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01'),
+    ('2020-01-01Z', 'DATE', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01'),
     # Time - Need to specify the timezone, otherwise Field Type Converter will create times in the local zone
     ('10:00:00Z', 'TIME', {'type': 'Time'}, '10:00:00.000Z'),
     ('10:00:00Z', 'TIME', {'type': 'Text', 'length': 30}, '10:00:00'),
@@ -119,13 +119,13 @@ DATA_TYPES = [
     ('10:00:00Z', 'TIME', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '10:00:00'),
     ('10:00:00Z', 'TIME', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '10:00:00'),
     # DateTime
-    ('2020-01-01 10:00:00', 'DATETIME', {'type': 'Date'}, '2020-01-01'),
-    ('2020-01-01 10:00:00', 'DATETIME', {'type': 'DateTime'}, '2020-01-01T18:00:00.000+0000'),
-    ('2020-01-01 10:00:00', 'DATETIME', {'type': 'Text', 'length': 30}, '2020-01-01T18:00:00.000Z'),
-    ('2020-01-01 10:00:00', 'DATETIME', {'type': 'EncryptedText', 'length': 30, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXXXXXXXXXXXXXXXXXXXXX'),
-    ('2020-01-01 10:00:00', 'DATETIME', {'type': 'TextArea'}, '2020-01-01T18:00:00.000Z'),
-    ('2020-01-01 10:00:00', 'DATETIME', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01T18:00:00.000Z'),
-    ('2020-01-01 10:00:00', 'DATETIME', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01T18:00:00.000Z'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'Date'}, '2020-01-01'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'DateTime'}, '2020-01-01T10:00:00.000+0000'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'Text', 'length': 30}, '2020-01-01T10:00:00.000Z'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'EncryptedText', 'length': 30, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXXXXXXXXXXXXXXXXXXXXX'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'TextArea'}, '2020-01-01T10:00:00.000Z'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01T10:00:00.000Z'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01T10:00:00.000Z'),
     # String
     ('120', 'STRING', {'type': 'Number', 'precision': 5, 'scale': 0}, 120),
     ('120', 'STRING', {'type': 'Currency', 'precision': 5, 'scale': 2}, 120.00),
@@ -211,16 +211,14 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     origin.stop_after_first_batch = True
     origin.raw_data = json.dumps({STANDARD_FIELDS["fullName"]: input })
 
-    date_format = None
     other_date_format = None
     zoned_date_time_format = None
 
     if converter_type == 'DATE':
-        date_format = 'YYYY_MM_DD'
+        other_date_format = 'yyyy-MM-ddX'
     elif converter_type == 'DATETIME':
-        date_format = 'YYYY_MM_DD_HH_MM_SS'
+        other_date_format = 'yyyy-MM-dd HH:mm:ssX'
     elif converter_type == 'TIME':
-        date_format = 'OTHER'
         other_date_format = 'HH:mm:ssX'
     elif converter_type == 'ZONED_DATETIME':
         zoned_date_time_format = 'ISO_OFFSET_DATE_TIME'
@@ -231,7 +229,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
         'fields': [f'/{STANDARD_FIELDS["fullName"]}'],
         'targetType': converter_type,
         'dataLocale': 'en.US',
-        'dateFormat': date_format,
+        'dateFormat': 'OTHER',
         'otherDateFormat': other_date_format,
         'zonedDateTimeFormat': zoned_date_time_format,
         'scale': 2
