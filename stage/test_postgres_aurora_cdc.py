@@ -152,7 +152,8 @@ def _get_wal_sender_status(connection):
 
 @sdc_min_version('5.0.0')
 @database('postgresqlaurora')
-@pytest.mark.parametrize('poll_interval', ["${1 * SECONDS}", "${5 * SECONDS}"])
+@pytest.mark.parametrize('poll_interval', [1,
+                                           5])
 def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
     """Records are neither dropped, nor duplicated when a pipeline is stopped and then started in
     the midst of ingesting data. Repeat this a couple of times, and inbetween restart with no data
@@ -166,24 +167,18 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
-    connection = database.engine.connect().execution_options(autocommit=True)
-
-    sample_data = [dict(id=i, name=f'Martin_{i}') for i in range(40)]
+    SAMPLE_DATA = [dict(id=i, name=f'Martin_{i}') for i in range(40)]
     table_name = get_random_string(string.ascii_lowercase, 20)
+    table = sqlalchemy.Table(table_name,
+                             sqlalchemy.MetaData(),
+                             sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                             sqlalchemy.Column('name', sqlalchemy.String(20)))
     replication_slot = get_random_string(string.ascii_lowercase, 10)
-
-    # Create table
-    connection.execute(f"""
-        CREATE TABLE {table_name}(
-            id int primary key,
-            name VARCHAR(20)
-        )
-    """)
 
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
         aurora_postgresql_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
-        aurora_postgresql_cdc_client.set_attributes(batch_wait_time_in_ms=10000,
+        aurora_postgresql_cdc_client.set_attributes(batch_wait_time_in_ms=100000,
                                                     max_batch_size_in_records=10,
                                                     poll_interval=poll_interval,
                                                     replication_slot=replication_slot)
@@ -207,8 +202,10 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
         # Start pipeline and add some data
         sdc_executor.start_pipeline(pipeline)
 
-        for row in sample_data[:30]:
-            connection.execute(f"INSERT INTO {table_name} VALUES(1, {row})")
+        table.create(database.engine)
+        with database.engine.connect().execution_options(autocommit=True) as connection:
+            for row in SAMPLE_DATA[:30]:
+                connection.execute(table.insert(), row)
 
         # Pipeline will stop once it sees id=9.
         sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED')
@@ -218,7 +215,7 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
         # Within the field, column names are stored in a list (e.g. ['id', 'name']) and so are
         # column values (e.g. [1, 'Martin_1']). We use zip to help us combine each instance into a dictionary.
         assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records] == sample_data[:10]
+                for record in wiretap.output_records] == SAMPLE_DATA[:10]
         # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
         wiretap.reset()
         logger.info('Starting pipeline for the second time ...')
@@ -226,7 +223,7 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         # We expect to see records with id=10 through id=19 (i.e. no duplicated or missing records).
         assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records][:10] == sample_data[10:20]
+                for record in wiretap.output_records][:10] == SAMPLE_DATA[10:20]
 
         # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
         wiretap.reset()
@@ -235,7 +232,7 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         # We expect to see records with id=10 through id=19 (i.e. no duplicated or missing records).
         assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records][:10] == sample_data[20:30]
+                for record in wiretap.output_records][:10] == SAMPLE_DATA[20:30]
 
         # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
         wiretap.reset()
@@ -247,18 +244,19 @@ def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
         assert metrics.counter("pipeline.batchOutputRecords.counter").count == 0
 
         # Add few records
-        for row in sample_data[30:40]:
-            connection.execute(f"INSERT INTO {table_name} VALUES(1, {row})")
+        with database.engine.connect().execution_options(autocommit=True) as connection:
+            for row in SAMPLE_DATA[30:40]:
+                connection.execute(table.insert(), row)
         # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
         wiretap.reset()
         logger.info('Starting pipeline for the fourth time ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         # We expect to see records with id=10 through id=19 (i.e. no duplicated or missing records).
         assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records][:10] == sample_data[30:40]
+                for record in wiretap.output_records][:10] == SAMPLE_DATA[30:40]
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
-        connection.execute(f'DROP TABLE {table_name}')
+        table.drop(database.engine)
         database.deactivate_and_drop_replication_slot(replication_slot)
         database.engine.connect().close()
 
