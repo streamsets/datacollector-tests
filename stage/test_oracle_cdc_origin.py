@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+import json
 import logging
 import pytest
 import sqlalchemy
 import string
-import threading
 import uuid
 
 from collections import namedtuple
@@ -3251,6 +3252,164 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
                                        force=True)
         if table is not None:
             table.drop(database.engine)
+
+
+@sdc_min_version('5.0.0')
+@database('oracle')
+def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
+                                                        sdc_executor,
+                                                        database):
+    """
+    Test to check all headers for primary keys metadata are present in the output records.
+    """
+
+    table = None
+    pipeline = None
+
+    try:
+
+        database_connection = database.engine.connect()
+
+        database_last_scn = _get_last_scn(database_connection)
+
+        table_name = get_random_string(string.ascii_uppercase, 16)
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+
+        trasaction = database_connection.begin()
+        database_connection.execute(f"""create table {table_name} 
+                                                     (my_binary_double binary_double,
+                                                      my_binary_float  binary_float,
+                                                      my_char_byte     char(32 byte),
+                                                      my_char_char     char(64 char),
+                                                      my_date          date,
+                                                      my_float         number(6),
+                                                      my_interval_year interval year(6) to month,
+                                                      my_interval_day  interval day(9) to second(7),
+                                                      my_nvarchar2     nvarchar2(512),
+                                                      my_number        number(4, 8),
+                                                      my_raw           raw(1024),
+                                                      my_timestamp     timestamp(9),
+                                                      my_varchar_byte  varchar(32 byte),
+                                                      my_varchar_char  varchar(64 char),
+                                                      my_varchar2_byte varchar2(128 byte),
+                                                      my_varchar2_char varchar2(256 char),
+                                                      primary key (my_binary_double,
+                                                                   my_binary_float,
+                                                                   my_char_byte,
+                                                                   my_char_char,
+                                                                   my_date,
+                                                                   my_float,
+                                                                   my_interval_year,
+                                                                   my_interval_day,
+                                                                   my_nvarchar2,
+                                                                   my_number,
+                                                                   my_raw,
+                                                                   my_timestamp,
+                                                                   my_varchar_byte,
+                                                                   my_varchar_char,
+                                                                   my_varchar2_byte,
+                                                                   my_varchar2_char))""")
+        database_connection.execute(f"""insert into {table_name} 
+                                                    (my_binary_double,
+                                                     my_binary_float,
+                                                     my_char_byte,
+                                                     my_char_char,
+                                                     my_date,
+                                                     my_float,
+                                                     my_interval_year,
+                                                     my_interval_day,
+                                                     my_nvarchar2,
+                                                     my_number,
+                                                     my_raw,
+                                                     my_timestamp,
+                                                     my_varchar_byte,
+                                                     my_varchar_char,
+                                                     my_varchar2_byte,
+                                                     my_varchar2_char)
+                                              values (0,
+                                                      0,
+                                                      ' ',
+                                                      ' ',
+                                                      sysdate,
+                                                      0,
+                                                      interval
+                                                      '1-1'
+                                                      year
+                                                      to
+                                                      month,
+                                                      interval
+                                                      '1 1:1:1.1'
+                                                      day
+                                                      to
+                                                      second,
+                                                      ' ',
+                                                      0,
+                                                      '0000',
+                                                      current_timestamp,
+                                                      ' ',
+                                                      ' ',
+                                                      ' ',
+                                                      ' ')""")
+        trasaction.commit()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
+                                         tables=[{"schema": database.username.upper(),
+                                                  "table": table_name,
+                                                  "excludePattern": ""}],
+                                         buffer_changes_locally=True,
+                                         logminer_session_window="${5 * MINUTES}",
+                                         maximum_transaction_length="${2 * MINUTES}",
+                                         db_time_zone="UTC",
+                                         max_batch_size_in_records=8,
+                                         initial_change="SCN",
+                                         start_scn=database_last_scn,
+                                         send_redo_query_in_headers=True,
+                                         unsupported_field_type='SEND_TO_PIPELINE',
+                                         add_unsupported_fields_to_records=True)
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
+
+        assert len(wiretap.output_records) == 1
+
+        for record in wiretap.output_records:
+            assert "oracle.cdc.primaryKeySpecification" in record.header.values
+            assert {record.header.values["oracle.cdc.primaryKeySpecification"]} is not None
+
+            primary_key_specification_json = json.dumps(json.loads(record.header.values["oracle.cdc.primaryKeySpecification"]), sort_keys=True)
+
+            primary_key_specification_expected = \
+                '''{"MY_CHAR_CHAR":     {"type": 1,    "datatype": "CHAR",      "size": 64,   "precision": 64,  "scale": 0, "signed": true, "currency": false},
+                    "MY_RAW":           {"type": -3,   "datatype": "VARBINARY", "size": 1024, "precision": 0,   "scale": 0, "signed": true, "currency": false},
+                    "MY_NUMBER":        {"type": 2,    "datatype": "NUMERIC",   "size": 6,    "precision": 4,   "scale": 8, "signed": true, "currency": true},
+                    "MY_VARCHAR_BYTE":  {"type": 12,   "datatype": "VARCHAR",   "size": 32,   "precision": 32,  "scale": 0, "signed": true, "currency": false},
+                    "MY_INTERVAL_YEAR": {"type": -103, "datatype": "UNKNOWN",   "size": 5,    "precision": 6,   "scale": 0, "signed": true, "currency": false},
+                    "MY_VARCHAR2_CHAR": {"type": 12,   "datatype": "VARCHAR",   "size": 256,  "precision": 256, "scale": 0, "signed": true, "currency": false},
+                    "MY_INTERVAL_DAY":  {"type": -104, "datatype": "UNKNOWN",   "size": 11,   "precision": 9,   "scale": 7, "signed": true, "currency": false},
+                    "MY_TIMESTAMP":     {"type": 93,   "datatype": "TIMESTAMP", "size": 11,   "precision": 0,   "scale": 9, "signed": true, "currency": false},
+                    "MY_BINARY_FLOAT":  {"type": 100,  "datatype": "UNKNOWN",   "size": 4,    "precision": 0,   "scale": 0, "signed": true, "currency": false},
+                    "MY_CHAR_BYTE":     {"type": 1,    "datatype": "CHAR",      "size": 32,   "precision": 32,  "scale": 0, "signed": true, "currency": false},
+                    "MY_VARCHAR_CHAR":  {"type": 12,   "datatype": "VARCHAR",   "size": 64,   "precision": 64,  "scale": 0, "signed": true, "currency": false},
+                    "MY_BINARY_DOUBLE": {"type": 101,  "datatype": "UNKNOWN",   "size": 8,    "precision": 0,   "scale": 0, "signed": true, "currency": false},
+                    "MY_NVARCHAR2":     {"type": -9,   "datatype": "NVARCHAR",  "size": 512,  "precision": 512, "scale": 0, "signed": true, "currency": false},
+                    "MY_FLOAT":         {"type": 2,    "datatype": "NUMERIC",   "size": 7,    "precision": 6,   "scale": 0, "signed": true, "currency": true},
+                    "MY_DATE":          {"type": 93,   "datatype": "TIMESTAMP", "size": 7,    "precision": 0,   "scale": 0, "signed": true, "currency": false},
+                    "MY_VARCHAR2_BYTE": {"type": 12,   "datatype": "VARCHAR",   "size": 128,  "precision": 128, "scale": 0, "signed": true, "currency": false}}'''
+            primary_key_specification_expected_json = json.dumps(json.loads(primary_key_specification_expected), sort_keys=True)
+
+            assert primary_key_specification_json == primary_key_specification_expected_json
+
+    finally:
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
+        if table is not None:
+            database_connection.execute(f"drop table  {table_name}")
 
 
 @sdc_min_version('5.0.0')
