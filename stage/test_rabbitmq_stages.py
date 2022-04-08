@@ -389,6 +389,7 @@ def test_rabbitmq_rabbitmq_consumer_quorum_queue(sdc_builder, sdc_executor, rabb
 
 
 @rabbitmq
+@sdc_min_version('5.0.0')
 def test_rabbitmq_producer_target_no_queue(sdc_builder, sdc_executor, rabbitmq):
     """Test for RabbitMQ producer target stage where user wants to connect to Exchange only. This is achieved by
     specifying only the configuration for the Exchange. The Exchange is configured on the RabbitMQ side to bind to a
