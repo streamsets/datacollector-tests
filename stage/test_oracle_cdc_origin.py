@@ -2097,6 +2097,119 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
 
 
 @database('oracle')
+@sdc_min_version('5.0.0')
+@pytest.mark.parametrize('case_sensitive', [True, False])
+@pytest.mark.parametrize('scenario', [{'pattern': '%',            'records':  5},
+                                      {'pattern': '/%',           'records':  0},
+                                      {'pattern': '_',            'records':  0},
+                                      {'pattern': '/_',           'records':  0},
+                                      {'pattern': 'ten%uki',      'records':  5},
+                                      {'pattern': 'ten/%uki',     'records':  0},
+                                      {'pattern': 'ten___uki',    'records': 10},
+                                      {'pattern': 'ten/_/_/_uki', 'records':  0},
+                                      {'pattern': 'ten_/__uki',   'records':  0},
+                                      {'pattern': 'ten/__/_uki',  'records': 10},
+                                      {'pattern': 'ten/_x/_uki',  'records': 10}])
+def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, case_sensitive, scenario):
+    """Test Oracle CDC table inclusion patterns (considering escaped characters).
+    """
+
+    logger.info(f'Running test mode: {case_sensitive} - {scenario["pattern"]} - {scenario["records"]}')
+
+    total_records = 10
+
+    table_prefix = f'STF_{get_random_string(string.ascii_lowercase, 16)}$'
+
+    pattern = f'{table_prefix}{scenario["pattern"]}'
+    records = scenario["records"]
+
+    check_table_name = f'{table_prefix}tenuki'
+    mined_table_name = f'{table_prefix}ten_x_uki'
+
+    try:
+
+        connection = database.engine.connect()
+
+        start_scn = _get_last_scn(connection)
+        logger.info(f'Initial SCN is {start_scn}')
+
+        schema_db = database.username.upper()
+        check_table_name_db = f'"{check_table_name}"' if case_sensitive else check_table_name.upper()
+        mined_table_name_db = f'"{mined_table_name}"' if case_sensitive else mined_table_name.upper()
+
+        logger.info(f'Creating temporary check table: {check_table_name_db}')
+        connection.execute(f'create table {check_table_name_db} (id number, name varchar2(32))')
+
+        logger.info(f'Creating temporary mined table: {mined_table_name_db}')
+        connection.execute(f'create table {mined_table_name_db} (id number, name varchar2(32))')
+
+        transaction = connection.begin()
+        for i in range(0, total_records - records):
+            connection.execute(f"insert into {check_table_name_db} values({i}, '{get_random_string(string.ascii_lowercase, 32)}')")
+
+        for i in range(0, records):
+            connection.execute(f"insert into {mined_table_name_db} values({i}, '{get_random_string(string.ascii_lowercase, 32)}')")
+        transaction.commit()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
+        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                         tables=[{'schema': schema_db,
+                                                  'table': check_table_name,
+                                                  'excludePattern': ''},
+                                                 {'schema': schema_db,
+                                                  'table': pattern,
+                                                  'excludePattern': ''}],
+                                         case_sensitive_names=case_sensitive,
+                                         buffer_changes_locally=True,
+                                         logminer_session_window='${2 * MINUTES}',
+                                         maximum_transaction_length='${1 * MINUTES}',
+                                         db_time_zone='UTC',
+                                         max_batch_size_in_records=total_records,
+                                         initial_change='SCN',
+                                         start_scn=start_scn)
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build('Oracle CDC Origin Offset Testing Pipeline').configure_for_environment(database)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_records)
+        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        check_table_name_token = check_table_name if case_sensitive else check_table_name.upper()
+        mined_table_name_token = mined_table_name if case_sensitive else mined_table_name.upper()
+
+        q_check = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.table"] == check_table_name_token)
+        q_mined = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.table"] == mined_table_name_token)
+
+        logger.info(f'Total for table {check_table_name}: {q_check}')
+        logger.info(f'Total for table {mined_table_name}: {q_mined}')
+
+        assert q_check == total_records - records
+        assert q_mined == records
+
+    finally:
+
+        try:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        except:
+            pass
+
+        try:
+            logger.info(f'Dropping temporary check table: {check_table_name_db}')
+            connection.execute(f'drop table {check_table_name_db}')
+        except:
+            pass
+
+        try:
+            logger.info(f'Dropping temporary mined table: {mined_table_name_db}')
+            connection.execute(f'drop table {mined_table_name_db}')
+        except:
+            pass
+
+
+@database('oracle')
 def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
     """Test Oracle CDC can track new tables created after the pipeline initialization.
 
@@ -3276,7 +3389,7 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
 
         trasaction = database_connection.begin()
-        database_connection.execute(f"""create table {table_name} 
+        database_connection.execute(f"""create table {table_name}
                                                      (my_binary_double binary_double,
                                                       my_binary_float  binary_float,
                                                       my_char_byte     char(32 byte),
@@ -3309,7 +3422,7 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
                                                                    my_varchar_char,
                                                                    my_varchar2_byte,
                                                                    my_varchar2_char))""")
-        database_connection.execute(f"""insert into {table_name} 
+        database_connection.execute(f"""insert into {table_name}
                                                     (my_binary_double,
                                                      my_binary_float,
                                                      my_char_byte,
@@ -3332,16 +3445,8 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
                                                       ' ',
                                                       sysdate,
                                                       0,
-                                                      interval
-                                                      '1-1'
-                                                      year
-                                                      to
-                                                      month,
-                                                      interval
-                                                      '1 1:1:1.1'
-                                                      day
-                                                      to
-                                                      second,
+                                                      interval '1-1' year to month,
+                                                      interval '1 1:1:1.1' day to second,
                                                       ' ',
                                                       0,
                                                       '0000',
@@ -3409,7 +3514,7 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
             sdc_executor.stop_pipeline(pipeline=pipeline,
                                        force=True)
         if table is not None:
-            database_connection.execute(f"drop table  {table_name}")
+            database_connection.execute(f"drop table {table_name}")
 
 
 @sdc_min_version('5.0.0')
