@@ -2424,7 +2424,7 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, ap
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
         else:
             # Check hard delete fails if we didn't assign the permission
-            with pytest.raises(StatusError) as e:
+            with pytest.raises(StatusError) as run_error:
                 sdc_executor.start_pipeline(pipeline).wait_for_finished()
             assert FORCE_60 in str(run_error.value)
 
