@@ -193,6 +193,8 @@ def test_object_names_columns(sdc_builder, sdc_executor, database, keep_data, co
                                                    src_table_name=table_name,
                                                    initial_change='SCN',
                                                    start_scn=initial_scn,
+                                                   logminer_session_window='${2 * MINUTES}',
+                                                   maximum_transaction_length='${1 * MINUTES}',
                                                    case_sensitive_names=True)
         wiretap = builder.add_wiretap()
         oracle_cdc >> wiretap.destination
@@ -205,12 +207,20 @@ def test_object_names_columns(sdc_builder, sdc_executor, database, keep_data, co
             connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
-        sdc_executor.stop_pipeline(pipeline)
 
-        output_values = [rec.field[column_name].value for rec in wiretap.output_records]
+        sorted_records = sorted(wiretap.output_records,
+                         key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                             record.header.values['oracle.cdc.sequence.internal']))
+        output_values = [record.field[column_name].value for record in sorted_records]
+
         assert input_values == output_values
 
     finally:
+        try:
+            sdc_executor.stop_pipeline(pipeline)
+        except:
+            pass
+
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
             connection.execute(f'DROP TABLE {table_name}')
