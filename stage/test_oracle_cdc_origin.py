@@ -845,16 +845,18 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         connection = database.engine.connect()
         table = _setup_table(database=database,
                              table_name=src_table_name)
+
+        _dump_dictionary_to_log(connection)
         start_scn = _get_last_scn(connection)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-
         oracle_cdc_client = _get_oracle_cdc_client_origin(connection=connection,
                                                           database=database,
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
-                                                          logminer_session_window='${4 * MINUTES}',
+                                                          logminer_session_window='${2 * MINUTES}',
+                                                          maximum_transaction_length='${1 * MINUTES}',
                                                           src_table_name=src_table_name,
                                                           initial_change='SCN',
                                                           start_scn=start_scn)
@@ -863,81 +865,100 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        # Insert 3 records
         inserts = _insert(connection=connection, table=table)
-
         rows = inserts.rows
         cdc_op_types = inserts.cdc_op_types
         sdc_op_types = inserts.sdc_op_types
         change_count = inserts.change_count
 
-        # Preview should return 3 records
+        # Preview: 01
         preview = sdc_executor.run_pipeline_preview(pipeline, batches=len(rows), batch_size=1, timeout=30000).preview
-        assert preview is not None
-        assert preview.issues.issues_count == 0
+        assert preview is not None, 'Got no preview instance in preview mode 1'
+        assert preview.issues.issues_count == 0, 'Unexpected issues in preview mode 1'
         preview_records = [batch[oracle_cdc_client.instance_name].output[0] for batch in preview.preview_batches]
-        assert len(preview_records) == len(rows)
+        assert len(preview_records) == len(rows), 'Wrong number of records in preview mode 1'
 
-        logger.debug('Count {}'.format(len(rows)))
         row_index = 0
         op_index = 0
 
-        for record in preview_records:
-            assert row_index == int(record.field['ID'].value)
-            assert rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
-            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
+        sorted_records = sorted(preview_records,
+                         key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                             record.header.values['oracle.cdc.sequence.internal']))
+        for record in sorted_records:
+            logger.info(f'Preview record in round 1: {record} - '
+                        f'{record.header.values["oracle.cdc.scn"]} - '
+                        f'{record.header.values["oracle.cdc.sequence.internal"]}')
+        for record in sorted_records:
+            assert row_index == int(record.field['ID'].value), 'Wrong row index in preview mode 1'
+            assert rows[op_index]['NAME'] == record.field['NAME'].value, 'Wrong NAME in preview mode 1'
+            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index], 'Wrong operation type in preview mode 1'
+            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index], 'Wrong operation in preview mode 1'
             row_index = (row_index + 1) % 3
             op_index += 1
-        assert op_index == change_count
+        assert op_index == change_count, 'Unmatched number of changes in preview mode 1'
 
-        # Run pipeline and capture the output, we should see 3 inserts
+        wiretap.reset()
+
+        # Run: 01
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows))
 
         row_index = 0
         op_index = 0
-        # assert all the data captured have the same raw_data
-        for record in wiretap.output_records:
-            assert row_index == int(record.field['ID'].value)
-            assert rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
-            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
+
+        sorted_records = sorted(wiretap.output_records,
+                         key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                             record.header.values['oracle.cdc.sequence.internal']))
+        for record in sorted_records:
+            logger.info(f'Run record in round 1: {record} - '
+                        f'{record.header.values["oracle.cdc.scn"]} - '
+                        f'{record.header.values["oracle.cdc.sequence.internal"]}')
+        for record in sorted_records:
+            assert row_index == int(record.field['ID'].value), 'Wrong ID in run mode 1'
+            assert rows[op_index]['NAME'] == record.field['NAME'].value, 'Wrong NAME in run mode 1'
+            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index], 'Wrong operation type in run mode 1'
+            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index], 'Wrong operation in run mode 1'
             row_index = (row_index + 1) % 3
             op_index += 1
-        assert op_index == change_count
+        assert op_index == change_count, 'Unmatched number of changes in run mode 1'
 
         sdc_executor.stop_pipeline(pipeline, force=True)
+        wiretap.reset()
 
-        # Do preview again and make sure preview still returns the 3 inserts
+        # Preview: 02
         preview = sdc_executor.run_pipeline_preview(pipeline, batches=len(rows), batch_size=1, timeout=30000).preview
-        assert preview is not None
-        assert preview.issues.issues_count == 0
+        assert preview is not None, 'Got no preview instance in preview mode 2'
+        assert preview.issues.issues_count == 0, 'Unexpected issues in preview mode 2'
         preview_records = [batch[oracle_cdc_client.instance_name].output[0] for batch in preview.preview_batches]
-        assert len(preview_records) == len(rows)
+        assert len(preview_records) == len(rows),'Wrong number of records in preview mode 2'
 
         row_index = 0
         op_index = 0
 
-        for record in preview_records:
-            assert row_index == int(record.field['ID'].value)
-            assert rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
-            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
+        sorted_records = sorted(preview_records,
+                         key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                             record.header.values['oracle.cdc.sequence.internal']))
+        for record in sorted_records:
+            logger.info(f'Preview record in round 2: {record} - '
+                        f'{record.header.values["oracle.cdc.scn"]} - '
+                        f'{record.header.values["oracle.cdc.sequence.internal"]}')
+        for record in sorted_records:
+            assert row_index == int(record.field['ID'].value), 'Wrong ID in preview mode 2'
+            assert rows[op_index]['NAME'] == record.field['NAME'].value, 'Wrong NAME in preview mode 2'
+            assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index], 'Wrong operation type in preview mode 2'
+            assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index], 'Wrong operation in preview mode 2'
             row_index = (row_index + 1) % 3
             op_index += 1
-        assert op_index == change_count
+        assert op_index == change_count, 'Unmatched number of changes in preview mode 2'
 
-        # Do more transactions (3 updates and 3 deletes)
+        wiretap.reset()
+
         updates = _update(connection=connection, table=table)
-
         new_rows = updates.rows
         new_cdc_op_types = updates.cdc_op_types
         new_sdc_op_types = updates.sdc_op_types
         new_change_count = updates.change_count
 
         deletes = _delete(connection=connection, table=table)
-
-        # deletes should have the last state of the row, so it would be the what comes from the updates.
         new_rows += updates.rows
         new_cdc_op_types += deletes.cdc_op_types
         new_sdc_op_types += deletes.sdc_op_types
@@ -948,76 +969,100 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         merged_cdc_op_types = cdc_op_types + new_cdc_op_types
         merged_change_count = change_count + new_change_count
 
-        # Make sure preview return all 9 records
+        # Preview 03
         preview_command = sdc_executor.run_pipeline_preview(pipeline,
                                                             batches=len(merged_rows),
                                                             batch_size=1,
                                                             timeout=30000)
         preview = preview_command.preview
-
-        assert preview is not None
-        assert preview.issues.issues_count == 0
+        assert preview is not None, 'Got no preview instance in preview mode 3'
+        assert preview.issues.issues_count == 0, 'Unexpected issues in preview mode 3'
         preview_records = [batch[oracle_cdc_client.instance_name].output[0] for batch in preview.preview_batches]
-        assert len(preview_records) == len(merged_rows)
+        assert len(preview_records) == len(merged_rows), 'Wrong number of records in preview mode 3'
 
         row_index = 0
         op_index = 0
 
-        for record in preview_records:
-            assert row_index == int(record.field['ID'].value)
-            assert merged_rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header.values['sdc.operation.type']) == merged_sdc_op_types[op_index]
-            assert record.header.values['oracle.cdc.operation'] == merged_cdc_op_types[op_index]
+        sorted_records = sorted(preview_records,
+                         key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                             record.header.values['oracle.cdc.sequence.internal']))
+        for record in sorted_records:
+            logger.info(f'Preview record in round 3: {record} - '
+                        f'{record.header.values["oracle.cdc.scn"]} - '
+                        f'{record.header.values["oracle.cdc.sequence.internal"]}')
+        for record in sorted_records:
+            assert row_index == int(record.field['ID'].value), 'Wrong ID in preview mode 3'
+            assert merged_rows[op_index]['NAME'] == record.field['NAME'].value, 'Wrong NAME in preview mode 3'
+            assert int(record.header.values['sdc.operation.type']) == merged_sdc_op_types[op_index], 'Wrong operation type in preview mode 3'
+            assert record.header.values['oracle.cdc.operation'] == merged_cdc_op_types[op_index], 'Wrong operation in preview mode 3'
             row_index = (row_index + 1) % 3
             op_index += 1
-
-        assert op_index == merged_change_count
+        assert op_index == merged_change_count, 'Unmatched number of changes in preview mode 3'
 
         wiretap.reset()
 
-        # If we run the pipeline and capture the output, we should see only the updates and deletes
+        # Run 03
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(new_rows))
 
         row_index = 0
         op_index = 0
-        # assert all the data captured have the same raw_data
-        for record in wiretap.output_records:
-            assert row_index == int(record.field['ID'].value)
-            assert new_rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header.values['sdc.operation.type']) == new_sdc_op_types[op_index]
-            assert record.header.values['oracle.cdc.operation'] == new_cdc_op_types[op_index]
+
+        sorted_records = sorted(wiretap.output_records,
+                         key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                             record.header.values['oracle.cdc.sequence.internal']))
+        for record in sorted_records:
+            logger.info(f'Run record in round 2: {record} - '
+                        f'{record.header.values["oracle.cdc.scn"]} - '
+                        f'{record.header.values["oracle.cdc.sequence.internal"]}')
+        for record in sorted_records:
+            assert row_index == int(record.field['ID'].value), 'Wrong ID in run mode 2'
+            assert new_rows[op_index]['NAME'] == record.field['NAME'].value, 'Wrong NAME in run mode 2'
+            assert int(record.header.values['sdc.operation.type']) == new_sdc_op_types[op_index], 'Wrong operation type in run mode 2'
+            assert record.header.values['oracle.cdc.operation'] == new_cdc_op_types[op_index], 'Wrong operation in run mode 2'
             row_index = (row_index + 1) % 3
             op_index += 1
+        assert op_index == new_change_count, 'Unmatched number of changes in run mode 2'
 
-        assert op_index == new_change_count
         sdc_executor.stop_pipeline(pipeline, force=True)
 
-        # Make sure preview still return all 9 records
+        # Preview 04
         preview_command = sdc_executor.run_pipeline_preview(pipeline,
                                                             batches=len(merged_rows),
                                                             batch_size=1,
                                                             timeout=30000)
         preview = preview_command.preview
+        wiretap.reset()
 
-        assert preview is not None
-        assert preview.issues.issues_count == 0
+        assert preview is not None, 'Got no preview instance in preview mode 4'
+        assert preview.issues.issues_count == 0, 'Unexpected issues in preview mode 4'
         preview_records = [batch[oracle_cdc_client.instance_name].output[0] for batch in preview.preview_batches]
-        assert len(preview_records) == len(merged_rows)
+        assert len(preview_records) == len(merged_rows), 'Wrong number of records in preview mode 4'
 
         row_index = 0
         op_index = 0
 
-        for record in preview_records:
-            assert row_index == int(record.field['ID'].value)
-            assert merged_rows[op_index]['NAME'] == record.field['NAME'].value
-            assert int(record.header.values['sdc.operation.type']) == merged_sdc_op_types[op_index]
-            assert record.header.values['oracle.cdc.operation'] == merged_cdc_op_types[op_index]
+        sorted_records = sorted(preview_records,
+                         key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                             record.header.values['oracle.cdc.sequence.internal']))
+        for record in sorted_records:
+            logger.info(f'Preview record in round 4: {record} - '
+                        f'{record.header.values["oracle.cdc.scn"]} - '
+                        f'{record.header.values["oracle.cdc.sequence.internal"]}')
+        for record in sorted_records:
+            assert row_index == int(record.field['ID'].value), 'Wrong ID in preview mode 4'
+            assert merged_rows[op_index]['NAME'] == record.field['NAME'].value, 'Wrong NAME in preview mode 4'
+            assert int(record.header.values['sdc.operation.type']) == merged_sdc_op_types[op_index], 'Wrong operation type in preview mode 4'
+            assert record.header.values['oracle.cdc.operation'] == merged_cdc_op_types[op_index], 'Wrong operation in preview mode 4'
             row_index = (row_index + 1) % 3
             op_index += 1
-
-        assert op_index == merged_change_count
+        assert op_index == merged_change_count, 'Unmatched number of changes in preview mode 4'
 
     finally:
+        try:
+            sdc_executor.stop_pipeline(pipeline, force=True)
+        except:
+            pass
+
         if table is not None:
             table.drop(db_engine)
             logger.info('Table: %s dropped.', src_table_name)
@@ -1462,6 +1507,11 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
             src_table_pattern = src_table_name
 
         connection = database.engine.connect()
+
+        _dump_dictionary_to_log(connection)
+
+        start_scn = _get_last_scn(connection)
+
         table = _setup_table(database=database,
                              table_name=src_table_name)
 
@@ -1474,7 +1524,11 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
-                                                          src_table_name=src_table_pattern)
+                                                          logminer_session_window='${2 * MINUTES}',
+                                                          maximum_transaction_length='${1 * MINUTES}',
+                                                          src_table_name=src_table_pattern,
+                                                          initial_change='SCN',
+                                                          start_scn=start_scn)
         wiretap = pipeline_builder.add_wiretap()
         lines = [
             f"INSERT INTO {src_table_name} VALUES (1, 'MORDOR')",
@@ -1503,12 +1557,16 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
 
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
+
         sdc_executor.add_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(5)
 
         # assert all the data captured have the same raw_data
-        output_records = wiretap.output_records
+        output_records = sorted(wiretap.output_records,
+                                key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                                    record.header.values['oracle.cdc.sequence.internal']))
+
         assert len(output_records) == 5
         assert output_records[0].field[PRIMARY_KEY] == 1
         assert output_records[0].field[OTHER_COLUMN] == 'MORDOR'
@@ -2225,6 +2283,8 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
     sports_table = f'{table_prefix}_SPORTS'
     connection = database.engine.connect()
 
+    start_scn = _get_last_scn(connection)
+
     sports_data1 = [(1, 'Kelly Slater', 'Surf'),
                     (2, 'Steve Caballero', 'Skateboard'),
                     (3, 'Andre Botha', 'Bodyboard')]
@@ -2247,13 +2307,15 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
                                                    batch_size=1,
                                                    buffer_locally=True,
                                                    src_table_name=table_pattern,
-                                                   initial_change='LATEST',
+                                                   initial_change='SCN',
+                                                   start_scn=start_scn,
                                                    dictionary_source='DICT_FROM_REDO_LOGS')
         wiretap = builder.add_wiretap()
         oracle_cdc >> wiretap.destination
         wiretap_evts = builder.add_wiretap()
         oracle_cdc >= wiretap_evts.destination
         pipeline = builder.build().configure_for_environment(database)
+
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline, create table and populate
@@ -2277,8 +2339,11 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
                       for event in wiretap_evts.output_records]
         assert sdc_events == expected_events
 
+        records = sorted(wiretap.output_records,
+                         key=lambda rec: rec.field['ID'].value)
         sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
-                       for record in wiretap.output_records]
+                       for record in records]
+
         assert sdc_records == sports_data1 + sports_data2
 
     finally:
@@ -2365,8 +2430,11 @@ def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
                       for event in wiretap_evts.output_records]
         assert sdc_events == expected_events
 
+        records = sorted(wiretap.output_records,
+                         key=lambda rec: rec.field['ID'].value)
         sdc_records = [(record.field['ID'], record.field['PLAYER'], record.field['SPORT'])
-                       for record in wiretap.output_records]
+                       for record in records]
+
         assert sdc_records == sports_data
 
     finally:
@@ -2609,6 +2677,8 @@ def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data,
     num_records = 10
     connection = database.engine.connect()
 
+    _dump_dictionary_to_log(connection)
+
     try:
         logger.info('Creating table %s', table_name)
         connection.execute(f'CREATE TABLE {table_name} (ID NUMBER PRIMARY KEY)')
@@ -2621,6 +2691,8 @@ def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data,
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=buffer_locally,
+                                                   logminer_session_window='${2 * MINUTES}',
+                                                   maximum_transaction_length='${1 * MINUTES}',
                                                    src_table_name=table_name,
                                                    initial_change='SCN',
                                                    start_scn=initial_scn,
@@ -2639,7 +2711,10 @@ def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data,
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records, timeout_sec=360)
         sdc_executor.stop_pipeline(pipeline)
 
-        output_values = [rec.field['ID'].value for rec in wiretap.output_records]
+        records = sorted(wiretap.output_records,
+                         key=lambda rec: rec.field['ID'].value)
+        output_values = [record.field['ID'].value for record in records]
+
         assert input_values == output_values
 
     finally:
@@ -3260,13 +3335,14 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
         oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
                                          tables=[{"schema": database.username.upper(), "table": table_name, "excludePattern": ""}],
                                          buffer_changes_locally=True,
-                                         logminer_session_window="${10 * MINUTES}",
-                                         maximum_transaction_length="${2 * MINUTES}",
+                                         logminer_session_window="${2 * MINUTES}",
+                                         maximum_transaction_length="${1 * MINUTES}",
                                          db_time_zone="UTC",
                                          max_batch_size_in_records=8,
                                          initial_change="SCN",
                                          start_scn=database_last_scn,
-                                         send_redo_query_in_headers=True)
+                                         send_redo_query_in_headers=True,
+                                         disable_continuous_mine=True)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
@@ -3707,3 +3783,10 @@ def _select_from_table(db_engine, dest_table):
     target_result_list = target_result.fetchall()
     target_result.close()
     return target_result_list
+
+def _dump_dictionary_to_log(connection):
+    """Make a dump of dictionary to redolog for better performance"""
+    logger.info('Dumping dictionary to redolog started...')
+    connection.execute('begin dbms_logmnr_d.build(options => dbms_logmnr_d.store_in_redo_logs); end;')
+    connection.execute('alter system archive log current')
+    logger.info('Dumping dictionary to redolog finished...')
