@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import pytest
 from decimal import Decimal
@@ -23,6 +24,249 @@ logger = logging.getLogger(__name__)
 #
 # Text base file format parsing via Data Parser processor
 #
+
+AVRO_RECORD = ('{"type": "record", "name": "strings", "fields":'
+               ' [{"name": "name", "type": "string"}, {"name": "value", "type": "long"}]}')
+
+AVRO_ENUM = '{"type": "enum", "name": "Suit", "symbols": ["SPADES", "HEARTS", "DIAMONDS", "CLUBS"]}'
+
+AVRO_ARRAY = '{"type": "array", "items": "string"}'
+
+AVRO_MAP = '{"type": "map", "values": "long"}'
+
+AVRO_UNION = '["long", "string"]'
+
+AVRO_UNION_WITH_NULL = '["null", "string"]'
+
+AVRO_FIXED = '{"type": "fixed", "size": 2, "name": "bb"}'
+
+
+@pytest.mark.parametrize('sdc_datatype, avro_datatype, value, expected_result', [
+    # Skipping null
+    # Boolean
+    ('BOOLEAN', 'boolean', True, True),
+    # Byte Array
+    ('BYTE_ARRAY', 'bytes', 'dataAsBytes', b'dataAsBytes'),
+    # Double
+    ('DOUBLE', 'float', 2424.2424, 2424.2424),
+    ('DOUBLE', 'string', 2424.2424, '2424.2424'),
+    ('DOUBLE', 'double', -123456789.12345, -123456789.12345),
+    # Float
+    ('FLOAT', 'float', 2424.2424, 2424.2424),
+    ('FLOAT', 'string', 2424.2424, '2424.2424'),
+    ('FLOAT', 'double', -1234567.125, -1234567.125),
+    # Long
+    ('LONG', 'int', 2424, 2424),
+    ('LONG', 'string', 2424, '2424'),
+    ('LONG', 'long', 2424, 2424),
+    ('LONG', 'double', 2424, 2424),
+    # Integer
+    ('INTEGER', 'int', 2424, 2424),
+    ('INTEGER', 'string', 2424, '2424'),
+    ('INTEGER', 'long', 2424, 2424),
+    ('INTEGER', 'double', 2424, 2424),
+    # Decimal
+    ('DECIMAL', 'int', 2424, 2424),
+    ('DECIMAL', 'string', -123456789.12345, '-123456789.12345'),
+    # String
+    ('STRING', 'string', 'avro test 123', 'avro test 123'),
+    ('STRING', 'float', '2424.2424', 2424.2424),
+    ('STRING', 'int', '2424', 2424),
+    ('STRING', 'long', '-12345678912345', -12345678912345),
+    ('STRING', 'double', '-123456789.12345', -123456789.12345)
+])
+def test_avro_primitive_type(sdc_builder, sdc_executor, sdc_datatype, avro_datatype, value, expected_result):
+    """Kind of a standard test for avro dataformat with the datatypes it supports
+    Migrated from integration java tests.
+
+    The pipeline looks like:
+        source >> converter >> generator >> parser >> wiretap
+    """
+
+    avro_schema = f'''{{
+        "type": "record",
+        "name": "RandomRecord",
+        "fields": [{{
+            "name": "value",
+            "type": "{avro_datatype}"
+            }}]
+        }}'''
+
+    avro_data = [dict(value=value)]
+    raw_data = ''.join([json.dumps(product) for product in avro_data])
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = raw_data
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.conversion_method = 'BY_FIELD'
+    converter.field_type_converter_configs = [{
+        'fields': ['/value'],
+        'targetType': sdc_datatype
+    }]
+
+    generator = builder.add_stage('Data Generator')
+    generator.data_format = 'AVRO'
+    generator.avro_schema_location = 'INLINE'
+    generator.avro_schema = avro_schema
+
+    parser = builder.add_stage('Data Parser')
+    parser.field_to_parse = '/'
+    parser.target_field = '/'
+    parser.data_format = 'AVRO'
+    parser.avro_schema_location = 'SOURCE'
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> generator >> parser >> wiretap.destination
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == len(avro_data)
+    assert wiretap.output_records[0].get_field_data('/value') == expected_result
+
+
+@pytest.mark.parametrize('sdc_datatype, avro_datatype, avro_logical_type, value, expected_result', [
+    ('BYTE', 'bytes', 'decimal', 31, b'\x016'),
+    # 86400000 msec equals to one day
+    ('DATE', 'int', 'date', '1970-01-02 00:00:00', 1),
+    ('DATE', 'int', 'time-millis', '1970-01-02 00:00:00', 86400000),
+    ('DATE', 'long', 'timestamp-millis', '1970-01-02 00:00:00', 86400000)
+])
+def test_avro_logical_type(sdc_builder, sdc_executor, sdc_datatype, avro_datatype, avro_logical_type, value,
+                           expected_result):
+    """Kind of a standard test for avro dataformat with the datatypes it supports
+    Migrated from integration java tests.
+
+    The pipeline looks like:
+        source >> converter >> generator >> parser >> wiretap
+    """
+
+    avro_schema = f'''{{
+        "type": "record",
+        "name": "RandomRecord",
+        "fields": [{{
+            "name": "value",
+            "type": "{avro_datatype}",
+            "logicalType": "{avro_logical_type}",
+            "scale": 1
+            }}]
+        }}'''
+
+    avro_data = [dict(value=value)]
+    raw_data = ''.join([json.dumps(product) for product in avro_data])
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = raw_data
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.conversion_method = 'BY_FIELD'
+    converter.field_type_converter_configs = [{
+        'fields': ['/value'],
+        'targetType': sdc_datatype
+    }]
+
+    generator = builder.add_stage('Data Generator')
+    generator.data_format = 'AVRO'
+    generator.avro_schema_location = 'INLINE'
+    generator.avro_schema = avro_schema
+
+    parser = builder.add_stage('Data Parser')
+    parser.field_to_parse = '/'
+    parser.target_field = '/'
+    parser.data_format = 'AVRO'
+    parser.avro_schema_location = 'SOURCE'
+
+    wiretap = builder.add_wiretap()
+
+    source >> converter >> generator >> parser >> wiretap.destination
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == len(avro_data)
+    assert wiretap.output_records[0].get_field_data('/value') == expected_result
+
+
+@pytest.mark.parametrize('avro_datatype, value, expected_result', [
+    (AVRO_RECORD, {'name': 'StreamSets', 'value': 15000000}, {'name': 'StreamSets', 'value': 15000000}),
+    (AVRO_ENUM, 'CLUBS', 'CLUBS'),
+    (AVRO_ARRAY, ['suits', 'not', 'suit'],  ['suits', 'not', 'suit']),
+    (AVRO_MAP, {'yes': 123, 'nope': 456},   {'yes': 123, 'nope': 456}),
+    (AVRO_UNION, 'joaquin', 'joaquin'),
+    (AVRO_UNION_WITH_NULL, None, None),
+    (AVRO_FIXED, 'jb', b'jb'),
+])
+def test_avro_complex_type(sdc_builder, sdc_executor, avro_datatype, value, expected_result):
+    """Kind of a standard test for avro dataformat with the datatypes it supports
+    Migrated from integration java tests.
+
+    The pipeline looks like:
+        source >> converter >> generator >> parser >> wiretap
+    """
+
+    avro_schema = f'''{{
+        "type": "record",
+        "name": "RandomRecord",
+        "fields": [{{
+            "name": "value",
+            "type": {avro_datatype}
+            }}]
+        }}'''
+
+    avro_data = [dict(value=value)]
+    raw_data = ''.join([json.dumps(product) for product in avro_data])
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'JSON'
+    source.raw_data = raw_data
+
+    generator = builder.add_stage('Data Generator')
+    generator.data_format = 'AVRO'
+    generator.avro_schema_location = 'INLINE'
+    generator.avro_schema = avro_schema
+
+    parser = builder.add_stage('Data Parser')
+    parser.field_to_parse = '/'
+    parser.target_field = '/'
+    parser.data_format = 'AVRO'
+    parser.avro_schema_location = 'SOURCE'
+
+    wiretap = builder.add_wiretap()
+
+    if avro_datatype == AVRO_FIXED:
+        # We need to convert to bytes explicitly for fixed type
+        converter = builder.add_stage('Field Type Converter')
+        converter.conversion_method = 'BY_FIELD'
+        converter.field_type_converter_configs = [{
+            'fields': ['/value'],
+            'targetType': 'BYTE_ARRAY'
+        }]
+        source >> converter >> generator >> parser >> wiretap.destination
+    else:
+        source >> generator >> parser >> wiretap.destination
+
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == len(avro_data)
+    assert wiretap.output_records[0].get_field_data('/value') == expected_result
 
 
 # SDC-11018: Re-scale data when writing Decimal into Avro
