@@ -2233,7 +2233,6 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, case_
         sdc_executor.add_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_records)
-        sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
         check_table_name_token = check_table_name if case_sensitive else check_table_name.upper()
         mined_table_name_token = mined_table_name if case_sensitive else mined_table_name.upper()
