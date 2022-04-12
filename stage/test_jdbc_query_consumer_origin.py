@@ -315,3 +315,59 @@ def test_jdbc_consumer_read_timestamp_with_local_timezone(sdc_builder, sdc_execu
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
+
+
+# Test for COLLECTOR-962
+@database('postgresql')
+@pytest.mark.parametrize('limit', [4,5,6])
+def test_jdbc_consumer_no_more_data_with_limit(sdc_builder, sdc_executor, database, limit):
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    try:
+        # Create table
+        connection.execute(f"""
+                    CREATE TABLE {table_name}(
+                        id int primary key,
+                        data_column int NULL
+                    )
+                """)
+
+        # Add some data to the table
+        for i in range(1, 11):
+            connection.execute(f"INSERT INTO {table_name} VALUES({i}, {i})")
+
+        # To make sure all issues with limit and maxBatchSize are fixed, we will run the test a few times with a different
+        # limit each time and check that all the data is read each time. The different scenarios to test are:
+        #   limit < maxBatchSize
+        #   limit = maxBatchSize
+        #   limit > maxBatchSize
+        sql_query = f'SELECT * FROM {table_name} WHERE id > ${{OFFSET}} ORDER BY id LIMIT {limit}'
+
+        # Create pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        origin = pipeline_builder.add_stage('JDBC Query Consumer')
+        origin.set_attributes(incremental_mode=True,
+                              sql_query=sql_query,
+                              offset_column='id',
+                              max_batch_size_in_records=5)
+
+        wiretap = pipeline_builder.add_wiretap()
+        finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+        finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"],
+                                on_record_error= 'DISCARD')
+
+        origin >> wiretap.destination
+        origin >= finisher
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        sdc_records = [record.field for record in wiretap.output_records]
+        assert len(sdc_records) == 10
+        for i in range(10):
+            assert sdc_records[i]['id'] == i+1
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f"DROP TABLE IF EXISTS {table_name}")
