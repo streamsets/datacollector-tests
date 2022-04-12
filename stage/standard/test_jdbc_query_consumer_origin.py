@@ -572,23 +572,42 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, incremental, keep_
         connection = database.engine.connect()
         connection.execute(table.insert(), [{'id' : n} for n in range(1, 10_001)])
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(10_001)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(10_003)
         sdc_executor.stop_pipeline(pipeline)
 
-        # Two events should be created
+        # In incremental mode, the query runs two times. The first time, the only event generated will be a
+        # successful query. When the query runs again with the last offset, returning an empty set, both another succesful
+        # query and a no-more-data are generated.
+        # In the non incremental mode, the query runs a single time and generates a succesful query and a no-more-data
+        # in one go
         records = wiretap.output_records
-        assert len(records) == 2
+        if incremental:
+            assert len(records) == 3
+        else:
+            assert len(records) == 2
 
-        # First event is successful query
+        # First event is always a successful query
         assert records[0].header.values['sdc.event.type'] == 'jdbc-query-success'
         assert records[0].field['offset'] == '10000' if incremental else '0'
         assert records[0].field['rows'] == 10000
         assert 'timestamp' in records[0].field
         assert 'query' in records[0].field
 
-        # Second event is no-more-data
-        assert records[1].header.values['sdc.event.type'] == 'no-more-data'
-        assert records[1].field['record-count'] == 10000
+        if incremental:
+            # Second event for incremental is another succesful query
+            assert records[1].header.values['sdc.event.type'] == 'jdbc-query-success'
+            assert records[1].field['offset'] == '10000' if incremental else '0'
+            assert records[1].field['rows'] == 0
+            assert 'timestamp' in records[1].field
+            assert 'query' in records[1].field
+
+            # Third event for incremental is no-more-data
+            assert records[2].header.values['sdc.event.type'] == 'no-more-data'
+            assert records[2].field['record-count'] == 10000
+        else:
+            # Second event for non incremental is no-more-data
+            assert records[1].header.values['sdc.event.type'] == 'no-more-data'
+            assert records[1].field['record-count'] == 10000
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
