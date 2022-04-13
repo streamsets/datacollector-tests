@@ -3367,55 +3367,55 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
             assert {record.header.values["oracle.cdc.query"]} is not None
             if record.header.values["oracle.cdc.operation"] == 'UPDATE':
 
-                assert "oracle.cdc.primaryKey.before.TYPE" in record.header.values
-                assert "oracle.cdc.primaryKey.before.ID" in record.header.values
-                assert "oracle.cdc.primaryKey.after.TYPE" in record.header.values
-                assert "oracle.cdc.primaryKey.after.ID" in record.header.values
+                assert "jdbc.primaryKey.before.TYPE" in record.header.values
+                assert "jdbc.primaryKey.before.ID" in record.header.values
+                assert "jdbc.primaryKey.after.TYPE" in record.header.values
+                assert "jdbc.primaryKey.after.ID" in record.header.values
 
-                assert record.header.values["oracle.cdc.primaryKey.before.TYPE"] is not None
-                assert record.header.values["oracle.cdc.primaryKey.before.ID"] is not None
-                assert record.header.values["oracle.cdc.primaryKey.after.TYPE"] is not None
-                assert record.header.values["oracle.cdc.primaryKey.after.ID"] is not None
+                assert record.header.values["jdbc.primaryKey.before.TYPE"] is not None
+                assert record.header.values["jdbc.primaryKey.before.ID"] is not None
+                assert record.header.values["jdbc.primaryKey.after.TYPE"] is not None
+                assert record.header.values["jdbc.primaryKey.after.ID"] is not None
 
                 column_address = record.field['ADDRESS'].value
 
                 if column_address == 'Bag End 1':
-                    assert record.header.values["oracle.cdc.primaryKey.before.TYPE"] == "Hobbit"
-                    assert record.header.values["oracle.cdc.primaryKey.before.ID"] == "1"
-                    assert record.header.values["oracle.cdc.primaryKey.after.TYPE"] == "Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.after.ID"] == "1"
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Hobbit"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "1"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "1"
                 elif column_address == 'Bag End 2':
-                    assert record.header.values["oracle.cdc.primaryKey.before.TYPE"] == "Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.before.ID"] == "1"
-                    assert record.header.values["oracle.cdc.primaryKey.after.TYPE"] == "Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.after.ID"] == "2"
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "1"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "2"
                 elif column_address == 'Bag End 3':
-                    assert record.header.values["oracle.cdc.primaryKey.before.TYPE"] == "Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.before.ID"] == "2"
-                    assert record.header.values["oracle.cdc.primaryKey.after.TYPE"] == "Hobbit - Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.after.ID"] == "3"
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "2"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Hobbit - Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "3"
                 elif column_address == 'Bag End 4':
-                    assert record.header.values["oracle.cdc.primaryKey.before.TYPE"] == "Hobbit - Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.before.ID"] == "3"
-                    assert record.header.values["oracle.cdc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.after.ID"] == "3"
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Hobbit - Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "3"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "3"
                 elif column_address == 'Bag End 5':
-                    assert record.header.values["oracle.cdc.primaryKey.before.TYPE"] == "Hobbit, Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.before.ID"] == "3"
-                    assert record.header.values["oracle.cdc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.after.ID"] == "4"
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "3"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "4"
                 elif column_address == 'Bag End 6':
-                    assert record.header.values["oracle.cdc.primaryKey.before.TYPE"] == "Hobbit, Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.before.ID"] == "4"
-                    assert record.header.values["oracle.cdc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
-                    assert record.header.values["oracle.cdc.primaryKey.after.ID"] == "4"
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "4"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "4"
 
             else:
 
-                assert "oracle.cdc.primaryKey.before.TYPE" not in record.header.values
-                assert "oracle.cdc.primaryKey.before.ID" not in record.header.values
-                assert "oracle.cdc.primaryKey.after.TYPE" not in record.header.values
-                assert "oracle.cdc.primaryKey.after.ID" not in record.header.values
+                assert "jdbc.primaryKey.before.TYPE" not in record.header.values
+                assert "jdbc.primaryKey.before.ID" not in record.header.values
+                assert "jdbc.primaryKey.after.TYPE" not in record.header.values
+                assert "jdbc.primaryKey.after.ID" not in record.header.values
 
             logger.info(f"schema..............: {record.header.values['schema']}")
             logger.info(f"oracle.cdc.table....: {record.header.values['oracle.cdc.table']}")
@@ -3427,10 +3427,10 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
             logger.info(f".....................")
             if record.header.values["oracle.cdc.operation"] == 'UPDATE':
                 logger.info(f"column - address.................: {record.field['ADDRESS'].value}")
-                logger.info(f"oracle.cdc.primaryKey.before.TYPE: {record.header.values['oracle.cdc.primaryKey.before.TYPE']}")
-                logger.info(f"oracle.cdc.primaryKey.before.ID..: {record.header.values['oracle.cdc.primaryKey.before.ID']}")
-                logger.info(f"oracle.cdc.primaryKey.after.TYPE.: {record.header.values['oracle.cdc.primaryKey.after.TYPE']}")
-                logger.info(f"oracle.cdc.primaryKey.after.ID...: {record.header.values['oracle.cdc.primaryKey.after.ID']}")
+                logger.info(f"jdbc.primaryKey.before.TYPE: {record.header.values['jdbc.primaryKey.before.TYPE']}")
+                logger.info(f"jdbc.primaryKey.before.ID..: {record.header.values['jdbc.primaryKey.before.ID']}")
+                logger.info(f"jdbc.primaryKey.after.TYPE.: {record.header.values['jdbc.primaryKey.after.TYPE']}")
+                logger.info(f"jdbc.primaryKey.after.ID...: {record.header.values['jdbc.primaryKey.after.ID']}")
                 logger.info(f"----------------------------------")
 
     finally:
@@ -3557,10 +3557,10 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
         assert len(wiretap.output_records) == 1
 
         for record in wiretap.output_records:
-            assert "oracle.cdc.primaryKeySpecification" in record.header.values
-            assert {record.header.values["oracle.cdc.primaryKeySpecification"]} is not None
+            assert "jdbc.primaryKeySpecification" in record.header.values
+            assert {record.header.values["jdbc.primaryKeySpecification"]} is not None
 
-            primary_key_specification_json = json.dumps(json.loads(record.header.values["oracle.cdc.primaryKeySpecification"]), sort_keys=True)
+            primary_key_specification_json = json.dumps(json.loads(record.header.values["jdbc.primaryKeySpecification"]), sort_keys=True)
 
             primary_key_specification_expected = \
                 '''{"MY_CHAR_CHAR":     {"type": 1,    "datatype": "CHAR",      "size": 64,   "precision": 64,  "scale": 0, "signed": true, "currency": false},
