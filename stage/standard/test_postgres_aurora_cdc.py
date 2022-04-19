@@ -486,7 +486,6 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
                 connection.execute(table.insert(), {'id': n})
 
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_iteration)
-            sdc_executor.stop_pipeline(pipeline)
 
             records = wiretap.output_records
 
