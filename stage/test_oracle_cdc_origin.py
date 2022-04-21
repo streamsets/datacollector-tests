@@ -70,10 +70,17 @@ def create_logminer_dictionary(database):
 
 @sdc_min_version('3.6.0')
 @database('oracle')
-def test_decimal_attributes(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_decimal_attributes(sdc_builder, sdc_executor, database, buffer_location):
     """Validates that Field attributes for decimal types will get properly generated
     Runs oracle_cdc_client >> wiretap.destination
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     db_engine = database.engine
     pipeline = None
     table = None
@@ -93,6 +100,7 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database):
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=True,
+                                                          buffer_location=buffer_location,
                                                           src_table_name=src_table_name)
         wiretap = pipeline_builder.add_wiretap()
 
@@ -133,8 +141,9 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database):
 
 @sdc_min_version('3.9.0')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('parse_sql', [True, False])
-def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
+def test_date_type_conversions(sdc_builder, sdc_executor, database, buffer_location, parse_sql):
     """Check that Oracle CDC Origin / SQL Parser Processor convert Oracle types DATE and TIMESTAMP to SDC DATETIME type.
 
     We create a table with a DATE and a TIMESTAMP columns and insert two rows by using different forms of TO_DATE and
@@ -146,6 +155,12 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
       False) oracle_cdc_client >> sql_parser >> wiretap.destination
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     # Create table in database.
     table_name = 'STF_{}'.format(get_random_string(string.ascii_uppercase, 9))
     logger.info('Using table pattern %s', table_name)
@@ -164,6 +179,7 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
                                                       sdc_builder=sdc_builder,
                                                       pipeline_builder=pipeline_builder,
                                                       buffer_locally=True,
+                                                      buffer_location=buffer_location,
                                                       src_table_name=table_name)
     oracle_cdc_client.parse_sql_query = parse_sql
     wiretap = pipeline_builder.add_wiretap()
@@ -235,12 +251,19 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, parse_sql):
 
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('use_pattern', [True, False])
-def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
+def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_locally, buffer_location, use_pattern):
     """Basic test that reads inserts/updates/deletes to an Oracle table,
     and validates that they are read in the same order.
     Runs oracle_cdc_client >> wiretap
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     db_engine = database.engine
     pipeline = None
     table = None
@@ -270,6 +293,7 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
+                                                          buffer_location=buffer_location,
                                                           src_table_name=src_table_pattern)
 
         inserts = _insert(connection=connection, table=table)
@@ -332,16 +356,23 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
             logger.info('Table: %s dropped.', src_table_name)
 
 
-@pytest.mark.parametrize('buffer_locally', [True, False])
 @database('oracle')
+@pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 def test_oracle_cdc_client_bulk(sdc_builder,
                                 sdc_executor,
                                 database,
-                                buffer_locally):
+                                buffer_locally,
+                                buffer_location):
     """Test that reads inserts/updates/deletes to an Oracle table with bulk sentences,
     and verifies that no record is lost .
     Runs oracle_cdc_client >> wiretap
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     source_table = None
     target_table = None
@@ -409,6 +440,7 @@ def test_oracle_cdc_client_bulk(sdc_builder,
         oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
                                          tables=[{'schema': database.username.upper(), 'table': target_table_name, 'excludePattern': ''}],
                                          buffer_changes_locally=buffer_locally,
+                                         buffer_location=buffer_location,
                                          logminer_session_window='${10 * MINUTES}',
                                          maximum_transaction_length='${2 * MINUTES}',
                                          db_time_zone='UTC',
@@ -449,15 +481,22 @@ def test_oracle_cdc_client_bulk(sdc_builder,
 
 
 @sdc_min_version('3.22.3')
-@pytest.mark.parametrize('buffer_locally', [True, False])
 @database('oracle')
+@pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 def test_oracle_cdc_client_headers(sdc_builder,
                                    sdc_executor,
                                    database,
-                                   buffer_locally):
+                                   buffer_locally,
+                                   buffer_location):
     """
     Test to check all headers are present in the output records.
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     source_table = None
     target_table = None
@@ -525,6 +564,7 @@ def test_oracle_cdc_client_headers(sdc_builder,
         oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
                                          tables=[{'schema': database.username.upper(), 'table': target_table_name, 'excludePattern': ''}],
                                          buffer_changes_locally=buffer_locally,
+                                         buffer_location=buffer_location,
                                          logminer_session_window='${10 * MINUTES}',
                                          maximum_transaction_length='${2 * MINUTES}',
                                          db_time_zone='UTC',
@@ -571,12 +611,19 @@ def test_oracle_cdc_client_headers(sdc_builder,
 
 @sdc_min_version('3.22.3')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 def test_oracle_cdc_client_sequence(sdc_builder,
                                     sdc_executor,
-                                    database):
+                                    database,
+                                    buffer_location):
     """
     Test that checks that the internal sequence is generated properly.
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     source_table = None
     target_table = None
@@ -644,6 +691,7 @@ def test_oracle_cdc_client_sequence(sdc_builder,
         oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
                                          tables=[{'schema': database.username.upper(), 'table': target_table_name, 'excludePattern': ''}],
                                          buffer_changes_locally=True,
+                                         buffer_location=buffer_location,
                                          logminer_session_window='${10 * MINUTES}',
                                          maximum_transaction_length='${2 * MINUTES}',
                                          db_time_zone='UTC',
@@ -694,16 +742,23 @@ def test_oracle_cdc_client_sequence(sdc_builder,
 
 @sdc_min_version('3.22.3')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('pseudocolumns_in_header', [True, False])
 def test_sql_parser_pseudocolumns(sdc_builder,
                                   sdc_executor,
                                   database,
+                                  buffer_location,
                                   case_sensitive,
                                   pseudocolumns_in_header):
     """
     Check pseudocolumns processing.
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     source_table = None
     target_table = None
@@ -771,6 +826,7 @@ def test_sql_parser_pseudocolumns(sdc_builder,
         oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
                                          tables=[{'schema': database.username.upper(), 'table': target_table_name, 'excludePattern': ''}],
                                          buffer_changes_locally=True,
+                                         buffer_location=buffer_location,
                                          logminer_session_window='${10 * MINUTES}',
                                          maximum_transaction_length='${2 * MINUTES}',
                                          db_time_zone='UTC',
@@ -830,13 +886,20 @@ def test_sql_parser_pseudocolumns(sdc_builder,
 
 
 @pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @database('oracle')
-def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, buffer_locally):
+def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, buffer_locally, buffer_location):
     """Basic test that reads inserts first via preview and then run and preview again returning records
         Perform update/deletes and see run correctly picks up from where it left off and do a preview
         again to see preview still returns the inserts, updates and deletes all
         Runs oracle_cdc_client >> wiretap
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     db_engine = database.engine
     table = None
     src_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -855,6 +918,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
+                                                          buffer_location=buffer_location,
                                                           logminer_session_window='${2 * MINUTES}',
                                                           maximum_transaction_length='${1 * MINUTES}',
                                                           src_table_name=src_table_name,
@@ -1068,15 +1132,26 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
             logger.info('Table: %s dropped.', src_table_name)
 
 
-@database('oracle')
 @sdc_min_version('3.5.1')
+@database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('use_pattern', [False])
-def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
+def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder,
+                                                               sdc_executor,
+                                                               database,
+                                                               buffer_locally,
+                                                               buffer_location,
+                                                               use_pattern):
     """
     Test for SDC-8418.  Pipeline should stop with RUN ERROR when there is no archived log files.
     Runs oracle_cdc_client >> trash
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     db_engine = database.engine
     src_table_name = get_random_string(string.ascii_uppercase, 9)
@@ -1094,6 +1169,7 @@ def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder, sdc_
         tables = [{'schema': database.username.upper(), 'table': src_table_name, 'excludePattern': ''}]
 
         oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
+                                         buffer_location=buffer_location,
                                          db_time_zone='UTC',
                                          dictionary_source='DICT_FROM_ONLINE_CATALOG',
                                          initial_change='DATE',
@@ -1136,12 +1212,19 @@ def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder, sdc_
 
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('use_pattern', [True, False])
-def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
+def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, database, buffer_locally, buffer_location, use_pattern):
     """Basic test that tests for SDC-8340. This test ensures that Strings with value 'NULL'/'null' is treated correctly,
     and null is not returned.
     Runs oracle_cdc_client >> wiretap
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     db_engine = database.engine
     pipeline = None
     table = None
@@ -1172,6 +1255,7 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
+                                                          buffer_location=buffer_location,
                                                           src_table_name=src_table_pattern)
         rows = [{'ID': 100, 'NAME': 'NULL'},
                 {'ID': None, 'NAME': 'Whose Name?'},
@@ -1243,7 +1327,8 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
 
 
 @database('oracle')
-def test_long_sql_statements(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_long_sql_statements(sdc_builder, sdc_executor, database, buffer_location):
     """Test Oracle CDC correctly handles long SQL statements.
 
     When querying LogMiner content (i.e. V$LOGMNR_CONTENT view), any database operation whose SQL statement is
@@ -1256,6 +1341,12 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database):
     Pipeline: oracle_cdc >> wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
     connection = database.engine.connect()
 
@@ -1282,6 +1373,7 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database):
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    src_table_name=table_name,
                                                    batch_size=1,
                                                    initial_change='SCN',
@@ -1307,7 +1399,8 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database):
 
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True])
-def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_locally):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_locally, buffer_location):
     """Tests SDC-8359. The basic premise of the test:
     - Start a transaction, and insert some data
     - Wait for 1 second so timestamp of next transaction is different
@@ -1321,6 +1414,11 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
     (Pre-8359, this would fail when buffer_locally=true with 2nd pipeline run timing out, since no data is read)
     Runs oracle_cdc_client >> wiretap
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     db_engine = database.engine
     pipeline = None
@@ -1344,6 +1442,7 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
+                                                          buffer_location=buffer_location,
                                                           src_table_name=src_table_name)
 
         # Start transaction
@@ -1406,8 +1505,15 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
 
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('use_pattern', [True, False])
-def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
+def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer_locally, buffer_location, use_pattern):
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     db_engine = database.engine
     pipeline = None
     src_table = None
@@ -1437,6 +1543,7 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
+                                                          buffer_location=buffer_location,
                                                           src_table_name=src_table_pattern,
                                                           batch_size=batch_size)
 
@@ -1484,12 +1591,19 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
 
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('use_pattern', [True, False])
-def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_locally, use_pattern):
+def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_locally, buffer_location, use_pattern):
     """Test that writes some data, then creates a save point, writes some more data and then rolls back to savepoint,
     and validates that only the data that is before the save point and after the rollback is read
     Runs oracle_cdc_client >> wiretap
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     db_engine = database.engine
     pipeline = None
     table = None
@@ -1524,6 +1638,7 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
                                                           sdc_builder=sdc_builder,
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
+                                                          buffer_location=buffer_location,
                                                           logminer_session_window='${2 * MINUTES}',
                                                           maximum_transaction_length='${1 * MINUTES}',
                                                           src_table_name=src_table_pattern,
@@ -1595,6 +1710,7 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
 
 @sdc_min_version('3.6.0')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('sql_type, insert_fragment, expected_values', [
     ('binary_float', '1.0', ['1.0E+000']),
     ('binary_double', '1.0', ['1.0E+000']),
@@ -1606,7 +1722,12 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
     ('nclob', "'VALUE EXAMPLE'", ['EMPTY_CLOB()', 'VALUE EXAMPLE']),
     # ('XMLType', "xmltype('<a></a>')", ['<a></a>'])  # Not fully supported by LogMiner
 ])
-def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database, sql_type, insert_fragment,
+def test_unsupported_types_send_to_pipeline(sdc_builder,
+                                            sdc_executor,
+                                            database,
+                                            buffer_location,
+                                            sql_type,
+                                            insert_fragment,
                                             expected_values):
     """Test Oracle types not supported by the CDC origin when they are sent to pipeline.
 
@@ -1624,6 +1745,12 @@ def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database,
     Pipeline: oracle_cdc >> wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
     expected_output = [{'ID': 1, 'DATA_COLUMN': v} for v in expected_values]
@@ -1641,6 +1768,7 @@ def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database,
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    initial_change='SCN',
                                                    start_scn=start_scn,
                                                    src_table_name=table_name,
@@ -1667,8 +1795,9 @@ def test_unsupported_types_send_to_pipeline(sdc_builder, sdc_executor, database,
 
 @sdc_min_version('3.6.0')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('action', ['TO_ERROR', 'DISCARD'])
-def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, action):
+def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, buffer_location, action):
     """Test Oracle types not supported by the CDC origin when the action to take is other than SEND_TO_PIPELINE
     (which has a specific test).
 
@@ -1683,6 +1812,12 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, ac
     Pipeline: oracle_cdc >> wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     connection = database.engine.connect()
     base_name = get_random_string(string.ascii_lowercase, 20)
     table_name1 = f'{base_name}_table1'
@@ -1714,6 +1849,7 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, ac
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    initial_change='SCN',
                                                    start_scn=start_scn,
                                                    src_table_name=f'{base_name}%',
@@ -1743,8 +1879,9 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, ac
 
 @sdc_min_version('3.19.0')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('peg_parser', [True, False])
-def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
+def test_unsupported_types_adt(sdc_builder, sdc_executor, database, buffer_location, peg_parser):
     """ This tests OracleCDC origin when the table has an ADT column.
     This is behaving different according to Oracle version. In Oracle 11 the redo
     logs for tables that contain ADT columns are unsupported, that means the OracleCDC stage
@@ -1768,6 +1905,11 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
         Not supported by LogMiner so no output neither exception is expected, no matter if
         peg parser is enabled or not.
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     connection = database.engine.connect()
     db_version = _get_oracle_db_version(connection)
@@ -1794,6 +1936,7 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    initial_change='LATEST',
                                                    src_table_name=f'{table_name}%',
                                                    unsupported_field_type='TO_ERROR',
@@ -1848,8 +1991,9 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, peg_parser):
 
 @sdc_min_version('3.20.0')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('peg_parser', [True, False])
-def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, peg_parser):
+def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, buffer_location, peg_parser):
     """ This tests OracleCDC origin when the table has an ADT column and an update
     is executed on the ADT column. The expected behaviour would be to have an unsupported
     operation type from the LOG MINER but instead of this we get an UPDATE operation and an empty
@@ -1862,6 +2006,11 @@ def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, p
 
     Oracle CDC >> Wiretap
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     connection = database.engine.connect()
     db_version = _get_oracle_db_version(connection)
@@ -1892,6 +2041,7 @@ def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, p
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    initial_change='LATEST',
                                                    src_table_name=table_name,
                                                    unsupported_field_type='TO_ERROR',
@@ -1928,7 +2078,8 @@ def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, p
 
 @sdc_min_version('3.21.0')
 @database('oracle')
-def test_empty_redo_log_record_is_ignored(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_empty_redo_log_record_is_ignored(sdc_builder, sdc_executor, database, buffer_location):
     """ This tests OracleCDC origin when the table has an ADT column and an update
     is executed on the ADT column and the unsupported types is set to 'Send to Pipeline'.
     This tests that when the empty redo log record is ignored on the pipeline.
@@ -1941,6 +2092,11 @@ def test_empty_redo_log_record_is_ignored(sdc_builder, sdc_executor, database):
 
     Oracle CDC >> Wiretap
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     connection = database.engine.connect()
     db_version = _get_oracle_db_version(connection)
@@ -1971,6 +2127,7 @@ def test_empty_redo_log_record_is_ignored(sdc_builder, sdc_executor, database):
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    initial_change='LATEST',
                                                    src_table_name=table_name,
                                                    unsupported_field_type='SEND_TO_PIPELINE',
@@ -2016,10 +2173,17 @@ def test_empty_redo_log_record_is_ignored(sdc_builder, sdc_executor, database):
 
 @sdc_min_version('3.0.0.0')
 @database('oracle')
-def test_event_startup(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_event_startup(sdc_builder, sdc_executor, database, buffer_location):
     """Verify that we create at least one event - STARTUP - in the origin. We don't check all types as that requires
        additional configuration on the shared database server (redo logs dictionary source).
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
 
@@ -2035,6 +2199,7 @@ def test_event_startup(sdc_builder, sdc_executor, database):
                                                initial_change='SCN',
                                                start_scn=start_scn,
                                                buffer_locally=True,
+                                               buffer_location=buffer_location,
                                                src_table_name=table_name)
         trash = builder.add_stage('Trash')
         identity = builder.add_stage('Dev Identity')
@@ -2064,7 +2229,8 @@ def test_event_startup(sdc_builder, sdc_executor, database):
 
 @sdc_min_version('3.1.0.0')
 @database('oracle')
-def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database, buffer_location):
     """Test Oracle CDC table exclusion patterns.
 
     The test configures an Oracle CDC stage to consume tables matching a defined name pattern, but excluding
@@ -2077,6 +2243,12 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
               oracle_cdc >= wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
     sports_table1 = f'{table_prefix}_SPORT1'
     sports_table2 = f'{table_prefix}_SPORT2'
@@ -2120,6 +2292,7 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
                                                    pipeline_builder=builder,
                                                    batch_size=1,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    dictionary_source='DICT_FROM_REDO_LOGS',
                                                    tables=[table_config],
                                                    initial_change='SCN',
@@ -2156,6 +2329,7 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
 
 @database('oracle')
 @sdc_min_version('5.0.0')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('scenario', [{'pattern': '%',            'records':  5},
                                       {'pattern': '/%',           'records':  0},
@@ -2168,9 +2342,14 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database):
                                       {'pattern': 'ten_/__uki',   'records':  0},
                                       {'pattern': 'ten/__/_uki',  'records': 10},
                                       {'pattern': 'ten/_x/_uki',  'records': 10}])
-def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, case_sensitive, scenario):
+def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, buffer_location, case_sensitive, scenario):
     """Test Oracle CDC table inclusion patterns (considering escaped characters).
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     logger.info(f'Running test mode: {case_sensitive} - {scenario["pattern"]} - {scenario["records"]}')
 
@@ -2220,6 +2399,7 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, case_
                                                   'excludePattern': ''}],
                                          case_sensitive_names=case_sensitive,
                                          buffer_changes_locally=True,
+                                         buffer_location=buffer_location,
                                          logminer_session_window='${2 * MINUTES}',
                                          maximum_transaction_length='${1 * MINUTES}',
                                          db_time_zone='UTC',
@@ -2267,7 +2447,8 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, case_
 
 
 @database('oracle')
-def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database, buffer_location):
     """Test Oracle CDC can track new tables created after the pipeline initialization.
 
     Besides to validate the origin consumes the records inserted in the new table, the test also validates the
@@ -2277,6 +2458,12 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
               oracle_cdc >= wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
     table_pattern = f'{table_prefix}%'
     sports_table = f'{table_prefix}_SPORTS'
@@ -2305,6 +2492,7 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
                                                    pipeline_builder=builder,
                                                    batch_size=1,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    src_table_name=table_pattern,
                                                    initial_change='SCN',
                                                    start_scn=start_scn,
@@ -2351,7 +2539,8 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database):
 
 
 @database('oracle')
-def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database, buffer_location):
     """Test that tables dropped before being chached by Oracle CDC origin are correctly ingored.
 
     There are three cases regarding the tables potentially tracked by the stage:
@@ -2368,6 +2557,12 @@ def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
               oracle_cdc >= wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_prefix = f'STF_{get_random_string(string.ascii_uppercase)}'
     table_pattern = f'{table_prefix}%'
     sports_table = f'{table_prefix}_SPORTS'
@@ -2408,6 +2603,7 @@ def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
                                                    pipeline_builder=builder,
                                                    batch_size=1,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    src_table_name=table_pattern,
                                                    initial_change='SCN',
                                                    start_scn=start_scn,
@@ -2442,8 +2638,9 @@ def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database):
 
 
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('initial_change', ['DATE', 'SCN', 'LATEST'])
-def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
+def test_initial_change(sdc_builder, sdc_executor, database, buffer_location, initial_change):
     """Test Initial Change config.
 
     The test performs 3 database transactions T1, T2 and T3, and the pipeline is started at a time in between
@@ -2455,6 +2652,12 @@ def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
     Pipeline: oracle_cdc >> wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_name = f'STF_{get_random_string(string.ascii_lowercase)}'
     connection = database.engine.connect()
     test_options = {'initial_change': initial_change}
@@ -2496,6 +2699,7 @@ def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    src_table_name=table_name,
                                                    batch_size=1,
                                                    **test_options)
@@ -2524,7 +2728,8 @@ def test_initial_change(sdc_builder, sdc_executor, database, initial_change):
 
 @sdc_min_version('3.14.0')
 @database('oracle')
-def test_dictionary_extraction(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_dictionary_extraction(sdc_builder, sdc_executor, database, buffer_location):
     """Test extraction of the LogMiner dictionary from the existing redo logs.
 
     This test configures an Oracle CDC stage with 'DICT_FROM_REDO_LOGS' as dictionary source, builds the
@@ -2534,6 +2739,12 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
     Pipeline: oracle_cdc >> wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_name = f'STF_{get_random_string(string.ascii_lowercase)}'
     connection = database.engine.connect()
     input_data = [1, 2, 3, 4, 5]
@@ -2560,6 +2771,7 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
                                  pipeline_builder=builder,
                                  batch_size=1,
                                  buffer_locally=True,
+                                 buffer_location=buffer_location,
                                  src_table_name=table_name,
                                  initial_change='SCN',
                                  start_scn=start_scn,
@@ -2588,8 +2800,9 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database):
 
 
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('dictionary_source', ['DICT_FROM_REDO_LOGS', 'DICT_FROM_ONLINE_CATALOG'])
-def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary_source):
+def test_logminer_session_switch(sdc_builder, sdc_executor, database, buffer_location, dictionary_source):
     """Test LogMiner session switches.
 
     In particular we want to check the stage is able to open subsequent LogMiner session windows after the
@@ -2603,6 +2816,12 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
     Pipeline: oracle_cdc >> wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
     connection = database.engine.connect()
     txn1_data = [1, 2, 3, 4, 5]
@@ -2636,6 +2855,7 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
                                                    pipeline_builder=builder,
                                                    batch_size=1,
                                                    buffer_locally=True,
+                                                   buffer_location=buffer_location,
                                                    src_table_name=table_name,
                                                    initial_change='DATE',
                                                    start_date=start_date,
@@ -2662,8 +2882,15 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, dictionary
 @sdc_min_version('3.19.0')
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('dictionary_source', ['DICT_FROM_REDO_LOGS', 'DICT_FROM_ONLINE_CATALOG'])
-def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data, buffer_locally, dictionary_source):
+def test_disable_continuous_mine(sdc_builder,
+                                 sdc_executor,
+                                 database,
+                                 keep_data,
+                                 buffer_locally,
+                                 buffer_location,
+                                 dictionary_source):
     """Simple test to check "Disable Continuous Mine" stage option.
 
     The test just inserts a few records in the test table and check they are successfully consumed by Oracle
@@ -2672,6 +2899,12 @@ def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data,
     Pipeline: oracle_cdc >> wiretap
 
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
     table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
     num_records = 10
     connection = database.engine.connect()
@@ -2690,6 +2923,7 @@ def test_disable_continuous_mine(sdc_builder, sdc_executor, database, keep_data,
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
                                                    buffer_locally=buffer_locally,
+                                                   buffer_location=buffer_location,
                                                    logminer_session_window='${2 * MINUTES}',
                                                    maximum_transaction_length='${1 * MINUTES}',
                                                    src_table_name=table_name,
@@ -2911,14 +3145,21 @@ def test_user_configuration_checks(sdc_builder,
 
 @sdc_min_version('4.0.0')
 @pytest.mark.parametrize('buffer_locally', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @database('oracle')
 def test_oracle_cdc_offset_chain(sdc_builder,
                                  sdc_executor,
                                  database,
-                                 buffer_locally):
+                                 buffer_locally,
+                                 buffer_location):
     """
     Test to check that offset between pipeline re-starts is tracked properly, especially focusing on JSON-based offsets.
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     source_table = None
     target_table = None
@@ -2957,6 +3198,7 @@ def test_oracle_cdc_offset_chain(sdc_builder,
                                                   'table': target_table_name,
                                                   'excludePattern': ''}],
                                          buffer_changes_locally=buffer_locally,
+                                         buffer_location=buffer_location,
                                          logminer_session_window='${5 * MINUTES}',
                                          maximum_transaction_length='${0 * SECONDS}',
                                          db_time_zone='UTC',
@@ -3076,14 +3318,21 @@ def test_oracle_cdc_offset_chain(sdc_builder,
 
 @sdc_min_version('4.2.0')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
                                                    sdc_executor,
-                                                   database):
+                                                   database,
+                                                   buffer_location):
     """
     Test to check that "nested" transactions are recovered properly if after processing the "enclosing" transaction, but
     before processing the "enclosed" transaction, and stopping the pipeline, then the "enclosed" transaction is
     "recovering" when the pipeline starts again.
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     target_table = None
 
@@ -3119,7 +3368,7 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
                                          dictionary_source='DICT_FROM_ONLINE_CATALOG',
                                          disable_continuous_mine=True,
                                          buffer_changes_locally=True,
-                                         buffer_location='IN_MEMORY',
+                                         buffer_location=buffer_location,
                                          discard_old_uncommitted_transactions=False,
                                          parsing_thread_pool_size=1,
                                          parse_sql_query=True,
@@ -3238,14 +3487,22 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
         if target_table is not None:
             target_table.drop(database.engine)
 
+
 @sdc_min_version('5.0.0')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
                                                 sdc_executor,
-                                                database):
+                                                database,
+                                                buffer_location):
     """
     Test to check all headers for primary keys are present in the output records.
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     source_table = None
     target_table = None
@@ -3334,6 +3591,7 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
         oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
                                          tables=[{"schema": database.username.upper(), "table": table_name, "excludePattern": ""}],
                                          buffer_changes_locally=True,
+                                         buffer_location=buffer_location,
                                          logminer_session_window="${2 * MINUTES}",
                                          maximum_transaction_length="${1 * MINUTES}",
                                          db_time_zone="UTC",
@@ -3444,12 +3702,19 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
 
 @sdc_min_version('5.0.0')
 @database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
                                                         sdc_executor,
-                                                        database):
+                                                        database,
+                                                        buffer_location):
     """
     Test to check all headers for primary keys metadata are present in the output records.
     """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
 
     table = None
     pipeline = None
@@ -3539,6 +3804,7 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
                                                   "table": table_name,
                                                   "excludePattern": ""}],
                                          buffer_changes_locally=True,
+                                         buffer_location=buffer_location,
                                          logminer_session_window="${5 * MINUTES}",
                                          maximum_transaction_length="${2 * MINUTES}",
                                          db_time_zone="UTC",
@@ -3641,8 +3907,15 @@ def test_oracle_cdc_client_read_timestamp_with_local_timezone(sdc_builder, sdc_e
         connection.execute(f"DROP TABLE {table_name}")
 
 
-def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_builder, buffer_locally,
-                                  src_table_name=None, batch_size=BATCH_SIZE, **kwargs):
+def _get_oracle_cdc_client_origin(connection,
+                                  database,
+                                  sdc_builder,
+                                  pipeline_builder,
+                                  buffer_locally,
+                                  buffer_location,
+                                  src_table_name=None,
+                                  batch_size=BATCH_SIZE,
+                                  **kwargs):
     kwargs.setdefault('dictionary_source', 'DICT_FROM_ONLINE_CATALOG')
     kwargs.setdefault('logminer_session_window', '${10 * MINUTES}')
     kwargs.setdefault('db_time_zone', 'UTC')
@@ -3677,6 +3950,7 @@ def _get_oracle_cdc_client_origin(connection, database, sdc_builder, pipeline_bu
     oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
 
     return oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
+                                            buffer_location=buffer_location,
                                             max_batch_size_in_records=batch_size,
                                             **kwargs)
 
