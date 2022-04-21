@@ -488,6 +488,7 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_iteration)
 
             records = wiretap.output_records
+            sdc_executor.stop_pipeline(pipeline)
 
             # We should get the right number of records
             assert len(records) == records_per_iteration
