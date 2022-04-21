@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import pytest
+import time
 from datetime import datetime
 from decimal import Decimal
 
@@ -1546,6 +1547,81 @@ def test_field_type_converter_source_empty_ignore_by_field(sdc_builder, sdc_exec
 
     assert output[0].field['value'].type == 'STRING'
     assert output[0].field['value'].value == ''
+
+
+@sdc_min_version('5.1.0')
+def test_field_type_converter_unix_timestamp(sdc_builder, sdc_executor):
+    """
+    Test the Field Type Converter can convert Unix Timestamp values to dates.
+
+    This test creates a Raw Data -> Field Type Converter -> Wiretap pipeline. The raw data will contain a Unix Timestamp
+    stored in seconds and milliseconds, written as a number and as a String, each of which the Converter shall transform
+    into a Date. The test asserts that these dates correspond to the initial Unix Timestamp.
+    """
+    timestamp_in_milliseconds = int(time.time() * 1000)
+    timestamp_in_seconds = int(timestamp_in_milliseconds / 1000)
+
+    raw_data = json.dumps([
+        {
+            'timestamp_in_milliseconds': timestamp_in_milliseconds,
+            'string_timestamp_in_milliseconds': str(timestamp_in_milliseconds),
+            'timestamp_in_seconds': timestamp_in_seconds,
+            'string_timestamp_in_seconds': str(timestamp_in_seconds)
+        }
+    ])
+    field_type_converter_configs = [
+        {
+            'fields': [
+                '/timestamp_in_milliseconds',
+                '/string_timestamp_in_milliseconds'
+            ],
+            'targetType': 'DATETIME',
+            'dateFormat': 'UNIX_TIMESTAMP_IN_MILLISECONDS'
+        },
+        {
+            'fields': [
+                '/timestamp_in_seconds',
+                '/string_timestamp_in_seconds'
+            ],
+            'targetType': 'DATETIME',
+            'dateFormat': 'UNIX_TIMESTAMP_IN_SECONDS'
+        }
+    ]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='JSON',
+        json_content='ARRAY_OBJECTS',
+        raw_data=raw_data,
+        stop_after_first_batch=True
+    )
+    field_type_converter_fields = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter_fields.set_attributes(
+        conversion_method='BY_FIELD',
+        field_type_converter_configs=field_type_converter_configs
+    )
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_type_converter_fields >> wiretap.destination
+    pipeline = pipeline_builder.build('Field Type Converter unix timestamp to date pipeline')
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    # assert the fields coming out of the Field Type Converter
+    field_output = wiretap.output_records
+    expected_datetime_for_milliseconds = datetime.utcfromtimestamp(timestamp_in_milliseconds / 1000.0)
+    expected_datetime_for_seconds = datetime.utcfromtimestamp(timestamp_in_seconds)
+    final_fields_and_values = {
+        'timestamp_in_milliseconds': expected_datetime_for_milliseconds,
+        'string_timestamp_in_milliseconds': expected_datetime_for_milliseconds,
+        'timestamp_in_seconds': expected_datetime_for_seconds,
+        'string_timestamp_in_seconds': expected_datetime_for_seconds
+    }
+
+    for field, value in final_fields_and_values.items():
+        assert field_output[0].field[field].type == 'DATETIME'
+        assert field_output[0].field[field] == value
 
 
 def test_field_zip(sdc_builder, sdc_executor):
