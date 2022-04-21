@@ -2824,6 +2824,10 @@ def test_logminer_session_switch(sdc_builder, sdc_executor, database, buffer_loc
 
     table_name = f'STF_{get_random_string(string.ascii_uppercase)}'
     connection = database.engine.connect()
+
+    if dictionary_source == 'DICT_FROM_REDO_LOGS':
+        _dump_dictionary_to_log(connection)
+
     txn1_data = [1, 2, 3, 4, 5]
     txn2_data = [11, 12, 13, 14, 15]
     session_window_secs = 10
