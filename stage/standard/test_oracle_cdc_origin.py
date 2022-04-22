@@ -167,12 +167,36 @@ def test_object_names_tables(sdc_builder, sdc_executor, database, keep_data, buf
             connection.execute(f'INSERT INTO "{table_name}" VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
-        sdc_executor.stop_pipeline(pipeline)
+
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_retries = 0
+        wiretap_output_records_control_length = num_records
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            logger.info(
+                f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+            logger.info(
+                f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        assert len(wiretap_output_records) == wiretap_output_records_control_length
 
         output_values = [rec.field['ID'].value for rec in wiretap.output_records]
+
+        assert len(output_values) == wiretap_output_records_control_length
+
         assert input_values == output_values
 
     finally:
+        try:
+            sdc_executor.stop_pipeline(pipeline)
+        except:
+            pass
+
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
             connection.execute(f'DROP TABLE "{table_name}"')
@@ -232,10 +256,30 @@ def test_object_names_columns(sdc_builder, sdc_executor, database, keep_data, bu
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
 
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_retries = 0
+        wiretap_output_records_control_length = num_records
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            logger.info(f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+            logger.info(f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        assert len(wiretap_output_records) == wiretap_output_records_control_length
+
         sorted_records = sorted(wiretap.output_records,
                          key=lambda record: (record.header.values["oracle.cdc.scn"],
                                              record.header.values['oracle.cdc.sequence.internal']))
+
+        assert len(sorted_records) == wiretap_output_records_control_length
+
         output_values = [record.field[column_name].value for record in sorted_records]
+
+        assert len(output_values) == wiretap_output_records_control_length
 
         assert input_values == output_values
 
