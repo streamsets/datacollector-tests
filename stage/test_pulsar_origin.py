@@ -15,9 +15,15 @@
 import json
 import logging
 import string
+import pytest
 
+from pulsar import schema
+import xml.etree.ElementTree as ET
 from streamsets.testframework.markers import pulsar, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+
+from .utils.utils_pulsar import enforce_schema_validation_for_pulsar_topic, disable_auto_update_schema, \
+    create_topic_with_schema, set_schema_validation_enforced, enable_auto_update_schema, json_to_avro
 
 logger = logging.getLogger(__name__)
 
@@ -737,3 +743,135 @@ def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar):
         producer.close()
         client.close()
         admin.delete_topic(producer.topic())
+
+
+class ComplexSchemaClass(schema.Record):
+    number = schema.Integer()
+    topic = schema.String()
+
+    def __init__(self, number, topic):
+        self.number = number
+        self.topic = topic
+
+@pulsar
+@pytest.mark.parametrize("data_format, schema_info, message_data", [
+    (
+            "TEXT",
+            {
+                "type": "STRING",
+                "schema": "",
+                "properties": {}
+            },
+            "Test string"
+    ),
+    (
+            "AVRO",
+            {
+                "type": "AVRO",
+                "schema": '{\"type\":\"record\",\"name\":\"schema\",\"fields\":'
+                          '[{\"name\":\"number\",\"type\":[\"null\", \"int\"]},'
+                          '{\"name\":\"topic\",\"type\":[\"null\", \"string\"]}]}',
+                "properties": {}
+             },
+            # This must contains values for the fields in the class ComplexSchemaClass. This is because we use this
+            # class instances to push messages to Pulsar. This is how the pulsar-client does work.
+            {"number": 10, "topic": "some_topic"}
+    ),
+    (
+            "JSON",
+            {
+                "type": "JSON",
+                "schema": '{\"type\":\"record\",\"name\":\"schema\",\"fields\":'
+                          '[{\"name\":\"number\",\"type\":[\"null\", \"int\"]},'
+                          '{\"name\":\"topic\",\"type\":[\"null\", \"string\"]}]}',
+                "properties": {}
+            },
+            # This must contains values for the fields in the class ComplexSchemaClass. This is because we use this
+            # class instances to push messages to Pulsar. This is how the pulsar-client does work.
+            {"number": 10, "topic": "some_topic"}
+    ),
+    (
+            "XML",
+            {
+                "type": "STRING",
+                "schema": "",
+                "properties": {}
+            },
+            "<record><name>Fran</name><age>32</age></record>"
+    ),
+])
+def test_pulsar_consumer_schemas(sdc_builder, sdc_executor, pulsar, data_format, schema_info, message_data):
+    topic_name = get_random_string()
+
+    builder = sdc_builder.get_pipeline_builder()
+    pulsar_consumer = builder.add_stage('Pulsar Consumer')
+    pulsar_consumer.set_attributes(subscription_name=get_random_string(),
+                                   consumer_name=get_random_string(),
+                                   topic=topic_name,
+                                   schema="USER_SCHEMA",
+                                   schema_info=json.dumps(schema_info),
+                                   data_format=data_format,
+                                   max_batch_size_in_records=1,
+                                   initial_offset='EARLIEST')
+    if schema_info["type"] == "AVRO":
+        pulsar_consumer.set_attributes(avro_schema_location="INLINE",
+                                       avro_schema=schema_info["schema"])
+    wiretap = builder.add_wiretap()
+
+    pulsar_consumer >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(pulsar)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Prepare Pulsar
+    if schema_info["type"] == "STRING":
+        pulsar_schema = schema.StringSchema()
+    elif schema_info["type"] == "AVRO":
+        pulsar_schema = schema.AvroSchema(ComplexSchemaClass)
+    elif schema_info["type"] == "JSON":
+        pulsar_schema = schema.JsonSchema(ComplexSchemaClass)
+
+    set_schema_validation_enforced(pulsar.admin, False)
+    enable_auto_update_schema(pulsar.admin)
+
+    create_topic_with_schema(pulsar.admin, topic_name, schema_info)
+    producer = pulsar.client.create_producer(topic_name, schema=pulsar_schema)
+
+    # To be sure the pipeline does not upload the schema and so respect the schema
+    # we set for the topic
+    set_schema_validation_enforced(pulsar.admin)
+    disable_auto_update_schema(pulsar.admin)
+
+    try:
+        if schema_info["type"] == "STRING":
+            producer.send(message_data)
+        else:  # Valid for complex schemas AVRO and JSON
+            producer.send(ComplexSchemaClass(**message_data))
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = [record for record in wiretap.output_records]
+        assert len(output_records) == 1
+        assert topic_name in str(wiretap.output_records[0].header.values)
+
+        if data_format == "TEXT":
+            assert output_records[0].field["text"] == message_data
+        elif data_format == "AVRO":  # Valid for complex schemas AVRO and JSON
+            for k, v in message_data.items():
+                assert k in output_records[0].field
+                assert output_records[0].field[k] == v
+        elif data_format == "JSON":
+            assert output_records[0].field == message_data
+        elif data_format == "XML":
+            t = ET.ElementTree(ET.fromstring(message_data)).getroot()
+            # Won't work for xml with arbitrary nested levels even though this is enough for this test purposes
+            xml_message_data = {t.tag: {c.tag: [{"value": c.text}] for c in t.getchildren()}}
+            assert output_records[0].field == xml_message_data
+        else:
+            raise Exception(f"Final assertions are not written for the schema type {schema_info['type']}")
+    finally:
+        producer.close()
+        pulsar.admin.delete_topic(producer.topic())
+        sdc_executor.remove_pipeline(pipeline)
