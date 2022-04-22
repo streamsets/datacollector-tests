@@ -23,9 +23,15 @@ from streamsets.testframework.utils import get_random_string
 
 from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
                                       get_ids, STANDARD_FIELDS, set_field_permissions,
-                                      OBJECT_NAMES, compare_values)
+                                      OBJECT_NAMES, compare_values, set_up_random, assign_hard_delete,
+                                      revoke_hard_delete)
 
 logger = logging.getLogger(__name__)
+
+@pytest.fixture(autouse=True)
+def _set_up_random(salesforce):
+    set_up_random(salesforce)
+
 
 LONG_TEXT_MIN_LENGTH = 256
 
@@ -202,6 +208,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     object_name = get_random_string(string.ascii_lowercase, 20)
 
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     # Build pipeline
@@ -280,6 +290,8 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
         assert len(result['records']) == 1
         assert compare_values(expected, result['records'][0][STANDARD_FIELDS['fullName']], database_type['type'])
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, read_ids)
         finally:
@@ -297,6 +309,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
 @pytest.mark.parametrize('test_name,object_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
 def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_name, field_name):
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
@@ -352,6 +368,8 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         assert len(result['records']) == 1
         assert result['records'][0][f'{field_name}__c'] == 1
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, read_ids)
         finally:
@@ -373,6 +391,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     batches = 10
 
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
@@ -440,6 +462,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
 
         assert data == [i for i in range(0, records)]
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, read_ids)
         finally:

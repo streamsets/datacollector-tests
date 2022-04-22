@@ -21,9 +21,15 @@ from streamsets.testframework.utils import get_random_string
 
 from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
                                       check_ids, get_ids, DATA_TYPES, set_field_permissions,
-                                      STANDARD_FIELDS, compare_values)
+                                      STANDARD_FIELDS, compare_values, set_up_random, assign_hard_delete,
+                                      revoke_hard_delete)
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(autouse=True)
+def _set_up_random(salesforce):
+    set_up_random(salesforce)
 
 
 @salesforce
@@ -33,6 +39,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     object_name = get_random_string(string.ascii_lowercase, 20)
 
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     record_ids = []
@@ -130,6 +140,8 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
                                   null_record.field[f'{STANDARD_FIELDS["label"]}']._data['value'],
                                   type_data['metadata']['type'])
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, record_ids, f'{object_name}__c')
         finally:
@@ -159,6 +171,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     object_name = get_random_string(string.ascii_lowercase, 20)
 
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
@@ -247,6 +263,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
             expected_number += 1
 
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, record_ids, f'{object_name}__c')
         finally:

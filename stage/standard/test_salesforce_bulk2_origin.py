@@ -20,9 +20,15 @@ from streamsets.testframework.utils import get_random_string
 
 from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
                                       check_ids, get_ids, DATA_TYPES, STANDARD_FIELDS, set_field_permissions,
-                                      compare_values, OBJECT_NAMES)
+                                      compare_values, OBJECT_NAMES, assign_hard_delete, revoke_hard_delete,
+                                      set_up_random)
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(autouse=True)
+def _set_up_random(salesforce):
+    set_up_random(salesforce)
 
 
 @salesforce
@@ -32,6 +38,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     object_name = get_random_string(string.ascii_lowercase, 20)
 
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
@@ -128,6 +138,8 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
                                   type_data['metadata']['type'])
 
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, record_ids, f'{object_name}__c')
         finally:
@@ -145,6 +157,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
 @pytest.mark.parametrize('test_name,object_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
 def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_name, field_name):
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
@@ -217,6 +233,8 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         assert wiretap.output_records[0].field[f'{field_name}__c'] == 1
 
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, [record_id], f'{object_name}__c')
         finally:
@@ -239,6 +257,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
     object_name = get_random_string(string.ascii_lowercase, 20)
 
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
@@ -300,6 +322,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
             expected_number += 1
 
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, record_ids, f'{object_name}__c')
         finally:
@@ -318,6 +342,10 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
     object_name = get_random_string(string.ascii_lowercase, 20)
 
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
@@ -402,6 +430,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
         assert len(wiretap.output_records) == 1
         assert wiretap.output_records[0].header.values['sdc.event.type'] == 'no-more-data'
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, record_ids, f'{object_name}__c')
         finally:
@@ -428,6 +458,10 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
     object_name = get_random_string(string.ascii_lowercase, 20)
 
     client = salesforce.client
+
+    # Create a hard delete permission file for this client
+    assign_hard_delete(client)
+
     mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
@@ -488,6 +522,8 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
                 expected_number += 1
 
     finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         try:
             clean_up(sdc_executor, pipeline, client, record_ids, f'{object_name}__c')
         finally:
