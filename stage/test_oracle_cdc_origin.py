@@ -936,7 +936,10 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         change_count = inserts.change_count
 
         # Preview: 01
-        preview = sdc_executor.run_pipeline_preview(pipeline, batches=len(rows), batch_size=1, timeout=30000).preview
+        preview = sdc_executor.run_pipeline_preview(pipeline,
+                                                    batches=len(rows),
+                                                    batch_size=1,
+                                                    timeout=300000).preview
         assert preview is not None, 'Got no preview instance in preview mode 1'
         assert preview.issues.issues_count == 0, 'Unexpected issues in preview mode 1'
         preview_records = [batch[oracle_cdc_client.instance_name].output[0] for batch in preview.preview_batches]
@@ -1009,7 +1012,10 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         wiretap.reset()
 
         # Preview: 02
-        preview = sdc_executor.run_pipeline_preview(pipeline, batches=len(rows), batch_size=1, timeout=30000).preview
+        preview = sdc_executor.run_pipeline_preview(pipeline,
+                                                    batches=len(rows),
+                                                    batch_size=1,
+                                                    timeout=300000).preview
         assert preview is not None, 'Got no preview instance in preview mode 2'
         assert preview.issues.issues_count == 0, 'Unexpected issues in preview mode 2'
         preview_records = [batch[oracle_cdc_client.instance_name].output[0] for batch in preview.preview_batches]
@@ -1057,7 +1063,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         preview_command = sdc_executor.run_pipeline_preview(pipeline,
                                                             batches=len(merged_rows),
                                                             batch_size=1,
-                                                            timeout=30000)
+                                                            timeout=300000)
         preview = preview_command.preview
         assert preview is not None, 'Got no preview instance in preview mode 3'
         assert preview.issues.issues_count == 0, 'Unexpected issues in preview mode 3'
@@ -1134,7 +1140,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         preview_command = sdc_executor.run_pipeline_preview(pipeline,
                                                             batches=len(merged_rows),
                                                             batch_size=1,
-                                                            timeout=30000)
+                                                            timeout=300000)
         preview = preview_command.preview
         wiretap.reset()
 
@@ -1765,7 +1771,7 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
                                 key=lambda record: (record.header.values["oracle.cdc.scn"],
                                                     record.header.values['oracle.cdc.sequence.internal']))
 
-        assert len(sorted_records) == wiretap_output_records_control_length
+        assert len(output_records) == wiretap_output_records_control_length
 
         assert len(output_records) == 5
         assert output_records[0].field[PRIMARY_KEY] == 1
@@ -3302,8 +3308,6 @@ def test_oracle_cdc_offset_chain(sdc_builder,
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Origin Offset Testing Pipeline').configure_for_environment(database)
-
-        oracle_cdc_client.set_attributes(jdbc_connection_string='jdbc:oracle:thin:@192.168.1.235:1521/ORCLCDB')
 
         sdc_executor.add_pipeline(pipeline)
 
