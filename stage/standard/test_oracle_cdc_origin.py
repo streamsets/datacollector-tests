@@ -168,6 +168,8 @@ def test_object_names_tables(sdc_builder, sdc_executor, database, keep_data, buf
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
 
+        sleep(30)
+
         wiretap_output_records_max_retries = 12
         wiretap_output_records_max_wait = 10
         wiretap_output_records_retries = 0
@@ -255,6 +257,8 @@ def test_object_names_columns(sdc_builder, sdc_executor, database, keep_data, bu
             connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records)
+
+        sleep(30)
 
         wiretap_output_records_max_retries = 12
         wiretap_output_records_max_wait = 10

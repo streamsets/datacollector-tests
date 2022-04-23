@@ -969,6 +969,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         # Run: 01
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows))
 
+        sleep(30)
+
         wiretap_output_records_max_retries = 12
         wiretap_output_records_max_wait = 10
         wiretap_output_records_retries = 0
@@ -1093,6 +1095,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
 
         # Run 02
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(new_rows))
+
+        sleep(30)
 
         wiretap_output_records_max_retries = 12
         wiretap_output_records_max_wait = 10
@@ -1354,6 +1358,8 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
         sdc_executor.add_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows))
+
+        sleep(30)
 
         wiretap_output_records_max_retries = 12
         wiretap_output_records_max_wait = 10
@@ -1716,6 +1722,7 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
                                                           src_table_name=src_table_pattern,
                                                           initial_change='SCN',
                                                           start_scn=start_scn)
+
         wiretap = pipeline_builder.add_wiretap()
         lines = [
             f"INSERT INTO {src_table_name} VALUES (1, 'MORDOR')",
@@ -1749,29 +1756,22 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(5)
 
-        wiretap_output_records_max_retries = 12
-        wiretap_output_records_max_wait = 10
-        wiretap_output_records_retries = 0
-        wiretap_output_records_control_length = 5
-        wiretap_output_records = wiretap.output_records
-        while len(wiretap_output_records) != wiretap_output_records_control_length and \
-                wiretap_output_records_retries < wiretap_output_records_max_retries:
-            wiretap_output_records_retries = wiretap_output_records_retries + 1
-            logger.info(
-                f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
-            logger.info(
-                f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
-            sleep(wiretap_output_records_max_wait)
-            wiretap_output_records = wiretap.output_records
-
-        assert len(wiretap_output_records) == wiretap_output_records_control_length
+        assert len(wiretap.output_records) == 5
 
         # assert all the data captured have the same raw_data
         output_records = sorted(wiretap.output_records,
                                 key=lambda record: (record.header.values["oracle.cdc.scn"],
                                                     record.header.values['oracle.cdc.sequence.internal']))
 
-        assert len(output_records) == wiretap_output_records_control_length
+        for record in wiretap.output_records:
+            logger.info(f'Record :: '
+                        f'{record.header.values["oracle.cdc.scn"]} - '                        
+                        f'{record.header.values["oracle.cdc.sequence.internal"]} - '
+                        f'{record.header.values["oracle.cdc.operation"]} - '
+                        f'{record.header.values["sdc.operation.type"]} - '
+                        f'{record.field[PRIMARY_KEY]}'
+                        f'{record.field[OTHER_COLUMN]}'
+                        f'{record}')
 
         assert len(output_records) == 5
         assert output_records[0].field[PRIMARY_KEY] == 1
