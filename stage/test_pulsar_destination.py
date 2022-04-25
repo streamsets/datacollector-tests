@@ -15,14 +15,16 @@
 import logging
 import string
 import json
+import requests
 import pytest
+import io
+import avro.schema
+import avro.io
 
 from pulsar import MessageId
 from streamsets.testframework.markers import pulsar, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from streamsets import sdk
-
-from .utils.utils_pulsar import enforce_schema_validation_for_pulsar_topic, disable_auto_update_schema, json_to_avro
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +111,8 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
 
     dev_raw_data_source >> pulsar_producer
     pipeline = builder.build(title='Pulsar Producer pipeline').configure_for_environment(pulsar)
-    enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
-    disable_auto_update_schema(pulsar.admin)
+    _enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
+    _disable_auto_update_schema(pulsar.admin)
 
     try:
         sdc_executor.add_pipeline(pipeline)
@@ -189,8 +191,8 @@ def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, inp
 
     dev_raw_data_source >> pulsar_producer
     pipeline = builder.build(title='Pulsar Producer pipeline').configure_for_environment(pulsar)
-    enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
-    disable_auto_update_schema(pulsar.admin)
+    _enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
+    _disable_auto_update_schema(pulsar.admin)
 
 
     try:
@@ -260,8 +262,8 @@ def test_pulsar_producer_schema_avro_processor(sdc_builder, sdc_executor, pulsar
     dev_raw_data_source >> schema_processor >> pulsar_producer
 
     pipeline = builder.build(title='Pulsar Producer pipeline').configure_for_environment(pulsar)
-    enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
-    disable_auto_update_schema(pulsar.admin)
+    _enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
+    _disable_auto_update_schema(pulsar.admin)
 
     try:
         sdc_executor.add_pipeline(pipeline)
@@ -285,7 +287,7 @@ def test_pulsar_producer_schema_avro_processor(sdc_builder, sdc_executor, pulsar
         number_generated_recors = history.latest.metrics.counter('stage.SchemaGenerator_01.outputRecords.counter').count
         if error_code is not None:
             # In this case if there is any schema related error, are record errors
-            # Because the schema is at record level
+            # Because the schema is at record level
             assert history.latest.metrics.counter('stage.PulsarProducer_01.errorRecords.counter').count == number_generated_recors
             assert msgs_sent_count == 0
         else:
@@ -327,8 +329,8 @@ def test_pulsar_producer_schema_auto_schema(sdc_builder, sdc_executor, pulsar, i
     dev_raw_data_source >> schema_processor >> pulsar_producer
 
     pipeline = builder.build(title='Pulsar Producer pipeline').configure_for_environment(pulsar)
-    enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
-    disable_auto_update_schema(pulsar.admin)
+    _enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
+    _disable_auto_update_schema(pulsar.admin)
 
     try:
         sdc_executor.add_pipeline(pipeline)
@@ -373,11 +375,11 @@ def test_pulsar_producer_schema_topic_in_record(sdc_builder, sdc_executor, pulsa
     topic1_name = get_random_string(string.ascii_letters, 10)
     topic2_name = get_random_string(string.ascii_letters, 10)
 
-    enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic1_name, topic1_schema_pulsar)
-    enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic2_name, topic2_schema_pulsar)
-    disable_auto_update_schema(pulsar.admin)
+    _enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic1_name, topic1_schema_pulsar)
+    _enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic2_name, topic2_schema_pulsar)
+    _disable_auto_update_schema(pulsar.admin)
 
-    # Creating the testing data
+    # Creating the testing data
     records_data_json = [
         {"name": "Anthony", "topic": topic1_name},
         {"number": 100, "topic": topic2_name},
@@ -385,8 +387,8 @@ def test_pulsar_producer_schema_topic_in_record(sdc_builder, sdc_executor, pulsa
         {"number": 150, "topic": topic2_name}
     ]
     records_raw_data = "\n".join([json.dumps(r) for r in records_data_json])
-    records_data_avro_topic1 = [json_to_avro(r, topic1_avro_schema) for r in records_data_json if r["topic"] == topic1_name]
-    records_data_avro_topic2 = [json_to_avro(r, topic2_avro_schema) for r in records_data_json if r["topic"] == topic2_name]
+    records_data_avro_topic1 = [_json_to_avro(r, topic1_avro_schema) for r in records_data_json if r["topic"] == topic1_name]
+    records_data_avro_topic2 = [_json_to_avro(r, topic2_avro_schema) for r in records_data_json if r["topic"] == topic2_name]
 
     # Creating the pipeline 
     builder = sdc_builder.get_pipeline_builder()
@@ -433,3 +435,37 @@ def test_pulsar_producer_schema_topic_in_record(sdc_builder, sdc_executor, pulsa
             client.close()
     finally:
         sdc_executor.remove_pipeline(pipeline)
+
+def _enforce_schema_validation_for_pulsar_topic(pulsar_admin_client, topic_name, topic_schema):
+    try:
+        pulsar_admin_client.put(f"persistent/public/default/{topic_name}")
+        pulsar_admin_client.session.headers = {'Content-type': 'application/json'}
+        pulsar_admin_client.post(f"schemas/public/default/{topic_name}/schema", data=topic_schema)
+        pulsar_admin_client.post(f"namespaces/public/default/schemaValidationEnforced", data=True)
+    except requests.exceptions.HTTPError as e:
+        # AFAIK there is no any way to check the pulsar server version so that we could know whether
+        # it is compatible with the feature we are testing. The indirect way I found
+        # up to now is to check out whether any of the API calls failed because of 404 or 405. In this
+        # case just skip the test.
+        if e.response.status_code in [404, 405]:
+            pytest.skip(f"Error trying to create Pulsar topic and enforce schema validation. Uncompatible Pulsar: {str(e)}")
+
+
+def _disable_auto_update_schema(pulsar_admin_client):
+    # For previous versions < 2.5.0: There is no the isAllowAutoUpdateSchema option so that If a schema passes 
+    # the schema compatibility check, Pulsar producer automatically updates this schema to the topic 
+    # it produces by default.
+    # https://pulsar.apache.org/docs/en/2.4.2/schema-manage/#schema-autoupdate
+    try:
+        pulsar_admin_client.post(f"namespaces/public/default/isAllowAutoUpdateSchema", data=False)
+        return True
+    except requests.exceptions.HTTPError as e:
+        logger.warning("API Call to set isAllowAutoUpdateSchema to False failed. Probably not supported.")
+        return False
+
+
+def _json_to_avro(json_data, avro_schema):
+    bytes_writer = io.BytesIO()
+    writer = avro.io.DatumWriter(avro.schema.Parse(avro_schema))
+    writer.write(json_data, avro.io.BinaryEncoder(bytes_writer))
+    return bytes_writer.getvalue()
