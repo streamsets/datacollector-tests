@@ -334,10 +334,35 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(change_count)
 
+        sleep(30)
+
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_retries = 0
+        wiretap_output_records_control_length = change_count
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            logger.info(
+                f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+            logger.info(
+                f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        assert len(wiretap_output_records) == wiretap_output_records_control_length
+
+        sorted_records = sorted(wiretap_output_records,
+                         key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                             record.header.values['oracle.cdc.sequence.internal']))
+
+        assert len(sorted_records) == wiretap_output_records_control_length
+
         row_index = 0
         op_index = 0
         # assert all the data captured have the same raw_data
-        for record in wiretap.output_records:
+        for record in sorted_records:
             assert row_index == int(record.field['ID'].value)
             assert rows[op_index]['NAME'] == record.field['NAME'].value
             assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
@@ -2509,11 +2534,36 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, buffe
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_records)
 
+        sleep(30)
+
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_retries = 0
+        wiretap_output_records_control_length = len(total_records)
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            logger.info(
+                f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+            logger.info(
+                f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        assert len(wiretap_output_records) == wiretap_output_records_control_length
+
+        sorted_records = sorted(wiretap_output_records,
+                                key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                                    record.header.values['oracle.cdc.sequence.internal']))
+
+        assert len(sorted_records) == wiretap_output_records_control_length
+
         check_table_name_token = check_table_name if case_sensitive else check_table_name.upper()
         mined_table_name_token = mined_table_name if case_sensitive else mined_table_name.upper()
 
-        q_check = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.table"] == check_table_name_token)
-        q_mined = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.table"] == mined_table_name_token)
+        q_check = sum(1 for record in sorted_records if record.header.values["oracle.cdc.table"] == check_table_name_token)
+        q_mined = sum(1 for record in sorted_records if record.header.values["oracle.cdc.table"] == mined_table_name_token)
 
         logger.info(f'Total for table {check_table_name}: {q_check}')
         logger.info(f'Total for table {mined_table_name}: {q_mined}')
@@ -3568,9 +3618,35 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
 
         pipeline_command = sdc_executor.start_pipeline(pipeline)
         pipeline_command.wait_for_pipeline_output_records_count(3 * number_of_rows_enclosing)
-        q_insert = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.operation"] == 'INSERT')
+
+        sleep(30)
+
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_retries = 0
+        wiretap_output_records_control_length = 3 * number_of_rows_enclosing
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            logger.info(
+                f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+            logger.info(
+                f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        assert len(wiretap_output_records) == wiretap_output_records_control_length
+
+        sorted_records = sorted(wiretap_output_records,
+                                key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                                    record.header.values['oracle.cdc.sequence.internal']))
+
+        assert len(sorted_records) == wiretap_output_records_control_length
+
+        q_insert = sum(1 for record in sorted_records if record.header.values["oracle.cdc.operation"] == 'INSERT')
         logger.info(f'Total INSERT\'s {q_insert}')
-        for record in wiretap.output_records:
+        for record in sorted_records:
             logger.info(f'{record.header.values["oracle.cdc.sequence.internal"]} - '
                         f'{record.header.values["oracle.cdc.operation"]} - '
                         f'{record.header.values["sdc.operation.type"]} - '
