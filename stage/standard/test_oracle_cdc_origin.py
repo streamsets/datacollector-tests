@@ -452,14 +452,14 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, buffer_location):
         for id, name, sport in sports_data:
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
 
-        sdc_pipeline_cmd.wait_for_pipeline_output_records_count(len(2 * sports_data), timeout_sec=420)
+        sdc_pipeline_cmd.wait_for_pipeline_output_records_count(len(2 * sports_data) + 2, timeout_sec=420)
 
         sleep(30)
 
         wiretap_output_records_max_retries = 12
         wiretap_output_records_max_wait = 10
         wiretap_output_records_retries = 0
-        wiretap_output_records_control_length = (len(2 * sports_data))
+        wiretap_output_records_control_length = (len(2 * sports_data) + 2)
         wiretap_output_records = wiretap.output_records
         while len(wiretap_output_records) != wiretap_output_records_control_length and \
                 wiretap_output_records_retries < wiretap_output_records_max_retries:
@@ -470,6 +470,9 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, buffer_location):
                 f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
             sleep(wiretap_output_records_max_wait)
             wiretap_output_records = wiretap.output_records
+
+        for record in wiretap_output_records:
+            logger.info(f'{record}')
 
         assert len(wiretap_output_records) == wiretap_output_records_control_length
 
@@ -529,7 +532,9 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data, buffer_lo
                                                    buffer_location=buffer_location,
                                                    src_table_name=table_name,
                                                    initial_change='SCN',
-                                                   start_scn=initial_scn)
+                                                   start_scn=initial_scn,
+                                                   logminer_session_window='${2 * MINUTES}',
+                                                   maximum_transaction_length='${1 * MINUTES}')
         wiretap = builder.add_wiretap()
         oracle_cdc >> wiretap.destination
         pipeline = builder.build().configure_for_environment(database)
@@ -549,9 +554,34 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data, buffer_lo
             sdc_executor.wait_for_pipeline_metric(
                 pipeline, 'input_record_count', records_per_iteration, timeout_sec=3600)
 
-            sdc_executor.stop_pipeline(pipeline)
+            sdc_executor.stop_pipeline(pipeline, Force=False)
 
-            output_values = [rec.field['ID'].value for rec in wiretap.output_records]
+            sleep(30)
+
+            wiretap_output_records_max_retries = 12
+            wiretap_output_records_max_wait = 10
+            wiretap_output_records_retries = 0
+            wiretap_output_records_control_length = records_per_iteration
+            wiretap_output_records = wiretap.output_records
+            while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                    wiretap_output_records_retries < wiretap_output_records_max_retries:
+                wiretap_output_records_retries = wiretap_output_records_retries + 1
+                logger.info(
+                    f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+                logger.info(
+                    f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+                sleep(wiretap_output_records_max_wait)
+                wiretap_output_records = wiretap.output_records
+
+            assert len(wiretap_output_records) == wiretap_output_records_control_length
+
+            sorted_records = sorted(wiretap_output_records,
+                                    key=lambda record: (record.header.values["oracle.cdc.scn"],
+                                                        record.header.values['oracle.cdc.sequence.internal']))
+
+            assert len(sorted_records) == wiretap_output_records_control_length
+
+            output_values = [rec.field['ID'].value for rec in sorted_records]
             assert input_values == output_values
 
     finally:
