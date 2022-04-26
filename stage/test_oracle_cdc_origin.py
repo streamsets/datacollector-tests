@@ -2539,7 +2539,7 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, buffe
         wiretap_output_records_max_retries = 12
         wiretap_output_records_max_wait = 10
         wiretap_output_records_retries = 0
-        wiretap_output_records_control_length = len(total_records)
+        wiretap_output_records_control_length = total_records
         wiretap_output_records = wiretap.output_records
         while len(wiretap_output_records) != wiretap_output_records_control_length and \
                 wiretap_output_records_retries < wiretap_output_records_max_retries:

@@ -453,21 +453,44 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, buffer_location):
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
 
         sdc_pipeline_cmd.wait_for_pipeline_output_records_count(len(2 * sports_data), timeout_sec=420)
-        sdc_executor.stop_pipeline(pipeline)
+
+        sleep(30)
+
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_retries = 0
+        wiretap_output_records_control_length = (len(2 * sports_data))
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            logger.info(
+                f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+            logger.info(
+                f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        assert len(wiretap_output_records) == wiretap_output_records_control_length
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],
                        event.field)
-                      for event in wiretap.output_records]
+                      for event in wiretap_output_records]
 
         assert len(sdc_events) == len(expected_events)
         for _event in sdc_events:
             logger.info(f'Read event: {_event}')
 
         for _event in sdc_events:
-            assert _event in expected_events[0:len(expected_events)], 'fMissing event: {_event}'
+            assert _event in expected_events[0:len(expected_events)], f'Missing event: {_event}'
 
     finally:
+        try:
+            sdc_executor.stop_pipeline(pipeline)
+        except:
+            pass
+
         logger.info('Dropping table %s in %s database ...', sports_table, database.type)
         connection.execute(f'DROP TABLE {sports_table}')
 
