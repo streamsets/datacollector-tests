@@ -463,9 +463,12 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
                           replication_slot=replication_slot_name
                           )
 
+    delay = builder.add_stage('Delay')
+    delay.set_attributes(delay_between_batches=5000)   # 5 seconds
+
     wiretap = builder.add_wiretap()
 
-    origin >> wiretap.destination
+    origin >> delay >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
@@ -485,7 +488,7 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
                            iteration * records_per_iteration + 1 + records_per_iteration):
                 connection.execute(table.insert(), {'id': n})
 
-            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_iteration)
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_iteration, timeout_sec=60)
 
             records = wiretap.output_records
             sdc_executor.stop_pipeline(pipeline)
