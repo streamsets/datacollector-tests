@@ -206,6 +206,77 @@ def test_excel_with_empty_columns(sdc_builder, sdc_executor):
         sdc_executor.execute_shell(f'rm -r {directory_out}')
 
 
+@sdc_min_version('5.1.0')
+def test_excel_with_duplicated_headers(sdc_builder, sdc_executor):
+    """
+    Tests that the Excel parser throws a Stage Error if the "With Header Line" option is set and there is at least a
+    couple of columns that have the same header. After throwing the Stage Error, the processing shall continue: the
+    following rows are read and the values in the repeated columns are overwritten with the latest values.
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    try:
+        # Create the Directory
+        files_directory = os.path.join('/tmp', get_random_string())
+        file_name = f'{get_random_string()}.xls'
+        file_path = os.path.join(files_directory, file_name)
+
+        # Create the Excel file with a repeated column name
+        sdc_executor.execute_shell(f'mkdir {files_directory}')
+        file_excel = io.BytesIO()
+        workbook = Workbook(encoding='utf-8')
+        sheet = workbook.add_sheet('sheet1')
+
+        sheet.write(0, 0, 'Col1')
+        sheet.write(0, 1, 'Col2')
+        sheet.write(0, 2, 'Col1')
+
+        sheet.write(1, 0, '1')
+        sheet.write(1, 1, '2')
+        sheet.write(1, 2, '3')
+
+        workbook.save(file_excel)
+        file_writer(sdc_executor, file_path, file_excel.getvalue())
+
+        # Create a pipeline Directory -> Wiretap
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(
+            excel_header_option='WITH_HEADER',
+            data_format='EXCEL',
+            files_directory=files_directory,
+            file_name_pattern='*.xls'
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        # Check the record has been read
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field['Col2'] == '2'
+        assert records[0].field['Col1'] == '3'
+
+        # Check the stage error has been thrown
+        stage_errors = sdc_executor.get_stage_errors(pipeline, directory)
+        assert len(stage_errors) == 1
+        assert stage_errors[0].error_code == 'EXCEL_PARSER_07'
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        if files_directory is not None:
+            logger.info('Delete directory in %s...', files_directory)
+            sdc_executor.execute_shell(f'rm -r {files_directory}')
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
 def file_writer(sdc_executor, file_path, file_contents):
     encoding = 'utf8'
     FILE_WRITER_SCRIPT_BINARY = """

@@ -893,6 +893,62 @@ def test_resume_offset(sdc_builder, sdc_executor, csv_parser):
     assert records[0].field['B'] == "8"
 
 
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('csv_parser', ALL_PARSERS)
+def test_duplicated_headers(sdc_builder, sdc_executor, csv_parser):
+    """
+    Tests that the CSV parser throws a Stage Error if the "With Header Line" option is set and there is at least a
+    couple of columns that have the same header. After throwing the Stage Error, the processing shall continue: the
+    following rows are read and the values in the repeated columns are overwritten with the latest values.
+    """
+    data = f"Col1,Col2,Col1\n" \
+           f"1,2,3\n"
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    try:
+        work_dir = _prepare_work_dir(sdc_executor, data)
+
+        # Create a Pipeline Directory -> Wiretap
+        directory = builder.add_stage('Directory', type='origin')
+        directory.set_attributes(
+            file_name_pattern='*.csv',
+            files_directory=work_dir,
+            data_format='DELIMITED',
+            csv_parser=csv_parser,
+            header_line='WITH_HEADER'
+        )
+
+        wiretap = builder.add_wiretap()
+        directory >> wiretap.destination
+
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        # Check the record has been read
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field['Col2'] == "2"
+        assert records[0].field['Col1'] == "3"
+
+        # Check the stage error has been thrown
+        stage_errors = sdc_executor.get_stage_errors(pipeline, directory)
+        assert len(stage_errors) == 1
+        assert stage_errors[0].error_code == 'DELIMITED_PARSER_02'
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        if work_dir is not None:
+            logger.info('Delete directory in %s...', work_dir)
+            sdc_executor.execute_shell(f'rm -r {work_dir}')
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
 def _prepare_work_dir(sdc_executor, data):
     """Create work directory, insert test data, return the work directory."""
     work_dir = os.path.join(tempfile.gettempdir(), get_random_string())
