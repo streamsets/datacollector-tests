@@ -20,9 +20,9 @@ from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
-                                      check_ids, get_ids, DATA_TYPES, set_field_permissions,
-                                      STANDARD_FIELDS, compare_values, set_up_random, assign_hard_delete,
-                                      revoke_hard_delete)
+                                      check_ids, get_ids, DATA_TYPES,
+                                      compare_values, set_up_random, assign_hard_delete,
+                                      revoke_hard_delete, add_custom_field_to_contact, delete_custom_field_from_contact)
 
 logger = logging.getLogger(__name__)
 
@@ -36,58 +36,61 @@ def _set_up_random(salesforce):
 @sdc_min_version('5.0.0')
 @pytest.mark.parametrize('type_data', DATA_TYPES, ids=[datatype['metadata']['type'] for datatype in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
-    object_name = get_random_string(string.ascii_lowercase, 20)
+    test_name = 'sale_bulk2_proc_data_types_' + type_data['metadata']['type'] + '_' + \
+                get_random_string(string.ascii_lowercase, 10)
 
     client = salesforce.client
 
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
 
-    mdapi = client.mdapi
+    metadata_client = salesforce.metadata_client
+
+    custom_field_name = 'testField__c'
+    custom_field_label = 'testField'
+    custom_field_type = type_data['metadata']['type']
+
+    parameters = ''
+    for param in type_data['metadata']:
+        if (param != 'type'):
+            parameters += '<' + param + '>'
+            parameters += str(type_data['metadata'][param])
+            parameters += '</' + param + '>'
+
+    fields = ",".join(type_data['expected_value'].keys()) \
+        if type_data.get('compound_field') else custom_field_name
+
+    uses_value_set = (custom_field_type == 'Picklist') or (custom_field_type == 'MultiselectPicklist')
+    if custom_field_type == 'Picklist':
+        parameters = ''
+    elif custom_field_type == 'MultiselectPicklist':
+        parameters = '<visibleLines>3</visibleLines>'
+
+    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
+                                                    custom_field_type, parameters, uses_value_set)
 
     record_ids = []
 
     try:
-        custom_object = mdapi.CustomObject(
-            fullName=f'{object_name}__c',
-            label=f'{object_name}',
-            pluralLabel=f'{object_name}',
-            nameField=mdapi.CustomField(
-                label='Name',
-                type=mdapi.FieldType('Text')
-            ),
-            fields=[mdapi.CustomField(
-                # This syntax combines the standard fields we
-                # need for every type of custom field with the
-                # fields specific to this data type
-                **{**STANDARD_FIELDS, **type_data['metadata']}
-            )],
-            deploymentStatus=mdapi.DeploymentStatus('Deployed'),
-            sharingModel=mdapi.SharingModel('Read')
-        )
-        logger.info(f'Creating object {object_name} in Salesforce ...')
-        mdapi.CustomObject.create(custom_object)
-
-        set_field_permissions(mdapi, object_name, f'{STANDARD_FIELDS["label"]}')
-
         logger.info('Adding two records into Salesforce ...')
         record = {
-            'Name': '1',
+            'FirstName': '1',
+            'LastName': test_name,
         }
         # Not every data type wants data - e.g. auto number field
         if type_data.get('data_to_insert'):
             if type_data.get('compound_field'):
                 record.update(type_data['data_to_insert'])
             else:
-                record[f'{STANDARD_FIELDS["fullName"]}'] = type_data['data_to_insert']
+                record[fields] = type_data['data_to_insert']
 
-        object_type = getattr(client, f'{object_name}__c')
-        result = object_type.create(record)
+        result = client.Contact.create(record)
         record_ids.append({'Id': result['id']})
 
         # And a record without a value for the field
-        result = object_type.create({
-            'Name': '2'
+        result = client.Contact.create({
+            'FirstName': '2',
+            'LastName': test_name
         })
         record_ids.append({'Id': result['id']})
 
@@ -99,13 +102,12 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
         origin.stop_after_first_batch = True
 
         lookup = builder.add_stage('Salesforce Bulk API 2.0 Lookup')
-        fields = ",".join(type_data['expected_value'].keys()) \
-            if type_data.get('compound_field') else f"{STANDARD_FIELDS['fullName']}"
-        lookup.soql_query = (f"SELECT {fields} FROM {object_name}__c "
-                             "WHERE Name = '${record:value(\"/id\")}'")
+        lookup.soql_query = (f"SELECT {fields} FROM Contact "
+                             "WHERE FirstName = '${record:value(\"/id\")}'"
+                             f"AND LastName = '{test_name}' ")
         lookup.field_mappings = [dict(dataType='USE_SALESFORCE_TYPE',
-                                      salesforceField=f'{STANDARD_FIELDS["fullName"]}',
-                                      sdcField=f'/{STANDARD_FIELDS["label"]}')]
+                                      salesforceField=f'{fields}',
+                                      sdcField=f'/{fields}')]
 
         wiretap = builder.add_wiretap()
 
@@ -130,28 +132,20 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
             for key in type_data['null_value'].keys():
                 assert type_data['null_value'][key] == null_record.field[key]._data['value']
         else:
-            assert type_data['expected_type'] == record.field[f'{STANDARD_FIELDS["label"]}'].type
+            assert type_data['expected_type'] == record.field[fields].type
             assert compare_values(type_data['expected_value'],
-                                  record.field[f'{STANDARD_FIELDS["label"]}']._data['value'],
+                                  record.field[fields]._data['value'],
                                   type_data['metadata']['type'])
 
-            assert type_data['expected_type'] == null_record.field[f'{STANDARD_FIELDS["label"]}'].type
+            assert type_data['expected_type'] == null_record.field[fields].type
             assert compare_values(type_data.get('null_value'),
-                                  null_record.field[f'{STANDARD_FIELDS["label"]}']._data['value'],
+                                  null_record.field[fields]._data['value'],
                                   type_data['metadata']['type'])
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        try:
-            clean_up(sdc_executor, pipeline, client, record_ids, f'{object_name}__c')
-        finally:
-            # mdapi.CustomObject.create() doesn't return a value, so we don't
-            # have a reliable way to know if the object was created or not.
-            # Just try to delete it and ignore any errors.
-            try:
-                mdapi.CustomObject.delete(f'{object_name}__c')
-            except:
-                pass
+        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        clean_up(sdc_executor, pipeline, client, record_ids)
 
 
 @salesforce
@@ -168,14 +162,12 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     # TODO - RAISE BACK TO 1000!
     batch_size = 40
     batches = 50
-    object_name = get_random_string(string.ascii_lowercase, 20)
+    test_name = 'sale_bulk2_proc_multiple_batches_' + get_random_string(string.ascii_lowercase, 10)
 
     client = salesforce.client
 
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
-
-    mdapi = client.mdapi
 
     builder = sdc_builder.get_pipeline_builder()
     origin = builder.add_stage('Dev Data Generator')
@@ -192,11 +184,12 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
       } ]
 
     lookup = builder.add_stage('Salesforce Bulk API 2.0 Lookup')
-    lookup.soql_query = (f"SELECT {STANDARD_FIELDS['fullName']} FROM {object_name}__c "
-                         "WHERE Name = '${record:value(\"/lookup\")}'")
+    lookup.soql_query = (f"SELECT LastName FROM Contact "
+                         "WHERE FirstName = '${record:value(\"/lookup\")}'"
+                         f"AND Department = '{test_name}' ")
     lookup.field_mappings = [dict(dataType='USE_SALESFORCE_TYPE',
-                                  salesforceField=f'{STANDARD_FIELDS["fullName"]}',
-                                  sdcField=f'/{STANDARD_FIELDS["label"]}')]
+                                  salesforceField=f'LastName',
+                                  sdcField=f'/Last Name')]
 
     wiretap = builder.add_wiretap()
     origin >> expression >> lookup >> wiretap.destination
@@ -206,34 +199,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
 
     record_ids = []
     try:
-        custom_object = mdapi.CustomObject(
-            fullName=f'{object_name}__c',
-            label=f'{object_name}',
-            pluralLabel=f'{object_name}',
-            nameField=mdapi.CustomField(
-                label='Name',
-                type=mdapi.FieldType('Text')
-            ),
-            fields=[mdapi.CustomField(
-                label=f'{STANDARD_FIELDS["label"]}',
-                fullName=f'{STANDARD_FIELDS["fullName"]}',
-                required=False,
-                type='Number',
-                precision=5,
-                scale=0
-            )],
-            deploymentStatus=mdapi.DeploymentStatus('Deployed'),
-            sharingModel=mdapi.SharingModel('Read')
-        )
-        logger.info(f'Creating object {object_name} in Salesforce ...')
-        mdapi.CustomObject.create(custom_object)
-        bulk_object_type = getattr(client.bulk, f'{object_name}__c')
-
-        set_field_permissions(mdapi, object_name, f'{STANDARD_FIELDS["label"]}')
-
-        logger.info(f'Inserting data into {object_name} ...')
-        records = [{'Name': str(n), f'{STANDARD_FIELDS["fullName"]}': n * 10} for n in range(1, 4)]
-        record_ids = check_ids(get_ids(bulk_object_type.insert(records), 'id'))
+        logger.info(f'Inserting data into Contacts ...')
+        records = [{'FirstName': str(n), 'LastName': str(n * 10), 'Department' : test_name} for n in range(1, 4)]
+        record_ids = check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
 
         # Wiretap generates one extra record per batch
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count((batches + 1) * batch_size)
@@ -259,22 +227,13 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
         for record in records:
             assert record.field['seq'] == expected_number
             assert record.field['lookup'] == expected_number % 3 + 1
-            assert record.field[f'{STANDARD_FIELDS["label"]}'] == (expected_number % 3 + 1) * 10
+            assert record.field['Last Name'] == str((expected_number % 3 + 1) * 10)
             expected_number += 1
 
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        try:
-            clean_up(sdc_executor, pipeline, client, record_ids, f'{object_name}__c')
-        finally:
-            # mdapi.CustomObject.create() doesn't return a value, so we don't
-            # have a reliable way to know if the object was created or not.
-            # Just try to delete it and ignore any errors.
-            try:
-                mdapi.CustomObject.delete(f'{object_name}__c')
-            except:
-                pass
+        clean_up(sdc_executor, pipeline, client, record_ids)
 
 
 @salesforce

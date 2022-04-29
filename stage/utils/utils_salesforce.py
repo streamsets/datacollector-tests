@@ -55,15 +55,36 @@ ADD_CUSTOM_FIELD = '''<?xml version="1.0" encoding="UTF-8"?>
 <CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
     <fields>
         <fullName>$CUSTOM_FIELD</fullName>
-        <defaultValue>false</defaultValue>
-        <description>ThisIsABoolCustField</description>
+        <description>ThisIsACustField</description>
         <externalId>false</externalId>
-        <inlineHelpText>ThisIsABoolCustField</inlineHelpText>
-        <label>BoolCustField</label>
+        <inlineHelpText>ThisIsACustField</inlineHelpText>
+        <label>$LABEL</label>
         <trackTrending>false</trackTrending>
-        <type>Checkbox</type>
+        <type>$TYPE</type>
+        $PARAMETERS
     </fields>
 </CustomObject>'''
+
+VALUE_SET = '''<valueSet>
+          <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+              <fullName>red</fullName>
+              <default>true</default>
+              <label>red</label>
+            </value>
+            <value>
+              <fullName>green</fullName>
+              <default>false</default>
+              <label>green</label>
+            </value>
+            <value>
+              <fullName>blue</fullName>
+              <default>false</default>
+              <label>blue</label>
+            </value>
+          </valueSetDefinition>
+        </valueSet>'''
 
 CUSTOM_FIELD_PERMISSION = '''<?xml version="1.0" encoding="UTF-8"?>
 <Profile xmlns="http://soap.sforce.com/2006/04/metadata">
@@ -89,6 +110,7 @@ DELETE_CUSTOM_FIELD = '''<?xml version="1.0" encoding="UTF-8"?>
 
 # Template objects
 ADD_CUSTOM_FIELD_TEMPLATE = Template(ADD_CUSTOM_FIELD)
+ADD_CUSTOM_FIELD_PACKAGE_TEMPLATE = Template(ADD_CUSTOM_FIELD_PACKAGE)
 CUSTOM_FIELD_PERMISSION_TEMPLATE = Template(CUSTOM_FIELD_PERMISSION)
 DELETE_CUSTOM_FIELD_TEMPLATE = Template(DELETE_CUSTOM_FIELD)
 
@@ -180,10 +202,10 @@ SAMPLE_PHONE = '111-222-3333'
 LONG_SAMPLE_TEXT = SAMPLE_TEXT * 50
 SAMPLE_URL   = 'https://www.example.com/'
 SAMPLE_HTML  = 'The <i>quick</i> brown fox <u>jumps</u> over the <b>lazy</b> dog'
-SAMPLE_LOCATION = {'Value__Latitude__s': 12.345, 'Value__Longitude__s': 54.321}
+SAMPLE_LOCATION = {'testField__Latitude__s': 12.345, 'testField__Longitude__s': 54.321}
 # Decimals appear in field._data['value'] as strings
-EXPECTED_LOCATION = {'Value__Latitude__s': '12.345', 'Value__Longitude__s': '54.321'}
-NULL_LOCATION = {'Value__Latitude__s': None, 'Value__Longitude__s': None}
+EXPECTED_LOCATION = {'testField__Latitude__s': '12.345', 'testField__Longitude__s': '54.321'}
+NULL_LOCATION = {'testField__Latitude__s': None, 'testField__Longitude__s': None}
 
 # https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_field_types.htm#meta_type_fieldtype
 DATA_TYPES = [
@@ -550,7 +572,7 @@ def clean_up(sdc_executor, pipeline, client, record_ids, object_name='Contact'):
     try:
         if record_ids:
             logger.info(f'Deleting {object_name}s with id(s) {record_ids} ...')
-            getattr(client.bulk, object_name).delete(record_ids)
+            getattr(client.bulk, object_name).hard_delete(record_ids)
     except Exception:
         logger.error(f'Unable to delete {object_name}s ...')
 
@@ -585,13 +607,20 @@ def find_dataset_include_timestamp(client, name):
     return None, None
 
 
-def add_custom_field_to_contact(salesforce, custom_field_name):
-    field_content = ADD_CUSTOM_FIELD_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name})
+def add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label, custom_field_type, parameters,
+                                usesValueSet=False):
+    if usesValueSet:
+        parameters += VALUE_SET
+
+    field_content = ADD_CUSTOM_FIELD_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name,
+                    'LABEL': custom_field_label, 'TYPE': custom_field_type, 'PARAMETERS': parameters})
     permission_content = CUSTOM_FIELD_PERMISSION_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name})
-    deploy_metadata(salesforce.metadata_client,
-                    ADD_CUSTOM_FIELD_PACKAGE,
-                    [{'name': 'objects/Contact.object', 'content': field_content},
-                      {'name': 'profiles/Admin.profile', 'content': permission_content}])
+
+    files = [{'name': 'objects/Contact.object', 'content': field_content},
+                      {'name': 'profiles/Admin.profile', 'content': permission_content}]
+
+    deploy_metadata(salesforce.metadata_client, ADD_CUSTOM_FIELD_PACKAGE, files)
+
     # Salesforce orgs can have a namespace associated with them. The namespace
     # is prepended to custom field names, breaking this test.
     namespace = get_org_namespace_prefix(salesforce.client)

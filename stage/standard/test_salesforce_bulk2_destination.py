@@ -24,7 +24,7 @@ from streamsets.testframework.utils import get_random_string
 from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
                                       get_ids, STANDARD_FIELDS, set_field_permissions,
                                       OBJECT_NAMES, compare_values, set_up_random, assign_hard_delete,
-                                      revoke_hard_delete)
+                                      revoke_hard_delete, add_custom_field_to_contact, delete_custom_field_from_contact)
 
 logger = logging.getLogger(__name__)
 
@@ -205,21 +205,48 @@ DATA_TYPES = [
 @sdc_min_version('5.0.0')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES, ids=[f"{i[1]}-{i[2]['type']}" for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type, database_type, expected):
-    object_name = get_random_string(string.ascii_lowercase, 20)
+    test_name = 'sale_bulk2_origin_data_types_' + database_type['type'] + '_' + \
+                get_random_string(string.ascii_lowercase, 10)
 
     client = salesforce.client
 
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
 
-    mdapi = client.mdapi
+    metadata_client = salesforce.metadata_client
+
+    custom_field_name = 'testField__c'
+    custom_field_label = 'testField'
+    custom_field_type = database_type['type']
+
+    parameters = ''
+    for param in database_type:
+        if (param != 'type'):
+            parameters += '<' + param + '>'
+            parameters += str(database_type[param])
+            parameters += '</' + param + '>'
+
+    uses_value_set = (custom_field_type == 'Picklist') or (custom_field_type == 'MultiselectPicklist')
+    if custom_field_type == 'Picklist':
+        parameters = ''
+    elif custom_field_type == 'MultiselectPicklist':
+        parameters = '<visibleLines>3</visibleLines>'
+
+    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
+                                                    custom_field_type, parameters, uses_value_set)
 
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
     origin = builder.add_stage('Dev Raw Data Source')
     origin.data_format = 'JSON'
     origin.stop_after_first_batch = True
-    origin.raw_data = json.dumps({STANDARD_FIELDS["fullName"]: input })
+    origin.raw_data = json.dumps({custom_field_name: input })
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [{
+        'fieldToSet': '/LastName',
+        'expression': test_name
+    }]
 
     other_date_format = None
     zoned_date_time_format = None
@@ -236,7 +263,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     converter = builder.add_stage('Field Type Converter')
     converter.conversion_method = 'BY_FIELD'
     converter.field_type_converter_configs = [{
-        'fields': [f'/{STANDARD_FIELDS["fullName"]}'],
+        'fields': [f'/{custom_field_name}'],
         'targetType': converter_type,
         'dataLocale': 'en.US',
         'dateFormat': 'OTHER',
@@ -246,11 +273,11 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     }]
 
     target = builder.add_stage('Salesforce Bulk API 2.0', type='destination')
-    target.sobject_type = f'{object_name}__c'
+    target.sobject_type = 'Contact'
     target.field_mapping = []
     target.on_record_error = 'STOP_PIPELINE'
 
-    origin >> converter >> target
+    origin >> expression >> converter >> target
 
     pipeline = builder.build().configure_for_environment(salesforce)
 
@@ -258,136 +285,86 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
 
     read_ids = []
     try:
-        custom_object = mdapi.CustomObject(
-            fullName=f'{object_name}__c',
-            label=f'{object_name}',
-            pluralLabel=f'{object_name}',
-            nameField=mdapi.CustomField(
-                label='Name',
-                type=mdapi.FieldType('Text')
-            ),
-            fields=[mdapi.CustomField(
-                # This syntax combines the standard fields we
-                # need for every type of custom field with the
-                # fields specific to this data type
-                **{**STANDARD_FIELDS, **database_type}
-            )],
-            deploymentStatus=mdapi.DeploymentStatus('Deployed'),
-            sharingModel=mdapi.SharingModel('Read')
-        )
-        logger.info('Creating object %s in Salesforce ...', object_name)
-        mdapi.CustomObject.create(custom_object)
-
-        set_field_permissions(mdapi, object_name, f'{STANDARD_FIELDS["label"]}')
-
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
 
-        query_str = f"SELECT Id, {STANDARD_FIELDS['fullName']} FROM {object_name}__c"
+        query_str = f"SELECT Id, {custom_field_name} FROM Contact WHERE LastName = '{test_name}'"
         result = client.query(query_str)
         logger.info(result['records'])
         read_ids = get_ids(result['records'], 'Id')
 
         assert len(result['records']) == 1
-        assert compare_values(expected, result['records'][0][STANDARD_FIELDS['fullName']], database_type['type'])
+        assert compare_values(expected, result['records'][0][custom_field_name], database_type['type'])
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        try:
-            clean_up(sdc_executor, pipeline, client, read_ids)
-        finally:
-            # mdapi.CustomObject.create() doesn't return a value, so we don't
-            # have a reliable way to know if the object was created or not.
-            # Just try to delete it and ignore any errors.
-            try:
-                mdapi.CustomObject.delete(f'{object_name}__c')
-            except:
-                pass
+        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 @salesforce
 @sdc_min_version('5.0.0')
 @pytest.mark.parametrize('test_name,object_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
 def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_name, field_name):
+    run_name = 'sale_bulk2_dest_object_names_' + test_name + '_' + get_random_string(string.ascii_lowercase, 10)
     client = salesforce.client
 
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
 
-    mdapi = client.mdapi
+    metadata_client = salesforce.metadata_client
+
+    custom_field_name = '{}__c'.format(field_name)
+    custom_field_label = 'Value'
+    custom_field_type = 'Number'
+    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
+                                                    custom_field_type)
 
     builder = sdc_builder.get_pipeline_builder()
 
     source = builder.add_stage('Dev Raw Data Source')
     source.data_format = 'JSON'
-    source.raw_data = f'{{ "{field_name}__c" : 1 }}'
+    source.raw_data = f'{{ "{custom_field_name}" : 1 }}'
     source.stop_after_first_batch = True
 
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [{
+        'fieldToSet': '/LastName',
+        'expression': run_name
+    }]
+
     target = builder.add_stage('Salesforce Bulk API 2.0', type='destination')
-    target.sobject_type = f'{object_name}__c'
+    target.sobject_type = 'Contact'
     target.field_mapping = []
     target.on_record_error = 'STOP_PIPELINE'
 
-    source >> target
+    source >> expression >> target
     pipeline = builder.build().configure_for_environment(salesforce)
 
     read_ids = []
 
     try:
-        custom_object = mdapi.CustomObject(
-            fullName=f'{object_name}__c',
-            label=f'{object_name}',
-            pluralLabel=f'{object_name}',
-            nameField=mdapi.CustomField(
-                label='Name',
-                type=mdapi.FieldType('Text')
-            ),
-            fields=[mdapi.CustomField(
-                label=f'{STANDARD_FIELDS["label"]}',
-                fullName=f'{field_name}__c',
-                required=False,
-                type='Number',
-                precision=5,
-                scale=0
-            )],
-            deploymentStatus=mdapi.DeploymentStatus('Deployed'),
-            sharingModel=mdapi.SharingModel('Read')
-        )
-        logger.info('Creating object %s in Salesforce ...', object_name)
-        mdapi.CustomObject.create(custom_object)
-        object_type = getattr(client, f'{object_name}__c')
-
-        set_field_permissions(mdapi, object_name, field_name)
-
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
 
         # Verify that the data were indeed inserted
-        result = client.query(f"SELECT Id, {field_name}__c FROM {object_name}__c")
+        result = client.query(f"SELECT Id, {custom_field_name} FROM Contact WHERE LastName = '{run_name}'")
         read_ids = get_ids(result['records'], 'Id')
 
         assert len(result['records']) == 1
-        assert result['records'][0][f'{field_name}__c'] == 1
+        assert result['records'][0][f'{custom_field_name}'] == 1
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        try:
-            clean_up(sdc_executor, pipeline, client, read_ids)
-        finally:
-            # mdapi.CustomObject.create() doesn't return a value, so we don't
-            # have a reliable way to know if the object was created or not.
-            # Just try to delete it and ignore any errors.
-            try:
-                mdapi.CustomObject.delete(f'{object_name}__c')
-            except:
-                pass
+        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 @salesforce
 @sdc_min_version('5.0.0')
 def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
-    object_name = get_random_string(string.ascii_lowercase, 20)
+    test_name = 'sale_bulk2_dest_multiple_batches_' + get_random_string(string.ascii_lowercase, 10)
     # Cap at 1000 records so we stay within Salesforce Developer Edition data limits
-    batch_size = 100
+    batch_size = 20
     batches = 10
 
     client = salesforce.client
@@ -395,23 +372,25 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
 
-    mdapi = client.mdapi
-
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Data Generator')
     origin.batch_size = batch_size
-    origin.fields_to_generate = [{
-        "type": "LONG_SEQUENCE",
-        "field": STANDARD_FIELDS["fullName"]
+    origin.fields_to_generate = [{"type": "LONG_SEQUENCE",
+                                  "field": "FirstName"}]
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [{
+        'fieldToSet': '/LastName',
+        'expression': test_name
     }]
 
     target = builder.add_stage('Salesforce Bulk API 2.0', type='destination')
-    target.sobject_type = f'{object_name}__c'
+    target.sobject_type = 'Contact'
     target.field_mapping = []
     target.on_record_error = 'STOP_PIPELINE'
 
-    origin >> target
+    origin >> expression >> target
     pipeline = builder.build().configure_for_environment(salesforce)
 
     sdc_executor.add_pipeline(pipeline)
@@ -419,31 +398,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     read_ids = []
 
     try:
-        custom_object = mdapi.CustomObject(
-            fullName=f'{object_name}__c',
-            label=f'{object_name}',
-            pluralLabel=f'{object_name}',
-            nameField=mdapi.CustomField(
-                label='Name',
-                type=mdapi.FieldType('Text')
-            ),
-            fields=[mdapi.CustomField(
-                label=f'{STANDARD_FIELDS["label"]}',
-                fullName=f'{STANDARD_FIELDS["fullName"]}',
-                required=False,
-                type='Number',
-                precision=5,
-                scale=0
-            )],
-            deploymentStatus=mdapi.DeploymentStatus('Deployed'),
-            sharingModel=mdapi.SharingModel('Read')
-        )
-        logger.info('Creating object %s in Salesforce ...', object_name)
-        mdapi.CustomObject.create(custom_object)
-        object_type = getattr(client, f'{object_name}__c')
-
-        set_field_permissions(mdapi, object_name, f'{STANDARD_FIELDS["label"]}')
-
         # Wiretap generates one extra record per batch
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count((batches + 1) * batch_size,
                                                                                      timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
@@ -456,24 +410,16 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
         # Sanity check
         assert records >= batch_size * batches
 
-        result = client.query(f"SELECT Id, {STANDARD_FIELDS['fullName']} FROM {object_name}__c")
+        result = client.query(f"SELECT Id, FirstName FROM Contact WHERE LastName = '{test_name}'")
         read_ids = get_ids(result['records'], 'Id')
-        data = sorted([record[STANDARD_FIELDS["fullName"]] for record in result['records']])
+        data = sorted([record["FirstName"] for record in result['records']])
 
-        assert data == [i for i in range(0, records)]
+        expected = sorted(str(i) for i in range(0, records))
+        assert data == expected
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        try:
-            clean_up(sdc_executor, pipeline, client, read_ids)
-        finally:
-            # mdapi.CustomObject.create() doesn't return a value, so we don't
-            # have a reliable way to know if the object was created or not.
-            # Just try to delete it and ignore any errors.
-            try:
-                mdapi.CustomObject.delete(f'{object_name}__c')
-            except:
-                pass
+        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 @salesforce
