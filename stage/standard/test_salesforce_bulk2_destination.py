@@ -215,7 +215,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
 
     metadata_client = salesforce.metadata_client
 
-    custom_field_name = 'testField__c'
+    custom_field_name = get_random_string(string.ascii_lowercase, 10) + '__c'
     custom_field_label = 'testField'
     custom_field_type = database_type['type']
 
