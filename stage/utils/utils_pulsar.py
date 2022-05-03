@@ -31,8 +31,19 @@ def create_topic_with_schema(pulsar_admin_client, topic_name, topic_schema):
 
 
 def set_schema_validation_enforced(pulsar_admin_client, must_be_enforced=True):
-    pulsar_admin_client.session.headers = {'Content-type': 'application/json'}
-    pulsar_admin_client.post(f"namespaces/public/default/schemaValidationEnforced", data=must_be_enforced)
+    try:
+        pulsar_admin_client.session.headers = {'Content-type': 'application/json'}
+        pulsar_admin_client.post(f"namespaces/public/default/schemaValidationEnforced", data=must_be_enforced)
+    except requests.exceptions.HTTPError as e:
+        # AFAIK there is no any way to check the pulsar server version so that we could know whether
+        # it is compatible with the feature we are testing. The indirect way I found
+        # up to now is to check out whether any of the API calls failed because of 404 or 405. In this
+        # case just skip the test.
+        if e.response.status_code in [404, 405]:
+            pytest.skip(f"Error trying to create Pulsar topic and enforce schema validation."
+                        f" Incompatible Pulsar: {str(e)}")
+        else:
+            raise e
 
 
 def disable_auto_update_schema(pulsar_admin_client):
