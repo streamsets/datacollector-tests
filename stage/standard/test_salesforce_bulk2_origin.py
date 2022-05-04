@@ -44,8 +44,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
 
-    metadata_client = salesforce.metadata_client
-
     custom_field_name = get_random_string(string.ascii_lowercase, 10) + '__c'
     custom_field_label = 'testField'
     custom_field_type = type_data['metadata']['type']
@@ -142,7 +140,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, record_ids)
 
 
@@ -155,8 +153,6 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
 
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
-
-    metadata_client = salesforce.metadata_client
 
     custom_field_name = '{}__c'.format(field_name)
     custom_field_label = 'Value'
@@ -215,7 +211,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, [record_id])
 
 

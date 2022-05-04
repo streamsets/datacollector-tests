@@ -213,8 +213,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
 
-    metadata_client = salesforce.metadata_client
-
     custom_field_name = get_random_string(string.ascii_lowercase, 10) + '__c'
     custom_field_label = 'testField'
     custom_field_type = database_type['type']
@@ -297,7 +295,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, read_ids)
 
 
@@ -311,14 +309,13 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
     # Create a hard delete permission file for this client
     assign_hard_delete(client)
 
-    metadata_client = salesforce.metadata_client
-
     custom_field_name = '{}__c'.format(field_name)
     custom_field_label = 'Value'
     custom_field_type = 'Number'
+    parameters = '<precision>5</precision>' \
+                 '<scale>0</scale>'
     custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                    custom_field_type)
-
+                                                    custom_field_type, parameters)
     builder = sdc_builder.get_pipeline_builder()
 
     source = builder.add_stage('Dev Raw Data Source')
@@ -355,7 +352,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
     finally:
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, read_ids)
 
 

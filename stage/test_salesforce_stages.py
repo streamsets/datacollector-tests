@@ -1499,13 +1499,16 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
     """
     client = salesforce.client
-    metadata_client = salesforce.metadata_client
     test_data = TEST_DATA['DATA_TO_INSERT'][0]
     custom_field_name = '{}__c'.format(get_random_string(string.ascii_letters, 10))
+    custom_field_label = 'BoolCustField'
+    custom_field_type = 'Checkbox'
+    parameters = '<defaultValue>false</defaultValue>'
 
     logger.info('Adding custom field %s to Contact object ...', custom_field_name)
     # If the Salesforce org has a namespace, it is prepended to the custom field name
-    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name)
+    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label, custom_field_type,
+                                                    parameters)
     custom_field_deleted = False
 
     pipeline = None
@@ -1558,7 +1561,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         logger.info('Created second record of Contact using Salesforce client with id as %s', contact_id_2)
 
         logger.info('Deleting custom field %s from Contact object ...', custom_field_name)
-        delete_custom_field_from_contact(metadata_client, custom_field_name)
+        delete_custom_field_from_contact(client, custom_field_name)
         custom_field_deleted = True
 
         logger.info('Restarting pipeline ...')
@@ -1587,7 +1590,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
             client.contact.delete(contact_id_2)
         if not custom_field_deleted:
             logger.info('Deleting custom field %s from Contact object ...', custom_field_name)
-            delete_custom_field_from_contact(metadata_client, custom_field_name)
+            delete_custom_field_from_contact(client, custom_field_name)
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             logger.info('Stopping pipeline after possible failure ...')
             sdc_executor.stop_pipeline(pipeline)

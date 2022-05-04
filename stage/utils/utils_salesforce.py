@@ -619,7 +619,7 @@ def add_custom_field_to_contact(salesforce, custom_field_name, custom_field_labe
     files = [{'name': 'objects/Contact.object', 'content': field_content},
                       {'name': 'profiles/Admin.profile', 'content': permission_content}]
 
-    deploy_metadata(salesforce.metadata_client, ADD_CUSTOM_FIELD_PACKAGE, files)
+    deploy_metadata(salesforce.client, ADD_CUSTOM_FIELD_PACKAGE, files)
 
     # Salesforce orgs can have a namespace associated with them. The namespace
     # is prepended to custom field names, breaking this test.
@@ -632,14 +632,14 @@ def get_org_namespace_prefix(client):
     return result['records'][0]['NamespacePrefix']
 
 
-def delete_custom_field_from_contact(metadata, custom_field_name):
+def delete_custom_field_from_contact(client, custom_field_name):
     field_content = DELETE_CUSTOM_FIELD_TEMPLATE.safe_substitute({'CUSTOM_FIELD': custom_field_name})
-    deploy_metadata(metadata,
+    deploy_metadata(client,
                     DELETE_CUSTOM_FIELD_PACKAGE,
                     [{'name': 'destructiveChanges.xml', 'content': field_content}])
 
 
-def deploy_metadata(metadata, package_content, files):
+def deploy_metadata(client, package_content, files):
     file_bytes = BytesIO()
 
     with ZipFile(file_bytes, 'w') as zip_file:
@@ -648,7 +648,8 @@ def deploy_metadata(metadata, package_content, files):
             zip_file.writestr(file['name'], file['content'])
         zip_file.close()
 
-    deployment = metadata.deploy(file_bytes, {})
+    metadata = client.mdapi
+    deployment = metadata.deploy(file_bytes, {}, purgeOnDelete=True)
 
     result = None
     end_time = datetime.now() + timedelta(seconds=60)
