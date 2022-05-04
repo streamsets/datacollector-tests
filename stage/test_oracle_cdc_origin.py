@@ -3663,6 +3663,173 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
             target_table.drop(database.engine)
 
 
+@sdc_min_version('5.1.0')
+@database('oracle')
+def test_oracle_cdc_offset_commit_only(sdc_builder,
+                                       sdc_executor,
+                                       database):
+    """
+    Test offset management when using COMMIT ONLY option LogMiner.
+    """
+
+    target_table = None
+
+    pipeline = None
+
+    maximum_transaction_length = 300
+    logminer_session_window = 600
+
+    try:
+
+        database_connection_enclosing = database.engine.connect()
+        database_connection_enclosed = database.engine.connect()
+
+        target_table_name = get_random_string(string.ascii_uppercase, 16)
+        logger.info('Creating target table %s in %s database ...', target_table_name, database.type)
+        target_table = sqlalchemy.Table(target_table_name, sqlalchemy.MetaData(),
+                                        sqlalchemy.Column('IDENTIFIER', sqlalchemy.Integer, primary_key=True),
+                                        sqlalchemy.Column('NAME', sqlalchemy.String(64)),
+                                        sqlalchemy.Column('SURNAME', sqlalchemy.String(64)),
+                                        sqlalchemy.Column('COUNTRY', sqlalchemy.String(2)),
+                                        sqlalchemy.Column('CITY', sqlalchemy.String(3)),
+                                        sqlalchemy.Column('ORIGIN', sqlalchemy.String(16)))
+        target_table.create(database.engine)
+
+        database_last_scn = _get_last_scn(database_connection_enclosing)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
+        oracle_cdc_client.set_attributes(initial_change='SCN',
+                                         start_scn=database_last_scn,
+                                         maximum_transaction_length=f'${{{maximum_transaction_length} * SECONDS}}',
+                                         logminer_session_window=f'${{{logminer_session_window} * SECONDS}}',
+                                         dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                         disable_continuous_mine=True,
+                                         buffer_changes_locally=False,
+                                         discard_old_uncommitted_transactions=False,
+                                         parsing_thread_pool_size=1,
+                                         parse_sql_query=True,
+                                         use_peg_parser=True,
+                                         pseudocolumns_in_header=True,
+                                         send_redo_query_in_headers=True,
+                                         max_batch_size_in_records=1,
+                                         tables=[{'schema': database.username.upper(),
+                                                  'table': target_table_name,
+                                                  'excludePattern': ''}],
+                                         db_time_zone='UTC')
+
+        oracle_cdc_client.set_attributes(jdbc_connection_string='jdbc:oracle:thin:@192.168.1.235:1521/ORCLCDB')
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build('Oracle CDC Origin Offset Testing Pipeline').configure_for_environment(database)
+        pipeline.rate_limit = 1
+
+        sdc_executor.add_pipeline(pipeline)
+
+        number_of_rows_enclosing = 30
+        number_of_rows_enclosed = 30
+
+        initial_number_of_records = 5
+
+        global_identifier = 1
+
+        sleep(2)
+
+        database_transaction_enclosing = database_connection_enclosing.begin()
+        sleep(1)
+        for identifier in range(global_identifier, global_identifier + number_of_rows_enclosing // 2):
+            table_identifier = identifier
+            table_name = "'OUT.start - " + str(uuid.uuid4())[:16] + "'"
+            table_surname = "'" + str(uuid.uuid4())[:32] + "'"
+            table_country = "'" + str(uuid.uuid4())[:2] + "'"
+            table_city = "'" + str(uuid.uuid4())[:3] + "'"
+            table_origin = "'enclosing'"
+            sentence = f'insert into {target_table} values ({table_identifier}, {table_name}, {table_surname}, {table_country}, {table_city}, {table_origin})'
+            sql = text(sentence)
+            database_connection_enclosing.execute(sql)
+            sleep(1)
+        global_identifier = identifier + 1
+        sleep(1)
+
+        database_transaction_enclosed = database_connection_enclosed.begin()
+        sleep(1)
+        for identifier in range(global_identifier, global_identifier + number_of_rows_enclosed):
+            table_identifier = identifier
+            table_name = "'IN.closed - " + str(uuid.uuid4())[:16] + "'"
+            table_surname = "'" + str(uuid.uuid4())[:32] + "'"
+            table_country = "'" + str(uuid.uuid4())[:2] + "'"
+            table_city = "'" + str(uuid.uuid4())[:3] + "'"
+            table_origin = "'enclosed'"
+            sentence = f'insert into {target_table} values ({table_identifier}, {table_name}, {table_surname}, {table_country}, {table_city}, {table_origin})'
+            sql = text(sentence)
+            database_connection_enclosed.execute(sql)
+            sleep(1)
+        global_identifier = identifier + 1
+        sleep(1)
+        database_transaction_enclosed.commit()
+
+        sleep(2)
+
+        pipeline_execution = sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count',
+                                              initial_number_of_records,
+                                              timeout_sec=300)
+        try:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        except:
+            pass
+
+        sleep(30)
+
+        q_operations_01 = len(wiretap.output_records)
+        logger.info(f'Total operations in first run: {q_operations_01} - {initial_number_of_records}')
+
+        sleep(5)
+
+        sleep(10)
+        for identifier in range(global_identifier, global_identifier + number_of_rows_enclosing // 2):
+            table_identifier = identifier
+            table_name = "'OUT.end - " + str(uuid.uuid4())[:16] + "'"
+            table_surname = "'" + str(uuid.uuid4())[:32] + "'"
+            table_country = "'" + str(uuid.uuid4())[:2] + "'"
+            table_city = "'" + str(uuid.uuid4())[:3] + "'"
+            table_origin = "'enclosing'"
+            sentence = f'insert into {target_table} values ({table_identifier}, {table_name}, {table_surname}, {table_country}, {table_city}, {table_origin})'
+            sql = text(sentence)
+            database_connection_enclosing.execute(sql)
+            sleep(1)
+        global_identifier = identifier + 1
+        sleep(10)
+        database_transaction_enclosing.commit()
+
+        sleep(5)
+
+        wiretap.reset()
+
+        pipeline_execution = sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              number_of_rows_enclosed + number_of_rows_enclosing - q_operations_01,
+                                              timeout_sec=300)
+        try:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
+        except:
+            pass
+
+        sleep(30)
+
+        q_operations_02 = len(wiretap.output_records)
+        logger.info(f'Total operations in second run: {q_operations_02} - {number_of_rows_enclosed + number_of_rows_enclosing - q_operations_01}')
+
+        assert q_operations_01 + q_operations_02 == number_of_rows_enclosed + number_of_rows_enclosing
+
+    finally:
+
+        if target_table is not None:
+            target_table.drop(database.engine)
+
+
 @sdc_min_version('5.0.0')
 @database('oracle')
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
