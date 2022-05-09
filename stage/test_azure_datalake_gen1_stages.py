@@ -22,6 +22,7 @@ from collections import namedtuple
 from operator import itemgetter
 
 import pytest
+from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -47,6 +48,29 @@ ADLS_GEN_STAGELIBS = {ADLS_LEGACY: ADLSGen(None, 'com_streamsets_pipeline_stage_
 def storage_type_check(azure):
     if azure.storage_type == 'StorageV2':
         pytest.skip('ADLS Gen1 and Legacy Gen1 tests require storage type to be of Gen1.')
+
+
+@azure('datalake')
+def test_adls_gen1_invalid_config(sdc_builder, sdc_executor):
+    """Verify that the Azure Datalake Producer fails for invalid config."""
+    adls_version = ADLS_LEGACY
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    azure_data_lake_store_destination = pipeline_builder.add_stage(name=ADLS_GEN_STAGELIBS[adls_version].target_stagelib)
+    azure_data_lake_store_destination.set_attributes(data_format='JSON',
+                                                     application_id='invalidApplicationId',
+                                                     application_key='invalidApplicationKey',
+                                                     auth_token_endpoint='inValidEndpoint')
+
+    dev_data_generator >> azure_data_lake_store_destination
+    pipeline = pipeline_builder.build()
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        pytest.fail("Test should not reach here. It should have failed with StartError.")
+    except StartError as e:
+        assert "ADLS_02" in e.message
 
 
 @azure('datalake')
@@ -832,3 +856,62 @@ def test_adls_gen1_file_event_filepath_when_whole_file_mode_enabled(sdc_builder,
             dl_fs.rmdir(directory_name)
         finally:
             sdc_executor.execute_shell(f'rm -fr {base_folder}')
+
+
+@azure('datalake')
+def test_adls_gen1_empty_records(sdc_builder, sdc_executor, azure):
+    """
+    We want to make sure that empty records are processed properly.
+
+    The pipeline looks like:
+              Directory >> ADLS gen1 FS
+
+    """
+    directory_name = get_random_string(string.ascii_letters, 10)
+    files_prefix = get_random_string(string.ascii_letters, 10)
+    files_suffix = get_random_string(string.ascii_letters, 10)
+    raw_list = [{}, {}]
+    raw_data = json.dumps(raw_list)
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS',
+                                       raw_data=raw_data, stop_after_first_batch=True)
+
+    azure_data_lake_store_destination = builder.add_stage(name='com_streamsets_pipeline_stage_destination_datalake_gen1_DataLakeDTarget')
+    azure_data_lake_store_destination.set_attributes(data_format='JSON',
+                                                     directory_template=f'/{directory_name}',
+                                                     files_prefix=files_prefix,
+                                                     files_suffix=files_suffix)
+
+    dev_raw_data_source >> azure_data_lake_store_destination
+
+    datalake_dest_pipeline = builder.build().configure_for_environment(azure)
+    sdc_executor.add_pipeline(datalake_dest_pipeline)
+    dl_fs = azure.datalake.file_system
+    try:
+        # start pipeline and capture pipeline messages to assert
+        logger.info('Azure Data Lake directory %s will be created with files prefix %s', directory_name, files_prefix)
+        sdc_executor.start_pipeline(datalake_dest_pipeline).wait_for_finished()
+
+        dl_files = dl_fs.ls(directory_name)
+        # assert Data Lake files generated
+        assert len(dl_files) == 1
+
+        # assert file prefix and suffix
+        dl_file_name = dl_files[0].split('/')[-1]
+        assert dl_file_name.startswith(files_prefix) and dl_file_name.endswith(files_suffix)
+
+        # Assert file content. File will have len(raw_list) JSON formatted records, delimited by newline (\n).
+        dl_file_contents = dl_fs.cat(dl_files[0]).decode()
+        result_list = [json.loads(line) for line in dl_file_contents.split('\n')]
+
+        assert raw_list == result_list
+    finally:
+        dl_files = dl_fs.ls(directory_name)
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        for dl_file in dl_files:
+            logger.info('Removing %s', dl_file)
+            dl_fs.rm(dl_file)
+        dl_fs.rmdir(directory_name)

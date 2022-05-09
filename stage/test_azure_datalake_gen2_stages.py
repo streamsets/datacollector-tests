@@ -45,6 +45,7 @@ SCHEMA = {
     ]
 }
 
+
 @pytest.fixture(autouse=True)
 def storage_type_check(azure):
     if azure.storage_type == 'Storage':
@@ -924,3 +925,60 @@ def test_adls_gen2_file_event_filepath_when_whole_file_mode_enabled(sdc_builder,
             dl_fs.rmdir(directory_name, recursive=True)
         finally:
             sdc_executor.execute_shell(f'rm -fr {base_folder}')
+
+
+@azure('datalake')
+def test_adls_gen2_empty_records(sdc_builder, sdc_executor, azure):
+    """
+    We want to make sure that empty records are processed properly.
+
+    The pipeline looks like:
+              Directory >> ADLS gen2 FS
+
+    """
+    directory_name = get_random_string(string.ascii_letters, 10)
+    files_prefix = get_random_string(string.ascii_letters, 10)
+    files_suffix = get_random_string(string.ascii_letters, 10)
+    raw_list = [{}, {}]
+    raw_data = json.dumps(raw_list)
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS',
+                                       raw_data=raw_data, stop_after_first_batch=True)
+
+    azure_data_lake_store_destination = builder.add_stage(name=TARGET_STAGE_NAME)
+    azure_data_lake_store_destination.set_attributes(data_format='JSON',
+                                                     directory_template=f'/{directory_name}',
+                                                     files_prefix=files_prefix,
+                                                     files_suffix=files_suffix)
+
+    dev_raw_data_source >> azure_data_lake_store_destination
+
+    datalake_dest_pipeline = builder.build().configure_for_environment(azure)
+    sdc_executor.add_pipeline(datalake_dest_pipeline)
+    dl_fs = azure.datalake.file_system
+    try:
+        # start pipeline and capture pipeline messages to assert
+        logger.info('Azure Data Lake directory %s will be created with files prefix %s', directory_name, files_prefix)
+        sdc_executor.start_pipeline(datalake_dest_pipeline).wait_for_finished()
+
+        paths = dl_fs.ls(directory_name).response.json()['paths']
+        dl_files = [item['name'] for item in paths] if paths else []
+
+        # assert Data Lake files generated
+        assert len(dl_files) == 1
+
+        # assert file prefix and suffix
+        dl_file_name = dl_files[0].split('/')[-1]
+        assert dl_file_name.startswith(files_prefix) and dl_file_name.endswith(files_suffix)
+
+        # Assert file content. File will have len(raw_list) JSON formatted records, delimited by newline (\n).
+        dl_file_contents = dl_fs.cat(dl_files[0]).response.content.decode()
+        result_list = [json.loads(line) for line in dl_file_contents.split('\n')]
+
+        assert raw_list == result_list
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)

@@ -18,6 +18,7 @@ import logging
 import string
 
 import pytest
+from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -27,6 +28,32 @@ logger = logging.getLogger(__name__)
 # To workaround the stage label tweak introduced in 3.0.1.0 (SDC-8077), we use the
 # Azure IoT/Event Hub Consumer stage's full name in tests.
 AZURE_IOT_EVENT_HUB_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_eventhubs_EventHubConsumerDSource'
+
+
+@azure('eventhub')
+def test_azure_event_hub_consumer_invalid_config(sdc_builder, sdc_executor):
+    """Verify that the Azure Event Hub Consumer fails for invalid config."""
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    azure_iot_event_hub_consumer = pipeline_builder.add_stage('Azure IoT/Event Hub Consumer')
+    azure_iot_event_hub_consumer.set_attributes(data_format='JSON',
+                                                shared_access_policy_name='inValidSasKeyName',
+                                                connection_string_key='inValidSas',
+                                                container_name='inValidContainerName',
+                                                event_hub_name='inValidEventHub',
+                                                namespace_name='inValidNamespace',
+                                                storage_account_key='inValidStorageAccountKey',
+                                                storage_account_name='inValidStorageAccountName')
+    trash = pipeline_builder.add_stage('Trash')
+
+    azure_iot_event_hub_consumer >> trash
+    pipeline = pipeline_builder.build()
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        pytest.fail("Test should not reach here. It should have failed with StartError.")
+    except StartError as e:
+        assert "EVENT_HUB_02" in e.message
 
 
 @azure('eventhub')
