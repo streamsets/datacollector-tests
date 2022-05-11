@@ -3663,11 +3663,8 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
             target_table.drop(database.engine)
 
 
-@sdc_min_version('5.1.0')
 @database('oracle')
-def test_oracle_cdc_offset_commit_only(sdc_builder,
-                                       sdc_executor,
-                                       database):
+def test_oracle_cdc_offset_commit_only(sdc_builder, sdc_executor, database):
     """
     Test offset management when using COMMIT ONLY option LogMiner.
     """
@@ -3845,9 +3842,6 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
     if buffer_location == 'ON_DISK':
         if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
             pytest.skip('Local buffering on disk will fail in this SDC version')
-
-    source_table = None
-    target_table = None
 
     pipeline = None
 
