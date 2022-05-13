@@ -3288,3 +3288,109 @@ def test_http_processor_pagination_next_page_link_prefix_el(sdc_builder, sdc_exe
 
     finally:
         http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("5.1.0")
+def test_http_processor_json_list_root_with_pagination(sdc_builder, sdc_executor, http_client):
+    """
+    Test the HTTP Processor stage with pagination by offset enabled and the root of the response
+    JSON list as the result field path. The pipeline looks like:
+
+    dev_data_generator >> http_client_processor >> [wiretap.destination, trash_destination]
+
+    Test for ESC-1629.
+    """
+
+    # The mock data to be returned by the HTTP mock server
+    mock_data_1 = [{"field1": "value1"}, {"field2": "value2"}, {"field3": "value3"}]  # first request
+    mock_data_2 = [{"field4": "value4"}, {"field5": "value5"}, {"field6": "value6"}]  # second request
+    # Configuration parameters
+    long_time = 10_000_000
+    per_page = 3
+    record_output_field = "/out"
+
+    # Create and configure the HTTP mock server
+    http_mock_server = http_client.mock()
+    http_mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock_url = f"{http_mock_server.pretend_url}/{http_mock_path}?page=${{startAt}}&per_page={per_page}"
+    # First and second responses will return an actual value, the third will return an empty body
+    http_mock_server.when(f"GET /{http_mock_path}").reply(status=200, body=json.dumps(mock_data_1), times=1)
+    http_mock_server.when(f"GET /{http_mock_path}").reply(status=200, body=json.dumps(mock_data_2), times=1)
+    http_mock_server.when(f"GET /{http_mock_path}").reply(status=200, body="{}", times=1)
+
+    # Test expectations
+    expected_record_number = 6
+    expected_data = mock_data_1 + mock_data_2
+    expected_urls = [f"/{http_mock_path}?page={x}&per_page={per_page}" for x in (1, 1 + per_page, 1 + per_page * 2)]
+
+    # Build pipeline stages
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    # Data generator
+    dev_data_generator = pipeline_builder.add_stage("Dev Data Generator")
+    dev_data_generator.set_attributes(
+        batch_size=1, root_field_type="MAP", records_to_be_generated=0, fields_to_generate=[]
+    )
+    # HTTP Processor
+    http_client_processor = pipeline_builder.add_stage("HTTP Client", type="processor")
+    http_client_processor.set_attributes(
+        # HTTP
+        resource_url=http_mock_url,
+        output_field=record_output_field,
+        missing_values_behavior="PASS_RECORD_ON",
+        multiple_values_behavior="SPLIT_INTO_MULTIPLE_RECORDS",
+        http_method="GET",
+        read_timeout=long_time,
+        one_request_per_batch=False,
+        per_status_actions=[
+            {
+                "statusCode": 404,
+                "action": "RETRY_EXPONENTIAL_BACKOFF",
+                "backoffInterval": 1000,
+                "maxNumRetries": 10,
+                "passRecord": False,
+            }
+        ],
+        connect_timeout=long_time,
+        maximum_request_time_in_sec=long_time,
+        batch_wait_time_in_ms=long_time,
+        # Pagination
+        pagination_mode="BY_OFFSET",
+        result_field_path="/",
+        wait_time_between_pages_in_ms=500,
+        keep_all_fields=True,
+        # Data Format
+        data_format="JSON",
+        ignore_control_characters=True,
+    )
+    setattr(http_client_processor, "initial_page/offset", 1)
+    # Wiretap and trash
+    wiretap = pipeline_builder.add_wiretap()
+    trash_destination = pipeline_builder.add_stage("Trash")
+
+    # Connect the stages and build the pipeline
+    dev_data_generator >> http_client_processor >> [wiretap.destination, trash_destination]
+    pipeline = pipeline_builder.build(title="Http Processor JSON List Root With Pagination")
+
+    # Run the pipeline
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        # Wait for the expected number of records
+        sdc_executor.wait_for_pipeline_metric(pipeline, "output_record_count", expected_record_number)
+        sdc_executor.stop_pipeline(pipeline, force=True)
+
+        output_records = wiretap.output_records
+        # Assertion 1: the number of records is correct
+        assert len(output_records) == expected_record_number, "Unexpected number of records"
+        # Assertion 2: the content of the records is correct
+        for i in range(expected_record_number):
+            assert (
+                output_records[i].field["out"] == expected_data[i]
+            ), "Output records don't match expected records"
+        # Assertion 3: the pagination was correct
+        for i in range(len(expected_urls)):
+            assert http_mock_server.get_request(i).url == expected_urls[i]
+
+    finally:
+        http_mock_server.delete_mock()
