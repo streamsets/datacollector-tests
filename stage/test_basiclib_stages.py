@@ -14,11 +14,11 @@
 
 import json
 import logging
-import string
-
 import pytest
+import string
+import tempfile
 
-from streamsets.sdk.models import Configuration
+from streamsets.sdk import sdc_api
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -250,6 +250,199 @@ def test_pipeline_finisher(reset_offset, sdc_builder, sdc_executor):
         assert len(offset['offsets']) == 1
 
 
+@sdc_min_version('5.2.0')
+def test_pipeline_finisher_react_to_events(sdc_builder, sdc_executor):
+    """
+    Tests the 'React to Events' option in the Pipeline Finisher stage.
+
+    The test creates a pipeline 'Directory (>= Pipeline Finisher) >> Trash' to check the pipeline is finished once the
+    Pipeline Finisher receives the event defined via the 'React to Events' option. In this case, the event defined is
+    the 'no-more-data' event.
+    """
+
+    # Create a file
+    file_path = tempfile.gettempdir()
+    file_name = f'{get_random_string(string.ascii_letters, 10)}'
+    _create_file(sdc_executor, 'Hello World!', file_path, file_name)
+
+    # Create the pipeline Directory (>= Pipeline Finisher) >> Trash
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(
+        data_format='TEXT',
+        file_name_pattern=file_name,
+        file_name_pattern_mode='GLOB',
+        file_post_processing='DELETE',
+        files_directory=file_path,
+        batch_size_in_recs=100
+    )
+
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(
+        react_to_events=True,
+        event_type="no-more-data"
+    )
+    directory >= pipeline_finisher
+
+    trash = builder.add_stage('Trash')
+    directory >> trash
+
+    pipeline = builder.build('Pipeline Finisher with React to Events pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=30)
+        assert sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'FINISHED'
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@sdc_min_version('5.2.0')
+def test_pipeline_finisher_react_to_events_unexpected_event(sdc_builder, sdc_executor):
+    """
+    Tests the 'React to Events' option in the Pipeline Finisher stage.
+
+    The test creates a pipeline 'Directory (>= Pipeline Finisher) >> Trash' to check the Pipeline Finisher doesn't end
+    the pipeline if the 'React to Events' option is on and the record received is a different kind of event. In such
+    case an error record should be created instead of finishing the pipeline.
+
+    As Wiretap cannot be attached to the Pipeline Finisher, in order to check the error record created we have to set
+    the 'On Record Error' policy to 'Stop Pipeline' and then check the pipeline has stopped because of the error
+    handling policies and not due to the Pipeline Finisher.
+    """
+
+    # Create a file
+    file_path = tempfile.gettempdir()
+    file_name = f'{get_random_string(string.ascii_letters, 10)}'
+    _create_file(sdc_executor, 'Hello World!', file_path, file_name)
+
+    # Create the pipeline Directory (>= Pipeline Finisher) >> Trash
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(
+        data_format='TEXT',
+        file_name_pattern=file_name,
+        file_name_pattern_mode='GLOB',
+        file_post_processing='DELETE',
+        files_directory=file_path,
+        batch_size_in_recs=100
+    )
+
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(
+        react_to_events=True,
+        event_type="file-created",
+        on_record_error='STOP_PIPELINE'
+    )
+    directory >= pipeline_finisher
+
+    trash = builder.add_stage('Trash')
+    directory >> trash
+
+    pipeline = builder.build('Pipeline Finisher with React to Events pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # As we can't add Wiretap after the Pipeline Finisher, we can only check the error produced with the Pipeline
+        # Finisher's On Error Record policy, which will arise a RunError as soon as a different event is received
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert False, 'The test should not reach here, a RunError should have been thrown'
+    except sdc_api.RunError as error:
+        error_message = "PIPELINE_FINISHER_002 - Unsatisfied stage condition: The event is not of type 'file-created'"
+        assert error_message in error.message
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@sdc_min_version('5.2.0')
+def test_pipeline_finisher_react_to_events_not_an_event(sdc_builder, sdc_executor):
+    """
+    Tests the 'React to Events' option in the Pipeline Finisher stage.
+
+    The test creates a pipeline 'Dev Raw Data Source >> Pipeline Finisher' to check the Pipeline Finisher doesn't end
+    the pipeline if the 'React to Events' option is on and the record received is not an event. In such case an error
+    record should be created instead of finishing the pipeline.
+
+    As Wiretap cannot be attached to the Pipeline Finisher, in order to check the error record created we have to set
+    the 'On Record Error' policy to 'Stop Pipeline' and then check the pipeline has stopped because of the error
+    handling policies and not due to the Pipeline Finisher.
+    """
+
+    # Create the pipeline Dev Raw Data Source >> Pipeline Finisher
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='TEXT',
+        raw_data='Hello World!',
+        stop_after_first_batch=True
+    )
+
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(
+        react_to_events=True,
+        event_type="no-more-data",
+        on_record_error='STOP_PIPELINE'
+    )
+
+    dev_raw_data_source >> pipeline_finisher
+
+    pipeline = builder.build('Pipeline Finisher with React to Events pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # As we can't add Wiretap after the Pipeline Finisher, we can only check the error produced with the Pipeline
+        # Finisher's On Error Record policy, which will arise a RunError once a record that is not an event is read
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert False, 'The test should not reach here, a RunError should have been thrown'
+    except sdc_api.RunError as error:
+        error_message = "PIPELINE_FINISHER_001 - Unsatisfied stage condition: The record is not an event"
+        assert error_message in error.message
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@sdc_min_version('5.2.0')
+def test_pipeline_finisher_react_to_events_missing_event(sdc_builder, sdc_executor):
+    """
+    Tests the 'React to Events' option in the Pipeline Finisher stage.
+
+    The test creates a pipeline 'Dev Raw Data Source >> Pipeline Finisher' to check a Validation Error arises if the
+    'React to Events' option is on but no event is defined.
+    """
+
+    # Create the pipeline Dev Raw Data Source >> Pipeline Finisher
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='TEXT',
+        raw_data='Hello World!',
+        stop_after_first_batch=True
+    )
+
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(
+        react_to_events=True,
+        event_type="",
+        on_record_error='STOP_PIPELINE'
+    )
+
+    dev_raw_data_source >> pipeline_finisher
+
+    pipeline = builder.build('Pipeline Finisher with React to Events pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'The test should not reach here, a validation error should have been thrown'
+    except Exception as error:
+        error_message = 'VALIDATION_0007 - Configuration value is required'
+        assert error_message in error.issues
+
+
 # SDC-11555: Provide ability to use direct SDC record in scripting processors
 @sdc_min_version('3.9.0')
 def test_javascript_sdc_record(sdc_builder, sdc_executor):
@@ -478,3 +671,29 @@ def test_log_parser_cef_format(sdc_builder, sdc_executor):
                 'status') == 'RUNNING':
             logger.info('Stopping pipeline')
             sdc_executor.stop_pipeline(cef_parser_pipeline)
+
+
+def _create_file(sdc_executor, file_content, file_path, file_name):
+    builder = sdc_executor.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='TEXT',
+        raw_data=file_content,
+        stop_after_first_batch=True
+    )
+
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(
+        data_format='TEXT',
+        directory_template=file_path,
+        files_prefix=file_name,
+        files_suffix=''
+    )
+
+    dev_raw_data_source >> local_fs
+    file_pipeline = builder.build(f'Generate files pipeline {file_path}')
+    sdc_executor.add_pipeline(file_pipeline)
+
+    sdc_executor.start_pipeline(file_pipeline).wait_for_finished()
+    sdc_executor.remove_pipeline(file_pipeline)
