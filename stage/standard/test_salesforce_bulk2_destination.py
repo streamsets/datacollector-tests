@@ -210,9 +210,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
 
     client = salesforce.client
 
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
-
     custom_field_name = get_random_string(string.ascii_lowercase, 10) + '__c'
     custom_field_label = 'testField'
     custom_field_type = database_type['type']
@@ -229,9 +226,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
         parameters = ''
     elif custom_field_type == 'MultiselectPicklist':
         parameters = '<visibleLines>3</visibleLines>'
-
-    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                    custom_field_type, parameters, uses_value_set)
 
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -283,6 +277,12 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
 
     read_ids = []
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
+        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
+                                                        custom_field_type, parameters, uses_value_set)
+
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
 
         query_str = f"SELECT Id, {custom_field_name} FROM Contact WHERE LastName = '{test_name}'"
@@ -306,16 +306,11 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
     run_name = 'sale_bulk2_dest_object_names_' + test_name + '_' + get_random_string(string.ascii_lowercase, 10)
     client = salesforce.client
 
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
-
     custom_field_name = '{}__c'.format(field_name)
     custom_field_label = 'Value'
     custom_field_type = 'Number'
     parameters = '<precision>5</precision>' \
                  '<scale>0</scale>'
-    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                    custom_field_type, parameters)
     builder = sdc_builder.get_pipeline_builder()
 
     source = builder.add_stage('Dev Raw Data Source')
@@ -340,6 +335,12 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
     read_ids = []
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
+        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
+                                                        custom_field_type, parameters)
+
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
 
@@ -365,9 +366,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     batches = 10
 
     client = salesforce.client
-
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -395,6 +393,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     read_ids = []
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Wiretap generates one extra record per batch
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count((batches + 1) * batch_size,
                                                                                      timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)

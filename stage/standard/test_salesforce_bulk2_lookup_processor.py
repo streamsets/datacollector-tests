@@ -41,9 +41,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
 
     client = salesforce.client
 
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
-
     custom_field_name = get_random_string(string.ascii_lowercase, 10) + '__c'
     custom_field_label = 'testField'
     custom_field_type = type_data['metadata']['type']
@@ -64,12 +61,15 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     elif custom_field_type == 'MultiselectPicklist':
         parameters = '<visibleLines>3</visibleLines>'
 
-    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                    custom_field_type, parameters, uses_value_set)
-
     record_ids = []
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
+        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
+                                                        custom_field_type, parameters, uses_value_set)
+
         logger.info('Adding two records into Salesforce ...')
         record = {
             'FirstName': '1',
@@ -157,15 +157,11 @@ def test_object_names(sdc_builder, sdc_executor, salesforce):
 @salesforce
 @sdc_min_version('5.0.0')
 def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
-    # TODO - RAISE BACK TO 1000!
     batch_size = 40
     batches = 50
     test_name = 'sale_bulk2_proc_multiple_batches_' + get_random_string(string.ascii_lowercase, 10)
 
     client = salesforce.client
-
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
 
     builder = sdc_builder.get_pipeline_builder()
     origin = builder.add_stage('Dev Data Generator')
@@ -197,6 +193,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
 
     record_ids = []
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         logger.info(f'Inserting data into Contacts ...')
         records = [{'FirstName': str(n), 'LastName': str(n * 10), 'Department' : test_name} for n in range(1, 4)]
         record_ids = check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))

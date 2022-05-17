@@ -41,9 +41,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
 
     client = salesforce.client
 
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
-
     custom_field_name = get_random_string(string.ascii_lowercase, 10) + '__c'
     custom_field_label = 'testField'
     custom_field_type = type_data['metadata']['type']
@@ -60,9 +57,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
         parameters = ''
     elif custom_field_type == 'MultiselectPicklist':
         parameters = '<visibleLines>3</visibleLines>'
-
-    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                    custom_field_type, parameters, uses_value_set)
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -86,6 +80,12 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     record_ids = []
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
+        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
+                                                        custom_field_type, parameters, uses_value_set)
+
         logger.info('Adding two records into Salesforce ...')
         record = {
             'FirstName': '1',
@@ -151,16 +151,11 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
     run_name = 'sale_bulk2_origin_object_names_' + test_name + '_' + get_random_string(string.ascii_lowercase, 10)
     client = salesforce.client
 
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
-
     custom_field_name = '{}__c'.format(field_name)
     custom_field_label = 'Value'
     custom_field_type = 'Number'
     parameters = '<precision>5</precision>' \
                  '<scale>0</scale>'
-    custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label, custom_field_type,
-                                                    parameters)
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -182,6 +177,13 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
     record_id = None
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
+        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
+                                                        custom_field_type,
+                                                        parameters)
+
         logger.info('Adding a Contact into Salesforce ...')
 
         result = client.Contact.create({
@@ -223,13 +225,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
     max_batch_size = 20
     batches = 50
 
-    test_name = 'sale_bulk2_origin_multiple_batches_' + number_of_threads + '_' + \
+    test_name = 'sale_bulk2_origin_multiple_batches_' + str(number_of_threads) + '_' + \
                 get_random_string(string.ascii_lowercase, 10)
 
     client = salesforce.client
-
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -255,6 +254,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
     record_ids = []
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         logger.info('Inserting data into Contacts...')
         records = [{'LastName': str(n), 'FirstName': test_name} for n in range(1, max_batch_size * batches + 1)]
         record_ids = check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
@@ -288,14 +290,11 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
 
     client = salesforce.client
 
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
-
     builder = sdc_builder.get_pipeline_builder()
     origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
-    query = (f"SELECT Id, LastName FROM Contact "
+    query = (f"SELECT Id, FirstName FROM Contact "
              "WHERE Id > '${OFFSET}' "
-             f"AND FirstName = '{test_name}' "
+             f"AND LastName = '{test_name}' "
              "ORDER BY Id")
     origin.set_attributes(soql_query=query,
                           query_interval='${1 * SECONDS}',
@@ -314,12 +313,16 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
     record_ids = []
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         logger.info('Adding a record into Salesforce ...')
         result = client.Contact.create({
-            'LastName': '1',
-            'FirstName': test_name
+            'FirstName': '1',
+            'LastName': test_name
         })
         record_ids.append({'Id': result['id']})
+
 
         # Start the pipeline
         status = sdc_executor.start_pipeline(pipeline)
@@ -336,8 +339,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
         # Second iteration - insert one new row
         logger.info('Inserting row into Contacts')
         result = client.Contact.create({
-            'LastName': '2',
-            'FirstName': test_name
+            'FirstName': '2',
+            'LastName': test_name
         })
         record_ids.append({'Id': result['id']})
 
@@ -380,9 +383,6 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
 
     client = salesforce.client
 
-    # Create a hard delete permission file for this client
-    assign_hard_delete(client)
-
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
@@ -404,6 +404,9 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
     record_ids = []
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         for iteration in range(0, iterations):
             logger.info(f"Iteration: {iteration}")
             wiretap.reset()
