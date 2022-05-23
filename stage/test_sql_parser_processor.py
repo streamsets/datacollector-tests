@@ -646,6 +646,98 @@ def test_sql_parser_dual_parser(sdc_builder,
             target_table.drop(database.engine)
 
 
+
+
+@sdc_min_version('5.1.0')
+@database('oracle')
+@pytest.mark.parametrize('use_peg_parser', [True, False])
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+def test_decimal_attributes(sdc_builder, sdc_executor, database, use_peg_parser, buffer_location):
+    """Validates that Field attributes for decimal types will get properly generated
+    """
+
+    db_engine = database.engine
+    pipeline = None
+    table = None
+
+    try:
+        table_name = get_random_string(string.ascii_uppercase, 9)
+        logger.info('Using table pattern %s', table_name)
+
+        db_connection = database.engine.connect()
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('ID', sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column('QUANTITY', sqlalchemy.Numeric(20, 2)))
+        table.create(db_engine)
+
+        db_last_scn = _get_last_scn(db_connection)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
+        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                         tables=[{'schema': database.username.upper(),
+                                                  'table': table_name,
+                                                  'excludePattern': ''}],
+                                         buffer_changes_locally=True,
+                                         buffer_location=buffer_location,
+                                         logminer_session_window='${10 * MINUTES}',
+                                         maximum_transaction_length='${2 * MINUTES}',
+                                         db_time_zone='UTC',
+                                         max_batch_size_in_records=1,
+                                         initial_change='SCN',
+                                         start_scn=db_last_scn,
+                                         parse_sql_query=False,
+                                         use_peg_parser=False,
+                                         case_sensitive_names=False,
+                                         include_nulls=False,
+                                         pseudocolumns_in_header=False,
+                                         send_redo_query_in_headers=True)
+
+        sql_parser_processor = pipeline_builder.add_stage(name=SQL_PARSER_STAGE_NAME)
+        sql_parser_processor.set_attributes(sql_field='/sql',
+                                            target_field='/columns',
+                                            db_time_zone='UTC',
+                                            use_peg_parser=use_peg_parser,
+                                            resolve_schema_from_db=True,
+                                            unsupported_field_type='SEND_TO_PIPELINE',
+                                            add_unsupported_fields_to_records=True,
+                                            pseudocolumns_in_header=True,
+                                            include_nulls=True,
+                                            case_sensitive_names=False)
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        lines = [
+            f'insert into {table_name} values (1, 10.2)',
+        ]
+        txn = db_connection.begin()
+        for line in lines:
+            transaction_text = text(line)
+            db_connection.execute(transaction_text)
+        txn.commit()
+
+        oracle_cdc_client >> sql_parser_processor >> wiretap.destination
+        pipeline = pipeline_builder.build('SQL Parser Processor: Decimal Attributes').configure_for_environment(database)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
+
+        assert len(wiretap.output_records) == 1
+
+        assert '20' == wiretap.output_records[0].field["columns"]["QUANTITY"].attributes['precision']
+        assert '2' == wiretap.output_records[0].field["columns"]["QUANTITY"].attributes['scale']
+
+    finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=False)
+
+        if table is not None:
+            table.drop(db_engine)
+            logger.info('Table: %s dropped.', table_name)
+
+
 def _get_last_scn(connection):
 
     """
