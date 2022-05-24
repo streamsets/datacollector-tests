@@ -1,4 +1,4 @@
-# Copyright 2022 StreamSets Inc.
+# Copyright 2018 StreamSets Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ from collections import namedtuple
 
 import pytest
 import sqlalchemy
+from streamsets.sdk.utils import Version
 from streamsets.sdk.utils import wait_for_condition
 from streamsets.testframework.environments import databases
 from streamsets.testframework.markers import database, sdc_min_version
@@ -27,35 +28,36 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-PRIMARY_KEY = 'id'
-NAME_COLUMN = 'name'
-OperationsData = namedtuple('OperationsData', ['kind', 'table', 'columnnames', 'columnvalues', 'oldkeys'])
-Oldkeys = namedtuple('Oldkeys', ['keynames', 'keyvalues'])
+table_column_id = 'id'
+table_column_name = 'name'
 
-INSERT_ROWS = [
-    {PRIMARY_KEY: 0, NAME_COLUMN: 'Mbappe'},
-    {PRIMARY_KEY: 1, NAME_COLUMN: 'Kane'},
-    {PRIMARY_KEY: 2, NAME_COLUMN: 'Griezmann'}
-]
-UPDATE_ROWS = [
-    {PRIMARY_KEY: 0, NAME_COLUMN: 'Kylian Mbappe'},
-    {PRIMARY_KEY: 1, NAME_COLUMN: 'Harry Kane'},
-    {PRIMARY_KEY: 2, NAME_COLUMN: 'Antoine Griezmann'}
-]
-DELETE_ROWS = [{PRIMARY_KEY: 0}, {PRIMARY_KEY: 1}, {PRIMARY_KEY: 2}]
-KIND_FOR_INSERT = 'insert'
-KIND_FOR_UPDATE = 'update'
-KIND_FOR_DELETE = 'delete'
+data_for_operations = namedtuple('OperationsData', ['kind', 'table', 'columnnames', 'columnvalues', 'oldkeys'])
+old_keys = namedtuple('Oldkeys', ['keynames', 'keyvalues'])
 
-CHECK_REP_SLOT_QUERY = 'select slot_name from pg_replication_slots;'
+rows_to_insert = [{table_column_id: 0, table_column_name: 'Mbappe'},
+                  {table_column_id: 1, table_column_name: 'Kane'},
+                  {table_column_id: 2, table_column_name: 'Griezmann'}]
 
-POLL_INTERVAL = "${1 * SECONDS}"
+rows_to_update = [{table_column_id: 0, table_column_name: 'Kylian Mbappe'},
+                  {table_column_id: 1, table_column_name: 'Harry Kane'},
+                  {table_column_id: 2, table_column_name: 'Antoine Griezmann'}]
 
-INSERTS_PER_THREAD = 20
-NUM_THREADS = 10
-TOTAL_THREADING_RECORDS = INSERTS_PER_THREAD * NUM_THREADS
-BLACKLISTED_WAL_SENDER_COLUMNS = set(["usename", "client_addr", "client_hostname"])
-WAL_SENDER_COLUMNS_TO_COMPARE = set(["application_name", "pid"])
+rows_to_delete = [{table_column_id: 0},
+                  {table_column_id: 1},
+                  {table_column_id: 2}]
+
+insert_kind = 'insert'
+update_kind = 'update'
+delete_kind = 'delete'
+
+check_replication_slot_query = 'select slot_name from pg_replication_slots;'
+
+inserts_per_thread = 20
+threads_count = 10
+threaded_records = inserts_per_thread * threads_count
+
+wal_sender_columns_blacklist = set(["usename", "client_addr", "client_hostname"])
+wal_sender_columns_whitelist = set(["application_name", "pid"])
 
 
 def _create_table_in_database(table_name, database):
@@ -63,15 +65,15 @@ def _create_table_in_database(table_name, database):
     table = sqlalchemy.Table(
         table_name,
         metadata,
-        sqlalchemy.Column(PRIMARY_KEY, sqlalchemy.Integer, primary_key=True),
-        sqlalchemy.Column(NAME_COLUMN, sqlalchemy.String(20))
+        sqlalchemy.Column(table_column_id, sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column(table_column_name, sqlalchemy.String(20))
     )
     logger.info('Creating table %s in %s database ...', table_name, database.type)
     table.create(database.engine)
     return table
 
 
-def _insert(connection, table, insert_rows=INSERT_ROWS, create_txn=False):
+def _insert(connection, table, insert_rows=rows_to_insert, create_txn=False):
     if create_txn:
         txn = connection.begin()
 
@@ -84,32 +86,34 @@ def _insert(connection, table, insert_rows=INSERT_ROWS, create_txn=False):
     # Prepare expected data to compare for verification against wiretap data.
     operations_data = []
     for row in insert_rows:
-        operations_data.append(OperationsData(KIND_FOR_INSERT,
-                                              table.name,
-                                              [PRIMARY_KEY, NAME_COLUMN],
-                                              list(row.values()),
-                                              None))  # No oldkeys expected.
+        operations_data.append(data_for_operations(insert_kind,
+                                                   table.name,
+                                                   [table_column_id, table_column_name],
+                                                   list(row.values()),
+                                                   None))  # No oldkeys expected.
     if create_txn:
         txn.close()
 
     return operations_data
 
 
-def _update(connection, table, update_rows=UPDATE_ROWS):
+def _update(connection, table, update_rows=rows_to_update):
     operations_data = []
     txn = connection.begin()
 
     try:
         for row in update_rows:
-            connection.execute(table.update().where(table.c.id == row[PRIMARY_KEY]).values(name=row[NAME_COLUMN]))
+            connection.execute(table.update().where(table.c.id == row[table_column_id]).values(name=row[table_column_name]))
             logger.info('Updating row %s from %s table ...', row, table)
             # Prepare expected data to compare for verification against wiretap data.
-            operations_data.append(OperationsData(KIND_FOR_UPDATE,
-                                                  table.name,
-                                                  [PRIMARY_KEY, NAME_COLUMN],
-                                                  list(row.values()),
-                                                  Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
+            operations_data.append(data_for_operations(update_kind,
+                                                       table.name,
+                                                       [table_column_id, table_column_name],
+                                                       list(row.values()),
+                                                       old_keys([table_column_id], [row[table_column_id]])))
         txn.commit()
+
+
     except:
         txn.rollback()
         pytest.fail('Error updating rows ...')
@@ -120,19 +124,19 @@ def _update(connection, table, update_rows=UPDATE_ROWS):
     return operations_data
 
 
-def _delete(connection, table, delete_rows=DELETE_ROWS):
+def _delete(connection, table, delete_rows=rows_to_delete):
     txn = connection.begin()
     operations_data = []
     try:
         for row in delete_rows:
-            connection.execute(table.delete().where(table.c.id == row[PRIMARY_KEY]))
+            connection.execute(table.delete().where(table.c.id == row[table_column_id]))
             logger.info('Deleting row %s from %s table ...', row, table)
             # Prepare expected data to compare for verification against wiretap data.
-            operations_data.append(OperationsData(KIND_FOR_DELETE,
-                                                  table.name,
-                                                  None,  # No column names expected.
-                                                  None,  # No column values expected.
-                                                  Oldkeys([PRIMARY_KEY], [row[PRIMARY_KEY]])))
+            operations_data.append(data_for_operations(delete_kind,
+                                                       table.name,
+                                                       None,  # No columnnames expected.
+                                                       None,  # No columnvalues expected.
+                                                       old_keys([table_column_id], [row[table_column_id]])))
         txn.commit()
 
     except:
@@ -150,399 +154,370 @@ def _get_wal_sender_status(connection):
     return wal_sender_statuses[0] if len(wal_sender_statuses) > 0 else None
 
 
-@sdc_min_version('5.0.0')
+def transaction_data_to_operation_data(transaction_data, wal2json_format, record_contents):
+    wal2json_version = 2 if wal2json_format == 'OPERATION' and record_contents == 'OPERATION' else 1
+    operations_data = []
+    for operation in transaction_data:
+        row_data = {}
+        if operation.columnnames is not None and operation.columnvalues is not None:
+            for column_name, column_value in zip(operation.columnnames, operation.columnvalues):
+                row_data[column_name] = column_value
+        primary_key_data = {}
+        if operation.oldkeys is not None:
+            for column_name, column_value in zip(operation.oldkeys.keynames, operation.oldkeys.keyvalues):
+                primary_key_data[column_name] = column_value
+        operation_code = operation.kind.upper() if wal2json_version == 1 else operation.kind.upper()[0]
+        operations_data.append({'operation': operation_code,
+                                'schema': 'public',
+                                'table': operation.table,
+                                'row_data': row_data,
+                                'primary_key_data': primary_key_data})
+    return operations_data
+
+
 @database('postgresqlaurora')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('poll_interval', [1,
                                            5])
-def test_stop_start(sdc_builder, sdc_executor, database, poll_interval):
-    """Records are neither dropped, nor duplicated when a pipeline is stopped and then started in
-    the midst of ingesting data. Repeat this a couple of times, and inbetween restart with no data
-    and make sure offset can be read properly back.
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_stop_start(sdc_builder,
+                    sdc_executor,
+                    database,
+                    poll_interval,
+                    wal2json_format,
+                    record_contents):
 
-    Runs with two poll intervals to verify that the Batch Wait Time (ms) configuration is respected.
-
-    The pipeline looks like:
-        aurora_postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
-    """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
 
-    SAMPLE_DATA = [dict(id=i, name=f'Martin_{i}') for i in range(40)]
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
+
+    sample_data = [dict(id=i, name=f'Takemiya{i}') for i in range(40)]
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = sqlalchemy.Table(table_name,
                              sqlalchemy.MetaData(),
-                             sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-                             sqlalchemy.Column('name', sqlalchemy.String(20)))
+                             sqlalchemy.Column('id',
+                                               sqlalchemy.Integer,
+                                               primary_key=True),
+                             sqlalchemy.Column('name',
+                                               sqlalchemy.String(20)))
     replication_slot = get_random_string(string.ascii_lowercase, 10)
 
     try:
         pipeline_builder = sdc_builder.get_pipeline_builder()
         aurora_postgresql_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
-        aurora_postgresql_cdc_client.set_attributes(batch_wait_time_in_ms=100000,
-                                                    max_batch_size_in_records=10,
+        aurora_postgresql_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
+                                                    max_batch_size_in_records=1,
                                                     poll_interval=poll_interval,
                                                     replication_slot=replication_slot)
-
+        if Version(sdc_builder.version) >= Version('4.2.0'):
+            aurora_postgresql_cdc_client.set_attributes(ssl_mode='DISABLED')
+        if Version(sdc_builder.version) >= Version('5.1.0'):
+            aurora_postgresql_cdc_client.set_attributes(record_contents=record_contents,
+                                                        wal2json_format=wal2json_format)
         wiretap = pipeline_builder.add_wiretap()
-
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        # We want the pipeline to stop automatically part-way through processing batch 1 and at the end of batch 2.
-        pipeline_finisher.set_attributes(preconditions=[
-            "${record:value('/change[0]/columnvalues[0]') == 9"
-            " or record:value('/change[0]/columnvalues[0]') == 19"
-            " or record:value('/change[0]/columnvalues[0]') == 29"
-            " or record:value('/change[0]/columnvalues[0]') == 39}"
-        ])
-
+        if record_contents == 'TRANSACTION':
+            precondition = "${record:value('/change[0]/columnvalues[0]') == 9 " \
+                          "or record:value('/change[0]/columnvalues[0]') == 19 " \
+                          "or record:value('/change[0]/columnvalues[0]') == 29 " \
+                          "or record:value('/change[0]/columnvalues[0]') == 39}"
+        else:
+            precondition = "${record:value('/id') == 9 " \
+                          "or record:value('/id') == 19 " \
+                          "or record:value('/id') == 29 " \
+                          "or record:value('/id') == 39}"
+        pipeline_finisher.set_attributes(preconditions=[precondition])
         aurora_postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
-
-        pipeline = pipeline_builder.build(title='test_stop_start').configure_for_environment(database)
+        pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        # Start pipeline and add some data
+        logger.info('Starting pipeline for the first time ...')
         sdc_executor.start_pipeline(pipeline)
-
         table.create(database.engine)
         with database.engine.connect().execution_options(autocommit=True) as connection:
-            for row in SAMPLE_DATA[:30]:
+            for row in sample_data[:30]:
                 connection.execute(table.insert(), row)
-
-        # Pipeline will stop once it sees id=9.
-        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED')
-
-        # Since we stop gracefully, we expect to see the entire first batch (records with id=0 through id=9)
-        # written to the destination.
-        # Within the field, column names are stored in a list (e.g. ['id', 'name']) and so are
-        # column values (e.g. [1, 'Martin_1']). We use zip to help us combine each instance into a dictionary.
-        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records] == SAMPLE_DATA[:10]
-        # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
+        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=300)
+        if record_contents == 'TRANSACTION':
+            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                    for record in wiretap.output_records] == sample_data[:10]
+        else:
+            assert [{'id': record.field['id'], 'name': record.field['name']}
+                    for record in wiretap.output_records] == sample_data[:10]
         wiretap.reset()
+
         logger.info('Starting pipeline for the second time ...')
-        # Again, pipeline will stop on its own, this time when it processes the last record (id=19).
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        # We expect to see records with id=10 through id=19 (i.e. no duplicated or missing records).
-        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records][:10] == SAMPLE_DATA[10:20]
-
-        # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=300)
+        if record_contents == 'TRANSACTION':
+            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                    for record in wiretap.output_records] == sample_data[10:20]
+        else:
+            assert [{'id': record.field['id'], 'name': record.field['name']}
+                    for record in wiretap.output_records] == sample_data[10:20]
         wiretap.reset()
-        logger.info('Starting pipeline for the second time ...')
-        # Again, pipeline will stop on its own, this time when it processes the last record (id=19).
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        # We expect to see records with id=10 through id=19 (i.e. no duplicated or missing records).
-        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records][:10] == SAMPLE_DATA[20:30]
 
-        # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
-        wiretap.reset()
         logger.info('Starting pipeline for the third time ...')
-        # Don't insert records and get an empty batch
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=300)
+        if record_contents == 'TRANSACTION':
+            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                    for record in wiretap.output_records] == sample_data[20:30]
+        else:
+            assert [{'id': record.field['id'], 'name': record.field['name']}
+                    for record in wiretap.output_records] == sample_data[20:30]
+        wiretap.reset()
+
+        logger.info('Starting pipeline for the fourth time ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
         metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
         assert metrics.counter("pipeline.batchOutputRecords.counter").count == 0
-
-        # Add few records
         with database.engine.connect().execution_options(autocommit=True) as connection:
-            for row in SAMPLE_DATA[30:40]:
+            for row in sample_data[30:40]:
                 connection.execute(table.insert(), row)
-        # Reset the wiretap so that we don't see records we've collected up to this point when we access it next time.
         wiretap.reset()
-        logger.info('Starting pipeline for the fourth time ...')
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        # We expect to see records with id=10 through id=19 (i.e. no duplicated or missing records).
-        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records][:10] == SAMPLE_DATA[30:40]
+
+        logger.info('Starting pipeline for the fifth time ...')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=300)
+        if record_contents == 'TRANSACTION':
+            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                    for record in wiretap.output_records] == sample_data[30:40]
+        else:
+            assert [{'id': record.field['id'], 'name': record.field['name']}
+                    for record in wiretap.output_records] == sample_data[30:40]
     finally:
-        logger.info('Dropping table %s in %s database ...', table_name, database.type)
-        table.drop(database.engine)
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot)
+        if table is not None:
+            table.drop(database.engine)
         database.engine.connect().close()
 
 
-@sdc_min_version('5.0.0')
 @database('postgresqlaurora')
+@sdc_min_version('5.0.0')
 @pytest.mark.parametrize('start_from', ['DATE', 'LSN'])
 @pytest.mark.parametrize('create_slot', [True, False])
-def test_start_not_from_latest(sdc_builder, sdc_executor, database, start_from, create_slot):
-    """
-    We test that start from LSN and Date works as expected, for that we insert some data, get the date/lsn and insert
-    some more data, after that we verify that we only process the second batch inserted.
-
-    After that we insert a third batch of records and start again the pipeline to verify that we don't read any
-    duplicated record.
-
-    Apart from that we also included a case where the replication slot is created by the pipeline it set during the
-    start, in that case we need to insert new data after it gets created so, there is a fourth batch of records that is
-    inserted and processed.
-
-    The pipeline looks like:
-        aurora_postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
-    """
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_start_not_from_latest(sdc_builder,
+                               sdc_executor,
+                               database,
+                               start_from,
+                               create_slot,
+                               wal2json_format,
+                               record_contents):
 
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     if start_from is 'LSN' and database.database_server_version.major < 10:
-        pytest.skip('LSN test cannot be executed in versions < 10.')
+        pytest.skip('LSN test cannot be executed in versions PostgresSQL versions < 10.')
 
-    SAMPLE_DATA = [dict(id=f'1{i}', name=f'Alex_{i}') for i in range(20)]
-    SAMPLE_DATA_2 = [dict(id=f'2{i}', name=f'Martin_{i}') for i in range(20)]
-    SAMPLE_DATA_3 = [dict(id=f'3{i}', name=f'Santhosh_{i}') for i in range(20)]
-    SAMPLE_DATA_4 = [dict(id=f'4{i}', name=f'Tucu_{i}') for i in range(20)]
+    sample_data_1 = [dict(id=f'1{i}', name=f'Takemiya_{i}') for i in range(20)]
+    sample_data_2 = [dict(id=f'2{i}', name=f'Kobayashi_{i}') for i in range(20)]
+    sample_data_3 = [dict(id=f'3{i}', name=f'Ishida_{i}') for i in range(20)]
+    sample_data_4 = [dict(id=f'4{i}', name=f'Otake_{i}') for i in range(20)]
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     table = sqlalchemy.Table(table_name,
                              sqlalchemy.MetaData(),
-                             sqlalchemy.Column('id', sqlalchemy.String(20), primary_key=True),
-                             sqlalchemy.Column('name', sqlalchemy.String(20)))
+                             sqlalchemy.Column('id',
+                                               sqlalchemy.String(20),
+                                               primary_key=True),
+                             sqlalchemy.Column('name',
+                                               sqlalchemy.String(20)))
     replication_slot = get_random_string(string.ascii_lowercase, 10)
 
     try:
         table.create(database.engine)
-
         if create_slot:
-            # create replication slot
             with database.engine.connect().execution_options(autocommit=True) as connection:
                 connection.execute(
-                    f'SELECT * FROM pg_create_logical_replication_slot(\'{replication_slot}\', \'wal2json\')')
-
-        # insert first batch of data
+                    f'select * from pg_create_logical_replication_slot(\'{replication_slot}\', \'wal2json\')')
         with database.engine.connect().execution_options(autocommit=True) as connection:
-            for row in SAMPLE_DATA:
+            for row in sample_data_1:
                 connection.execute(table.insert(), row)
-
         if start_from is 'DATE':
-            # get timestamp from database and timezone
             time.sleep(5)
             with database.engine.connect().execution_options(autocommit=True) as connection:
-                date = connection.execute('SELECT CURRENT_TIMESTAMP').first()[0]
-                timezone = str(connection.execute('SHOW timezone').first()[0])
+                date = connection.execute('select current_timestamp').first()[0]
+                timezone = str(connection.execute('show timezone').first()[0])
         else:
-            # get current lsn from replication slot
             with database.engine.connect().execution_options(autocommit=True) as connection:
                 start_lsn = str(connection.execute('select pg_current_wal_lsn()').first()[0])
-
-        # insert second batch of data
         with database.engine.connect().execution_options(autocommit=True) as connection:
-            for row in SAMPLE_DATA_2:
+            for row in sample_data_2:
                 connection.execute(table.insert(), row)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         aurora_postgresql_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
-        aurora_postgresql_cdc_client.set_attributes(replication_slot=replication_slot,
+        aurora_postgresql_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
+                                                    max_batch_size_in_records=1,
+                                                    replication_slot=replication_slot,
                                                     initial_change=start_from,
                                                     poll_interval=1)
-
         if start_from is 'DATE':
             aurora_postgresql_cdc_client.set_attributes(start_date=date.strftime('%m-%d-%Y %H:%M:%S'),
                                                         database_time_zone=timezone)
         else:
             aurora_postgresql_cdc_client.set_attributes(start_lsn=start_lsn)
-
+        if Version(sdc_builder.version) >= Version('4.2.0'):
+            aurora_postgresql_cdc_client.set_attributes(ssl_mode='DISABLED')
+        if Version(sdc_builder.version) >= Version('5.1.0'):
+            aurora_postgresql_cdc_client.set_attributes(record_contents=record_contents,
+                                                        wal2json_format=wal2json_format)
         wiretap = pipeline_builder.add_wiretap()
-
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        pipeline_finisher.set_attributes(preconditions=[
-            "${record:value('/change[0]/columnvalues[0]') == 219"
-            " or record:value('/change[0]/columnvalues[0]') == 319"
-            " or record:value('/change[0]/columnvalues[0]') == 419}"])
-
+        if record_contents == 'TRANSACTION':
+            precondition = "${record:value('/change[0]/columnvalues[0]') == 219 " \
+                          "or record:value('/change[0]/columnvalues[0]') == 319 " \
+                          "or record:value('/change[0]/columnvalues[0]') == 419}"
+        else:
+            precondition = "${record:value('/id') == 219 " \
+                          "or record:value('/id') == 319 " \
+                          "or record:value('/id') == 419}"
+        pipeline_finisher.set_attributes(preconditions=[precondition])
         aurora_postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
-
-        pipeline = pipeline_builder.build(title='test_start_not_from_latest').configure_for_environment(database)
+        pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
 
         if create_slot:
-            # We manually created the slot in the test so the data that we inserted after it will be available
-            expected_data = SAMPLE_DATA_2
+            expected_data = sample_data_2
         else:
-            # Since the pipeline has created the replication slot we are inserting data now to make it available
-            expected_data = SAMPLE_DATA_4
-            sdc_executor.wait_for_pipeline_status(pipeline, 'RUNNING', timeout_sec=120)
-            # insert first batch of data
+            expected_data = sample_data_4
+            sdc_executor.wait_for_pipeline_status(pipeline, 'RUNNING', timeout_sec=300)
             with database.engine.connect().execution_options(autocommit=True) as connection:
-                for row in SAMPLE_DATA_4:
+                for row in sample_data_4:
                     connection.execute(table.insert(), row)
-
-        # Pipeline will stop once it sees id=219 or 419 if the pipelines creates the replication slot
-        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=120)
-
-        # Since we stop gracefully, we expect to see the entire first batch (records with id=0 through id=9)
-        # written to the destination.
-        # Within the field, column names are stored in a list (e.g. ['id', 'name']) and so are
-        # column values (e.g. [1, 'Martin_1']). We use zip to help us combine each instance into a dictionary.
-        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records] == expected_data
-
+        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=300)
+        if record_contents == 'TRANSACTION':
+            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                    for record in wiretap.output_records] == expected_data
+        else:
+            assert [{'id': record.field['id'], 'name': record.field['name']}
+                    for record in wiretap.output_records] == expected_data
         wiretap.reset()
 
-        # insert second batch of data
         with database.engine.connect().execution_options(autocommit=True) as connection:
-            for row in SAMPLE_DATA_3:
+            for row in sample_data_3:
                 connection.execute(table.insert(), row)
-
-        sdc_executor.start_pipeline(pipeline)
-
-        # Pipeline will stop once it sees id=319.
-        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=120)
-
-        assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                for record in wiretap.output_records] == SAMPLE_DATA_3
-
+            sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=300)
+        if record_contents == 'TRANSACTION':
+            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                    for record in wiretap.output_records] == sample_data_3
+        else:
+            assert [{'id': record.field['id'], 'name': record.field['name']}
+                    for record in wiretap.output_records] == sample_data_3
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
-        table.drop(database.engine)
         database.deactivate_and_drop_replication_slot(replication_slot)
+        if table is not None:
+            table.drop(database.engine)
         database.engine.connect().close()
 
 
 @database('postgresqlaurora')
 @sdc_min_version('5.0.0')
-def test_postgres_cdc_aurora_client_basic(sdc_builder, sdc_executor, database):
-    """Basic test that inserts/updates/deletes to a Postgres table,
-    and validates that they are read in the same order.
-    Here `Initial Change` config. is at default value = `From the latest change`.
-    With this, the origin processes all changes that occur after pipeline is started.
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_client_basic(sdc_builder,
+                                          sdc_executor,
+                                          database,
+                                          wal2json_format,
+                                          record_contents):
 
-    The pipeline looks like:
-        aurora_postgresql_cdc_client >> wiretap
-    """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    aurora_postgresql_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
-    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    aurora_postgresql_cdc_client.set_attributes(remove_replication_slot_on_close=True,
-                                                max_batch_size_in_records=1,
-                                                poll_interval=POLL_INTERVAL,
-                                                replication_slot=replication_slot_name
-                                                )
-    wiretap = pipeline_builder.add_wiretap()
-
-    aurora_postgresql_cdc_client >> wiretap.destination
-
-    pipeline = pipeline_builder.build(title='test_postgres_cdc_aurora_client_basic').configure_for_environment(database)
-    sdc_executor.add_pipeline(pipeline)
-
-    table = None
-    try:
-        connection = database.engine.connect()
-        # Database operations done after pipeline start will be captured by CDC.
-        # Hence start the pipeline but do not wait for the capture to be finished.
-        sdc_executor.start_pipeline(pipeline)
-
-        # Create table and then perform insert, update and delete operations.
-        table = _create_table_in_database(table_name, database)
-        expected_operations_data = _insert(connection=connection, table=table)
-        expected_operations_data += _update(connection=connection, table=table)
-        expected_operations_data += _delete(connection=connection, table=table)
-
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
-        sdc_executor.stop_pipeline(pipeline)
-
-        # Verify wiretap contains records
-        assert len(wiretap.output_records) > 0
-
-        # Verify wiretap data is received in exact order as expected.
-        operation_index = 0
-        for record in wiretap.output_records:
-            # No need to worry about DDL related CDC records. e.g. table creation etc.
-            if record.get_field_data('/change'):
-                # Since we performed each operation (insert, update and delete) on 3 rows,
-                # each CDC  record change contains a list of 3 elements.
-                for i in range(3):
-                    expected = expected_operations_data[operation_index]
-                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
-                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
-                    # For delete operation there are no columnnames and columnvalues fields.
-                    if expected.kind != KIND_FOR_DELETE:
-                        assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
-                        assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
-                    if expected.kind != KIND_FOR_INSERT:
-                        # For update and delete operations verify extra information about old keys.
-                        assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                    operation_index += 1
-
-    finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
-        database.deactivate_and_drop_replication_slot(replication_slot_name)
-        if table is not None:
-            table.drop(database.engine)
-            logger.info('Table: %s dropped.', table_name)
-        connection.close()
-
-
-@database('postgresqlaurora')
-@sdc_min_version('5.0.0')
-def test_postgres_cdc_aurora_max_poll_attempts(sdc_builder, sdc_executor, database):
-    """Test the delivery of a batch when the maximum poll attempts is reached.
-
-    The condition to generate a new batch in Aurora PostgreSQL CDC Client is a) to reach the maximum batch size; or b)
-    to reach the maximum attempts to poll data from CDC. This test set a max batch size of 100 records and check a new
-    batch is generated with only a few records because of hitting the max poll attempts.
-
-    Pipeline:
-        aurora_postgres_cdc_client >> wiretap
-    """
-    if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
-                                              max_batch_size_in_records=100,
-                                              poll_interval=POLL_INTERVAL,
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
+                                              max_batch_size_in_records=1,
+                                              remove_replication_slot_on_close=True,
+                                              poll_interval=1,
                                               replication_slot=replication_slot_name)
-
+    if Version(sdc_builder.version) >= Version('4.2.0'):
+        aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                                  wal2json_format=wal2json_format)
     wiretap = pipeline_builder.add_wiretap()
-
     aurora_postgres_cdc_client >> wiretap.destination
-
-    pipeline = pipeline_builder.build(title='test_postgres_cdc_aurora_max_poll_attempts').configure_for_environment(
-        database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     table = None
     try:
-        # Database operations done after pipeline start will be captured by CDC.
-        # Hence start the pipeline but do not wait for the capture to be finished.
         sdc_executor.start_pipeline(pipeline)
-
-        # Create table, perform a few insertions, and then wait for the pipeline a period of time enough to hit the
-        # max poll attempts (max poll attempts == POLL_INTERVAL * 100).
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
         expected_operations_data = _insert(connection=connection, table=table)
+        expected_operations_data += _update(connection=connection, table=table)
+        expected_operations_data += _delete(connection=connection, table=table)
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        if record_contents == 'TRANSACTION':
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
+        else:
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
-
-        # Verify wiretap contains records
-        assert len(wiretap.output_records) > 0
-
-        # Verify wiretap data is received in exact order as expected.
+        if record_contents == 'TRANSACTION':
+            assert len(wiretap.output_records) == 3
+        else:
+            assert len(wiretap.output_records) == 9
         for record in wiretap.output_records:
-            # No need to worry about DDL related CDC records. e.g. table creation etc.
-            if record.get_field_data('/change'):
-                # Check that the CDC record change contains a list of 3 insertions.
-                for i in range(len(INSERT_ROWS)):
-                    expected = expected_operations_data[i]
-                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
-                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
-                    assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
-                    assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+            logger.info(f'Record :: {record}')
+        if record_contents == 'TRANSACTION':
+            operation_index = 0
+            for record in wiretap.output_records:
+                if record.get_field_data('/change'):
+                    for i in range(3):
+                        expected = expected_operations_data[operation_index]
+                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                        if expected.kind != delete_kind:
+                            assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                            assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+                        if expected.kind != insert_kind:
+                            assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
+                        operation_index += 1
+            assert operation_index == len(expected_operations_data)
+        else:
+            expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
+                                                                          wal2json_format,
+                                                                          record_contents)
+            for record, expected in zip(wiretap.output_records, expected_operations_data):
+                assert expected['operation'] == record.header.values['postgres.cdc.operation']
+                assert expected['schema'] == record.header.values['postgres.cdc.schema']
+                assert expected['table'] == record.header.values['postgres.cdc.table']
+                if expected['operation'] != delete_kind.upper():
+                    for expected_column_name, expected_column_value in expected['row_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
+                if expected['operation'] != insert_kind.upper():
+                    for expected_column_name, expected_column_value in expected['primary_key_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -550,26 +525,117 @@ def test_postgres_cdc_aurora_max_poll_attempts(sdc_builder, sdc_executor, databa
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
-            logger.info('Table: %s dropped.', table_name)
         connection.close()
 
 
 @database('postgresqlaurora')
 @sdc_min_version('5.0.0')
-def test_postgres_cdc_aurora_client_filtering_table(sdc_builder, sdc_executor, database):
-    """
-        Test filtering for inserts/updates/deletes to a Postgres table
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_max_poll_attempts(sdc_builder,
+                                               sdc_executor,
+                                               database,
+                                               wal2json_format,
+                                               record_contents):
 
-        1. Random table names for "table_allow", "table_deny"
-        2. Filter OUT anything for "table_deny"
-        3. Insert/update/delete for both tables
-        4. Should see updates for "table_allow" only
-
-        The pipeline looks like:
-            aurora_postgres_cdc_client >> wiretap
-    """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=30000,
+                                              max_batch_size_in_records=33,
+                                              remove_replication_slot_on_close=True,
+                                              poll_interval=1,
+                                              replication_slot=replication_slot_name)
+    if Version(sdc_builder.version) >= Version('4.2.0'):
+        aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                           wal2json_format=wal2json_format)
+    wiretap = pipeline_builder.add_wiretap()
+    aurora_postgres_cdc_client >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    table = None
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        table = _create_table_in_database(table_name, database)
+        connection = database.engine.connect()
+        expected_operations_data = _insert(connection=connection, table=table)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1, timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+
+        if record_contents == 'TRANSACTION':
+            assert len(wiretap.output_records) == 1
+        else:
+            assert len(wiretap.output_records) == 3
+        if record_contents == 'TRANSACTION':
+            operation_index = 0
+            for record in wiretap.output_records:
+                if record.get_field_data('/change'):
+                    for i in range(3):
+                        expected = expected_operations_data[operation_index]
+                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                        if expected.kind != delete_kind:
+                            assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                            assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+                        if expected.kind != insert_kind:
+                            assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
+                        operation_index += 1
+            assert operation_index == len(expected_operations_data)
+        else:
+            expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
+                                                                          wal2json_format,
+                                                                          record_contents)
+            for record, expected in zip(wiretap.output_records, expected_operations_data):
+                assert expected['operation'] == record.header.values['postgres.cdc.operation']
+                assert expected['schema'] == record.header.values['postgres.cdc.schema']
+                assert expected['table'] == record.header.values['postgres.cdc.table']
+                if expected['operation'] != delete_kind.upper():
+                    for expected_column_name, expected_column_value in expected['row_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
+                if expected['operation'] != insert_kind.upper():
+                    for expected_column_name, expected_column_value in expected['primary_key_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        if table is not None:
+            table.drop(database.engine)
+        connection.close()
+
+
+@database('postgresqlaurora')
+@sdc_min_version('5.0.0')
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_client_filtering_table(sdc_builder,
+                                                    sdc_executor,
+                                                    database,
+                                                    wal2json_format,
+                                                    record_contents):
+
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name_allow = get_random_string(string.ascii_lowercase, 20)
     table_name_deny = get_random_string(string.ascii_lowercase, 20)
@@ -577,66 +643,78 @@ def test_postgres_cdc_aurora_client_filtering_table(sdc_builder, sdc_executor, d
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
+                                              max_batch_size_in_records=1,
+                                              remove_replication_slot_on_close=True,
+                                              poll_interval=1,
                                               replication_slot=replication_slot_name,
-                                              poll_interval=POLL_INTERVAL,
                                               tables=[{'schema': 'public',
                                                        'excludePattern': table_name_deny,
                                                        'table': table_name_allow}])
+    if Version(sdc_builder.version) >= Version('4.2.0'):
+        aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                                  wal2json_format=wal2json_format)
 
     wiretap = pipeline_builder.add_wiretap()
-
     aurora_postgres_cdc_client >> wiretap.destination
-
-    pipeline = pipeline_builder.build(
-        title='test_postgres_cdc_aurora_client_filtering_table').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
-    # Create tables before pipeline starts
     table_allow = _create_table_in_database(table_name_allow, database)
     table_deny = _create_table_in_database(table_name_deny, database)
     try:
-        # Database operations done after pipeline start will be captured by CDC.
         sdc_executor.start_pipeline(pipeline)
-
-        # Create table and then perform insert, update and delete operations.
         connection = database.engine.connect()
-
         _insert(connection=connection, table=table_deny)
         _update(connection=connection, table=table_deny)
         _delete(connection=connection, table=table_deny)
-
         expected_operations_data = _insert(connection=connection, table=table_allow)
         expected_operations_data += _update(connection=connection, table=table_allow)
         expected_operations_data += _delete(connection=connection, table=table_allow)
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        if record_contents == 'TRANSACTION':
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
+        else:
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
-
-        # Verify output_records data lenght * 3 - three inserts/updates/deletes per record - is equal
-        # to wiretap length
-        assert len(expected_operations_data) == len(wiretap.output_records) * 3
-
-        # Verify wiretap data is received in exact order as expected.
-        operation_index = 0
+        if record_contents == 'TRANSACTION':
+            assert len(wiretap.output_records) == 3
+        else:
+            assert len(wiretap.output_records) == 9
         for record in wiretap.output_records:
-            # No need to worry about DDL related CDC records. e.g. table creation etc.
-            if record.get_field_data('/change'):
-                # Since we performed each operation (insert, update and delete) on 3 rows,
-                # each CDC  record change contains a list of 3 elements.
-                for i in range(3):
-                    expected = expected_operations_data[operation_index]
-                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
-                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
-                    # For delete operation there are no columnnames and columnvalues fields.
-                    if expected.kind != KIND_FOR_DELETE:
-                        assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
-                        assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
-                    if expected.kind != KIND_FOR_INSERT:
-                        # For update and delete operations verify extra information about old keys.
-                        assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                    operation_index += 1
+            logger.info(f'Record :: {record}')
+        if record_contents == 'TRANSACTION':
+            operation_index = 0
+            for record in wiretap.output_records:
+                if record.get_field_data('/change'):
+                    for i in range(3):
+                        expected = expected_operations_data[operation_index]
+                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                        if expected.kind != delete_kind:
+                            assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                            assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+                        if expected.kind != insert_kind:
+                            assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
+                        operation_index += 1
+            assert operation_index == len(expected_operations_data)
+        else:
+            expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
+                                                                          wal2json_format,
+                                                                          record_contents)
+            for record, expected in zip(wiretap.output_records, expected_operations_data):
+                assert expected['operation'] == record.header.values['postgres.cdc.operation']
+                assert expected['schema'] == record.header.values['postgres.cdc.schema']
+                assert expected['table'] == record.header.values['postgres.cdc.table']
+                if expected['operation'] != delete_kind.upper():
+                    for expected_column_name, expected_column_value in expected['row_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
+                if expected['operation'] != insert_kind.upper():
+                    for expected_column_name, expected_column_value in expected['primary_key_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -644,205 +722,213 @@ def test_postgres_cdc_aurora_client_filtering_table(sdc_builder, sdc_executor, d
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table_allow is not None:
             table_allow.drop(database.engine)
-            logger.info('Table: %s dropped.', table_name_allow)
         if table_deny is not None:
             table_deny.drop(database.engine)
-            logger.info('Table: %s dropped.', table_name_deny)
         connection.close()
 
 
 @database('postgresqlaurora')
 @sdc_min_version('5.0.0')
-def test_postgres_cdc_aurora_client_remove_replication_slot(sdc_builder, sdc_executor, database):
-    """
-        Test the 'Remove replication slot on close' functionality
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_client_remove_replication_slot(sdc_builder,
+                                                            sdc_executor,
+                                                            database,
+                                                            wal2json_format,
+                                                            record_contents):
 
-        1.  Initialize and start pipeline with specified replication slot
-        2.  Pass some data
-        3.  Stop the pipeline
-        4.  Query postgres database for replication slots, checking removal
+    if database.database_server_version < databases.EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID:
+        pytest.skip('Test only runs against Aurora PostgresSQL version >= '
+                    f"{'.'.join(str(item) for item in databases.EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID)}")
 
-        The pipeline looks like:
-            aurora_postgres_cdc_client >> wiretap
-    """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
-    replication_slot = get_random_string(string.ascii_lowercase, 10)
+    replication_slot_name = get_random_string(string.ascii_lowercase, 10)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
-    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
                                               max_batch_size_in_records=1,
-                                              poll_interval=POLL_INTERVAL,
-                                              replication_slot=replication_slot)
-
+                                              remove_replication_slot_on_close=True,
+                                              poll_interval=1,
+                                              replication_slot=replication_slot_name)
+    if Version(sdc_builder.version) >= Version('4.2.0'):
+        aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                           wal2json_format=wal2json_format)
     wiretap = pipeline_builder.add_wiretap()
-
     aurora_postgres_cdc_client >> wiretap.destination
-
-    pipeline = pipeline_builder.build(
-        title='test_postgres_cdc_aurora_client_remove_replication_slot').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     table = None
     try:
-        # Database operations done after pipeline start will be captured by CDC.
-        # Hence start the pipeline but do not wait for the capture to be finished.
         sdc_executor.start_pipeline(pipeline)
-
-        # Create table and then perform some operations to simulate activity
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
         expected_operations_data = _insert(connection=connection, table=table)
         expected_operations_data += _update(connection=connection, table=table)
         expected_operations_data += _delete(connection=connection, table=table)
-
-        # Timeout is set as without SDC-11252, pipeline will get stuck in 'STOPPING' state forever
         sdc_executor.stop_pipeline(pipeline=pipeline).wait_for_stopped(timeout_sec=60)
 
-        # After pipeline stoppage, check on the replication slots remaining
-        listed_slots = connection.execute(CHECK_REP_SLOT_QUERY).fetchall()
-
-        # Check that replication_slot is not in listed_slots
-        logger.info('Replication slot:  ' + replication_slot)
+        listed_slots = connection.execute(check_replication_slot_query).fetchall()
+        logger.info('Replication slot:  ' + replication_slot_name)
         logger.info('List of current slots: ' + str(listed_slots))
-        assert (replication_slot,) not in listed_slots
+        assert (replication_slot_name,) not in listed_slots
+
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         if table is not None:
             table.drop(database.engine)
-            logger.info('Table: %s dropped.', table_name)
         connection.close()
 
 
 @database('postgresqlaurora')
 @sdc_min_version('5.0.0')
-@pytest.mark.parametrize('batch_size', [1, 10, 100, 1000])
-def test_postgres_cdc_aurora_client_multiple_concurrent_operations(sdc_builder, sdc_executor, database, batch_size):
-    """Basic test that inserts/update/delete to a Postgres table with multiple threads,
-    and validates using a wire tap the records processed.
-    Here `Initial Change` config. is at default value = `From the latest change`.
-    With this, the origin processes all changes that occur after pipeline is started.
+@pytest.mark.parametrize('batch_size', [1,
+                                        10,
+                                        100,
+                                        1000])
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
+                                                                   sdc_executor,
+                                                                   database,
+                                                                   batch_size,
+                                                                   wal2json_format,
+                                                                   record_contents):
 
-    The pipeline looks like:
-        aurora_postgres_cdc_client >> [pipeline_finesher, wiretap]
-    """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=False,
-                                              max_batch_size_in_records=batch_size,
-                                              poll_interval=POLL_INTERVAL,
-                                              replication_slot=replication_slot_name,
-                                              batch_wait_time_in_ms=3000
-                                              )
+    if record_contents == 'TRANSACTION':
+        max_batch_size_in_records = batch_size
+        batch_wait_time_in_ms = 3000
+        timeout_sec = 120
+    else:
+        max_batch_size_in_records = 10 * batch_size
+        batch_wait_time_in_ms = 30000
+        timeout_sec = 300
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=batch_wait_time_in_ms,
+                                              max_batch_size_in_records=max_batch_size_in_records,
+                                              remove_replication_slot_on_close=False,
+                                              poll_interval=1,
+                                              replication_slot=replication_slot_name)
+    if Version(sdc_builder.version) >= Version('4.2.0'):
+        aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                           wal2json_format=wal2json_format)
     wiretap = pipeline_builder.add_wiretap()
-
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    # We want the pipeline to stop automatically part-way through processing batch 1 and at the end of batch 2.
-    pipeline_finisher.set_attributes(preconditions=[
-        "${record:value('/change[0]/columnvalues[0]') == -1}"
-    ])
-
+    if record_contents == 'TRANSACTION':
+        precondition = "${record:value('/change[0]/columnvalues[0]') == -1}"
+    else:
+        precondition = "${record:value('/id') == -1}"
+    pipeline_finisher.set_attributes(preconditions=[precondition])
     aurora_postgres_cdc_client >> [wiretap.destination, pipeline_finisher]
-
-    pipeline = pipeline_builder.build(
-        title='test_postgres_cdc_aurora_client_multiple_concurrent_operations').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     table = None
     try:
         pipeline_cmd = sdc_executor.start_pipeline(pipeline)
-
-        # Create table and then perform insert operations with various threads at the same time.
         table = _create_table_in_database(table_name, database)
-        connections = [database.engine.connect() for _ in range(NUM_THREADS)]
-
+        connections = [database.engine.connect() for _ in range(threads_count)]
         expected = []
-
         def inserter_thread(connection, table, id, amount):
             for i in range(amount):
-                insert_rows = [
-                    {
-                        PRIMARY_KEY: id * amount + i,
-                        NAME_COLUMN: get_random_string(string.ascii_lowercase, 10)
-                    }
-                ]
-                expected.append(_insert(
-                    connection=connection,
-                    table=table,
-                    insert_rows=insert_rows,
-                    create_txn=True
-                ))
-                insert_rows = [
-                    {
-                        PRIMARY_KEY: id * amount + i,
-                        NAME_COLUMN: get_random_string(string.ascii_lowercase, 10)
-                    }
-                ]
-                expected.append(_update(
-                    connection=connection,
-                    table=table,
-                    update_rows=insert_rows
-                ))
-                expected.append(_delete(
-                    connection=connection,
-                    table=table,
-                    delete_rows=insert_rows
-                ))
-
-        thread_pool = [
-            threading.Thread(
-                target=inserter_thread,
-                args=(connections[i], table, i, INSERTS_PER_THREAD)
-            )
-            for i in range(NUM_THREADS)
-        ]
-
+                insert_rows = [{table_column_id: id * amount + i,
+                                table_column_name: get_random_string(string.ascii_lowercase, 10)}]
+                expected.append(_insert(connection=connection,
+                                        table=table,
+                                        insert_rows=insert_rows,
+                                        create_txn=True))
+                insert_rows = [{table_column_id: id * amount + i,
+                                table_column_name: get_random_string(string.ascii_lowercase, 10)}]
+                expected.append(_update(connection=connection,
+                                        table=table,
+                                        update_rows=insert_rows))
+                expected.append(_delete(connection=connection,
+                                        table=table,
+                                        delete_rows=insert_rows))
+        thread_pool = [threading.Thread(target=inserter_thread,
+                                        args=(connections[i],
+                                              table,
+                                              i,
+                                              inserts_per_thread)) for i in range(threads_count)]
         for thread in thread_pool:
             thread.start()
-
         for thread in thread_pool:
             thread.join()
+        final_row = [{table_column_id: -1, table_column_name: 'Last Record'}]
+        expected.append(_insert(connection=connections[0],
+                                table=table,
+                                insert_rows=final_row,
+                                create_txn=True))
+        pipeline_cmd.wait_for_finished(timeout_sec=timeout_sec)
 
-        final_row = [{PRIMARY_KEY: -1, NAME_COLUMN: 'Last Record'}]
-        expected.append(_insert(
-            connection=connections[0],
-            table=table,
-            insert_rows=final_row,
-            create_txn=True
-        ))
-        pipeline_cmd.wait_for_finished(timeout_sec=120)
-
-        output = []
-        for record in wiretap.output_records:
-            if record.get_field_data('/change[0]/kind') == 'delete':
-                output.append({'type': 'delete', 'value': record.get_field_data('/change[0]/oldkeys/keyvalues')})
-            if record.get_field_data('/change[0]/kind') == 'insert':
-                output.append({'type': 'insert', 'value': record.get_field_data('/change[0]/columnvalues')})
-            if record.get_field_data('/change[0]/kind') == 'update':
-                output.append({'type': 'update', 'value': record.get_field_data('/change[0]/columnvalues')})
-
-        output_sorted_values = sorted(output, key=lambda key: f'{key["value"][0]}|{key["type"]}')
+        output_values = []
+        if record_contents == 'TRANSACTION':
+            for record in wiretap.output_records:
+                if record.get_field_data('/change[0]/kind') == 'delete':
+                    output_values.append({'type': 'delete', 'value': record.get_field_data('/change[0]/oldkeys/keyvalues')})
+                if record.get_field_data('/change[0]/kind') == 'insert':
+                    output_values.append({'type': 'insert', 'value': record.get_field_data('/change[0]/columnvalues')})
+                if record.get_field_data('/change[0]/kind') == 'update':
+                    output_values.append({'type': 'update', 'value': record.get_field_data('/change[0]/columnvalues')})
+            output_sorted_values = sorted(output_values, key=lambda key: f'{key["value"][0]}|{key["type"]}')
+        else:
+            for record in wiretap.output_records:
+                if record.header.values['postgres.cdc.operation'] == 'DELETE' or   record.header.values['postgres.cdc.operation'] == 'D':
+                    output_values.append({'type': 'delete', 'value': record.field['id']})
+                if record.header.values['postgres.cdc.operation'] == 'INSERT' or record.header.values['postgres.cdc.operation'] == 'I':
+                    output_values.append({'type': 'insert', 'value': record.field['id']})
+                elif record.header.values['postgres.cdc.operation'] == 'UPDATE' or record.header.values['postgres.cdc.operation'] == 'U':
+                    output_values.append({'type': 'update', 'value': record.field['id']})
+            output_sorted_values = sorted(output_values, key=lambda key: f'{key["value"]}|{key["type"]}')
 
         expected_values = []
-        for record in expected:
-            if record[0].kind == 'delete':
-                expected_values.append({'type': 'delete', 'value': record[0].oldkeys.keyvalues})
-            if record[0].kind == 'insert':
-                expected_values.append({'type': 'insert', 'value': record[0].columnvalues})
-            if record[0].kind == 'update':
-                expected_values.append({'type': 'update', 'value': record[0].columnvalues})
-
-        expected_sorted_values = sorted(expected_values, key=lambda key: f'{key["value"][0]}|{key["type"]}')
+        if record_contents == 'TRANSACTION':
+            for record in expected:
+                if record[0].kind == 'delete':
+                    expected_values.append({'type': 'delete', 'value': record[0].oldkeys.keyvalues})
+                if record[0].kind == 'insert':
+                    expected_values.append({'type': 'insert', 'value': record[0].columnvalues})
+                if record[0].kind == 'update':
+                    expected_values.append({'type': 'update', 'value': record[0].columnvalues})
+            expected_sorted_values = sorted(expected_values, key=lambda key: f'{key["value"][0]}|{key["type"]}')
+        else:
+            for record in expected:
+                if record[0].kind == 'delete':
+                    for operation in record:
+                        expected_values.append({'type': 'delete', 'value': operation.oldkeys.keyvalues[0]})
+                if record[0].kind == 'insert':
+                    for operation in record:
+                        expected_values.append({'type': 'insert', 'value': operation.columnvalues[0]})
+                if record[0].kind == 'update':
+                    for operation in record:
+                        expected_values.append({'type': 'update', 'value': operation.columnvalues[0]})
+            expected_sorted_values = sorted(expected_values, key=lambda key: f'{key["value"]}|{key["type"]}')
 
         assert len(expected_sorted_values) == len(output_sorted_values)
         assert expected_sorted_values == output_sorted_values
@@ -853,58 +939,56 @@ def test_postgres_cdc_aurora_client_multiple_concurrent_operations(sdc_builder, 
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
-            logger.info('Table: %s dropped.', table_name)
         for conn in connections:
             conn.close()
 
 
 @database('postgresqlaurora')
 @sdc_min_version('5.0.0')
-def test_postgres_cdc_aurora_client_filtering_multiple_tables(sdc_builder, sdc_executor, database):
-    """
-    Test filtering for inserts/updates/deletes to multiple Postgres table
-        1. Random table name for "table[1]", "table[2]", "table[3]", "table[4]"
-        2. Filter in "table[1]", "table[2]", "table[3]"
-        3. Insert/update/delete for the four tables
-        4. Should see updates for "table[1], [2] and [3]" only
-
-        The pipeline looks like:
-            aurora_postgres_cdc_client >> wiretap
-    """
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_client_filtering_multiple_tables(sdc_builder,
+                                                              sdc_executor,
+                                                              database,
+                                                              wal2json_format,
+                                                              record_contents):
 
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
+
 
     table_name = [get_random_string(string.ascii_lowercase, 20) for _ in range(4)]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
-                                              replication_slot=replication_slot_name,
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
                                               max_batch_size_in_records=1,
-                                              poll_interval=POLL_INTERVAL,
+                                              remove_replication_slot_on_close=True,
+                                              replication_slot=replication_slot_name,
+                                              poll_interval=1,
                                               tables=[{'schema': 'public',
                                                        'excludePattern': '',
-                                                       'table': table_name[i]} for i in range(3)
-                                                      ])
+                                                       'table': table_name[i]} for i in range(3)])
+    if Version(sdc_builder.version) >= Version('4.2.0'):
+        aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                                  wal2json_format=wal2json_format)
     wiretap = pipeline_builder.add_wiretap()
-
     aurora_postgres_cdc_client >> wiretap.destination
-
-    pipeline = pipeline_builder.build(
-        title='test_postgres_cdc_aurora_client_filtering_multiple_tables').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     table = []
     try:
-        # Create tables and then perform insert, update and delete operations.
         table = [_create_table_in_database(name, database) for name in table_name]
-
-        # Database operations done after pipeline start will be captured by CDC.
-        # Hence start the pipeline but do not wait for the capture to be finished.
         sdc_executor.start_pipeline(pipeline)
-
         with database.engine.connect().execution_options(autocommit=False) as connection:
             expected_operations_data = []
             for i in range(3):
@@ -914,39 +998,49 @@ def test_postgres_cdc_aurora_client_filtering_multiple_tables(sdc_builder, sdc_e
                 time.sleep(1)
                 expected_operations_data += _delete(connection=connection, table=table[i])
                 time.sleep(1)
-
-            # inserts/updates/deletes in table 3 should not be processed
             _insert(connection=connection, table=table[3], create_txn=True)
             _update(connection=connection, table=table[3])
             _delete(connection=connection, table=table[3])
-
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9)
+        if record_contents == 'TRANSACTION':
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
+        else:
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 27, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
+        if record_contents == 'TRANSACTION':
+            assert len(wiretap.output_records) == 9
+        else:
+            assert len(wiretap.output_records) == 27
 
-        # Verify record data is received in exact order as expected.
-        operation_index = 0
-
-        # Each record record includes 3 records
-        assert len(wiretap.output_records) * 3 == len(expected_operations_data)
-        for record in wiretap.output_records:
-            if record.get_field_data('/change'):
-                # Since we performed each operation (insert, update and delete) on 3 rows,
-                # each CDC  record change contains a list of 3 elements.
-                for i in range(3):
-                    if operation_index >= len(expected_operations_data):
-                        break
-                    expected = expected_operations_data[operation_index]
-                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
-                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
-                    # For delete operation there are no columnnames and columnvalues fields.
-                    if expected.kind != KIND_FOR_DELETE:
-                        assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
-                        assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
-                    if expected.kind != KIND_FOR_INSERT:
-                        # For update and delete operations verify extra information about old keys.
-                        assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                    operation_index += 1
+        if record_contents == 'TRANSACTION':
+            operation_index = 0
+            for record in wiretap.output_records:
+                if record.get_field_data('/change'):
+                    for i in range(3):
+                        expected = expected_operations_data[operation_index]
+                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                        if expected.kind != delete_kind:
+                            assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                            assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+                        if expected.kind != insert_kind:
+                            assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
+                        operation_index += 1
+            assert operation_index == len(expected_operations_data)
+        else:
+            expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
+                                                                          wal2json_format,
+                                                                          record_contents)
+            for record, expected in zip(wiretap.output_records, expected_operations_data):
+                assert expected['operation'] == record.header.values['postgres.cdc.operation']
+                assert expected['schema'] == record.header.values['postgres.cdc.schema']
+                assert expected['table'] == record.header.values['postgres.cdc.table']
+                if expected['operation'] != delete_kind.upper():
+                    for expected_column_name, expected_column_value in expected['row_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
+                if expected['operation'] != insert_kind.upper():
+                    for expected_column_name, expected_column_value in expected['primary_key_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -954,95 +1048,98 @@ def test_postgres_cdc_aurora_client_filtering_multiple_tables(sdc_builder, sdc_e
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         for t in table:
             t.drop(database.engine)
-            logger.info('Table: %s dropped.', t.name)
         database.engine.connect().close()
 
 
 @database('postgresqlaurora')
 @sdc_min_version('5.0.0')
-def test_postgres_cdc_aurora_wal_sender_status_metrics(sdc_builder, sdc_executor, database):
-    """
-    Test Wal Sender Status gauge. Test whether after pipeline stop the metrics captured
-         has the right information from the database
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_wal_sender_status_metrics(sdc_builder,
+                                                       sdc_executor,
+                                                       database,
+                                                       wal2json_format,
+                                                       record_contents):
 
-        The pipeline looks like:
-            aurora_postgres_cdc_client >> trash
-    """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-
-    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
-                                              replication_slot=replication_slot_name,
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
                                               max_batch_size_in_records=1,
-                                              poll_interval=POLL_INTERVAL,
+                                              remove_replication_slot_on_close=True,
+                                              replication_slot=replication_slot_name,
+                                              poll_interval=1,
                                               tables=[{'schema': 'public',
                                                        'excludePattern': '',
                                                        'table': table_name}])
+    if Version(sdc_builder.version) >= Version('4.2.0'):
+        aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                                  wal2json_format=wal2json_format)
     trash = pipeline_builder.add_stage('Trash')
-
     aurora_postgres_cdc_client >> trash
-
-    pipeline = pipeline_builder.build(
-        title='test_postgres_cdc_aurora_wal_sender_status_metrics').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
     table = _create_table_in_database(table_name, database)
     try:
         start_command = sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
         expected_operations_data = []
-
         expected_operations_data += _insert(connection=connection, table=table)
         time.sleep(1)
-
         expected_operations_data += _update(connection=connection, table=table)
         time.sleep(1)
-
         expected_operations_data += _delete(connection=connection, table=table)
-
-        start_command.wait_for_pipeline_output_records_count(3)
-
+        if record_contents == 'TRANSACTION':
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
+        else:
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
         wal_sender_status_from_db = _get_wal_sender_status(connection)
-
         assert wal_sender_status_from_db is not None
-
         sdc_executor.stop_pipeline(pipeline)
 
         history = sdc_executor.get_pipeline_history(pipeline)
-        wal_sender_status_from_metrics = history.latest.metrics.gauge(
-            'custom.AuroraPostgreSQLCDCClient_01.Wal Sender Status.0.gauge').value
-
-        # Black listed fields should not be available in metrics
-        assert all([k not in wal_sender_status_from_metrics for k in BLACKLISTED_WAL_SENDER_COLUMNS])
-        # Assert fields from wal sender properly available in gauge
-        assert ({k: str(v) for k, v in wal_sender_status_from_metrics.items() if k in WAL_SENDER_COLUMNS_TO_COMPARE}
-                == {k: str(v) for k, v in wal_sender_status_from_db.items() if k in WAL_SENDER_COLUMNS_TO_COMPARE})
+        wal_sender_status_from_metrics = \
+            history.latest.metrics.gauge('custom.AuroraPostgreSQLCDCClient_01.Wal Sender Status.0.gauge').value
+        assert all([k not in wal_sender_status_from_metrics for k in wal_sender_columns_blacklist])
+        assert ({k: str(v) for k, v in wal_sender_status_from_metrics.items() if k in wal_sender_columns_whitelist} ==
+                {k: str(v) for k, v in wal_sender_status_from_db.items() if k in wal_sender_columns_whitelist})
     finally:
         if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         table.drop(database.engine)
-        logger.info('Table: %s dropped.', table.name)
         connection.close()
 
 
 @database('postgresqlaurora')
 @sdc_min_version('5.0.0')
-def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, database):
-    """
-    Test Queue buffering Metrics are proper. Produce multiple batches and
-        assert the question size metrics are proper.
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_queue_buffering_metrics(sdc_builder,
+                                                     sdc_executor,
+                                                     database,
+                                                     wal2json_format,
+                                                     record_contents):
 
-        The pipeline looks like:
-            aurora_postgres_cdc_client >> delay >> wiretap.destination
-    """
     if not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(9)]
 
@@ -1050,40 +1147,44 @@ def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, 
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     queue_size = 6
-    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
-                                              replication_slot=replication_slot_name,
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
                                               max_batch_size_in_records=1,
+                                              remove_replication_slot_on_close=True,
+                                              replication_slot=replication_slot_name,
                                               cdc_generator_queue_size=queue_size,
-                                              poll_interval=POLL_INTERVAL,
+                                              poll_interval=1,
                                               tables=[{'schema': 'public',
                                                        'excludePattern': '',
                                                        'table': table_name} for table_name in table_names])
+    if Version(sdc_builder.version) >= Version('4.2.0'):
+        aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                                  wal2json_format=wal2json_format)
     delay = pipeline_builder.add_stage('Delay')
     delay.delay_between_batches = 5000
-
     wiretap = pipeline_builder.add_wiretap()
-
     aurora_postgres_cdc_client >> delay >> wiretap.destination
-
-    pipeline = pipeline_builder.build(
-        title='test_postgres_cdc_aurora_queue_buffering_metrics').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
+
     tables = [_create_table_in_database(table_name, database) for table_name in table_names]
     try:
         start_command = sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
-
         expected_operations_data = []
         for i in range(9):
             expected_operations_data += _insert(connection=connection,
-                                                insert_rows=[{PRIMARY_KEY: 1, NAME_COLUMN: 'dummy'}],
+                                                insert_rows=[{table_column_id: 1,
+                                                              table_column_name: 'Dosaku'}],
                                                 table=tables[i])
 
         def condition():
             pipeline_metrics = sdc_executor.get_pipeline_metrics(pipeline)
-            queue_metrics = pipeline_metrics.gauge('custom.AuroraPostgreSQLCDCClient_01.CDC Metrics.0.gauge').value
-            output_records_from_origin = pipeline_metrics.counter(
-                'stage.AuroraPostgreSQLCDCClient_01.outputRecords.counter').count
+            queue_metrics = \
+                pipeline_metrics.gauge('custom.AuroraPostgreSQLCDCClient_01.CDC Metrics.0.gauge').value
+            output_records_from_origin = \
+                pipeline_metrics.counter('stage.AuroraPostgreSQLCDCClient_01.outputRecords.counter').count
             if 0 < output_records_from_origin < len(expected_operations_data):
                 assert 0 < queue_metrics['Queue Size'] <= queue_size
             assert queue_metrics['Queue Capacity'] == queue_size - queue_metrics['Queue Size']
@@ -1091,117 +1192,129 @@ def test_postgres_cdc_aurora_queue_buffering_metrics(sdc_builder, sdc_executor, 
 
         def failure(timeout):
             pipeline_metrics = sdc_executor.get_pipeline_metrics(pipeline)
-            output_records_from_origin = pipeline_metrics.counter(
-                'stage.AuroraPostgreSQLCDCClient_01.outputRecords.counter').count
-            raise Exception('Timed out after `{}` seconds waiting for Output record metrics `{}` to reach `{}` '.format(
-                timeout, output_records_from_origin, len(expected_operations_data)))
+            output_records_from_origin = \
+                pipeline_metrics.counter('stage.AuroraPostgreSQLCDCClient_01.outputRecords.counter').count
+            raise Exception('Timed out after `{}` seconds waiting for Output record metrics `{}` to reach `{}` '
+                            .format(timeout, output_records_from_origin, len(expected_operations_data)))
 
-        wait_for_condition(condition=condition, timeout=120, failure=failure)
-
-        start_command.wait_for_pipeline_output_records_count(9)
-
-        sdc_executor.stop_pipeline(pipeline=pipeline)
-
-        assert len(wiretap.output_records) == len(expected_operations_data)
+        wait_for_condition(condition=condition,  timeout=120, failure=failure)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+        assert len(wiretap.output_records) == 9
     finally:
         if sdc_executor.get_pipeline_status(pipeline) == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
         database.deactivate_and_drop_replication_slot(replication_slot_name)
         for t in tables:
             t.drop(database.engine)
-            logger.info('Table: %s dropped.', t.name)
         connection.close()
 
 
 @database('postgresqlaurora')
 @sdc_min_version('5.0.0')
-@pytest.mark.parametrize('ssl_mode', [
-    'REQUIRED',
-    'VERIFY_CA',
-    'VERIFY_FULL'
-])
-def test_postgres_cdc_ssl_enabled(sdc_builder, sdc_executor, database, ssl_mode):
-    """
-    Basic test for SSL enabled that inserts/updates/deletes to a Postgres table,
-    and validates that they are read in the same order.
+@pytest.mark.parametrize('ssl_mode', ['REQUIRED',
+                                      'VERIFY_CA',
+                                      'VERIFY_FULL'])
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'TRANSACTION'),
+                                                              ('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_aurora_postgres_cdc_ssl_enabled(sdc_builder,
+                                         sdc_executor,
+                                         database,
+                                         ssl_mode,
+                                         wal2json_format,
+                                         record_contents):
 
-    The pipeline looks like:
-        aurora_postgres_cdc_client >> wiretap
-    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against Aurora PostgresSQL with CDC enabled.')
 
-    # skip the test if the Aurora PostgreSQL CDC client isn't ssl enabled.
-    if not database.ca_certificate or not database.is_cdc_enabled:
-        pytest.skip('Test only runs against Aurora PostgreSQL with CDC and SSL enabled.')
+    if not database.ca_certificate:
+        pytest.skip('Test only runs against Aurora PostgresSQL with SSL enabled.')
+
+    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+        pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
+
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
-    aurora_postgres_cdc_client.set_attributes(remove_replication_slot_on_close=True,
+    aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
                                               max_batch_size_in_records=1,
-                                              poll_interval=POLL_INTERVAL,
+                                              remove_replication_slot_on_close=True,
                                               replication_slot=replication_slot_name,
-                                              ssl_mode=ssl_mode
-                                              )
-
+                                              poll_interval=1,
+                                              ssl_mode=ssl_mode)
     if ssl_mode != 'REQUIRED':
         aurora_postgres_cdc_client.set_attributes(ca_certificate_pem=database.ca_certificate_file_contents,
-                                                  server_certificate_pem=database.server_certificate_file_contents
-                                                  )
-
+                                           server_certificate_pem=database.server_certificate_file_contents)
+    if Version(sdc_builder.version) >= Version('5.1.0'):
+        aurora_postgres_cdc_client.set_attributes(record_contents=record_contents,
+                                                  wal2json_format=wal2json_format)
     wiretap = pipeline_builder.add_wiretap()
-
     aurora_postgres_cdc_client >> wiretap.destination
-
-    pipeline = pipeline_builder.build(title='test_postgres_cdc_ssl_enabled').configure_for_environment(database)
+    pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
     table = None
     try:
-        # Database operations done after pipeline start will be captured by CDC.
-        # Hence start the pipeline but do not wait for the capture to be finished.
         sdc_executor.start_pipeline(pipeline)
-
-        # Create table and then perform insert, update and delete operations.
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
         expected_operations_data = _insert(connection=connection, table=table)
         expected_operations_data += _update(connection=connection, table=table)
         expected_operations_data += _delete(connection=connection, table=table)
-
         sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
-        # Verify wiretap contains records
-        assert len(wiretap.output_records) > 0
-
-        # Verify wiretap data is received in exact order as expected.
-        operation_index = 0
+        if record_contents == 'TRANSACTION':
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
+        else:
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+        if record_contents == 'TRANSACTION':
+            assert len(wiretap.output_records) == 3
+        else:
+            assert len(wiretap.output_records) == 9
         for record in wiretap.output_records:
-            # No need to worry about DDL related CDC records. e.g. table creation etc.
-            if record.get_field_data('/change'):
-                # Since we performed each operation (insert, update and delete) on 3 rows,
-                # each CDC  record change contains a list of 3 elements.
-                for i in range(3):
-                    expected = expected_operations_data[operation_index]
-                    assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
-                    assert expected.table == record.get_field_data(f'/change[{i}]/table')
-                    # For delete operation there are no columnnames and columnvalues fields.
-                    if expected.kind != KIND_FOR_DELETE:
-                        assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
-                        assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
-                    if expected.kind != KIND_FOR_INSERT:
-                        # For update and delete operations verify extra information about old keys.
-                        assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                        assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                    operation_index += 1
+            logger.info(f'Record :: {record}')
+        if record_contents == 'TRANSACTION':
+            operation_index = 0
+            for record in wiretap.output_records:
+                if record.get_field_data('/change'):
+                    for i in range(3):
+                        expected = expected_operations_data[operation_index]
+                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        assert expected.table == record.get_field_data(f'/change[{i}]/table')
+                        if expected.kind != delete_kind:
+                            assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
+                            assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
+                        if expected.kind != insert_kind:
+                            assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
+                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
+                        operation_index += 1
+            assert operation_index == len(expected_operations_data)
+        else:
+            expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
+                                                                          wal2json_format,
+                                                                          record_contents)
+            for record, expected in zip(wiretap.output_records, expected_operations_data):
+                assert expected['operation'] == record.header.values['postgres.cdc.operation']
+                assert expected['schema'] == record.header.values['postgres.cdc.schema']
+                assert expected['table'] == record.header.values['postgres.cdc.table']
+                if expected['operation'] != delete_kind.upper():
+                    for expected_column_name, expected_column_value in expected['row_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
+                if expected['operation'] != insert_kind.upper():
+                    for expected_column_name, expected_column_value in expected['primary_key_data'].items():
+                        assert record.field[expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
-        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        #database.deactivate_and_drop_replication_slot(replication_slot_name)
         if table is not None:
             table.drop(database.engine)
-            logger.info('Table: %s dropped.', table_name)
         connection.close()
