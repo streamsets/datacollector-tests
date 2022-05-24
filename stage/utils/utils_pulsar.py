@@ -25,14 +25,14 @@ def enforce_schema_validation_for_pulsar_topic(pulsar_admin_client, topic_name, 
 
 
 def create_topic_with_schema(pulsar_admin_client, topic_name, topic_schema):
-    pulsar_admin_client.session.headers = {'Content-type': 'application/json'}
+    pulsar_admin_client.session.headers.update({'Content-type': 'application/json'})
     pulsar_admin_client.put(f"persistent/public/default/{topic_name}")
     pulsar_admin_client.post(f"schemas/public/default/{topic_name}/schema", data=topic_schema)
 
 
 def set_schema_validation_enforced(pulsar_admin_client, must_be_enforced=True):
     try:
-        pulsar_admin_client.session.headers = {'Content-type': 'application/json'}
+        pulsar_admin_client.session.headers.update({'Content-type': 'application/json'})
         pulsar_admin_client.post(f"namespaces/public/default/schemaValidationEnforced", data=must_be_enforced)
     except requests.exceptions.HTTPError as e:
         # AFAIK there is no any way to check the pulsar server version so that we could know whether
@@ -52,7 +52,7 @@ def disable_auto_update_schema(pulsar_admin_client):
     # it produces by default.
     # https://pulsar.apache.org/docs/en/2.4.2/schema-manage/#schema-autoupdate
     try:
-        pulsar_admin_client.session.headers = {'Content-type': 'application/json'}
+        pulsar_admin_client.session.headers.update({'Content-type': 'application/json'})
         pulsar_admin_client.post(f"namespaces/public/default/isAllowAutoUpdateSchema", data=False)
         return True
     except requests.exceptions.HTTPError:
@@ -66,7 +66,7 @@ def enable_auto_update_schema(pulsar_admin_client):
     # it produces by default.
     # https://pulsar.apache.org/docs/en/2.4.2/schema-manage/#schema-autoupdate
     try:
-        pulsar_admin_client.session.headers = {'Content-type': 'application/json'}
+        pulsar_admin_client.session.headers.update({'Content-type': 'application/json'})
         pulsar_admin_client.post(f"namespaces/public/default/isAllowAutoUpdateSchema", data=True)
         return True
     except requests.exceptions.HTTPError:
