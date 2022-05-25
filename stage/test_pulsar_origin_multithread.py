@@ -22,23 +22,12 @@ import xml.etree.ElementTree as ET
 from streamsets.testframework.markers import pulsar, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-from .utils.utils_pulsar import enforce_schema_validation_for_pulsar_topic, disable_auto_update_schema, \
-    create_topic_with_schema, set_schema_validation_enforced, enable_auto_update_schema, json_to_avro
+from .utils.utils_pulsar import disable_auto_update_schema, create_topic_with_schema, set_schema_validation_enforced, \
+    enable_auto_update_schema
 
 logger = logging.getLogger(__name__)
 
-PULSAR_PUSH_ORIGIN_STAGE_NAME = "com_streamsets_pipeline_stage_origin_pulsar_PulsarDSource"
-
-
-def get_pulsar_consumer_stage(pipeline_builder, topic, initial_offset):
-    """Create and return a Pulsar Consumer origin stage depending on execution mode for the pipeline."""
-    pulsar_consumer = pipeline_builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME, type='origin')
-    pulsar_consumer.set_attributes(data_format='TEXT',
-                                   batch_wait_time_in_ms=20000,
-                                   topic=topic,
-                                   consumer_name='consumer',
-                                   initial_offset=initial_offset)
-    return pulsar_consumer
+PULSAR_PUSH_ORIGIN_STAGE_NAME = "com_streamsets_pipeline_stage_origin_pulsarmultithread_PulsarDSourceMultiThread"
 
 
 def get_pulsar_producer_stage(pipeline_builder, topic):
@@ -64,9 +53,12 @@ def get_dev_raw_data_source(pipeline_builder, raw_data, data_format='JSON', stop
     return dev_raw_data_source
 
 
+
 @pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_consumer(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('subscription_type', ['SHARED', 'EXCLUSIVE'])
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_consumer(sdc_builder, sdc_executor, pulsar, subscription_type, number_of_threads):
     """Test for Pulsar consumer origin stage. We do so by publishing data to a test topic using Pulsar client and
     having a pipeline which reads that data using Pulsar consumer origin stage. Data is then asserted for what is
     published at Pulsar client and what we read from wiretap. The pipeline looks like:
@@ -81,11 +73,14 @@ def test_pulsar_consumer(sdc_builder, sdc_executor, pulsar):
     input_text = 'Hello World!'
 
     builder = sdc_builder.get_pipeline_builder()
-    pulsar_consumer = builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME).set_attributes(subscription_name=sub_name,
-                                                                          consumer_name=consumer_name,
-                                                                          topic=topic_name,
-                                                                          data_format='TEXT',
-                                                                          max_batch_size_in_records=max_records)
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(subscription_name=sub_name,
+                                   consumer_name=consumer_name,
+                                   topic=topic_name,
+                                   data_format='TEXT',
+                                   subscription_type=subscription_type,
+                                   max_batch_size_in_records=max_records,
+                                   number_of_threads=number_of_threads)
     wiretap = builder.add_wiretap()
 
     pulsar_consumer >> wiretap.destination
@@ -93,29 +88,31 @@ def test_pulsar_consumer(sdc_builder, sdc_executor, pulsar):
     consumer_origin_pipeline = builder.build(title='Pulsar Consumer pipeline').configure_for_environment(pulsar)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
-    client = pulsar.client
-    admin = pulsar.admin
+    producer = pulsar.client.create_producer(topic_name)
     try:
         sdc_executor.start_pipeline(consumer_origin_pipeline)
 
-        producer = client.create_producer(topic_name)
-        for _ in range(max_records):
-            producer.send(input_text.encode())
+        records_sent = []
+        for i in range(max_records):
+            record_to_send = f"{i}-{input_text}"
+            records_sent.append(record_to_send)
+            producer.send(record_to_send.encode())
 
         sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', max_records)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
-        output_records = [record.field['text'] for record in wiretap.output_records]
-        assert output_records == [input_text] * max_records
+        output_records = [record.field['text'].value for record in wiretap.output_records]
+        assert sorted(output_records) == sorted(records_sent)
     finally:
         producer.close()  # all producer/consumers need to be closed before topic can be deleted without force
-        client.close()
-        admin.delete_topic(producer.topic())
+        pulsar.client.close()
+        pulsar.admin.delete_topic(producer.topic())
 
 
 @pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_consumer_with_parameters(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_consumer_with_parameters(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """Make sure that pulsar's topic name is properly resolved with pipeline parameters."""
     sub_name = get_random_string(string.ascii_letters, 10)
     consumer_name = get_random_string(string.ascii_letters, 10)
@@ -124,11 +121,13 @@ def test_pulsar_consumer_with_parameters(sdc_builder, sdc_executor, pulsar):
     input_text = 'Hello World!'
 
     builder = sdc_builder.get_pipeline_builder()
-    pulsar_consumer = builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME).set_attributes(subscription_name=sub_name,
-                                                                          consumer_name=consumer_name,
-                                                                          topic="${TOPIC_NAME}",
-                                                                          data_format='TEXT',
-                                                                          max_batch_size_in_records=max_records)
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(subscription_name=sub_name,
+                                   consumer_name=consumer_name,
+                                   topic="${TOPIC_NAME}",
+                                   data_format='TEXT',
+                                   max_batch_size_in_records=max_records,
+                                   number_of_threads=number_of_threads)
     wiretap = builder.add_wiretap()
 
     pulsar_consumer >> wiretap.destination
@@ -158,8 +157,9 @@ def test_pulsar_consumer_with_parameters(sdc_builder, sdc_executor, pulsar):
 
 
 @pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_origin_standalone_text(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_origin_standalone_text(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """
     Write simple text messages into pulsar and confirm that pulsar successfully reads them.
     Specifically, this would look like:
@@ -196,7 +196,13 @@ def test_pulsar_origin_standalone_text(sdc_builder, sdc_executor, pulsar):
     pulsar_consumer_pipeline_builder = sdc_builder.get_pipeline_builder()
     pulsar_consumer_pipeline_builder.add_error_stage('Discard')
 
-    pulsar_consumer = get_pulsar_consumer_stage(pulsar_consumer_pipeline_builder, topic, 'LATEST')
+    pulsar_consumer = pulsar_consumer_pipeline_builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(data_format='TEXT',
+                                   batch_wait_time_in_ms=20000,
+                                   topic=topic,
+                                   consumer_name='consumer',
+                                   initial_offset='LATEST',
+                                   number_of_threads=number_of_threads)
     pulsar_consumer.set_attributes(subscription_type='FAILOVER', consumer_queue_size=1000)
 
     wiretap = pulsar_consumer_pipeline_builder.add_wiretap()
@@ -218,14 +224,15 @@ def test_pulsar_origin_standalone_text(sdc_builder, sdc_executor, pulsar):
 
 
 @pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_origin_standalone_json(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_origin_standalone_json(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """
     Write simple json messages into pulsar and confirm that pulsar successfully reads them.
     Specifically, this would look like:
 
     Pulsar Producer Destination pipeline with standalone mode:
-        dev_raw_data_soruce >> pulsar_producer
+        dev_raw_data_source >> pulsar_producer
 
     Pulsar Consumer Origin pipeline with standalone mode:
         pulsar_consumer >> wiretap
@@ -260,8 +267,13 @@ def test_pulsar_origin_standalone_json(sdc_builder, sdc_executor, pulsar):
     pulsar_consumer_pipeline_builder = sdc_builder.get_pipeline_builder()
     pulsar_consumer_pipeline_builder.add_error_stage('Discard')
 
-    pulsar_consumer = get_pulsar_consumer_stage(pulsar_consumer_pipeline_builder, topic,
-                                                'EARLIEST')
+    pulsar_consumer = pulsar_consumer_pipeline_builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(data_format='TEXT',
+                                   batch_wait_time_in_ms=20000,
+                                   topic=topic,
+                                   consumer_name='consumer',
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads)
     pulsar_consumer.set_attributes(subscription_type='SHARED',
                                    consumer_queue_size=10000,
                                    data_format='JSON')
@@ -285,14 +297,15 @@ def test_pulsar_origin_standalone_json(sdc_builder, sdc_executor, pulsar):
 
 
 @pulsar
-@sdc_min_version('3.14.0')
-def test_pulsar_origin_standalone_xml(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_origin_standalone_xml(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """
     Write simple XML messages into pulsar and confirm that pulsar successfully reads them.
     Specifically, this would look like:
 
     Pulsar Producer Destination pipeline with standalone mode:
-        dev_raw_data_soruce text message >> pulsar_producer XML
+        dev_raw_data_source text message >> pulsar_producer XML
 
     Pulsar Consumer Origin pipeline with standalone mode:
         pulsar_consumer XML >> wiretap
@@ -326,7 +339,13 @@ def test_pulsar_origin_standalone_xml(sdc_builder, sdc_executor, pulsar):
     pulsar_consumer_pipeline_builder = sdc_builder.get_pipeline_builder()
     pulsar_consumer_pipeline_builder.add_error_stage('Discard')
 
-    pulsar_consumer = get_pulsar_consumer_stage(pulsar_consumer_pipeline_builder, topic, 'EARLIEST')
+    pulsar_consumer = pulsar_consumer_pipeline_builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(data_format='TEXT',
+                                   batch_wait_time_in_ms=20000,
+                                   topic=topic,
+                                   consumer_name='consumer',
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads)
     pulsar_consumer.set_attributes(data_format='XML',
                                    consumer_queue_size=1)
 
@@ -349,8 +368,9 @@ def test_pulsar_origin_standalone_xml(sdc_builder, sdc_executor, pulsar):
 
 
 @pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_origin_standalone_topics_list(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_origin_standalone_topics_list(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """
     Write simple json messages into pulsar and confirm that pulsar successfully reads them.
     Specifically, this would look like:
@@ -413,14 +433,18 @@ def test_pulsar_origin_standalone_topics_list(sdc_builder, sdc_executor, pulsar)
     pulsar_consumer_pipeline_builder = sdc_builder.get_pipeline_builder()
     pulsar_consumer_pipeline_builder.add_error_stage('Discard')
 
-    pulsar_consumer = get_pulsar_consumer_stage(pulsar_consumer_pipeline_builder, topic1, 'EARLIEST')
+    pulsar_consumer = pulsar_consumer_pipeline_builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
     topics_list = [topic1, topic2]
 
-    pulsar_consumer.set_attributes(topics_selector='TOPICS_LIST',
+    pulsar_consumer.set_attributes(batch_wait_time_in_ms=20000,
+                                   consumer_name='consumer',
+                                   initial_offset='EARLIEST',
+                                   topics_selector='TOPICS_LIST',
                                    topics_list=topics_list,
                                    subscription_type='EXCLUSIVE',
                                    read_compacted=False,
-                                   data_format='JSON')
+                                   data_format='JSON',
+                                   number_of_threads=number_of_threads)
 
     wiretap = pulsar_consumer_pipeline_builder.add_wiretap()
     pulsar_consumer >> wiretap.destination
@@ -444,17 +468,18 @@ def test_pulsar_origin_standalone_topics_list(sdc_builder, sdc_executor, pulsar)
 
 
 @pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """
     Write simple json messages into pulsar and confirm that pulsar successfully reads them.
     Specifically, this would look like:
 
     Pulsar Producer Destination pipeline with standalone mode:
-        dev_raw_data_soruce >> pulsar_producer_1
+        dev_raw_data_source >> pulsar_producer_1
 
     Pulsar Producer Destination pipeline with standalone mode:
-        dev_raw_data_soruce >> pulsar_producer_2
+        dev_raw_data_source >> pulsar_producer_2
 
     Pulsar Consumer Origin pipeline with standalone mode:
         pulsar_consumer_1_2 >> wiretap
@@ -530,7 +555,13 @@ def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, puls
     pulsar_consumer_pipeline_builder = sdc_builder.get_pipeline_builder()
     pulsar_consumer_pipeline_builder.add_error_stage('Discard')
 
-    pulsar_consumer = get_pulsar_consumer_stage(pulsar_consumer_pipeline_builder, topic1, 'EARLIEST')
+    pulsar_consumer = pulsar_consumer_pipeline_builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(data_format='TEXT',
+                                   batch_wait_time_in_ms=20000,
+                                   topic=topic1,
+                                   consumer_name='consumer',
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads)
     pulsar_consumer.set_attributes(topics_selector='TOPICS_PATTERN',
                                    topics_pattern=f'persistent://public/default/({topic1}|{topic2}|{topic3})',
                                    subscription_type='EXCLUSIVE',
@@ -563,8 +594,9 @@ def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, puls
 
 
 @pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_origin_standalone_json_tls_encrypt(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_origin_standalone_json_tls_encrypt(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """
     Write simple json messages into pulsar and confirm that pulsar successfully reads them.
     Specifically, this would look like:
@@ -606,8 +638,13 @@ def test_pulsar_origin_standalone_json_tls_encrypt(sdc_builder, sdc_executor, pu
     pulsar_consumer_pipeline_builder = sdc_builder.get_pipeline_builder()
     pulsar_consumer_pipeline_builder.add_error_stage('Discard')
 
-    pulsar_consumer = get_pulsar_consumer_stage(pulsar_consumer_pipeline_builder, topic,
-                                                'EARLIEST')
+    pulsar_consumer = pulsar_consumer_pipeline_builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(data_format='TEXT',
+                                   batch_wait_time_in_ms=20000,
+                                   topic=topic,
+                                   consumer_name='consumer',
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads)
     pulsar_consumer.set_attributes(subscription_type='SHARED',
                                    consumer_queue_size=10000,
                                    data_format='JSON',
@@ -632,14 +669,15 @@ def test_pulsar_origin_standalone_json_tls_encrypt(sdc_builder, sdc_executor, pu
 
 
 @pulsar
-@sdc_min_version('3.5.0')
-def test_pulsar_origin_standalone_json_tls_mutual_auth(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_origin_standalone_json_tls_mutual_auth(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """
     Write simple json messages into pulsar and confirm that pulsar successfully reads them.
     Specifically, this would look like:
 
     Pulsar Producer Destination pipeline with standalone mode:
-        dev_raw_data_soruce >> pulsar_producer
+        dev_raw_data_source >> pulsar_producer
 
     Pulsar Consumer Origin pipeline with standalone mode:
         pulsar_consumer >> wiretap
@@ -676,8 +714,13 @@ def test_pulsar_origin_standalone_json_tls_mutual_auth(sdc_builder, sdc_executor
     pulsar_consumer_pipeline_builder = sdc_builder.get_pipeline_builder()
     pulsar_consumer_pipeline_builder.add_error_stage('Discard')
 
-    pulsar_consumer = get_pulsar_consumer_stage(pulsar_consumer_pipeline_builder, topic,
-                                                'EARLIEST')
+    pulsar_consumer = pulsar_consumer_pipeline_builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(data_format='TEXT',
+                                   batch_wait_time_in_ms=20000,
+                                   topic=topic,
+                                   consumer_name='consumer',
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads)
     pulsar_consumer.set_attributes(subscription_type='SHARED',
                                    consumer_queue_size=10000,
                                    data_format='JSON',
@@ -703,8 +746,9 @@ def test_pulsar_origin_standalone_json_tls_mutual_auth(sdc_builder, sdc_executor
 
 
 @pulsar
-@sdc_min_version('4.4.0')
-def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar):
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar, number_of_threads):
     """Test for Pulsar consumer origin stage.
     We verify that the output records contains a header with the topic
 
@@ -715,10 +759,12 @@ def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar):
     input_text = 'Hello World!'
 
     builder = sdc_builder.get_pipeline_builder()
-    pulsar_consumer = builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME).set_attributes(subscription_name=get_random_string(),
-                                                                          consumer_name=get_random_string(),
-                                                                          topic=topic_name,
-                                                                          data_format='TEXT')
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(subscription_name=get_random_string(),
+                                   consumer_name=get_random_string(),
+                                   topic=topic_name,
+                                   data_format='TEXT',
+                                   number_of_threads=number_of_threads)
     wiretap = builder.add_wiretap()
 
     pulsar_consumer >> wiretap.destination
@@ -757,6 +803,7 @@ class ComplexSchemaClass(schema.Record):
 
 @pulsar
 @sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
 @pytest.mark.parametrize("data_format, schema_info, message_data", [
     (
             "TEXT",
@@ -775,7 +822,7 @@ class ComplexSchemaClass(schema.Record):
                           '[{\"name\":\"number\",\"type\":[\"null\", \"int\"]},'
                           '{\"name\":\"topic\",\"type\":[\"null\", \"string\"]}]}',
                 "properties": {}
-             },
+            },
             # This must contains values for the fields in the class ComplexSchemaClass. This is because we use this
             # class instances to push messages to Pulsar. This is how the pulsar-client does work.
             {"number": 10, "topic": "some_topic"}
@@ -803,11 +850,12 @@ class ComplexSchemaClass(schema.Record):
             "<record><name>Fran</name><age>32</age></record>"
     ),
 ])
-def test_pulsar_consumer_schemas(sdc_builder, sdc_executor, pulsar, data_format, schema_info, message_data):
+def test_pulsar_consumer_schemas(sdc_builder, sdc_executor, pulsar, data_format, schema_info, message_data,
+                                 number_of_threads):
     topic_name = get_random_string()
 
     builder = sdc_builder.get_pipeline_builder()
-    pulsar_consumer = builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
     pulsar_consumer.set_attributes(subscription_name=get_random_string(),
                                    consumer_name=get_random_string(),
                                    topic=topic_name,
@@ -815,7 +863,8 @@ def test_pulsar_consumer_schemas(sdc_builder, sdc_executor, pulsar, data_format,
                                    schema_info=json.dumps(schema_info),
                                    data_format=data_format,
                                    max_batch_size_in_records=1,
-                                   initial_offset='EARLIEST')
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads)
     if schema_info["type"] == "AVRO":
         pulsar_consumer.set_attributes(avro_schema_location="INLINE",
                                        avro_schema=schema_info["schema"])
@@ -878,3 +927,385 @@ def test_pulsar_consumer_schemas(sdc_builder, sdc_executor, pulsar, data_format,
         producer.close()
         pulsar.admin.delete_topic(producer.topic())
         sdc_executor.remove_pipeline(pipeline)
+
+
+@pulsar
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize("subscription_type", ['EXCLUSIVE', 'SHARED'])
+@pytest.mark.parametrize('number_of_threads', [1, 4])
+@pytest.mark.parametrize("data_format, schema_info, message_data", [
+    (
+            "TEXT",
+            {
+                "type": "STRING",
+                "schema": "",
+                "properties": {}
+            },
+            "Test string"
+    ),
+    (
+            "AVRO",
+            {
+                "type": "AVRO",
+                "schema": '{\"type\":\"record\",\"name\":\"schema\",\"fields\":'
+                          '[{\"name\":\"number\",\"type\":[\"null\", \"int\"]},'
+                          '{\"name\":\"topic\",\"type\":[\"null\", \"string\"]}]}',
+                "properties": {}
+            },
+            # This must contains values for the fields in the class ComplexSchemaClass. This is because we use this
+            # class instances to push messages to Pulsar. This is how the pulsar-client does work.
+            {"number": 10, "topic": "some_topic"}
+    ),
+    (
+            "JSON",
+            {
+                "type": "JSON",
+                "schema": '{\"type\":\"record\",\"name\":\"schema\",\"fields\":'
+                          '[{\"name\":\"number\",\"type\":[\"null\", \"int\"]},'
+                          '{\"name\":\"topic\",\"type\":[\"null\", \"string\"]}]}',
+                "properties": {}
+            },
+            # This must contains values for the fields in the class ComplexSchemaClass. This is because we use this
+            # class instances to push messages to Pulsar. This is how the pulsar-client does work.
+            {"number": 10, "topic": "some_topic"}
+    ),
+    (
+            "XML",
+            {
+                "type": "STRING",
+                "schema": "",
+                "properties": {}
+            },
+            "<record><name>Fran</name><age>32</age></record>"
+    ),
+])
+def test_pulsar_consumer_schemas_topics_list(sdc_builder, sdc_executor, pulsar, data_format, schema_info, message_data,
+                                 number_of_threads, subscription_type):
+    topics_list = sorted([get_random_string() for _ in range(2)])
+
+    builder = sdc_builder.get_pipeline_builder()
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(subscription_name=get_random_string(),
+                                   consumer_name=get_random_string(),
+                                   topics_selector='TOPICS_LIST',
+                                   topics_list=topics_list,
+                                   schema="USER_SCHEMA",
+                                   schema_info=json.dumps(schema_info),
+                                   data_format=data_format,
+                                   max_batch_size_in_records=1,
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads,
+                                   subscription_type=subscription_type)
+    if schema_info["type"] == "AVRO":
+        pulsar_consumer.set_attributes(avro_schema_location="INLINE",
+                                       avro_schema=schema_info["schema"])
+    wiretap = builder.add_wiretap()
+
+    pulsar_consumer >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(pulsar)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Prepare Pulsar
+    if schema_info["type"] == "STRING":
+        pulsar_schema = schema.StringSchema()
+    elif schema_info["type"] == "AVRO":
+        pulsar_schema = schema.AvroSchema(ComplexSchemaClass)
+    elif schema_info["type"] == "JSON":
+        pulsar_schema = schema.JsonSchema(ComplexSchemaClass)
+
+    set_schema_validation_enforced(pulsar.admin, False)
+    enable_auto_update_schema(pulsar.admin)
+
+    producers = []
+    for topic_name in topics_list:
+        create_topic_with_schema(pulsar.admin, topic_name, schema_info)
+        producers.append(pulsar.client.create_producer(topic_name, schema=pulsar_schema))
+
+    # To be sure the pipeline does not upload the schema and so respect the schema
+    # we set for the topic
+    set_schema_validation_enforced(pulsar.admin)
+    disable_auto_update_schema(pulsar.admin)
+
+    try:
+        for producer in producers:
+            if schema_info["type"] == "STRING":
+                producer.send(message_data)
+            else:  # Valid for complex schemas AVRO and JSON
+                producer.send(ComplexSchemaClass(**message_data))
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = sorted([record for record in wiretap.output_records],
+                                key=lambda x: x.header.values['pulsar.topic'])
+
+        assert len(output_records) == len(topics_list)
+        for topic_name, output_record in zip(topics_list, output_records):
+            assert topic_name in str(output_record.header.values)
+            if data_format == "TEXT":
+                assert output_record.field["text"] == message_data
+            elif data_format == "AVRO":  # Valid for complex schemas AVRO and JSON
+                for k, v in message_data.items():
+                    assert k in output_record.field
+                    assert output_record.field[k] == v
+            elif data_format == "JSON":
+                assert output_record.field == message_data
+            elif data_format == "XML":
+                t = ET.ElementTree(ET.fromstring(message_data)).getroot()
+                # Won't work for xml with arbitrary nested levels even though this is enough for this test purposes
+                xml_message_data = {t.tag: {c.tag: [{"value": c.text}] for c in t.getchildren()}}
+                assert output_record.field == xml_message_data
+            else:
+                raise Exception(f"Final assertions are not written for the schema type {schema_info['type']}")
+    finally:
+        for producer in producers:
+            producer.close()
+            pulsar.admin.delete_topic(producer.topic())
+        sdc_executor.remove_pipeline(pipeline)
+
+
+@pulsar
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize("subscription_type", ['EXCLUSIVE', 'SHARED'])
+@pytest.mark.parametrize('number_of_threads', [1, 4])
+@pytest.mark.parametrize("data_format, schema_info, message_data", [
+    (
+            "TEXT",
+            {
+                "type": "STRING",
+                "schema": "",
+                "properties": {}
+            },
+            "Test string"
+    ),
+    (
+            "AVRO",
+            {
+                "type": "AVRO",
+                "schema": '{\"type\":\"record\",\"name\":\"schema\",\"fields\":'
+                          '[{\"name\":\"number\",\"type\":[\"null\", \"int\"]},'
+                          '{\"name\":\"topic\",\"type\":[\"null\", \"string\"]}]}',
+                "properties": {}
+            },
+            # This must contains values for the fields in the class ComplexSchemaClass. This is because we use this
+            # class instances to push messages to Pulsar. This is how the pulsar-client does work.
+            {"number": 10, "topic": "some_topic"}
+    ),
+    (
+            "JSON",
+            {
+                "type": "JSON",
+                "schema": '{\"type\":\"record\",\"name\":\"schema\",\"fields\":'
+                          '[{\"name\":\"number\",\"type\":[\"null\", \"int\"]},'
+                          '{\"name\":\"topic\",\"type\":[\"null\", \"string\"]}]}',
+                "properties": {}
+            },
+            # This must contains values for the fields in the class ComplexSchemaClass. This is because we use this
+            # class instances to push messages to Pulsar. This is how the pulsar-client does work.
+            {"number": 10, "topic": "some_topic"}
+    ),
+    (
+            "XML",
+            {
+                "type": "STRING",
+                "schema": "",
+                "properties": {}
+            },
+            "<record><name>Fran</name><age>32</age></record>"
+    ),
+])
+def test_pulsar_consumer_schemas_topics_pattern(sdc_builder, sdc_executor, pulsar, data_format, schema_info, message_data,
+                                             number_of_threads, subscription_type):
+    topics_list = sorted([f'topic-prefix{get_random_string()}' for _ in range(2)])
+
+    builder = sdc_builder.get_pipeline_builder()
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(subscription_name=get_random_string(),
+                                   consumer_name=get_random_string(),
+                                   topics_selector='TOPICS_PATTERN',
+                                   topics_pattern=f'persistent://public/default/({"|".join(topics_list)})',
+                                   schema="USER_SCHEMA",
+                                   schema_info=json.dumps(schema_info),
+                                   data_format=data_format,
+                                   max_batch_size_in_records=1,
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads,
+                                   subscription_type=subscription_type)
+    if schema_info["type"] == "AVRO":
+        pulsar_consumer.set_attributes(avro_schema_location="INLINE",
+                                       avro_schema=schema_info["schema"])
+    wiretap = builder.add_wiretap()
+
+    pulsar_consumer >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(pulsar)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Prepare Pulsar
+    if schema_info["type"] == "STRING":
+        pulsar_schema = schema.StringSchema()
+    elif schema_info["type"] == "AVRO":
+        pulsar_schema = schema.AvroSchema(ComplexSchemaClass)
+    elif schema_info["type"] == "JSON":
+        pulsar_schema = schema.JsonSchema(ComplexSchemaClass)
+
+    set_schema_validation_enforced(pulsar.admin, False)
+    enable_auto_update_schema(pulsar.admin)
+
+    producers = []
+    for topic_name in topics_list:
+        create_topic_with_schema(pulsar.admin, topic_name, schema_info)
+        producers.append(pulsar.client.create_producer(topic_name, schema=pulsar_schema))
+
+    # To be sure the pipeline does not upload the schema and so respect the schema
+    # we set for the topic
+    set_schema_validation_enforced(pulsar.admin)
+    disable_auto_update_schema(pulsar.admin)
+
+    try:
+        for producer in producers:
+            if schema_info["type"] == "STRING":
+                producer.send(message_data)
+            else:  # Valid for complex schemas AVRO and JSON
+                producer.send(ComplexSchemaClass(**message_data))
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = sorted([record for record in wiretap.output_records],
+                                key=lambda x: x.header.values['pulsar.topic'])
+
+        assert len(output_records) == len(topics_list)
+        for topic_name, output_record in zip(topics_list, output_records):
+            assert topic_name in str(output_record.header.values)
+            if data_format == "TEXT":
+                assert output_record.field["text"] == message_data
+            elif data_format == "AVRO":  # Valid for complex schemas AVRO and JSON
+                for k, v in message_data.items():
+                    assert k in output_record.field
+                    assert output_record.field[k] == v
+            elif data_format == "JSON":
+                assert output_record.field == message_data
+            elif data_format == "XML":
+                t = ET.ElementTree(ET.fromstring(message_data)).getroot()
+                # Won't work for xml with arbitrary nested levels even though this is enough for this test purposes
+                xml_message_data = {t.tag: {c.tag: [{"value": c.text}] for c in t.getchildren()}}
+                assert output_record.field == xml_message_data
+            else:
+                raise Exception(f"Final assertions are not written for the schema type {schema_info['type']}")
+    finally:
+        for producer in producers:
+            producer.close()
+            pulsar.admin.delete_topic(producer.topic())
+        sdc_executor.remove_pipeline(pipeline)
+
+
+@pulsar
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize("subscription_type", ['EXCLUSIVE', 'SHARED'])
+@pytest.mark.parametrize("number_of_threads", [1, 8])
+def test_pulsar_consumer_max_batch_time(sdc_builder, sdc_executor, pulsar, subscription_type, number_of_threads):
+    sub_name = get_random_string(string.ascii_letters, 10)
+    consumer_name = get_random_string(string.ascii_letters, 10)
+    topic_name = get_random_string(string.ascii_letters, 10)
+    number_messages = 10
+    input_text = 'Hello World!'
+
+    builder = sdc_builder.get_pipeline_builder()
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(subscription_name=sub_name,
+                                   consumer_name=consumer_name,
+                                   topic=topic_name,
+                                   data_format='TEXT',
+                                   initial_offset='EARLIEST',
+                                   batch_wait_time_in_ms=2000,
+                                   max_batch_size_in_records=1_000_000,
+                                   subscription_type=subscription_type,
+                                   number_of_threads=number_of_threads)
+    wiretap = builder.add_wiretap()
+    pulsar_consumer >> wiretap.destination
+
+    pipeline = builder.build(title='Pulsar Consumer pipeline Max batch time').configure_for_environment(pulsar)
+    sdc_executor.add_pipeline(pipeline)
+
+    producer = pulsar.client.create_producer(topic_name)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+
+        for _ in range(number_messages):
+            producer.send(input_text.encode())
+
+        # It will never reach 1_000_000 records so that if it reaches 10 it would mean the max batch timeout has been
+        # reached and the timeout mechanisms worked as expected.
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', number_messages)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = [record.field['text'] for record in wiretap.output_records]
+        assert len(output_records) == number_messages
+        assert output_records == [input_text] * number_messages
+    finally:
+        producer.close()
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.remove_pipeline(pipeline)
+        pulsar.admin.delete_topic(producer.topic())
+
+
+@pulsar
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize("subscription_type", ['EXCLUSIVE', 'SHARED'])
+@pytest.mark.parametrize("number_of_threads", [1, 8])
+def test_pulsar_consumer_multiple_threads_assert_parallel(sdc_builder, sdc_executor, pulsar, subscription_type,
+                                                          number_of_threads):
+    """ For every record, a jython script will sleep the pipeline for 10 seconds. If two records are
+    handled in parallel the wait time will be 10 seconds as well """
+    sub_name = get_random_string(string.ascii_letters, 10)
+    consumer_name = get_random_string(string.ascii_letters, 10)
+    topic_name = get_random_string(string.ascii_letters, 10)
+    max_records = number_of_threads
+    input_text = 'Hello World!'
+    busy_time = 10
+
+    builder = sdc_builder.get_pipeline_builder()
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(subscription_name=sub_name,
+                                   consumer_name=consumer_name,
+                                   topic=topic_name,
+                                   data_format='TEXT',
+                                   number_of_threads=number_of_threads,
+                                   subscription_type=subscription_type,
+                                   max_batch_size_in_records=1)
+    jython_evaluator = builder.add_stage('Jython Evaluator')
+    jython_evaluator.set_attributes(script=f"""
+from time import sleep 
+for record in records: output.write(record);sleep({busy_time});
+""")
+    wiretap = builder.add_wiretap()
+
+    pulsar_consumer >> jython_evaluator >> wiretap.destination
+
+    consumer_origin_pipeline = builder.build(title='Pulsar Consumer pipeline').configure_for_environment(pulsar)
+    sdc_executor.add_pipeline(consumer_origin_pipeline)
+
+    producer = pulsar.client.create_producer(topic_name)
+    try:
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+
+        for _ in range(max_records):
+            producer.send(input_text.encode())
+
+        import time
+        start_time = time.time()
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', max_records)
+        assert busy_time < time.time() - start_time < busy_time * 1.5
+        sdc_executor.stop_pipeline(consumer_origin_pipeline)
+
+        output_records = [record.field['text'] for record in wiretap.output_records]
+        assert output_records == [input_text] * max_records
+    finally:
+        producer.close()  # all producer/consumers need to be closed before topic can be deleted without force
+        pulsar.client.close()
+        pulsar.admin.delete_topic(producer.topic())
