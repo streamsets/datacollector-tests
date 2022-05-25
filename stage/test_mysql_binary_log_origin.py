@@ -12,16 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
+import pytest
 import random
+import sqlalchemy
 import string
 import time
+import uuid
 
-import pytest
-import sqlalchemy
+from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.databases import MySqlDatabase
-from streamsets.testframework.markers import database
+from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from time import sleep
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +33,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture(autouse=True)
 def cdc_check(database):
     if isinstance(database, MySqlDatabase) and not database.is_cdc_enabled:
-            pytest.skip('Test only runs against MySQL with CDC enabled.')
+        pytest.skip('Test only runs against MySQL with CDC enabled.')
 
 
 @database('mysql')
@@ -170,7 +174,7 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
         assert len(records) == 9
 
         for i in range(1, 10):
-            assert records[i-1].field['Data']['id'] == i
+            assert records[i - 1].field['Data']['id'] == i
     finally:
         if not keep_data:
             # Drop table and Connection.
@@ -358,6 +362,1063 @@ def test_auto_recovery_from_lost_connectivity(sdc_builder,
         if pipeline is not None:
             logger.info(f'Stopping pipeline {pipeline_title}')
             sdc_executor.stop_pipeline(pipeline, force=True)
+
+
+@database('mysql')
+def test_rollback_to_savepoint(sdc_builder, sdc_executor, database):
+    """
+    Tests the rollback to savepoint mechanism. The test writes some data, creates a savepoint, writes some more
+    data and then rolls back to the savepoint. Finally, it validates that only the data before the save point and
+    after the rollback is read.
+    """
+
+    pipeline = None
+    table = None
+
+    try:
+        connection = database.engine.connect()
+
+        # Create the table
+        table_name = get_random_string(string.ascii_uppercase, 20)
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(
+            table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('name', sqlalchemy.String(64))
+        )
+        table.create(database.engine)
+
+        # Create the pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            include_tables=database.database + '.' + table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        transaction = connection.begin()
+
+        connection.execute(f"insert into {table_name} values (1, 'Tony Stark')")
+        connection.execute(f"insert into {table_name} values (2, 'Peter Parker')")
+        connection.execute(f"update {table_name} set name = 'Steven Rogers' where id = 1")
+        connection.execute("savepoint test_savepoint")
+        connection.execute(f"insert into {table_name} values (3, 'Thor')")
+        connection.execute(f"update {table_name} set name = 'Loki' where id = 1")
+        connection.execute(f"delete from {table_name} where id = 1")
+        connection.execute("rollback to savepoint test_savepoint")
+        connection.execute(f"update {table_name} set name = 'Bruce Banner' WHERE id = 2")
+        connection.execute(f"insert into {table_name} values (3, 'Steven Strange')")
+
+        transaction.commit()
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 5)
+
+        output_records = wiretap.output_records
+        assert len(output_records) == 5
+
+        assert output_records[0].field['Type'] == 'INSERT'
+        assert output_records[0].field['Data']['id'] == 1
+        assert output_records[0].field['Data']['name'] == 'Tony Stark'
+
+        assert output_records[1].field['Type'] == 'INSERT'
+        assert output_records[1].field['Data']['id'] == 2
+        assert output_records[1].field['Data']['name'] == 'Peter Parker'
+
+        assert output_records[2].field['Type'] == 'UPDATE'
+        assert output_records[2].field['Data']['id'] == 1
+        assert output_records[2].field['Data']['name'] == 'Steven Rogers'
+
+        assert output_records[3].field['Type'] == 'UPDATE'
+        assert output_records[3].field['Data']['id'] == 2
+        assert output_records[3].field['Data']['name'] == 'Bruce Banner'
+
+        assert output_records[4].field['Type'] == 'INSERT'
+        assert output_records[4].field['Data']['id'] == 3
+        assert output_records[4].field['Data']['name'] == 'Steven Strange'
+
+    finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        if table is not None:
+            table.drop(database.engine)
+
+
+@database('mysql')
+def test_mysql_binary_log_bulk(sdc_builder, sdc_executor, database):
+    """
+    Tests inserts/updates/deletes to a table with bulk sentences and verifies that no record is lost .
+    """
+    source_table = None
+    target_table = None
+    pipeline = None
+
+    try:
+        connection = database.engine.connect()
+
+        source_table_name = get_random_string(string.ascii_uppercase, 20)
+        logger.info('Creating source table %s in %s database ...', source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column('ID', sqlalchemy.Integer),
+            sqlalchemy.Column('NAME', sqlalchemy.String(32)),
+            sqlalchemy.Column('SURNAME', sqlalchemy.String(64)),
+            sqlalchemy.Column('COUNTRY', sqlalchemy.String(2)),
+            sqlalchemy.Column('CITY', sqlalchemy.String(3))
+        )
+        source_table.create(database.engine)
+
+        target_table_name = get_random_string(string.ascii_uppercase, 16)
+        logger.info('Creating target table %s in %s database ...', target_table_name, database.type)
+        target_table = sqlalchemy.Table(
+            target_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column('ID', sqlalchemy.Integer),
+            sqlalchemy.Column('NAME', sqlalchemy.String(32)),
+            sqlalchemy.Column('SURNAME', sqlalchemy.String(64)),
+            sqlalchemy.Column('COUNTRY', sqlalchemy.String(2)),
+            sqlalchemy.Column('CITY', sqlalchemy.String(3))
+        )
+        target_table.create(database.engine)
+
+        # Create the pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            include_tables=database.database + '.' + target_table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        number_of_rows = 100
+
+        for id in range(0, number_of_rows):
+            name = "'" + str(uuid.uuid4())[:32] + "'"
+            surname = "'" + str(uuid.uuid4())[:64] + "'"
+            country = "'" + str(uuid.uuid4())[:2] + "'"
+            city = "'" + str(uuid.uuid4())[:3] + "'"
+            connection.execute(f"insert into {source_table_name} values ({id}, {name}, {surname}, {country}, {city})")
+
+        connection.execute(f'insert into {target_table_name} select * from {source_table_name}')
+        connection.execute(f'update {target_table_name} set CITY = COUNTRY')
+        connection.execute(f'delete from {target_table_name}')
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows)
+
+        q_insert = sum(1 for record in wiretap.output_records if record.field['Type'] == 'INSERT')
+        q_update = sum(1 for record in wiretap.output_records if record.field['Type'] == 'UPDATE')
+        q_delete = sum(1 for record in wiretap.output_records if record.field['Type'] == 'DELETE')
+
+        logger.info(f'Total INSERT sentences: {q_insert}')
+        logger.info(f'Total UPDATE sentences: {q_update}')
+        logger.info(f'Total DELETE sentences: {q_delete}')
+
+        assert q_insert == number_of_rows
+        assert q_update == number_of_rows
+        assert q_delete == number_of_rows
+
+    finally:
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        if source_table is not None:
+            source_table.drop(database.engine)
+
+        if target_table is not None:
+            target_table.drop(database.engine)
+
+
+@database('mysql')
+@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
+def test_mysql_binary_log_record_information(sdc_builder, sdc_executor, database, table_loading_option):
+    """
+    Test to check the contents of the record field.
+    """
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        # Create the table
+        connection = database.engine.connect()
+
+        if table_loading_option == 'via_event':
+            if Version(database.version) < Version('8.0.0'):
+                pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
+
+            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
+
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(
+            table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('name', sqlalchemy.String(64)),
+            sqlalchemy.Column('code_name', sqlalchemy.String(64))
+        )
+        table.create(database.engine)
+
+        # Create the pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            include_tables=database.database + '.' + table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        ironman = {'id': 1, 'name': 'Tony Stark', 'code_name': 'Iron Man'}
+        spiderman = {'id': 2, 'name': 'Peter Parker', 'code_name': 'Spider-man'}
+
+        connection.execute(f"""
+            insert into {table_name}
+            values ({ironman.get('id')}, '{ironman.get('name')}', '{ironman.get('code_name')}')
+        """)
+        connection.execute(f"""
+            update {table_name}
+            set id = {spiderman.get('id')}, name = '{spiderman.get('name')}', code_name = '{spiderman.get('code_name')}'
+            where id = {ironman.get('id')}
+        """)
+        connection.execute(f"delete from {table_name} where id = {spiderman.get('id')}")
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+
+        assert len(wiretap.output_records) == 3
+
+        for record in wiretap.output_records:
+            assert record.field is not None
+
+            assert 'BinLogFilename' in record.field
+            assert 'Type' in record.field
+            assert 'Table' in record.field
+            assert 'ServerId' in record.field
+            assert 'BinLogPosition' in record.field
+            assert 'Database' in record.field
+            assert 'Timestamp' in record.field
+            assert 'Offset' in record.field
+
+            assert record.field['BinLogFilename'] is not None
+            assert record.field['Type'] is not None
+            assert record.field['Table'] is not None
+            assert record.field['ServerId'] is not None
+            assert record.field['BinLogPosition'] is not None
+            assert record.field['Database'] is not None
+            assert record.field['Timestamp'] is not None
+            assert record.field['Offset'] is not None
+
+            assert record.field['Table'] == table_name
+            assert record.field['Type'] in ['INSERT', 'UPDATE', 'DELETE']
+
+            assert 'sdc.operation.type' in record.header.values
+
+            if record.field['Type'] == 'INSERT':
+                assert record.header.values['sdc.operation.type'] == '1'
+
+                assert 'OldData' not in record.field
+                assert 'Data' in record.field
+
+                assert record.field['Data'] is not None
+                assert sorted(record.field['Data']) == sorted(ironman)
+
+            elif record.field['Type'] == 'UPDATE':
+                assert record.header.values['sdc.operation.type'] == '3'
+
+                assert 'OldData' in record.field
+                assert 'Data' in record.field
+
+                assert record.field['OldData'] is not None
+                assert record.field['Data'] is not None
+                assert sorted(record.field['OldData']) == sorted(ironman)
+                assert sorted(record.field['Data']) == sorted(spiderman)
+
+            else:
+                assert record.header.values['sdc.operation.type'] == '2'
+
+                assert 'OldData' in record.field
+                assert 'Data' not in record.field
+
+                assert record.field['OldData'] is not None
+                assert sorted(record.field['OldData']) == sorted(spiderman)
+
+    finally:
+        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
+            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
+
+        connection.execute(f'drop table if exists {table_name}')
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+
+@database('mysql')
+def test_mysql_binary_log_include_tables(sdc_builder, sdc_executor, database):
+    """
+    Test to check the 'Include Tables' filter.
+    """
+    pipeline = None
+    included_table_name = get_random_string(string.ascii_lowercase, 20)
+    excluded_table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        connection = database.engine.connect()
+
+        logger.info('Creating table %s in %s database ...', included_table_name, database.type)
+        included_table = sqlalchemy.Table(
+            included_table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('name', sqlalchemy.String(64))
+        )
+        included_table.create(database.engine)
+
+        logger.info('Creating table %s in %s database ...', excluded_table_name, database.type)
+        excluded_table = sqlalchemy.Table(
+            excluded_table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('name', sqlalchemy.String(64))
+        )
+        excluded_table.create(database.engine)
+
+        # Create the pipeline setting the table to be included
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            include_tables=database.database + '.' + included_table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        black_widow = {'id': 1, 'name': 'Black Widow'}
+        hulk = {'id': 2, 'name': 'Hulk'}
+
+        connection.execute(f"""
+            insert into {excluded_table_name}
+            values ({hulk.get('id')}, '{hulk.get('name')}')
+        """)
+        connection.execute(f"""
+            insert into {included_table_name}
+            values ({black_widow.get('id')}, '{black_widow.get('name')}')
+        """)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        assert len(wiretap.output_records) == 1
+
+        record = wiretap.output_records[0]
+        assert 'Data' in record.field
+        assert record.field['Data'] is not None
+        assert sorted(record.field['Data']) == sorted(black_widow)
+
+    finally:
+        connection.execute(f'drop table if exists {included_table_name}')
+        connection.execute(f'drop table if exists {excluded_table_name}')
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+
+@database('mysql')
+def test_mysql_binary_log_ignore_tables(sdc_builder, sdc_executor, database):
+    """
+    Test to check the 'Ignore Tables' filter.
+    """
+    pipeline = None
+    included_table_name = get_random_string(string.ascii_lowercase, 20)
+    excluded_table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        # Create the table
+        connection = database.engine.connect()
+
+        logger.info('Creating source table %s in %s database ...', included_table_name, database.type)
+        included_table = sqlalchemy.Table(
+            included_table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('name', sqlalchemy.String(64))
+        )
+        included_table.create(database.engine)
+
+        logger.info('Creating source table %s in %s database ...', excluded_table_name, database.type)
+        excluded_table = sqlalchemy.Table(
+            excluded_table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('name', sqlalchemy.String(64))
+        )
+        excluded_table.create(database.engine)
+
+        # Create the pipeline setting the table to be ignored
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            ignore_tables=database.database + '.' + excluded_table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        black_widow = {'id': 1, 'name': 'Black Widow'}
+        hulk = {'id': 2, 'name': 'Hulk'}
+
+        connection.execute(f"""
+            insert into {excluded_table_name}
+            values ({hulk.get('id')}, '{hulk.get('name')}')
+        """)
+        connection.execute(f"""
+            insert into {included_table_name}
+            values ({black_widow.get('id')}, '{black_widow.get('name')}')
+        """)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        assert len(wiretap.output_records) == 1
+
+        record = wiretap.output_records[0]
+        assert 'Data' in record.field
+        assert record.field['Data'] is not None
+        assert sorted(record.field['Data']) == sorted(black_widow)
+
+    finally:
+        connection.execute(f'drop table if exists {included_table_name}')
+        connection.execute(f'drop table if exists {excluded_table_name}')
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+
+@sdc_min_version('5.1.0')
+@database('mysql')
+@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
+def test_mysql_binary_log_primary_keys_headers(
+        sdc_builder,
+        sdc_executor,
+        database,
+        table_loading_option
+):
+    """
+    Test to check the primary keys are present in the headers of the output records.
+    """
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        # Create the table
+        connection = database.engine.connect()
+
+        if table_loading_option == 'via_event':
+            if Version(database.version) < Version('8.0.0'):
+                pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
+
+            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
+
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(
+            table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('TYPE', sqlalchemy.String(64), primary_key=True),
+            sqlalchemy.Column('ID', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('NAME', sqlalchemy.String(64)),
+            sqlalchemy.Column('SURNAME', sqlalchemy.String(64)),
+            sqlalchemy.Column('ADDRESS', sqlalchemy.String(64))
+        )
+        table.create(database.engine)
+
+        # Create the pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            include_tables=database.database + '.' + table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        # Define the data for each statement
+        name = 'Bilbo'
+        surname = 'Baggins'
+        column_types = [
+            'Hobbit',
+            'Fallohide',
+            'Fallohide',
+            'Hobbit - Fallohide',
+            'Hobbit - Fallohide',
+            'Hobbit - Fallohide',
+            'Hobbit - Fallohide',
+            'Hobbit'
+        ]
+        column_ids = [1, 1, 2, 3, 3, 4, 4, 5]
+        index = 0
+
+        # Insert data into the table
+        connection.execute(f"""
+            insert into {table_name}
+            values ('{column_types[index]}', {column_ids[index]}, '{name}', '{surname}', 'Bag End {index}')
+        """)
+        index += 1
+
+        connection.execute(f"""
+            update {table_name}
+            set ADDRESS = 'Bag End {index}', TYPE = '{column_types[index]}'
+            where TYPE = '{column_types[index - 1]}' and ID = {column_ids[index - 1]}
+        """)
+        index += 1
+
+        connection.execute(f"""
+            update {table_name}
+            set ADDRESS = 'Bag End {index}', ID = {column_ids[index]}
+            where TYPE = '{column_types[index - 1]}' and ID = {column_ids[index - 1]}
+        """)
+        index += 1
+
+        connection.execute(f"""
+            update {table_name}
+            set ADDRESS = 'Bag End {index}', TYPE = '{column_types[index]}', ID = {column_ids[index]}
+            where TYPE = '{column_types[index - 1]}' and ID = {column_ids[index - 1]}
+        """)
+        index += 1
+
+        connection.execute(f"""
+            update {table_name}
+            set ADDRESS = 'Bag End {index}', TYPE = '{column_types[index]}'
+            where TYPE = '{column_types[index - 1]}'
+        """)
+        index += 1
+
+        connection.execute(f"""
+            update {table_name}
+            set ADDRESS = 'Bag End {index}', ID = {column_ids[index]}
+            where ID = {column_ids[index - 1]}
+        """)
+        index += 1
+
+        connection.execute(f"""
+            update {table_name}
+            set ADDRESS = 'Bag End {index}'
+            where ID = {column_ids[index - 1]}
+        """)
+        index += 1
+
+        connection.execute(f"""
+            update {table_name}
+            set ADDRESS = 'Bag End {index}', ID = {column_ids[index]}, TYPE = '{column_types[index]}'
+            where ADDRESS = 'Bag End {index - 1}'
+        """)
+        index += 1
+
+        connection.execute(f"delete from {table_name}")
+        index += 1
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', index)
+
+        assert len(wiretap.output_records) == index
+
+        primary_key_before_prefix = "jdbc.primaryKey.before."
+        primary_key_after_prefix = "jdbc.primaryKey.after."
+
+        for record in wiretap.output_records:
+            if record.field['Type'] == "UPDATE":
+                assert primary_key_before_prefix + "TYPE" in record.header.values
+                assert primary_key_before_prefix + "ID" in record.header.values
+                assert primary_key_after_prefix + "TYPE" in record.header.values
+                assert primary_key_after_prefix + "ID" in record.header.values
+
+                assert record.header.values[primary_key_before_prefix + "TYPE"] is not None
+                assert record.header.values[primary_key_before_prefix + "ID"] is not None
+                assert record.header.values[primary_key_after_prefix + "TYPE"] is not None
+                assert record.header.values[primary_key_after_prefix + "ID"] is not None
+
+                column_address = record.field['Data']['ADDRESS'].value
+                index = int(column_address[-1])
+
+                assert record.header.values[f"{primary_key_before_prefix}TYPE"] == column_types[index - 1]
+                assert record.header.values[f"{primary_key_before_prefix}ID"] == f"{column_ids[index - 1]}"
+                assert record.header.values[f"{primary_key_after_prefix}TYPE"] == column_types[index]
+                assert record.header.values[f"{primary_key_after_prefix}ID"] == f"{column_ids[index]}"
+
+            else:
+                assert primary_key_before_prefix + "TYPE" not in record.header.values
+                assert primary_key_before_prefix + "ID" not in record.header.values
+                assert primary_key_after_prefix + "TYPE" not in record.header.values
+                assert primary_key_after_prefix + "ID" not in record.header.values
+
+    finally:
+        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
+            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
+
+        connection.execute(f'drop table if exists {table_name}')
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+
+@sdc_min_version('5.1.0')
+@database('mysql')
+@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
+def test_mysql_binary_log_numeric_primary_keys_metadata(
+        sdc_builder,
+        sdc_executor,
+        database,
+        table_loading_option
+):
+    """
+    Test to check the metadata of numeric primary keys are present in the headers of the output records with the
+    expected values.
+    """
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        connection = database.engine.connect()
+
+        if table_loading_option == 'via_event':
+            if Version(database.version) < Version('8.0.0'):
+                pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
+
+            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
+
+        # Create the table
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        connection.execute(f"""
+            create table {table_name}(
+                my_bit bit(2),
+                my_tinyint tinyint,
+                my_smallint smallint,
+                my_int int,
+                my_bigint bigint,
+                my_decimal decimal(10, 5),
+                my_numeric numeric(8, 4),
+                my_float float,
+                my_double double,
+                primary key (
+                    my_bit,
+                    my_tinyint,
+                    my_smallint,
+                    my_int,
+                    my_bigint,
+                    my_decimal,
+                    my_numeric,
+                    my_float,
+                    my_double
+                )
+            )
+        """)
+
+        # Create the pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            include_tables=database.database + '.' + table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        # Add a record to the table
+        connection.execute(f'insert into {table_name} values (1, 1, 1, 1, 1, 1.1, 1, 1.1, 1.1)')
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        assert len(wiretap.output_records) == 1
+
+        record = wiretap.output_records[0]
+        assert "jdbc.primaryKeySpecification" in record.header.values
+        assert {record.header.values["jdbc.primaryKeySpecification"]} is not None
+
+        primary_key_specification_json = json.dumps(
+            json.loads(record.header.values["jdbc.primaryKeySpecification"]),
+            sort_keys=True
+        )
+
+        if Version(database.version) < Version('8.0.0'):
+            t_int_size = 4
+            s_int_size = 6
+            int_size = 11
+            b_int_size = 20
+            decimal_size = 12
+            numeric_size = 10
+            float_scale = 31
+            double_scale = 31
+        else:
+            t_int_size = 3
+            s_int_size = 5
+            int_size = 10
+            b_int_size = 19
+            decimal_size = 10
+            numeric_size = 8
+            float_scale = 0
+            double_scale = 0
+
+        primary_key_specification_expected = f'''{{
+            {_primary_key_specification_json("my_bit", -7, "BIT", 2, 2, 0, "false", "false")},
+            {_primary_key_specification_json("my_tinyint", -6, "TINYINT", t_int_size, t_int_size, 0, "true", "false")},
+            {_primary_key_specification_json("my_smallint", 5, "SMALLINT", s_int_size, s_int_size, 0, "true", "false")},
+            {_primary_key_specification_json("my_int", 4, "INTEGER", int_size, int_size, 0, "true", "false")},
+            {_primary_key_specification_json("my_bigint", -5, "BIGINT", b_int_size, b_int_size, 0, "true", "false")},
+            {_primary_key_specification_json("my_decimal", 3, "DECIMAL", decimal_size, 10, 5, "true", "false")},
+            {_primary_key_specification_json("my_numeric", 3, "DECIMAL", numeric_size, 8, 4, "true", "false")},
+            {_primary_key_specification_json("my_float", 7, "REAL", 12, 12, float_scale, "true", "false")},
+            {_primary_key_specification_json("my_double", 8, "DOUBLE", 22, 22, double_scale, "true", "false")}
+        }}'''
+
+        primary_key_specification_expected_json = json.dumps(
+            json.loads(primary_key_specification_expected),
+            sort_keys=True
+        )
+
+        assert primary_key_specification_json == primary_key_specification_expected_json
+
+    finally:
+        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
+            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
+
+        connection.execute(f'drop table if exists {table_name}')
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+
+@sdc_min_version('5.1.0')
+@database('mysql')
+@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
+def test_mysql_binary_log_non_numeric_primary_keys_metadata(
+        sdc_builder,
+        sdc_executor,
+        database,
+        table_loading_option
+):
+    """
+    Test to check the metadata of non-numeric primary keys are present in the headers of the output records with the
+    expected values.
+    """
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        connection = database.engine.connect()
+
+        if table_loading_option == 'via_event':
+            if Version(database.version) < Version('8.0.0'):
+                pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
+
+            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
+
+        # Create the table
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        connection.execute(f"""
+            create table {table_name}(
+                my_boolean boolean,
+                my_date date,
+                my_datetime datetime,
+                my_timestamp timestamp,
+                my_time time,
+                my_year year,
+                my_char char(10),
+                my_varchar varchar(32),
+                my_varchar2 varchar(64),
+                my_text text(16),
+                primary key (
+                    my_boolean,
+                    my_date,
+                    my_datetime,
+                    my_timestamp,
+                    my_time,
+                    my_year,
+                    my_char,
+                    my_varchar,
+                    my_varchar2,
+                    my_text(16)
+                )
+            )
+        """)
+
+        # Create the pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            include_tables=database.database + '.' + table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        # Add a record to the table
+        connection.execute(f'''
+            insert into {table_name}
+            values (true, '2011-12-18', '2011-12-18 9:17:17', current_timestamp, current_time, 2022, ' ', ' ', ' ', ' ')
+        ''')
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        assert len(wiretap.output_records) == 1
+
+        # Check the primary keys metadata in the record header
+        record = wiretap.output_records[0]
+        assert "jdbc.primaryKeySpecification" in record.header.values
+        assert {record.header.values["jdbc.primaryKeySpecification"]} is not None
+
+        primary_key_specification_json = json.dumps(
+            json.loads(record.header.values["jdbc.primaryKeySpecification"]),
+            sort_keys=True
+        )
+
+        if Version(database.version) < Version('8.0.0'):
+            text_datatype = "LONGVARCHAR"
+            text_size = 255
+            text_type = -1
+        else:
+            text_datatype = "VARCHAR"
+            text_size = 63
+            text_type = 12
+
+        primary_key_specification_expected = f'''{{
+            {_primary_key_specification_json("my_boolean", -7, "BIT", 1, 1, 0, "false", "false")},
+            {_primary_key_specification_json("my_date", 91, "DATE", 10, 10, 0, "false", "false")},
+            {_primary_key_specification_json("my_datetime", 93, "TIMESTAMP", 19, 19, 0, "false", "false")},
+            {_primary_key_specification_json("my_timestamp", 93, "TIMESTAMP", 19, 19, 0, "false", "false")},
+            {_primary_key_specification_json("my_time", 92, "TIME", 10, 10, 0, "false", "false")},
+            {_primary_key_specification_json("my_year", 91, "DATE", 4, 4, 0, "false", "false")},
+            {_primary_key_specification_json("my_char", 1, "CHAR", 10, 10, 0, "false", "false")},
+            {_primary_key_specification_json("my_varchar", 12, "VARCHAR", 32, 32, 0, "false", "false")},
+            {_primary_key_specification_json("my_varchar2", 12, "VARCHAR", 64, 64, 0, "false", "false")},
+            {_primary_key_specification_json(
+                "my_text",
+                text_type,
+                text_datatype,
+                text_size,
+                text_size,
+                0,
+                "false",
+                "false"
+            )}
+        }}'''
+
+        primary_key_specification_expected_json = json.dumps(
+            json.loads(primary_key_specification_expected),
+            sort_keys=True
+        )
+
+        assert primary_key_specification_json == primary_key_specification_expected_json
+
+    finally:
+        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
+            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
+
+        connection.execute(f"drop table if exists {table_name}")
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+
+@sdc_min_version('5.1.0')
+@database('mysql')
+@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
+def test_mysql_binary_log_altering_columns(
+        sdc_builder,
+        sdc_executor,
+        database,
+        table_loading_option
+):
+    """
+    Test to check the record values and primary keys headers after adding columns and deleting and changing the columns
+    defined as primary keys. The rows added to the table before adding a column should have no value for the newly added
+    columns and the primary key headers information should match the primary key constraints as they are changed.
+    """
+    if Version(database.version) < Version('8.0.0'):
+        pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
+
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        connection = database.engine.connect()
+        connection.execute('SET GLOBAL binlog_row_metadata=FULL')
+
+        # Create the table
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        connection.execute(f"create table {table_name}(id int primary key, name varchar(32))")
+
+        # Create the pipeline
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(
+            initial_offset=_get_initial_offset(database),
+            server_id=_get_server_id(),
+            include_tables=database.database + '.' + table_name
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build("MySQL Binary Log Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        connection.execute(f'insert into {table_name} values (1, "Tony Stark")')
+        connection.execute(f'alter table {table_name} add column code_name varchar(64) after name')
+        connection.execute(f'insert into {table_name} values (2, "Steve Rogers", "Captain America")')
+        connection.execute(f'update {table_name} set id = 3 where id = 1')
+        connection.execute(f'alter table {table_name} drop primary key')
+        connection.execute(f'update {table_name} set id = 4 where id = 2')
+        connection.execute(f'alter table {table_name} add primary key (id, name)')
+        connection.execute(f'update {table_name} set id = 5 where id = 4')
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 5)
+        assert len(wiretap.output_records) == 5
+
+        primary_key_before_prefix = "jdbc.primaryKey.before."
+        primary_key_after_prefix = "jdbc.primaryKey.after."
+        primary_key_specification = "jdbc.primaryKeySpecification"
+        id_metadata = _primary_key_specification_json("id", 4, "INTEGER", 10, 10, 0, "true", "false")
+        name_metadata = _primary_key_specification_json("name", 12, "VARCHAR", 32, 32, 0, "false", "false")
+
+        for record in wiretap.output_records:
+            # Check the primary keys headers
+            if record.field['Type'] == 'UPDATE' and record.field['Data']['id'] != 4:
+                assert primary_key_before_prefix + "id" in record.header.values
+                assert primary_key_after_prefix + "id" in record.header.values
+                assert record.header.values[primary_key_before_prefix + "id"] is not None
+                assert record.header.values[primary_key_after_prefix + "id"] is not None
+
+                if record.field['Data']['id'] == 5:
+                    assert primary_key_before_prefix + "name" in record.header.values
+                    assert primary_key_after_prefix + "name" in record.header.values
+                    assert record.header.values[primary_key_before_prefix + "name"] is not None
+                    assert record.header.values[primary_key_after_prefix + "name"] is not None
+
+                    assert record.header.values[primary_key_before_prefix + "id"] == "4"
+                    assert record.header.values[primary_key_after_prefix + "id"] == "5"
+                    assert record.header.values[primary_key_before_prefix + "name"] == "Steve Rogers"
+                    assert record.header.values[primary_key_after_prefix + "name"] == "Steve Rogers"
+                else:
+                    assert primary_key_before_prefix + "name" not in record.header.values
+                    assert primary_key_after_prefix + "name" not in record.header.values
+
+                    assert record.header.values[primary_key_before_prefix + "id"] == "1"
+                    assert record.header.values[primary_key_after_prefix + "id"] == "3"
+            else:
+                assert primary_key_before_prefix + "id" not in record.header.values
+                assert primary_key_before_prefix + "name" not in record.header.values
+                assert primary_key_after_prefix + "id" not in record.header.values
+                assert primary_key_after_prefix + "name" not in record.header.values
+
+            # Check the primary keys metadata
+            assert primary_key_specification in record.header.values
+            assert {record.header.values[primary_key_specification]} is not None
+
+            if record.field['Data']['id'] == 4:
+                primary_key_specification_expected = "{}"
+            elif record.field['Data']['id'] == 5:
+                primary_key_specification_expected = f'{{ {id_metadata}, {name_metadata} }}'
+            else:
+                primary_key_specification_expected = f'{{ {id_metadata} }}'
+
+            primary_key_specification_json = json.dumps(
+                json.loads(record.header.values[primary_key_specification]),
+                sort_keys=True
+            )
+            primary_key_specification_expected_json = json.dumps(
+                json.loads(primary_key_specification_expected),
+                sort_keys=True
+            )
+            assert primary_key_specification_json == primary_key_specification_expected_json
+
+            # Check the presence and value for the new column added halfway through
+            if record.field['Data']['id'] == 1:
+                assert 'code_name' not in record.field['Data']
+            elif record.field['Data']['id'] == 3:
+                assert 'code_name' in record.field['Data']
+                assert record.field['Data']['code_name'] == None
+            else:
+                assert 'code_name' in record.field['Data']
+                assert record.field['Data']['code_name'] == "Captain America"
+
+    finally:
+        if table_loading_option == 'via_event':
+            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
+
+        connection.execute(f"drop table if exists {table_name}")
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+
+def _primary_key_specification_json(column_name, column_type, data_type, size, precision, scale, signed, currency):
+    return f'''
+        \"{column_name}\": {{
+            \"type\": {column_type},
+            \"datatype\": \"{data_type}\",
+            \"size\": {size},
+            \"precision\": {precision},
+            \"scale\": {scale},
+            \"signed\": {signed},
+            \"currency\": {currency}
+        }}
+    '''
 
 
 def _get_server_id():
