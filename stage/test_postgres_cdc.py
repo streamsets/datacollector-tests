@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import string
 import threading
@@ -1318,3 +1319,165 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
         if table is not None:
             table.drop(database.engine)
         connection.close()
+
+
+@database('postgresql')
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+@pytest.mark.parametrize('parse_datetimes', [True,
+                                             False])
+def test_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
+                                                           sdc_executor,
+                                                           database,
+                                                           wal2json_format,
+                                                           record_contents,
+                                                           parse_datetimes):
+    pipeline = None
+
+    try:
+
+        database_connection = database.engine.connect()
+
+        replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+
+        table_name = get_random_string(string.ascii_uppercase, 16)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+        postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
+                                           max_batch_size_in_records=1,
+                                           remove_replication_slot_on_close=True,
+                                           poll_interval=1,
+                                           replication_slot=replication_slot_name,
+                                           ssl_mode='DISABLED',
+                                           record_contents=record_contents,
+                                           wal2json_format=wal2json_format,
+                                           parse_datetimes=parse_datetimes)
+        wiretap = pipeline_builder.add_wiretap()
+        postgres_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+
+        transaction = database_connection.begin()
+        database_connection.execute(f"""create table {table_name}
+                                                     (my_bigint                   bigint,
+                                                      my_bigserial                bigserial,
+                                                      my_bit                      bit(2),
+                                                      my_bit_varying              bit varying(2),
+                                                      my_boolean                  boolean,
+                                                      my_bytea                    bytea,
+                                                      my_character                character(32),
+                                                      my_character_varying        character varying(32),
+                                                      my_date                     date,
+                                                      my_double_precision         double precision,
+                                                      my_integer                  integer,
+                                                      my_numeric                  numeric(6, 3),
+                                                      my_real                     real,
+                                                      my_smallint                 smallint,
+                                                      my_text                     text,
+                                                      my_time                     time(3),
+                                                      my_time_with_time_zone      time(3) with time zone,
+                                                      my_timestamp                timestamp(3),
+                                                      my_timestamp_with_time_zone timestamp(3) with time zone,  
+                                         primary key (my_bigint,                                                                                                          
+                                                      my_bigserial,
+                                                      my_bit,
+                                                      my_bit_varying,
+                                                      my_boolean,
+                                                      my_bytea,
+                                                      my_character,
+                                                      my_character_varying,
+                                                      my_date,
+                                                      my_double_precision,
+                                                      my_integer,
+                                                      my_numeric,
+                                                      my_real,
+                                                      my_smallint,
+                                                      my_text,
+                                                      my_time,
+                                                      my_time_with_time_zone,
+                                                      my_timestamp,
+                                                      my_timestamp_with_time_zone))""")
+        database_connection.execute(f"""insert into {table_name}
+                                                    (my_bigint,
+                                                     my_bigserial,                                                                                                          
+                                                     my_bit,
+                                                     my_bit_varying,
+                                                     my_boolean,
+                                                     my_bytea,
+                                                     my_character,
+                                                     my_character_varying,
+                                                     my_date,
+                                                     my_double_precision,
+                                                     my_integer,
+                                                     my_numeric,
+                                                     my_real,
+                                                     my_smallint,
+                                                     my_text,
+                                                     my_time,
+                                                     my_time_with_time_zone,
+                                                     my_timestamp,
+                                                     my_timestamp_with_time_zone)
+                                              values (0,
+                                                      '0',
+                                                      B'00',
+                                                      '0',
+                                                      true,
+                                                      '0',
+                                                      '0',
+                                                      '0',
+                                                      '2000-01-01',
+                                                      1.1,
+                                                      0,
+                                                      1.1,
+                                                      1.1,
+                                                      0,
+                                                      '0',
+                                                      '01:01:01.111',
+                                                      '01:01:01.111 UTC',
+                                                      current_timestamp(3),
+                                                      current_timestamp(3))""")
+        transaction.commit()
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+        assert len(wiretap.output_records) == 1
+
+        primary_key_specification_expected = \
+            '''{"my_bigint":                   {"currency": false, "datatype": "BIGINT",    "precision": 19,         "scale": 0,  "signed": true,  "size": 20,         "type": -5}, 
+                "my_bigserial":                {"currency": false, "datatype": "BIGINT",    "precision": 19,         "scale": 0,  "signed": true,  "size": 20,         "type": -5}, 
+                "my_bit":                      {"currency": false, "datatype": "BIT",       "precision": 2,          "scale": 0,  "signed": false, "size": 2,          "type": -7}, 
+                "my_bit_varying":              {"currency": false, "datatype": "OTHER",     "precision": 2,          "scale": 0,  "signed": false, "size": 2,          "type": 1111}, 
+                "my_boolean":                  {"currency": false, "datatype": "BIT",       "precision": 1,          "scale": 0,  "signed": false, "size": 1,          "type": -7}, 
+                "my_bytea":                    {"currency": false, "datatype": "BINARY",    "precision": 2147483647, "scale": 0,  "signed": false, "size": 2147483647, "type": -2}, 
+                "my_character":                {"currency": false, "datatype": "CHAR",      "precision": 32,         "scale": 0,  "signed": false, "size": 32,         "type": 1}, 
+                "my_character_varying":        {"currency": false, "datatype": "VARCHAR",   "precision": 32,         "scale": 0,  "signed": false, "size": 32,         "type": 12}, 
+                "my_date":                     {"currency": false, "datatype": "DATE",      "precision": 13,         "scale": 0,  "signed": false, "size": 13,         "type": 91}, 
+                "my_double_precision":         {"currency": false, "datatype": "DOUBLE",    "precision": 17,         "scale": 17, "signed": true,  "size": 25,         "type": 8}, 
+                "my_integer":                  {"currency": false, "datatype": "INTEGER",   "precision": 10,         "scale": 0,  "signed": true,  "size": 11,         "type": 4}, 
+                "my_numeric":                  {"currency": false, "datatype": "NUMERIC",   "precision": 6,          "scale": 3,  "signed": true,  "size": 8,          "type": 2}, 
+                "my_real":                     {"currency": false, "datatype": "REAL",      "precision": 8,          "scale": 8,  "signed": true,  "size": 15,         "type": 7}, 
+                "my_smallint":                 {"currency": false, "datatype": "SMALLINT",  "precision": 5,          "scale": 0,  "signed": true,  "size": 6,          "type": 5}, 
+                "my_text":                     {"currency": false, "datatype": "VARCHAR",   "precision": 2147483647, "scale": 0,  "signed": false, "size": 2147483647, "type": 12}, 
+                "my_time":                     {"currency": false, "datatype": "TIME",      "precision": 12,         "scale": 3,  "signed": false, "size": 12,         "type": 92}, 
+                "my_time_with_time_zone":      {"currency": false, "datatype": "TIME",      "precision": 18,         "scale": 3,  "signed": false, "size": 18,         "type": 92}, 
+                "my_timestamp":                {"currency": false, "datatype": "TIMESTAMP", "precision": 26,         "scale": 3,  "signed": false, "size": 26,         "type": 93}, 
+                "my_timestamp_with_time_zone": {"currency": false, "datatype": "TIMESTAMP", "precision": 32,         "scale": 3,  "signed": false, "size": 32,         "type": 93}}'''
+        primary_key_specification_expected_json = json.dumps(json.loads(primary_key_specification_expected), sort_keys=True)
+
+        for record in wiretap.output_records:
+            primary_key_specification_json = json.dumps(json.loads(record.header.values["jdbc.primaryKeySpecification"]), sort_keys=True)
+            assert primary_key_specification_json == primary_key_specification_expected_json
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+        database.deactivate_and_drop_replication_slot(replication_slot_name)
+        try:
+            database_connection.execute(f'drop table {table_name}')
+        except:
+            pass
+        database_connection.close()
