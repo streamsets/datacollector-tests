@@ -47,9 +47,13 @@ DATA_TYPES = [
 @pytest.mark.parametrize('input,converter_type,expected', DATA_TYPES, ids=[i[1] for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, expected):
     device_id = get_random_string(string.ascii_letters, 10)
+    subscriber_id = get_random_string(string.ascii_letters, 10)
+
+    iot_hub = azure.iot_hub
+    topic_name = azure.iot_hub_topic
+    sb_service = azure.service_bus.service
 
     try:
-        iot_hub = azure.iot_hub
         logger.info('Creating %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         device_info = iot_hub.create_device_id(device_id)
         device_access_key = device_info['authentication']['symmetricKey']['primaryKey']
@@ -87,10 +91,6 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
         producer_dest_pipeline = pipeline_builder.build().configure_for_environment(azure)
 
         # Note: set topic subscriber first, else data will not be read.
-        topic_name = azure.iot_hub_topic
-        subscriber_id = get_random_string(string.ascii_letters, 10)
-
-        sb_service = azure.service_bus.service
         logger.info('Creating %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.create_subscription(topic_name, subscriber_id)
         # Use a Azure Rule filter to read topic for our specific Device ID.
@@ -147,10 +147,14 @@ def test_object_names_device(sdc_builder, sdc_executor, azure, device_name_categ
     Verify that we can respect all the documented containers names possible
     """
     device_id = device_name
+    subscriber_id = get_random_string(string.ascii_letters, 10)
     raw_records = [{'Body': f'Hello {msg}'} for msg in range(10)]
 
+    iot_hub = azure.iot_hub
+    topic_name = azure.iot_hub_topic
+    sb_service = azure.service_bus.service
+
     try:
-        iot_hub = azure.iot_hub
         logger.info('Creating %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         device_info = iot_hub.create_device_id(device_id)
         device_access_key = device_info['authentication']['symmetricKey']['primaryKey']
@@ -177,10 +181,6 @@ def test_object_names_device(sdc_builder, sdc_executor, azure, device_name_categ
         producer_dest_pipeline = pipeline_builder.build().configure_for_environment(azure)
 
         # Note: set topic subscriber first, else data will not be read.
-        topic_name = azure.iot_hub_topic
-        subscriber_id = get_random_string(string.ascii_letters, 10)
-
-        sb_service = azure.service_bus.service
         logger.info('Creating %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.create_subscription(topic_name, subscriber_id)
         # Use a Azure Rule filter to read topic for our specific Device ID.
@@ -221,11 +221,15 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, batch_size):
     Test read multiple batches.
     """
     device_id = get_random_string(string.ascii_letters, 10)
+    subscriber_id = get_random_string(string.ascii_letters, 10)
     batches = 3
     no_of_records = batches * batch_size
 
+    iot_hub = azure.iot_hub
+    topic_name = azure.iot_hub_topic
+    sb_service = azure.service_bus.service
+
     try:
-        iot_hub = azure.iot_hub
         logger.info('Creating %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         device_info = iot_hub.create_device_id(device_id)
         device_access_key = device_info['authentication']['symmetricKey']['primaryKey']
@@ -255,10 +259,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, batch_size):
         producer_dest_pipeline = pipeline_builder.build().configure_for_environment(azure)
 
         # Note: set topic subscriber first, else data will not be read.
-        topic_name = azure.iot_hub_topic
-        subscriber_id = get_random_string(string.ascii_letters, 10)
-
-        sb_service = azure.service_bus.service
         logger.info('Creating %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.create_subscription(topic_name, subscriber_id)
         # Use a Azure Rule filter to read topic for our specific Device ID.
@@ -300,10 +300,14 @@ def test_data_format_json(sdc_builder, sdc_executor, azure):
     Test Azure IoT Hub origin parses JSON in a variety of data types.
     """
     device_id = get_random_string(string.ascii_letters, 10)
+    subscriber_id = get_random_string(string.ascii_letters, 10)
     raw_records = [{'Body': f'Hello {msg}'} for msg in range(10)]
 
+    iot_hub = azure.iot_hub
+    topic_name = azure.iot_hub_topic
+    sb_service = azure.service_bus.service
+
     try:
-        iot_hub = azure.iot_hub
         logger.info('Creating %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         device_info = iot_hub.create_device_id(device_id)
         device_access_key = device_info['authentication']['symmetricKey']['primaryKey']
@@ -330,10 +334,6 @@ def test_data_format_json(sdc_builder, sdc_executor, azure):
         producer_dest_pipeline = pipeline_builder.build().configure_for_environment(azure)
 
         # Note: set topic subscriber first, else data will not be read.
-        topic_name = azure.iot_hub_topic
-        subscriber_id = get_random_string(string.ascii_letters, 10)
-
-        sb_service = azure.service_bus.service
         logger.info('Creating %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.create_subscription(topic_name, subscriber_id)
         # Use a Azure Rule filter to read topic for our specific Device ID.
@@ -374,10 +374,14 @@ def test_data_format_text(sdc_builder, sdc_executor, azure):
     Test Azure EventHub origin parses Text in a variety of data types.
     """
     device_id = get_random_string(string.ascii_letters, 10)
+    subscriber_id = get_random_string(string.ascii_letters, 10)
     raw_record = 'Hello World!'
 
+    iot_hub = azure.iot_hub
+    topic_name = azure.iot_hub_topic
+    sb_service = azure.service_bus.service
+
     try:
-        iot_hub = azure.iot_hub
         logger.info('Creating %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         device_info = iot_hub.create_device_id(device_id)
         device_access_key = device_info['authentication']['symmetricKey']['primaryKey']
@@ -403,10 +407,6 @@ def test_data_format_text(sdc_builder, sdc_executor, azure):
         producer_dest_pipeline = pipeline_builder.build().configure_for_environment(azure)
 
         # Note: set topic subscriber first, else data will not be read.
-        topic_name = azure.iot_hub_topic
-        subscriber_id = get_random_string(string.ascii_letters, 10)
-
-        sb_service = azure.service_bus.service
         logger.info('Creating %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.create_subscription(topic_name, subscriber_id)
         # Use a Azure Rule filter to read topic for our specific Device ID.
@@ -441,11 +441,15 @@ def test_data_format_xml(sdc_builder, sdc_executor, azure):
     Test Azure EventHub origin parses XML in a variety of data types.
     """
     device_id = get_random_string(string.ascii_letters, 10)
+    subscriber_id = get_random_string(string.ascii_letters, 10)
     raw_data = '{"key":"value"}'
     EXPECTED_XML_OUTPUT = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n<key>value</key>'
 
+    iot_hub = azure.iot_hub
+    topic_name = azure.iot_hub_topic
+    sb_service = azure.service_bus.service
+
     try:
-        iot_hub = azure.iot_hub
         logger.info('Creating %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         device_info = iot_hub.create_device_id(device_id)
         device_access_key = device_info['authentication']['symmetricKey']['primaryKey']
@@ -471,10 +475,6 @@ def test_data_format_xml(sdc_builder, sdc_executor, azure):
         producer_dest_pipeline = pipeline_builder.build().configure_for_environment(azure)
 
         # Note: set topic subscriber first, else data will not be read.
-        topic_name = azure.iot_hub_topic
-        subscriber_id = get_random_string(string.ascii_letters, 10)
-
-        sb_service = azure.service_bus.service
         logger.info('Creating %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.create_subscription(topic_name, subscriber_id)
         # Use a Azure Rule filter to read topic for our specific Device ID.
@@ -517,9 +517,13 @@ def test_push_pull(sdc_builder, sdc_executor, azure):
     the coverage.
     """
     device_id = get_random_string(string.ascii_letters, 10)
+    subscriber_id = get_random_string(string.ascii_letters, 10)
+
+    iot_hub = azure.iot_hub
+    topic_name = azure.iot_hub_topic
+    sb_service = azure.service_bus.service
 
     try:
-        iot_hub = azure.iot_hub
         logger.info('Creating %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         device_info = iot_hub.create_device_id(device_id)
         device_access_key = device_info['authentication']['symmetricKey']['primaryKey']
@@ -547,10 +551,6 @@ def test_push_pull(sdc_builder, sdc_executor, azure):
         producer_dest_pipeline = pipeline_builder.build().configure_for_environment(azure)
 
         # Note: set topic subscriber first, else data will not be read.
-        topic_name = azure.iot_hub_topic
-        subscriber_id = get_random_string(string.ascii_letters, 10)
-
-        sb_service = azure.service_bus.service
         logger.info('Creating %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.create_subscription(topic_name, subscriber_id)
         # Use a Azure Rule filter to read topic for our specific Device ID.

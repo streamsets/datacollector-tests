@@ -59,10 +59,14 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
     """
     # Note: Test will fail till SDC-7638 is addressed/fixed
     device_id = get_random_string(string.ascii_letters, 10)
+    subscriber_id = get_random_string(string.ascii_letters, 10)
     raw_records = [{'Body': f'Hello {msg}'} for msg in range(10)]
 
+    iot_hub = azure.iot_hub
+    topic_name = azure.iot_hub_topic
+    sb_service = azure.service_bus.service
+
     try:
-        iot_hub = azure.iot_hub
         logger.info('Creating %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         device_info = iot_hub.create_device_id(device_id)
         device_access_key = device_info['authentication']['symmetricKey']['primaryKey']
@@ -83,10 +87,6 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
         producer_dest_pipeline = builder.build(title='IoT Producer pipeline').configure_for_environment(azure)
 
         # Note: set topic subscriber first, else data will not be read.
-        topic_name = azure.iot_hub_topic
-        subscriber_id = get_random_string(string.ascii_letters, 10)
-
-        sb_service = azure.service_bus.service
         logger.info('Creating %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
         sb_service.create_subscription(topic_name, subscriber_id)
         # Use a Azure Rule filter to read topic for our specific Device ID.
