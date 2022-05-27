@@ -22,17 +22,17 @@ import xml.etree.ElementTree as ET
 from streamsets.testframework.markers import pulsar, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-from .utils.utils_pulsar import enforce_schema_validation_for_pulsar_topic, disable_auto_update_schema, \
-    create_topic_with_schema, set_schema_validation_enforced, enable_auto_update_schema, json_to_avro
+from .utils.utils_pulsar import disable_auto_update_schema, create_topic_with_schema, set_schema_validation_enforced, \
+    enable_auto_update_schema
 
 logger = logging.getLogger(__name__)
 
-PULSAR_PUSH_ORIGIN_STAGE_NAME = "com_streamsets_pipeline_stage_origin_pulsar_PulsarDSource"
+PULSAR_ORIGIN_STAGE_NAME = "com_streamsets_pipeline_stage_origin_pulsar_PulsarDSource"
 
 
 def get_pulsar_consumer_stage(pipeline_builder, topic, initial_offset):
     """Create and return a Pulsar Consumer origin stage depending on execution mode for the pipeline."""
-    pulsar_consumer = pipeline_builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME, type='origin')
+    pulsar_consumer = pipeline_builder.add_stage(name=PULSAR_ORIGIN_STAGE_NAME, type='origin')
     pulsar_consumer.set_attributes(data_format='TEXT',
                                    batch_wait_time_in_ms=20000,
                                    topic=topic,
@@ -81,11 +81,11 @@ def test_pulsar_consumer(sdc_builder, sdc_executor, pulsar):
     input_text = 'Hello World!'
 
     builder = sdc_builder.get_pipeline_builder()
-    pulsar_consumer = builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME).set_attributes(subscription_name=sub_name,
-                                                                          consumer_name=consumer_name,
-                                                                          topic=topic_name,
-                                                                          data_format='TEXT',
-                                                                          max_batch_size_in_records=max_records)
+    pulsar_consumer = builder.add_stage(name=PULSAR_ORIGIN_STAGE_NAME).set_attributes(subscription_name=sub_name,
+                                                                                      consumer_name=consumer_name,
+                                                                                      topic=topic_name,
+                                                                                      data_format='TEXT',
+                                                                                      max_batch_size_in_records=max_records)
     wiretap = builder.add_wiretap()
 
     pulsar_consumer >> wiretap.destination
@@ -124,11 +124,11 @@ def test_pulsar_consumer_with_parameters(sdc_builder, sdc_executor, pulsar):
     input_text = 'Hello World!'
 
     builder = sdc_builder.get_pipeline_builder()
-    pulsar_consumer = builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME).set_attributes(subscription_name=sub_name,
-                                                                          consumer_name=consumer_name,
-                                                                          topic="${TOPIC_NAME}",
-                                                                          data_format='TEXT',
-                                                                          max_batch_size_in_records=max_records)
+    pulsar_consumer = builder.add_stage(name=PULSAR_ORIGIN_STAGE_NAME).set_attributes(subscription_name=sub_name,
+                                                                                      consumer_name=consumer_name,
+                                                                                      topic="${TOPIC_NAME}",
+                                                                                      data_format='TEXT',
+                                                                                      max_batch_size_in_records=max_records)
     wiretap = builder.add_wiretap()
 
     pulsar_consumer >> wiretap.destination
@@ -715,10 +715,10 @@ def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar):
     input_text = 'Hello World!'
 
     builder = sdc_builder.get_pipeline_builder()
-    pulsar_consumer = builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME).set_attributes(subscription_name=get_random_string(),
-                                                                          consumer_name=get_random_string(),
-                                                                          topic=topic_name,
-                                                                          data_format='TEXT')
+    pulsar_consumer = builder.add_stage(name=PULSAR_ORIGIN_STAGE_NAME).set_attributes(subscription_name=get_random_string(),
+                                                                                      consumer_name=get_random_string(),
+                                                                                      topic=topic_name,
+                                                                                      data_format='TEXT')
     wiretap = builder.add_wiretap()
 
     pulsar_consumer >> wiretap.destination
@@ -754,6 +754,7 @@ class ComplexSchemaClass(schema.Record):
     def __init__(self, number, topic):
         self.number = number
         self.topic = topic
+
 
 @pulsar
 @sdc_min_version('5.1.0')
@@ -807,7 +808,7 @@ def test_pulsar_consumer_schemas(sdc_builder, sdc_executor, pulsar, data_format,
     topic_name = get_random_string()
 
     builder = sdc_builder.get_pipeline_builder()
-    pulsar_consumer = builder.add_stage(PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer = builder.add_stage(name=PULSAR_ORIGIN_STAGE_NAME)
     pulsar_consumer.set_attributes(subscription_name=get_random_string(),
                                    consumer_name=get_random_string(),
                                    topic=topic_name,
