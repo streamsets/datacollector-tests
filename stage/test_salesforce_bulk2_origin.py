@@ -23,7 +23,8 @@ from streamsets.testframework.utils import get_random_string, Version
 
 from .utils.utils_salesforce import (insert_data_and_verify_using_wiretap, verify_wiretap_data,
                                      clean_up, CONTACTS_FOR_NO_MORE_DATA, get_ids, set_up_random,
-                                     TEST_DATA, TIMEOUT, check_ids, BULK_PIPELINE_TIMEOUT_SECONDS)
+                                     TEST_DATA, TIMEOUT, check_ids, BULK_PIPELINE_TIMEOUT_SECONDS, assign_hard_delete,
+                                     revoke_hard_delete)
 
 ACCOUNTS_FOR_BULK_QUERY = 100
 
@@ -470,3 +471,76 @@ def test_salesforce_origin_threading(sdc_builder, sdc_executor, salesforce, thre
 
     finally:
         clean_up(sdc_executor, pipeline, client, account_ids, 'Account')
+
+
+@salesforce
+@sdc_min_version('5.0.0')
+@pytest.mark.parametrize('max_columns', [1, 512])
+def test_salesforce_origin_max_columns(sdc_builder, sdc_executor, salesforce, max_columns):
+    # The test tries to set up max query columns as 1 and as 512. Since the query is retrieving 2 columns (Id and
+    # Firstname) the execution fails in the case of max_columns=1 with error FORCE_55.
+    run_name = 'sale_bulk2_origin_max_columns_' + get_random_string(string.ascii_lowercase, 10)
+    client = salesforce.client
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
+    query = (f"SELECT Id, FirstName FROM Contact "
+             "WHERE Id > '${OFFSET}' "
+             f"AND LastName = '{run_name}' "
+             "ORDER BY Id")
+    origin.set_attributes(soql_query=query,
+                          incremental_mode=False,
+                          maximum_query_columns=max_columns)
+
+    wiretap = builder.add_wiretap()
+
+    origin >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    record_id = None
+
+    try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
+        logger.info('Adding a Contact into Salesforce ...')
+
+        result = client.Contact.create({
+            'FirstName': '1',
+            'LastName': run_name
+        })
+        record_id = {'Id': result['id']}
+
+        execution = sdc_executor.start_pipeline(pipeline)
+
+        if max_columns == 512:
+            # Run the pipeline normally and expect to retrieve the Contact
+            sdc_executor.wait_for_pipeline_metric(pipeline,
+                                                  'input_record_count',
+                                                  1,
+                                                  timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
+            sdc_executor.stop_pipeline(pipeline)
+
+            # There should be no errors reported
+            history = sdc_executor.get_pipeline_history(pipeline)
+            assert history.latest.metrics.counter('stage.SalesforceBulkAPI20_01.errorRecords.counter').count == 0
+            assert history.latest.metrics.counter('stage.SalesforceBulkAPI20_01.stageErrors.counter').count == 0
+
+            assert len(wiretap.output_records) == 1
+            assert wiretap.output_records[0].field['FirstName'] == '1'
+        else:
+            # This execution should fail as max_columns=1
+            execution.wait_for_status('RUN_ERROR', timeout_sec=300, ignore_errors=True)
+
+            # Check that the error is the one we expect
+            status = sdc_executor.get_pipeline_status(pipeline).response.json()
+            assert status.get('status') == 'RUN_ERROR'
+            assert 'FORCE_55' in status.get('message')
+
+    finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
+        clean_up(sdc_executor, pipeline, client, [record_id])
