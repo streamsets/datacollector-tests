@@ -233,9 +233,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
-    query = (f"SELECT Id, LastName FROM Contact "
+    query = (f"SELECT Id, FirstName FROM Contact "
              "WHERE Id > '${OFFSET}' "
-             f"AND FirstName = '{test_name}' "
+             f"AND LastName = '{test_name}' "
              "ORDER BY Id")
     origin.set_attributes(soql_query=query,
                           incremental_mode=False,
@@ -258,7 +258,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
         assign_hard_delete(client)
 
         logger.info('Inserting data into Contacts...')
-        records = [{'LastName': str(n), 'FirstName': test_name} for n in range(1, max_batch_size * batches + 1)]
+        records = [{'FirstName': str(n), 'LastName': test_name} for n in range(1, max_batch_size * batches + 1)]
         record_ids = check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -268,13 +268,13 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
 
         # Verify each record
         def sort_func(entry):
-            return int(entry.field['LastName'].value)
+            return int(entry.field['FirstName'].value)
 
         records.sort(key=sort_func)
 
         expected_number = 1
         for record in records:
-            assert int(record.field['LastName'].value) == expected_number
+            assert int(record.field['FirstName'].value) == expected_number
             expected_number += 1
 
     finally:
@@ -386,9 +386,9 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
-    query = (f"SELECT Id, LastName FROM Contact "
+    query = (f"SELECT Id, FirstName FROM Contact "
              "WHERE Id > '${OFFSET}' "
-             f"AND FirstName = '{test_name}' "
+             f"AND LastName = '{test_name}' "
              "ORDER BY Id")
     origin.set_attributes(soql_query=query,
                           query_interval='${1 * SECONDS}',
@@ -412,7 +412,7 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
             wiretap.reset()
 
             logger.info('Inserting data into Contacts')
-            records = [{'LastName': str(n), 'FirstName': test_name} for n in range(iteration * records_per_iteration + 1, iteration * records_per_iteration + 1 + records_per_iteration)]
+            records = [{'FirstName': str(n), 'LastName': test_name} for n in range(iteration * records_per_iteration + 1, iteration * records_per_iteration + 1 + records_per_iteration)]
             record_ids += check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
 
 
@@ -426,8 +426,7 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
 
             expected_number = iteration * records_per_iteration + 1
             for record in records:
-                print(record)
-                assert int(record.field['LastName'].value) == expected_number
+                assert int(record.field['FirstName'].value) == expected_number
                 expected_number += 1
 
     finally:
