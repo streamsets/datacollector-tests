@@ -1240,7 +1240,7 @@ def test_pulsar_consumer_max_batch_time(sdc_builder, sdc_executor, pulsar, subsc
 
         # It will never reach 1_000_000 records so that if it reaches 10 it would mean the max batch timeout has been
         # reached and the timeout mechanisms worked as expected.
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', number_messages)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', number_messages, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
 
         output_records = [record.field['text'] for record in wiretap.output_records]
