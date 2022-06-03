@@ -1240,7 +1240,7 @@ def test_aurora_postgres_cdc_ssl_enabled(sdc_builder,
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora Aurora PostgreSQL CDC Client')
+    aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
     aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
                                               max_batch_size_in_records=1,
@@ -1345,7 +1345,7 @@ def test_aurora_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
         table_name = get_random_string(string.ascii_uppercase, 16)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora Aurora PostgreSQL CDC Client')
+        aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
         aurora_postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
                                                   max_batch_size_in_records=1,
                                                   remove_replication_slot_on_close=True,
