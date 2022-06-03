@@ -3828,10 +3828,12 @@ def test_oracle_cdc_offset_commit_only(sdc_builder, sdc_executor, database):
 @sdc_min_version('5.0.0')
 @database('oracle')
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+@pytest.mark.parametrize('use_peg_parser', [False, True])
 def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
                                                 sdc_executor,
                                                 database,
-                                                buffer_location):
+                                                buffer_location,
+                                                use_peg_parser):
     """
     Test to check all headers for primary keys are present in the output records.
     """
@@ -3933,7 +3935,8 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
                                          initial_change="SCN",
                                          start_scn=database_last_scn,
                                          send_redo_query_in_headers=True,
-                                         disable_continuous_mine=True)
+                                         disable_continuous_mine=True,
+                                         use_peg_parser=use_peg_parser)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
