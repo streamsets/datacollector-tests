@@ -1256,6 +1256,7 @@ def test_pulsar_consumer_max_batch_time(sdc_builder, sdc_executor, pulsar, subsc
 
 @pulsar
 @sdc_min_version('5.1.0')
+@pytest.mark.skip('Suspect this is breaking Pulsar so skipping temporarily')
 @pytest.mark.parametrize("subscription_type", ['EXCLUSIVE', 'SHARED'])
 @pytest.mark.parametrize("number_of_threads", [1, 8])
 def test_pulsar_consumer_multiple_threads_assert_parallel(sdc_builder, sdc_executor, pulsar, subscription_type,
