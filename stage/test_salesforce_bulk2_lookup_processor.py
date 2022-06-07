@@ -167,3 +167,81 @@ def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, sale
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
         clean_up(sdc_executor, pipeline, client, [record_id])
+
+
+@salesforce
+@sdc_min_version('5.0.0')
+@pytest.mark.parametrize('timeout', [0, 60])
+def test_salesforce_lookup_processor_timeout(sdc_builder, sdc_executor, salesforce, timeout):
+    # The test tries to set up Salesforce query timeout as 0 and as 60. Whith the timeout set to 0, the execution is
+    # expected to fail with FORCE_59, otherwise it should execute just fine.
+    test_name = 'sale_bulk2_lookup_timeout_' + get_random_string(string.ascii_lowercase, 10)
+
+    client = salesforce.client
+
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Data Generator')
+    origin.records_to_be_generated = 1
+    origin.fields_to_generate = [{
+        "type": "LONG_SEQUENCE",
+        "field": "seq"
+    }]
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [{
+        'fieldToSet': '/Last Name',
+        'expression': test_name
+    }]
+
+    lookup = builder.add_stage('Salesforce Bulk API 2.0 Lookup')
+    lookup.soql_query = (f"SELECT Id, FirstName FROM Contact "
+                         f"WHERE LastName = '{test_name}'")
+    lookup.field_mappings = [dict(dataType='USE_SALESFORCE_TYPE',
+                                  salesforceField=f'LastName',
+                                  sdcField=f'/Last Name')]
+    lookup.salesforce_query_timeout = timeout
+
+    wiretap = builder.add_wiretap()
+    origin >> expression >> lookup >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
+        logger.info('Adding a Contact into Salesforce ...')
+
+        result = client.Contact.create({
+            'FirstName': '1',
+            'LastName': test_name
+        })
+        record_id = {'Id': result['id']}
+
+        execution = sdc_executor.start_pipeline(pipeline)
+
+        if timeout == 60:
+            # Run the pipeline normally and expect to retrieve the Contact
+            execution.wait_for_finished()
+
+            # There should be no errors reported
+            history = sdc_executor.get_pipeline_history(pipeline)
+            assert history.latest.metrics.counter('stage.SalesforceBulkAPI20Lookup_01.errorRecords.counter').count == 0
+            assert history.latest.metrics.counter('stage.SalesforceBulkAPI20Lookup_01.stageErrors.counter').count == 0
+
+            assert len(wiretap.output_records) == 1
+            assert wiretap.output_records[0].field['FirstName'] == '1'
+        else:
+            # This execution should fail as timeout=0
+            execution.wait_for_status('RUN_ERROR', timeout_sec=300, ignore_errors=True)
+
+            # Check that the error is the one we expect
+            status = sdc_executor.get_pipeline_status(pipeline).response.json()
+            assert status.get('status') == 'RUN_ERROR'
+            assert 'FORCE_59' in status.get('message')
+
+    finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
+        clean_up(sdc_executor, pipeline, client, [record_id])

@@ -15,9 +15,11 @@
 import copy
 import json
 import logging
+import string
 
 import pytest
 from streamsets.sdk.sdc_api import StatusError
+from streamsets.sdk.utils import get_random_string
 from streamsets.testframework.markers import salesforce, sdc_min_version
 
 from .utils.utils_salesforce import (CASE_SUBJECT, clean_up, get_dev_raw_data_source,
@@ -458,3 +460,68 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, de
         clean_up(sdc_executor, pipeline, client, inserted_ids)
         if set_permission:
             revoke_hard_delete(client)
+
+
+@salesforce
+@sdc_min_version('5.0.0')
+@pytest.mark.parametrize('timeout', [0, 60])
+def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, timeout):
+    # The test tries to set up Salesforce query timeout as 0 and as 60. Whith the timeout set to 0, the execution is
+    # expected to fail with FORCE_59, otherwise it should execute just fine.
+    test_name = 'sale_bulk2_dest_timeout_' + get_random_string(string.ascii_lowercase, 10)
+    client = salesforce.client
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.data_format = 'JSON'
+    source.raw_data = f'{{ "FirstName" : 1 }}'
+    source.stop_after_first_batch = True
+
+    expression = builder.add_stage('Expression Evaluator')
+    expression.field_expressions = [{
+        'fieldToSet': '/LastName',
+        'expression': test_name
+    }]
+
+    target = builder.add_stage('Salesforce Bulk API 2.0', type='destination')
+    target.sobject_type = 'Contact'
+    target.field_mapping = []
+    target.on_record_error = 'STOP_PIPELINE'
+    target.salesforce_query_timeout = timeout
+
+    source >> expression >> target
+    pipeline = builder.build().configure_for_environment(salesforce)
+
+    read_ids = []
+
+    try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        execution = sdc_executor.start_pipeline(pipeline)
+
+        if timeout == 60:
+            # Run the pipeline normally and expect to retrieve the Contact
+            execution.wait_for_finished()
+
+            # Verify that the data were indeed inserted
+            result = client.query(f"SELECT Id, FirstName FROM Contact WHERE LastName = '{test_name}'")
+            read_ids = get_ids(result['records'], 'Id')
+
+            assert len(result['records']) == 1
+            assert result['records'][0]['FirstName'] == '1'
+        else:
+            # This execution should fail as timeout=0
+            execution.wait_for_status('RUN_ERROR', timeout_sec=300, ignore_errors=True)
+
+            # Check that the error is the one we expect
+            status = sdc_executor.get_pipeline_status(pipeline).response.json()
+            assert status.get('status') == 'RUN_ERROR'
+            assert 'FORCE_59' in status.get('message')
+    finally:
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
+        clean_up(sdc_executor, pipeline, client, read_ids)
