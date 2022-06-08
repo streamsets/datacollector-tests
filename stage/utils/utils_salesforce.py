@@ -513,6 +513,8 @@ def insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expect
     client = salesforce.client
     inserted_ids = None
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
@@ -522,7 +524,9 @@ def insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expect
 
         verify_wiretap_data(wiretap, expected_data, sort)
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 def get_ids(records, key):
@@ -553,7 +557,7 @@ def check_ids(records):
         assert record['Id'], "Error creating Salesforce data"
     return records
 
-def clean_up(sdc_executor, pipeline, client, record_ids, object_name='Contact'):
+def clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=False, object_name='Contact'):
     """Utility method to delete inserted records and stop the pipeline
 
     Args:
@@ -571,8 +575,12 @@ def clean_up(sdc_executor, pipeline, client, record_ids, object_name='Contact'):
             logger.error('Unable to stop the pipeline ...')
     try:
         if record_ids:
-            logger.info(f'Deleting {object_name}s with id(s) {record_ids} ...')
-            getattr(client.bulk, object_name).hard_delete(record_ids)
+            if hard_delete:
+                logger.info(f'Hard deleting {object_name}s with id(s) {record_ids} ...')
+                getattr(client.bulk, object_name).hard_delete(record_ids)
+            else:
+                logger.info(f'Deleting {object_name}s with id(s) {record_ids} ...')
+                getattr(client.bulk, object_name).delete(record_ids)
     except Exception:
         logger.error(f'Unable to delete {object_name}s ...')
 
@@ -640,6 +648,7 @@ def delete_custom_field_from_contact(client, custom_field_name):
 
 
 def deploy_metadata(client, package_content, files):
+    logger.info('Deploying metadata')
     file_bytes = BytesIO()
 
     with ZipFile(file_bytes, 'w') as zip_file:

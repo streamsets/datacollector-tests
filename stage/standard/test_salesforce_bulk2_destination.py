@@ -24,7 +24,8 @@ from streamsets.testframework.utils import get_random_string
 from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
                                       get_ids, STANDARD_FIELDS, set_field_permissions,
                                       OBJECT_NAMES, compare_values, set_up_random, assign_hard_delete,
-                                      revoke_hard_delete, add_custom_field_to_contact, delete_custom_field_from_contact)
+                                      revoke_hard_delete, add_custom_field_to_contact, delete_custom_field_from_contact,
+                                      get_current_user_id)
 
 logger = logging.getLogger(__name__)
 
@@ -293,10 +294,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
         assert len(result['records']) == 1
         assert compare_values(expected, result['records'][0][custom_field_name], database_type['type'])
     finally:
+        delete_custom_field_from_contact(client, custom_field_name)
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 @salesforce
@@ -351,10 +352,10 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         assert len(result['records']) == 1
         assert result['records'][0][f'{custom_field_name}'] == 1
     finally:
+        delete_custom_field_from_contact(client, custom_field_name)
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 @salesforce
@@ -415,9 +416,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
         expected = sorted(str(i) for i in range(0, records))
         assert data == expected
     finally:
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        clean_up(sdc_executor, pipeline, client, read_ids)
 
 
 @salesforce

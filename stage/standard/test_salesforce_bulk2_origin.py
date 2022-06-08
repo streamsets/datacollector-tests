@@ -138,10 +138,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
                                   type_data['metadata']['type'])
 
     finally:
+        delete_custom_field_from_contact(client, custom_field_name)
+        clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, record_ids)
 
 
 @salesforce
@@ -211,10 +211,10 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         assert wiretap.output_records[0].field[custom_field_name] == 1
 
     finally:
+        delete_custom_field_from_contact(client, custom_field_name)
+        clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, [record_id])
 
 
 @salesforce
@@ -278,9 +278,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
             expected_number += 1
 
     finally:
+        clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        clean_up(sdc_executor, pipeline, client, record_ids)
 
 
 @salesforce
@@ -363,9 +363,9 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
         assert len(wiretap.output_records) == 1
         assert wiretap.output_records[0].header.values['sdc.event.type'] == 'no-more-data'
     finally:
+        clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        clean_up(sdc_executor, pipeline, client, record_ids)
 
 
 @salesforce
@@ -430,6 +430,6 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
                 expected_number += 1
 
     finally:
+        clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        clean_up(sdc_executor, pipeline, client, record_ids)

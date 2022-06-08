@@ -164,9 +164,9 @@ def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, sale
             assert 'FORCE_55' in status.get('message')
 
     finally:
+        clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        clean_up(sdc_executor, pipeline, client, [record_id])
 
 
 @salesforce
@@ -242,6 +242,6 @@ def test_salesforce_lookup_processor_timeout(sdc_builder, sdc_executor, salesfor
             assert 'FORCE_59' in status.get('message')
 
     finally:
+        clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        clean_up(sdc_executor, pipeline, client, [record_id])

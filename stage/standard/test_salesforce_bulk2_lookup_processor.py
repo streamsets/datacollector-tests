@@ -140,10 +140,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
                                   null_record.field[fields]._data['value'],
                                   type_data['metadata']['type'])
     finally:
+        delete_custom_field_from_contact(client, custom_field_name)
+        clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, record_ids)
 
 
 @salesforce
@@ -228,9 +228,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
             expected_number += 1
 
     finally:
+        clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client)
-        clean_up(sdc_executor, pipeline, client, record_ids)
 
 
 @salesforce

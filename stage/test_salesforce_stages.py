@@ -93,6 +93,9 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
 
     client = salesforce.client
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Produce Salesforce records using pipeline.
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -111,7 +114,9 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
         assert TEST_DATA['CSV_DATA_TO_INSERT'][1:] == read_data
 
     finally:
-        clean_up(sdc_executor, pipeline, client, read_ids)
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -155,6 +160,9 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
 
     client = salesforce.client
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Produce Salesforce records using pipeline.
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -174,7 +182,9 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
         assert TEST_DATA['CSV_DATA_TO_INSERT'][1:] == read_data
 
     finally:
-        clean_up(sdc_executor, pipeline, client, read_ids)
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -214,6 +224,9 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
 
     client = salesforce.client
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Produce Salesforce records using pipeline.
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(2)
@@ -238,7 +251,9 @@ def test_salesforce_destination_commit_before_stopping(sdc_builder, sdc_executor
         assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count > 3
 
     finally:
-        clean_up(sdc_executor, pipeline, client, read_ids)
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -367,6 +382,9 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
     client = salesforce.client
     inserted_ids = None
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
@@ -392,7 +410,9 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce, api):
 
         assert len([record.value['value'] for record in wiretap.output_records]) == 0
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 @salesforce
 def test_salesforce_origin_platform_events(sdc_builder, sdc_executor, salesforce):
@@ -545,6 +565,9 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
     sdc_executor.add_pipeline(pipeline)
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         logger.info('Starting pipeline')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
@@ -556,7 +579,9 @@ def test_salesforce_lookup_processor_retrieve(sdc_builder, sdc_executor, salesfo
         verify_wiretap_data(wiretap, lookup_expected_data)
 
     finally:
-        clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -587,6 +612,9 @@ def test_salesforce_lookup_processor_single_quote_escaping(sdc_builder, sdc_exec
     client = salesforce.client
     inserted_ids = None
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['QUOTED_DATA_TO_INSERT']), 'id')
@@ -600,7 +628,9 @@ def test_salesforce_lookup_processor_single_quote_escaping(sdc_builder, sdc_exec
             record['surName'] = record.pop('LastName')
         verify_wiretap_data(wiretap, lookup_expected_data)
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -733,6 +763,9 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
 
     client = salesforce.client
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         expected_accounts = []
         account_ids = []
         logger.info('Creating accounts using Salesforce client ...')
@@ -767,7 +800,9 @@ def test_salesforce_origin_subquery(sdc_builder, sdc_executor, salesforce, api):
         logger.info('Deleting records ...')
         if account_ids:
             client.bulk.Account.delete(account_ids)
-        clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -802,6 +837,9 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
 
     client = salesforce.client
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
@@ -814,7 +852,9 @@ def test_salesforce_origin_aggregate_count(sdc_builder, sdc_executor, salesforce
         assert wiretap.output_records[0].field['count'] == 3
 
     finally:
-        clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -923,6 +963,9 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
 
     client = salesforce.client
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         contact_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
@@ -935,7 +978,9 @@ def test_salesforce_lookup_aggregate_count(sdc_builder, sdc_executor, salesforce
         assert wiretap.output_records[0].field['count'].value == 3
 
     finally:
-        clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -978,6 +1023,9 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
 
     client = salesforce.client
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         contact_ids = []
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
@@ -993,7 +1041,9 @@ def test_salesforce_lookup_aggregate(sdc_builder, sdc_executor, salesforce):
         assert wiretap.output_records[0].field['expr2'].value == TEST_DATA['DATA_TO_INSERT'][-1]['LastName']
 
     finally:
-        clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -1034,6 +1084,9 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
     client = salesforce.client
     inserted_ids = None
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
 
@@ -1064,7 +1117,9 @@ def test_salesforce_origin_session_timeout(sdc_builder, sdc_executor, salesforce
         verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -1123,6 +1178,9 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
     inserted_ids_2 = None
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids_1 = get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
@@ -1167,7 +1225,9 @@ def test_salesforce_origin_stop_resume(sdc_builder, sdc_executor, salesforce):
             inserted_ids += inserted_ids_2
         if len(inserted_ids) == 0:
             inserted_ids = None
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -1376,6 +1436,9 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
     sdc_executor.add_pipeline(pipeline)
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Now the pipeline will make the contacts report to each other
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -1391,7 +1454,9 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
         assert result['records'][1]['ReportsToId'] == result['records'][2]['Id']
 
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -1717,6 +1782,9 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
     client = salesforce.client
     contact_ids = None
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Make a load of Contacts
         data_to_insert = []
         for aux in range(CONTACTS_FOR_NO_MORE_DATA):
@@ -1747,7 +1815,9 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
         assert error_records == 0, f'Observed {error_records} error records (expected 0)'
 
     finally:
-        clean_up(sdc_executor, pipeline, client, contact_ids)
+        clean_up(sdc_executor, pipeline, client, contact_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -1800,6 +1870,9 @@ def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, sal
     sdc_executor.add_pipeline(pipeline)
 
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Now the pipeline will make the contacts report to each other
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -1815,7 +1888,9 @@ def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, sal
         assert result['records'][2]['ReportsToId'] is None
 
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -1985,6 +2060,9 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
     client = salesforce.client
     inserted_ids = None
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(TEST_DATA['DATA_TO_INSERT']), 'id')
@@ -1999,7 +2077,9 @@ def test_salesforce_origin_query_cdc_no_object(sdc_builder, sdc_executor, salesf
         verify_wiretap_data(wiretap, TEST_DATA['DATA_TO_INSERT'])
 
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
 
 
 @salesforce
@@ -2193,6 +2273,9 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
     inserted_ids = get_ids(client.bulk.Contact.insert(test_data), 'id')
     logger.info('Created Contacts using Salesforce client with id(s) as %s', inserted_ids)
     try:
+        # Create a hard delete permission file for this client
+        assign_hard_delete(client)
+
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         if subscription_type == PUSH_TOPIC:
@@ -2261,7 +2344,9 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
             assert change_record.header.values['salesforce.cdc.changeType'] == 'UPDATE'
             assert change_record.field['Name']['FirstName'] == test_data[0]['FirstName']
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
+        clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
+        # Delete the hard delete permission file to keep the test account clean
+        revoke_hard_delete(client)
         if subscription_id and subscription_type == PUSH_TOPIC:
             logger.info('Deleting PushTopic with id %s ...', subscription_id)
             client.PushTopic.delete(subscription_id)
@@ -2469,6 +2554,8 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, ap
             verify_result_ids(inserted_ids, result, 'Record')
 
     finally:
-        clean_up(sdc_executor, pipeline, client, inserted_ids)
         if set_permission:
+            clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
             revoke_hard_delete(client)
+        else:
+            clean_up(sdc_executor, pipeline, client, inserted_ids)
