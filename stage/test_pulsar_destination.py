@@ -64,7 +64,7 @@ def test_pulsar_producer_with_no_schema(sdc_builder, sdc_executor, pulsar):
         reader = client.create_reader(topic_name, MessageId.earliest)
         msgs_received = []
         while reader.has_message_available():
-            msgs_received.append(reader.read_next().data().decode().strip()) # strip to remove newlines
+            msgs_received.append(reader.read_next().data().decode().strip())  # strip to remove newlines
     finally:
         reader.close()  # reader needs to be closed before topic can be deleted without force
         client.close()
@@ -79,8 +79,8 @@ def test_pulsar_producer_with_no_schema(sdc_builder, sdc_executor, pulsar):
 @sdc_min_version('5.0.0')
 @pytest.mark.parametrize("data, topic_type_pipeline, topic_type_pulsar, error_code", [
     ("just a string", "STRING", "STRING", None),
-    #("just a string", "STRING", "INT32", "PULSAR_21"), # Incompatible schemas. Working from Pulsar 2.9.x
-    ("true", "BOOLEAN", "BOOLEAN", "PULSAR_23"), # Not supported types for now
+    # ("just a string", "STRING", "INT32", "PULSAR_21"), # Incompatible schemas. Working from Pulsar 2.9.x
+    ("true", "BOOLEAN", "BOOLEAN", "PULSAR_23"),  # Not supported types for now
     ("100", "INT32", "INT32", "PULSAR_23"),
     ("100", "INT8", "INT8", "PULSAR_23"),
     ("100", "INT16", "INT16", "PULSAR_23"),
@@ -88,14 +88,17 @@ def test_pulsar_producer_with_no_schema(sdc_builder, sdc_executor, pulsar):
     ("100.0", "FLOAT", "FLOAT", "PULSAR_23"),
     ("100.0", "DOUBLE", "DOUBLE", "PULSAR_23"),
     ("100", "TIMESTAMP", "TIMESTAMP", "PULSAR_23"),
-    #("just a string", "BYTES", "BYTES", None), # https://github.com/apache/pulsar/issues/10271
+    # ("just a string", "BYTES", "BYTES", None), # https://github.com/apache/pulsar/issues/10271
 ])
-def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar, data, topic_type_pipeline, topic_type_pulsar, error_code):
+def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar, data, topic_type_pipeline,
+                                               topic_type_pulsar, error_code):
     topic_name = get_random_string(string.ascii_letters, 10)
 
     input_text = data
-    topic_schema_pipeline = {"name": "primitive-string-schema", "type": topic_type_pipeline, "schema": "","properties": {}}
-    topic_schema_pulsar = {"name": "primitive-string-schema", "type": topic_type_pulsar, "schema": "","properties": {}}
+    topic_schema_pipeline = {"name": "primitive-string-schema", "type": topic_type_pipeline,
+                             "schema": "", "properties": {}}
+    topic_schema_pulsar = {"name": "primitive-string-schema", "type": topic_type_pulsar,
+                           "schema": "", "properties": {}}
 
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
@@ -136,11 +139,12 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
         assert msgs_sent_count == len(msgs_received)
         assert msgs_received[0] == input_text
     except (sdk.sdc_api.RunError, sdk.sdc_api.StartError) as e:
-        # StageException because in this case the pulsar schema is an stage level configuration
+        # StageException because in this case the pulsar schema is a stage level configuration
         assert error_code is not None
         assert error_code in e.message
     finally:
         sdc_executor.remove_pipeline(pipeline)
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic_name}")
 
 
 @pulsar
@@ -149,26 +153,33 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
     (
         {"name": "Fran", "age": 32}, 
         '\x08Fran@',
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}', 
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}', 
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
         None
     ),
     (
         {"name": "Fran", "age": 32}, 
         '\x08Fran@',
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}', 
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"string"}]}', 
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"string"}]}',
         'PULSAR_21'
     ),
     (
         {"name": "Fran", "age": "thirty-two"}, 
         '\x08Fran@',
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}', 
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}', 
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
         'PULSAR_24'
     ),
 ])
-def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, input_data_json, input_data_avro, topic_type_pipeline, topic_type_pulsar, error_code):
+def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, input_data_json, input_data_avro,
+                                          topic_type_pipeline, topic_type_pulsar, error_code):
     topic_name = get_random_string(string.ascii_letters, 10)
 
     topic_schema_pipeline = {"name": "complex-schema", "type": "AVRO", "schema": topic_type_pipeline, "properties": {}}
@@ -182,7 +193,7 @@ def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, inp
     pulsar_producer.set_attributes(topic=topic_name, 
                                    schema='USER_SCHEMA',
                                    schema_info=json.dumps(topic_schema_pipeline),
-                                   data_format='AVRO',  # TODO All data format configuration shouldn't be needed
+                                   data_format='AVRO',
                                    avro_schema_location='INLINE',
                                    avro_schema=topic_type_pipeline,
                                    include_schema=False)
@@ -192,7 +203,6 @@ def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, inp
     enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
     disable_auto_update_schema(pulsar.admin)
 
-
     try:
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(10)
@@ -200,7 +210,8 @@ def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, inp
 
         history = sdc_executor.get_pipeline_history(pipeline)
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        number_generated_records = history.latest.metrics.counter('stage.DevRawDataSource_01.outputRecords.counter').count
+        number_generated_records = history.latest.metrics\
+            .counter('stage.DevRawDataSource_01.outputRecords.counter').count
         logger.debug('Number of messages ingested into the pipeline = %s', msgs_sent_count)
 
         client = pulsar.client
@@ -218,11 +229,13 @@ def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, inp
         assert msgs_sent_count == len(msgs_received)
         assert msgs_received[0] == input_data_avro
     except sdk.sdc_api.RunError as e:
-        # StageException because in this case the pulsar schema is an stage level configuration
+        # StageException because in this case the pulsar schema is a stage level configuration
         assert error_code is not None
         assert error_code in e.message
     finally:
         sdc_executor.remove_pipeline(pipeline)
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic_name}")
+
 
 @pulsar
 @sdc_min_version('5.0.0')
@@ -230,17 +243,20 @@ def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, inp
     (
         {"name": "Fran", "age": 32}, 
         '\x08Fran@',
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}', 
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
         None
     ),
     (
         {"name": "Fran", "age": "32"}, 
         '\x08Fran@',
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}', 
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
         'PULSAR_21'
     ),
 ])
-def test_pulsar_producer_schema_avro_processor(sdc_builder, sdc_executor, pulsar, input_data_json, input_data_avro, topic_type_pulsar, error_code):
+def test_pulsar_producer_schema_avro_processor(sdc_builder, sdc_executor, pulsar, input_data_json, input_data_avro,
+                                               topic_type_pulsar, error_code):
     topic_name = get_random_string(string.ascii_letters, 10)
 
     topic_schema_pulsar = {"name": "complex-schema", "type": "AVRO", "schema": topic_type_pulsar, "properties": {}}
@@ -282,19 +298,22 @@ def test_pulsar_producer_schema_avro_processor(sdc_builder, sdc_executor, pulsar
             reader.close()  # reader needs to be closed before topic can be deleted without force
             client.close()
 
-        number_generated_recors = history.latest.metrics.counter('stage.SchemaGenerator_01.outputRecords.counter').count
+        number_generated_records = history.latest.metrics\
+            .counter('stage.SchemaGenerator_01.outputRecords.counter').count
         if error_code is not None:
             # In this case if there is any schema related error, are record errors
             # Because the schema is at record level
-            assert history.latest.metrics.counter('stage.PulsarProducer_01.errorRecords.counter').count == number_generated_recors
+            assert history.latest.metrics.counter('stage.PulsarProducer_01.errorRecords.counter').count == \
+                   number_generated_records
             assert msgs_sent_count == 0
         else:
             assert error_code is None
-            assert msgs_sent_count == number_generated_recors
+            assert msgs_sent_count == number_generated_records
             assert msgs_sent_count == len(msgs_received)
             assert msgs_received[0] == input_data_avro
     finally:
         sdc_executor.remove_pipeline(pipeline)
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic_name}")
 
 
 @pulsar
@@ -303,11 +322,13 @@ def test_pulsar_producer_schema_avro_processor(sdc_builder, sdc_executor, pulsar
     (
         {"name": "Fran", "age": 32}, 
         '\x08Fran@',
-        '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}', 
+        '{"type":"record","name":"schema","doc":"",'
+        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
         None
     ),
 ])
-def test_pulsar_producer_schema_auto_schema(sdc_builder, sdc_executor, pulsar, input_data_json, input_data_avro, topic_type_pulsar, error_code):
+def test_pulsar_producer_schema_auto_schema(sdc_builder, sdc_executor, pulsar, input_data_json, input_data_avro,
+                                            topic_type_pulsar, error_code):
     topic_name = get_random_string(string.ascii_letters, 10)
 
     topic_schema_pulsar = {"name": "complex-schema", "type": "AVRO", "schema": topic_type_pulsar, "properties": {}}
@@ -337,7 +358,8 @@ def test_pulsar_producer_schema_auto_schema(sdc_builder, sdc_executor, pulsar, i
 
         history = sdc_executor.get_pipeline_history(pipeline)
         msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        number_generated_records = history.latest.metrics.counter('stage.DevRawDataSource_01.outputRecords.counter').count
+        number_generated_records = history.latest.metrics\
+            .counter('stage.DevRawDataSource_01.outputRecords.counter').count
         logger.debug('Number of messages ingested into the pipeline = %s', msgs_sent_count)
 
         client = pulsar.client
@@ -355,18 +377,22 @@ def test_pulsar_producer_schema_auto_schema(sdc_builder, sdc_executor, pulsar, i
         assert msgs_sent_count == len(msgs_received)
         assert msgs_received[0] == input_data_avro
     except sdk.sdc_api.RunError as e:
-        # StageException because in this case the pulsar schema is an stage level configuration
+        # StageException because in this case the pulsar schema is a stage level configuration
         assert error_code is not None
         assert error_code in e.message
     finally:
         sdc_executor.remove_pipeline(pipeline)
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic_name}")
+
 
 @pulsar
 @sdc_min_version('5.0.0')
 def test_pulsar_producer_schema_topic_in_record(sdc_builder, sdc_executor, pulsar):
     # Creating the topics with schema
-    topic1_avro_schema = '{"type":"record","name":"schema","doc":"","fields":[{"name":"name","type":"string"},{"name":"topic","type":"string"}]}'
-    topic2_avro_schema = '{"type":"record","name":"schema","doc":"","fields":[{"name":"number","type":"int"},{"name":"topic","type":"string"}]}' 
+    topic1_avro_schema = '{"type":"record","name":"schema","doc":"",' \
+                         '"fields":[{"name":"name","type":"string"},{"name":"topic","type":"string"}]}'
+    topic2_avro_schema = '{"type":"record","name":"schema","doc":"",' \
+                         '"fields":[{"name":"number","type":"int"},{"name":"topic","type":"string"}]}'
     topic1_schema_pulsar = {"name": "complex-schema", "type": "AVRO", "schema": topic1_avro_schema, "properties": {}}
     topic2_schema_pulsar = {"name": "complex-schema", "type": "AVRO", "schema": topic2_avro_schema, "properties": {}}
 
@@ -385,8 +411,10 @@ def test_pulsar_producer_schema_topic_in_record(sdc_builder, sdc_executor, pulsa
         {"number": 150, "topic": topic2_name}
     ]
     records_raw_data = "\n".join([json.dumps(r) for r in records_data_json])
-    records_data_avro_topic1 = [json_to_avro(r, topic1_avro_schema) for r in records_data_json if r["topic"] == topic1_name]
-    records_data_avro_topic2 = [json_to_avro(r, topic2_avro_schema) for r in records_data_json if r["topic"] == topic2_name]
+    records_data_avro_topic1 = [json_to_avro(r, topic1_avro_schema)
+                                for r in records_data_json if r["topic"] == topic1_name]
+    records_data_avro_topic2 = [json_to_avro(r, topic2_avro_schema)
+                                for r in records_data_json if r["topic"] == topic2_name]
 
     # Creating the pipeline 
     builder = sdc_builder.get_pipeline_builder()
@@ -413,7 +441,8 @@ def test_pulsar_producer_schema_topic_in_record(sdc_builder, sdc_executor, pulsa
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         client = pulsar.client
         try:
-            for topic_name, expected_msgs in [(topic1_name, records_data_avro_topic1), (topic2_name, records_data_avro_topic2)]:
+            for topic_name, expected_msgs in [(topic1_name, records_data_avro_topic1),
+                                              (topic2_name, records_data_avro_topic2)]:
                 reader = client.create_reader(topic_name, MessageId.earliest)
                 msgs_received = []
                 # reader.has_message_available does not have the expected behavior in some old versions
@@ -428,8 +457,10 @@ def test_pulsar_producer_schema_topic_in_record(sdc_builder, sdc_executor, pulsa
 
                 assert len(msgs_received) == len(expected_msgs)
                 assert msgs_received == expected_msgs
+                reader.close()  # reader needs to be closed before topic can be deleted without force
         finally:
-            reader.close()  # reader needs to be closed before topic can be deleted without force
             client.close()
     finally:
         sdc_executor.remove_pipeline(pipeline)
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic1_name}")
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic2_name}")

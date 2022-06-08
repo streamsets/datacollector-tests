@@ -207,14 +207,17 @@ def test_pulsar_origin_standalone_text(sdc_builder, sdc_executor, pulsar):
     sdc_executor.add_pipeline(pulsar_consumer_pipeline)
 
     # Publish messages to Pulsar and verify using wiretap if the same messages are received.
-    sdc_executor.start_pipeline(pulsar_consumer_pipeline)
-    sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
 
-    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
-    sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
 
-    assert len(wiretap.output_records) == 1
-    assert [record.field['text'] for record in wiretap.output_records][0] == message
+        assert len(wiretap.output_records) == 1
+        assert [record.field['text'] for record in wiretap.output_records][0] == message
+    finally:
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic}")
 
 
 @pulsar
@@ -274,14 +277,17 @@ def test_pulsar_origin_standalone_json(sdc_builder, sdc_executor, pulsar):
     sdc_executor.add_pipeline(pulsar_consumer_pipeline)
 
     # Publish messages to Pulsar and verify using wiretap if the same messages are received.
-    sdc_executor.start_pipeline(pulsar_consumer_pipeline)
-    sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
 
-    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
-    sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
 
-    assert len(wiretap.output_records) == 1
-    assert [record.field for record in wiretap.output_records][0] == message
+        assert len(wiretap.output_records) == 1
+        assert [record.field for record in wiretap.output_records][0] == message
+    finally:
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic}")
 
 
 @pulsar
@@ -338,14 +344,17 @@ def test_pulsar_origin_standalone_xml(sdc_builder, sdc_executor, pulsar):
     sdc_executor.add_pipeline(pulsar_consumer_pipeline)
 
     # Publish messages to Pulsar and verify using wiretap if the same messages are received.
-    sdc_executor.start_pipeline(pulsar_consumer_pipeline)
-    sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
 
-    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
-    sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
 
-    assert len(wiretap.output_records) == 1
-    assert [record.field['text']['value'] for record in wiretap.output_records][0] == message
+        assert len(wiretap.output_records) == 1
+        assert [record.field['text']['value'] for record in wiretap.output_records][0] == message
+    finally:
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic}")
 
 
 @pulsar
@@ -430,17 +439,21 @@ def test_pulsar_origin_standalone_topics_list(sdc_builder, sdc_executor, pulsar)
     sdc_executor.add_pipeline(pulsar_consumer_pipeline)
 
     # Publish messages to Pulsar and verify using wiretap if the same messages are received.
-    sdc_executor.start_pipeline(pulsar_consumer_pipeline)
-    sdc_executor.start_pipeline(pulsar_producer_pipeline1).wait_for_finished()
-    sdc_executor.start_pipeline(pulsar_producer_pipeline2).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.start_pipeline(pulsar_producer_pipeline1).wait_for_finished()
+        sdc_executor.start_pipeline(pulsar_producer_pipeline2).wait_for_finished()
 
-    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
-    sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
 
-    assert len(wiretap.output_records) == 2
-    records = [record.field for record in wiretap.output_records]
-    for record in records:
-        assert record == message
+        assert len(wiretap.output_records) == 2
+        records = [record.field for record in wiretap.output_records]
+        for record in records:
+            assert record == message
+    finally:
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic1}")
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic2}")
 
 
 @pulsar
@@ -546,20 +559,25 @@ def test_pulsar_origin_standalone_topics_pattern(sdc_builder, sdc_executor, puls
     sdc_executor.add_pipeline(pulsar_consumer_pipeline)
 
     # Publish messages to Pulsar and verify using wiretap if the same messages are received.
-    sdc_executor.start_pipeline(pulsar_consumer_pipeline).wait_for_status('RUNNING')
+    try:
+        sdc_executor.start_pipeline(pulsar_consumer_pipeline).wait_for_status('RUNNING')
 
-    sdc_executor.start_pipeline(pulsar_producer_pipeline1).wait_for_finished()
-    sdc_executor.start_pipeline(pulsar_producer_pipeline2).wait_for_finished()
-    sdc_executor.start_pipeline(pulsar_producer_pipeline3).wait_for_finished()
+        sdc_executor.start_pipeline(pulsar_producer_pipeline1).wait_for_finished()
+        sdc_executor.start_pipeline(pulsar_producer_pipeline2).wait_for_finished()
+        sdc_executor.start_pipeline(pulsar_producer_pipeline3).wait_for_finished()
 
-    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1, timeout_sec=100)
-    sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1, timeout_sec=100)
+        sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
 
-    assert len(wiretap.output_records) == 3
+        assert len(wiretap.output_records) == 3
 
-    records = [record.field for record in wiretap.output_records]
-    for record in records:
-        assert ','.join(str(element) for element in record.values()) == message
+        records = [record.field for record in wiretap.output_records]
+        for record in records:
+            assert ','.join(str(element) for element in record.values()) == message
+    finally:
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic1}")
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic2}")
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic3}")
 
 
 @pulsar
@@ -621,14 +639,17 @@ def test_pulsar_origin_standalone_json_tls_encrypt(sdc_builder, sdc_executor, pu
     sdc_executor.add_pipeline(pulsar_consumer_pipeline)
 
     # Publish messages to Pulsar and verify using wiretap if the same messages are received.
-    sdc_executor.start_pipeline(pulsar_consumer_pipeline)
-    sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
 
-    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
-    sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
 
-    assert len(wiretap.output_records) == 1
-    assert [record.field for record in wiretap.output_records][0] == message
+        assert len(wiretap.output_records) == 1
+        assert [record.field for record in wiretap.output_records][0] == message
+    finally:
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic}")
 
 
 @pulsar
@@ -692,14 +713,17 @@ def test_pulsar_origin_standalone_json_tls_mutual_auth(sdc_builder, sdc_executor
     sdc_executor.add_pipeline(pulsar_consumer_pipeline)
 
     # Publish messages to Pulsar and verify using wiretap if the same messages are received.
-    sdc_executor.start_pipeline(pulsar_consumer_pipeline)
-    sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.start_pipeline(pulsar_producer_pipeline).wait_for_finished()
 
-    sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
-    sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
+        sdc_executor.wait_for_pipeline_metric(pulsar_consumer_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pulsar_consumer_pipeline)
 
-    assert len(wiretap.output_records) == 1
-    assert [record.field for record in wiretap.output_records][0] == message
+        assert len(wiretap.output_records) == 1
+        assert [record.field for record in wiretap.output_records][0] == message
+    finally:
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic}")
 
 
 @pulsar
@@ -727,7 +751,6 @@ def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar):
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
     client = pulsar.client
-    admin = pulsar.admin
     try:
         sdc_executor.start_pipeline(consumer_origin_pipeline)
 
@@ -744,7 +767,7 @@ def test_pulsar_consumer_topic_header(sdc_builder, sdc_executor, pulsar):
     finally:
         producer.close()
         client.close()
-        admin.delete_topic(producer.topic())
+        pulsar.admin.delete_topic(producer.topic())
 
 
 class ComplexSchemaClass(schema.Record):
@@ -877,5 +900,5 @@ def test_pulsar_consumer_schemas(sdc_builder, sdc_executor, pulsar, data_format,
             raise Exception(f"Final assertions are not written for the schema type {schema_info['type']}")
     finally:
         producer.close()
-        pulsar.admin.delete_topic(producer.topic())
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic_name}")
         sdc_executor.remove_pipeline(pipeline)
