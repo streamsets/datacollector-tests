@@ -15,9 +15,11 @@
 import json
 
 import pytest
+from streamsets.sdk import sdc_api
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.sdk.utils import Version
+from time import sleep
 
 
 @pytest.mark.parametrize('stage_attributes', [{'action': 'KEEP'},
@@ -93,6 +95,88 @@ def test_fields(sdc_builder, sdc_executor):
     """:py:function:`stage.configuration.test_field_remover_processor.test_action` covers this case
     as we alternately set one field (when keeping or removing individual ones) or all of them."""
     test_action(sdc_builder, sdc_executor, dict(action='REMOVE'))
+
+
+@pytest.mark.parametrize('on_record_error', ['TO_ERROR', 'DISCARD'])
+@sdc_min_version('5.1.0')
+def test_error_handling(sdc_builder, sdc_executor, on_record_error):
+    """
+    Tests the error handling for the On Record Error options 'Send to Error' and 'Discard'.
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    raw_data = dict(a='a', b='b')
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'JSON'
+    dev_raw_data_source.raw_data = json.dumps(raw_data)
+    dev_raw_data_source.stop_after_first_batch = True
+
+    field_remover = pipeline_builder.add_stage('Field Remover').set_attributes(
+        preconditions=["${record:value('/a') != 'a'}"],
+        on_record_error=on_record_error,
+        action='REMOVE',
+        fields=['/a']
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> field_remover >> wiretap.destination
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+
+        sleep(10)
+
+        assert len(wiretap.output_records) == 0
+
+        if on_record_error == 'TO_ERROR':
+            assert len(wiretap.error_records) == 1
+        else:
+            assert len(wiretap.error_records) == 0
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline, force=True)
+
+
+@sdc_min_version('5.1.0')
+def test_error_handling_stop_pipeline(sdc_builder, sdc_executor):
+    """
+    Tests the error handling for the On Record Error option 'Stop Pipeline'.
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    raw_data = dict(a='a', b='b')
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.data_format = 'JSON'
+    dev_raw_data_source.raw_data = json.dumps(raw_data)
+    dev_raw_data_source.stop_after_first_batch = True
+
+    field_remover = pipeline_builder.add_stage('Field Remover').set_attributes(
+        preconditions=["${record:value('/a') != 'a'}"],
+        on_record_error='STOP_PIPELINE',
+        action='REMOVE',
+        fields=['/a']
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_remover >> wiretap.destination
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+
+    # Check the pipeline stops as soon as it receives the first record with a RunError
+    sdc_executor.dump_log_on_error = False
+    with pytest.raises(sdc_api.RunError) as exception_info:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    sdc_executor.dump_log_on_error = True
+
+    # Check the error arisen corresponds to "CONTAINER_0051 - Unsatisfied precondition(s)"
+    assert("CONTAINER_0051" in exception_info.value.message)
 
 
 @stub
