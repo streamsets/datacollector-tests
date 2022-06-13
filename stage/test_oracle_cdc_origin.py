@@ -24,7 +24,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta
 from sqlalchemy import text
 from time import sleep
-
+from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version
@@ -4426,6 +4426,62 @@ def test_oracle_cdc_client_sorted_columns(sdc_builder,
 
         if target_table is not None:
             target_table.drop(database.engine)
+
+@database('oracle')
+@pytest.mark.parametrize('test_case, setup_actions, tear_down_actions, expected_error', [
+    ('Buffer directory does not exist.', [], [], 'JDBC_643'),
+    ('Buffer directory does not have read permissions.', [f'mkdir -m 222 %s'], [f'chmod 700 %s', f'rm -fr %s'],
+     'JDBC_644'),
+    ('Buffer directory does not have write permissions.', [f'mkdir -m 444 %s'], [f'rm -fr %s'], 'JDBC_645'),
+    ('Buffer directory is used correctly.', [f'mkdir -m 755 %s'], [], None)])
+def test_buffer_directory(sdc_builder, sdc_executor, database, test_case, setup_actions, tear_down_actions,
+                          expected_error):
+    """
+        Verify that the buffer directory is used.
+    """
+
+    buffer_directory = "/home/sdc/%s" % get_random_string(string.ascii_lowercase, 10)
+    for setup_action in setup_actions:
+        logger.info('Creating buffer directory %s', buffer_directory)
+        sdc_executor.execute_shell(setup_action % buffer_directory)
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+
+    try:
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        start_scn = _get_last_scn(connection)
+        oracle_origin = _get_oracle_cdc_client_origin(connection=connection,
+                                                      database=database,
+                                                      sdc_builder=sdc_builder,
+                                                      pipeline_builder=pipeline_builder,
+                                                      initial_change='SCN',
+                                                      start_scn=start_scn,
+                                                      buffer_locally=True,
+                                                      buffer_location='ON_DISK',
+                                                      src_table_name=table_name,
+                                                      buffer_directory=buffer_directory)
+        trash = pipeline_builder.add_stage('Trash')
+        pipeline = pipeline_builder.build(test_case).configure_for_environment(database)
+        oracle_origin >> trash
+        sdc_executor.add_pipeline(pipeline)
+
+        if expected_error:
+            with pytest.raises(StartError) as e:
+                sdc_executor.start_pipeline(pipeline)
+            assert e.value.message.startswith(expected_error)
+        else:
+            sdc_executor.start_pipeline(pipeline)
+            # assert that buffer directory is used by Oracle CDC.
+            assert int(sdc_executor.execute_shell(f'ls {buffer_directory} | wc -l').stdout) > 0
+            sdc_executor.stop_pipeline(pipeline=pipeline).wait_for_stopped()
+            # make sure the directory gets cleaned after pipeline stops.
+            assert int(sdc_executor.execute_shell(f'ls {buffer_directory} | wc -l').stdout) == 0
+
+    finally:
+        for tear_down_action in tear_down_actions:
+            logger.info('Deleting buffer directory %s', buffer_directory)
+            sdc_executor.execute_shell(tear_down_action % buffer_directory)
 
 
 def _get_oracle_cdc_client_origin(connection,
