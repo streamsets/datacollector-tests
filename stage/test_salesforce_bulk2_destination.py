@@ -480,7 +480,7 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, de
 
 
 @salesforce
-@sdc_min_version('5.0.0')
+@sdc_min_version('5.1.0')
 @pytest.mark.parametrize('timeout', [0, 60])
 def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, timeout):
     # The test tries to set up Salesforce query timeout as 0 and as 60. Whith the timeout set to 0, the execution is

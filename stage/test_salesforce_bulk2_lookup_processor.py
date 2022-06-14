@@ -92,7 +92,7 @@ def test_salesforce_lookup_processor(sdc_builder, sdc_executor, salesforce, data
 
 
 @salesforce
-@sdc_min_version('5.0.0')
+@sdc_min_version('5.1.0')
 @pytest.mark.parametrize('max_columns', [1, 512])
 def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, salesforce, max_columns):
     # The test tries to set up max query columns as 1 and as 512. Since the query is retrieving 2 columns (Id and
@@ -170,7 +170,7 @@ def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, sale
 
 
 @salesforce
-@sdc_min_version('5.0.0')
+@sdc_min_version('5.1.0')
 @pytest.mark.parametrize('timeout', [0, 60])
 def test_salesforce_lookup_processor_timeout(sdc_builder, sdc_executor, salesforce, timeout):
     # The test tries to set up Salesforce query timeout as 0 and as 60. Whith the timeout set to 0, the execution is
