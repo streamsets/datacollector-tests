@@ -97,7 +97,7 @@ def test_field_to_column_mapping(sdc_builder, sdc_executor):
 
 @cassandra
 @sdc_min_version('3.12.0')
-@pytest.mark.parametrize('qualified_table_name', ['CORRECT', 'INCORRECT', 'NONEXISTENT'])
+@pytest.mark.parametrize('qualified_table_name', ['CORRECT', 'INCORRECT', 'NONEXISTENT_TABLE', 'NONEXISTENT_KEYSPACE'])
 def test_fully_qualified_table_name(sdc_builder, sdc_executor, cassandra, qualified_table_name):
     """Test for Cassandra stage table name configuration. Support to test Kerberos or plain text only. Tests:
     correct name creation and look up, incorrect name creation, and correct creation but looking for nonexistent name.
@@ -116,10 +116,12 @@ def test_fully_qualified_table_name(sdc_builder, sdc_executor, cassandra, qualif
         fully_qualified_table_name = f'{cassandra_keyspace}.{cassandra_table}'
     elif qualified_table_name == 'INCORRECT':
         fully_qualified_table_name = f'{cassandra_keyspace}:{cassandra_table}'
-    elif qualified_table_name == 'NONEXISTENT':
-        cassandra_wrong_keyspace = get_random_string(string.ascii_letters, 10)
+    elif qualified_table_name == 'NONEXISTENT_TABLE':
         cassandra_wrong_table = 'notcontacts'
-        fully_qualified_table_name = f'{cassandra_wrong_keyspace}.{cassandra_wrong_table}'
+        fully_qualified_table_name = f'{cassandra_keyspace}.{cassandra_wrong_table}'
+    elif qualified_table_name == 'NONEXISTENT_KEYSPACE':
+        cassandra_wrong_keyspace = get_random_string(string.ascii_letters, 10)
+        fully_qualified_table_name = f'{cassandra_wrong_keyspace}.{cassandra_table}'
 
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
@@ -164,7 +166,7 @@ def test_fully_qualified_table_name(sdc_builder, sdc_executor, cassandra, qualif
     except Exception as e:
         if qualified_table_name == 'INCORRECT':
             assert 'CASSANDRA_02' in str(e)
-        elif qualified_table_name == 'NONEXISTENT':
+        elif qualified_table_name.startswith('NONEXISTENT'):
             assert 'CASSANDRA_12' in str(e)
     finally:
         # drop table and keyspace from Cassandra
