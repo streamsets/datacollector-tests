@@ -109,6 +109,159 @@ def test_data_types_oracle(sdc_builder, sdc_executor, database, sql_type, insert
             connection.execute(f"DROP TABLE {table_name}")
 
 
+# https://mariadb.com/docs/reference/mdb/data-types/
+# As of 10.6 version
+DATA_TYPES_MARIADB = [
+    ('BIGINT', '-9223372036854775807', 'LONG', '-9223372036854775807'),
+    ('BIGINT UNSIGNED', '18446744073709551615', 'DECIMAL', '18446744073709551615'),
+    ('BINARY(5)', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+#    ('BIT(8)',"b'01010101'", 'BYTE_ARRAY', 'VQ=='), # Not supported like on MySQL
+    ('BLOB', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('BOOL', '1', 'BOOLEAN', True),
+    ('BOOLEAN', '1', 'BOOLEAN', True),
+    ('CHAR(5)', "'Hello'", 'STRING', 'Hello'),
+    ('CHAR(5) BYTE', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('CHAR VARYING(5)', "'Hello'", 'STRING', 'Hello'),
+    ('CHARACTER(5)', "'Hello'", 'STRING', 'Hello'),
+    ('CHARACTER VARYING(5)', "'Hello'", 'STRING', 'Hello'),
+#    ('CLOB', "'Hello'", 'STRING', 'Hello'), # Only available in sql_mode='oracle' as synonym to LONGTEXT
+    ('DATE', "'2019-01-01'", 'DATE', 1546300800000),
+    ('DATETIME', "'2019-01-01 5:00:00'", 'DATETIME', 1546318800000),
+    ('DEC(5, 2)', '5.20', 'DECIMAL', '5.20'),
+    ('DECIMAL(5, 2)', '5.20', 'DECIMAL', '5.20'),
+    ('DOUBLE', '5.2', 'DOUBLE', '5.2'),
+    ('DOUBLE PRECISION', '5.2', 'DOUBLE', '5.2'),
+    ("ENUM('a', 'b')", "'a'", 'STRING', 'a'),
+    ('FIXED(5, 2)', '5.20', 'DECIMAL', '5.20'),
+    ('FLOAT', '5.2', 'FLOAT', '5.2'),
+    ('FLOAT4', '5.2', 'FLOAT', '5.2'),
+    ('FLOAT8', '5.2', 'DOUBLE', '5.2'),
+    ("GEOMETRY", "POINT(1, 1)", 'BYTE_ARRAY', 'AAAAAAEBAAAAAAAAAAAA8D8AAAAAAADwPw=='),
+    ("GEOMETRYCOLLECTION", "ST_GeomCollFromText('GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(0 1, 0 2),POINT(1 0))')", 'BYTE_ARRAY', 'AAAAAAEHAAAAAwAAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAECAAAAAgAAAAAAAAAAAAAAAAAAAAAA8D8AAAAAAAAAAAAAAAAAAABAAQEAAAAAAAAAAADwPwAAAAAAAAAA'),
+    ('INET6', '"::192.0.2.42"', 'STRING', '::192.0.2.42'),
+    ('INT', '-2147483648', 'INTEGER', '-2147483648'),
+    ('INT UNSIGNED', '4294967295', 'DECIMAL', '4294967295'),
+    ('INT1', '-128', 'SHORT', -128),
+    ('INT1 UNSIGNED', '255', 'SHORT', 255),
+    ('INT2', '-32768', 'SHORT', -32768),
+    ('INT2 UNSIGNED', '65535', 'LONG', '65535'),
+    ('INT4', '-2147483648', 'INTEGER', '-2147483648'),
+    ('INT4 UNSIGNED', '4294967295', 'DECIMAL', '4294967295'),
+    ('INT8', '-9223372036854775807', 'LONG', '-9223372036854775807'),
+    ('INT8 UNSIGNED', '18446744073709551615', 'DECIMAL', '18446744073709551615'),
+    ('INTEGER', '-2147483648', 'INTEGER', '-2147483648'),
+    ('INTEGER UNSIGNED', '4294967295', 'DECIMAL', '4294967295'),
+    ("JSON", "'{\"a\":\"b\"}'", 'STRING', '{\"a\":\"b\"}'),
+    ("LINESTRING", "LineString(Point(0,0), Point(10,10), Point(20,25), Point(50,60))", 'BYTE_ARRAY', 'AAAAAAECAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkQAAAAAAAACRAAAAAAAAANEAAAAAAAAA5QAAAAAAAAElAAAAAAAAATkA='),
+    ('LONG', "'Hello'", 'STRING', 'Hello'),
+    ('LONG CHAR VARYING', "'Hello'", 'STRING', 'Hello'),
+    ('LONG CHARACTER VARYING', "'Hello'", 'STRING', 'Hello'),
+    ('LONG VARBINARY', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('LONG VARCHAR', "'Hello'", 'STRING', 'Hello'),
+    ('LONG VARCHARACTER', "'Hello'", 'STRING', 'Hello'),
+    ('LONGBLOB', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('LONGTEXT', "'Hello'", 'STRING', 'Hello'),
+    ('MEDIUMBLOB', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('MEDIUMINT', '-8388608', 'INTEGER', '-8388608'),
+    ('MEDIUMINT UNSIGNED', '16777215', 'LONG', '16777215'),
+    ('MEDIUMTEXT', "'Hello'", 'STRING', 'Hello'),
+    ('MIDDLEINT', '-8388608', 'INTEGER', '-8388608'),
+    ('MIDDLEINT UNSIGNED', '16777215', 'LONG', '16777215'),
+    ('MULTILINESTRING', "ST_MultiLineStringFromText('MULTILINESTRING((0 40, 0 20, 6 30, 12 20, 12 40),(15 40, 15 20, 25 20, 30 25, 30 35, 25 40, 15 40))')", 'BYTE_ARRAY', 'AAAAAAEFAAAAAgAAAAECAAAABQAAAAAAAAAAAAAAAAAAAAAAREAAAAAAAAAAAAAAAAAAADRAAAAAAAAAGEAAAAAAAAA+QAAAAAAAAChAAAAAAAAANEAAAAAAAAAoQAAAAAAAAERAAQIAAAAHAAAAAAAAAAAALkAAAAAAAABEQAAAAAAAAC5AAAAAAAAANEAAAAAAAAA5QAAAAAAAADRAAAAAAAAAPkAAAAAAAAA5QAAAAAAAAD5AAAAAAACAQUAAAAAAAAA5QAAAAAAAAERAAAAAAAAALkAAAAAAAABEQA=='),
+    ('MULTIPOINT', "ST_MultiPointFromText('MULTIPOINT(0 0, 1 0, 1 1, 0 1)')", 'BYTE_ARRAY', 'AAAAAAEEAAAABAAAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAEBAAAAAAAAAAAA8D8AAAAAAAAAAAEBAAAAAAAAAAAA8D8AAAAAAADwPwEBAAAAAAAAAAAAAAAAAAAAAADwPw=='),
+    ('MULTIPOLYGON', "ST_MultiPolygonFromText('MULTIPOLYGON(((0 40, 0 20, 6 30, 12 20, 12 40, 0 40),(15 40, 15 20, 25 20, 30 25, 30 35, 25 40, 15 40)))')", 'BYTE_ARRAY', 'AAAAAAEGAAAAAQAAAAEDAAAAAgAAAAYAAAAAAAAAAAAAAAAAAAAAAERAAAAAAAAAAAAAAAAAAAA0QAAAAAAAABhAAAAAAAAAPkAAAAAAAAAoQAAAAAAAADRAAAAAAAAAKEAAAAAAAABEQAAAAAAAAAAAAAAAAAAAREAHAAAAAAAAAAAALkAAAAAAAABEQAAAAAAAAC5AAAAAAAAANEAAAAAAAAA5QAAAAAAAADRAAAAAAAAAPkAAAAAAAAA5QAAAAAAAAD5AAAAAAACAQUAAAAAAAAA5QAAAAAAAAERAAAAAAAAALkAAAAAAAABEQA=='),
+    ('NATIONAL CHAR(5)', "'Hello'", 'STRING', 'Hello'),
+    ('NATIONAL CHAR VARYING(5)', "'Hello'", 'STRING', 'Hello'),
+    ('NATIONAL CHARACTER(5)', "'Hello'", 'STRING', 'Hello'),
+    ('NATIONAL CHARACTER VARYING(5)', "'Hello'", 'STRING', 'Hello'),
+    ('NCHAR(5)', "'Hello'", 'STRING', 'Hello'),
+    ('NCHAR VARCHAR(5)', "'Hello'", 'STRING', 'Hello'),
+    ('NCHAR VARCHARACTER(32)', "'Hello'", 'STRING', 'Hello'),
+    ('NCHAR VARYING(32)', "'Hello'", 'STRING', 'Hello'),
+#    ('NUMBER', '5', 'DECIMAL', '5'), # Only available in sql_mode='oracle' as synonym to DECIMAL
+    ('NUMERIC(5, 2)', '5.20', 'DECIMAL', '5.20'),
+    ('NVARCHAR(5)', "'Hello'", 'STRING', 'Hello'),
+    ("POINT", "POINT(1, 1)", 'BYTE_ARRAY', 'AAAAAAEBAAAAAAAAAAAA8D8AAAAAAADwPw=='),
+    ("POLYGON", "Polygon(LineString(Point(0,0),Point(10,0),Point(10,10),Point(0,10),Point(0,0)),LineString(Point(5,5),Point(7,5),Point(7,7),Point(5,7),Point(5,5)))", 'BYTE_ARRAY', 'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
+#    ('RAW(5)', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='), # Only available in sql_mode='oracle' as synonym to VARBINARY
+    ('REAL', '5.2', 'DOUBLE', '5.2'),
+# Serial?
+    ("set('a', 'b')", "'a,b'", 'STRING', 'a,b'),
+    ('SMALLINT', '-32768', 'SHORT', -32768),
+    ('SMALLINT UNSIGNED', '65535', 'LONG', '65535'),
+    ('SQL_TSI_YEAR', "'2019'", 'DATE', 1546300800000),
+    ('TEXT', "'Hello'", 'STRING', 'Hello'),
+    ('TIME', "'5:00:00'", 'TIME', 18000000),
+    ('TIMESTAMP', "'2019-01-01 5:00:00'", 'DATETIME', 1546318800000),
+    ('TINYBLOB', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('TINYINT', '-128', 'SHORT', -128),
+    ('TINYINT UNSIGNED', '255', 'SHORT', 255),
+    ('TINYTEXT', "'Hello'", 'STRING', 'Hello'),
+    ('VARBINARY(5)', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
+    ('VARCHAR(5)', "'Hello'", 'STRING', 'Hello'),
+#   ('VARCHAR2(5)', "'Hello'", 'STRING', 'Hello'), # Only available in sql_mode='oracle' as synonym to VARCHAR
+    ('VARCHARACTER(5)', "'Hello'", 'STRING', 'Hello'),
+    ('YEAR', "'2019'", 'DATE', 1546300800000),
+]
+@sdc_min_version('5.2.0')
+@database('mariadb')
+@pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_MARIADB, ids=[i[0] for i in DATA_TYPES_MARIADB])
+def test_data_types_mariadb(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
+    """Test all feasible MariaDB types."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    try:
+        # Create table
+        connection.execute(f"""
+            CREATE TABLE {table_name}(
+                id int primary key,
+                data_column {sql_type} NULL
+            )
+        """)
+
+        # And insert a row with actual value
+        connection.execute(f"INSERT INTO {table_name} VALUES(1, {insert_fragment})")
+        # And a null
+        connection.execute(f"INSERT INTO {table_name} VALUES(2, NULL)")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('JDBC Query Consumer')
+        origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
+        origin.incremental_mode = False
+        origin.on_unknown_type = 'CONVERT_TO_STRING'
+
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(wiretap.output_records) == 2
+        record = wiretap.output_records[0]
+        null_record = wiretap.output_records[1]
+
+        # Since we are controlling types, we want to check explicit values inside the record rather the python
+        # wrappers.
+        # TLKT-177: Add ability for field to return raw value
+
+        assert record.field['data_column'].type == expected_type
+        assert null_record.field['data_column'].type == expected_type
+
+        assert record.field['data_column']._data['value'] == expected_value
+        assert null_record.field['data_column'] == None
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
+            connection.execute(f"DROP TABLE {table_name}")
+
+
+
 # https://dev.mysql.com/doc/refman/8.0/en/data-types.html
 # We don't support BIT generally (the driver is doing funky 'random' mappings on certain versions)
 DATA_TYPES_MYSQL = [
