@@ -19,7 +19,7 @@ import json
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.environments.databases import MySqlDatabase, OracleDatabase, MemSqlDatabase
+from streamsets.testframework.environments.databases import MySqlDatabase, MariaDBDatabase, OracleDatabase, MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -146,6 +146,159 @@ DATA_TYPES_ORACLE = [
 @database('oracle')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_ORACLE, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_ORACLE])
 def test_data_types_oracle(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
+    _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
+
+
+DATA_TYPES_MARIADB = [
+    # Boolean
+    ('true', 'BOOLEAN', 'char(1)', '1'),
+    ('true', 'BOOLEAN', 'char(5)', '1'),
+    ('true', 'BOOLEAN', 'int', 1),
+    # Byte
+    ('65', 'BYTE', 'char(2)', '65'),
+    # Char
+    ('a', 'CHAR', 'char(1)', 'a'),
+    ('a', 'CHAR', 'varchar(1)', 'a'),
+    ('a', 'CHAR', 'text', 'a'),
+    # Short
+    (120, 'SHORT', 'tinyint', 120),
+    (120, 'SHORT', 'tinyint unsigned', 120),
+    (120, 'SHORT', 'smallint', 120),
+    (120, 'SHORT', 'smallint unsigned', 120),
+    (120, 'SHORT', 'mediumint', 120),
+    (120, 'SHORT', 'mediumint unsigned', 120),
+    (120, 'SHORT', 'int', 120),
+    (120, 'SHORT', 'int unsigned', 120),
+    (120, 'SHORT', 'bigint', 120),
+    (120, 'SHORT', 'bigint unsigned', 120),
+    (120, 'SHORT', 'decimal(5,2)', 120.0),
+    (120, 'SHORT', 'numeric(5,2)', 120.0),
+    (120, 'SHORT', 'char(5)', '120'),
+    (120, 'SHORT', 'varchar(5)', '120'),
+    (120, 'SHORT', 'binary(5)', b'120\x00\x00'),
+    (120, 'SHORT', 'varbinary(5)', b'120'),
+    (120, 'SHORT', 'text', '120'),
+    (120, 'SHORT', 'blob', b'120'),
+    # Integer
+    (120, 'INTEGER', 'tinyint', 120),
+    (120, 'INTEGER', 'tinyint unsigned', 120),
+    (120, 'INTEGER', 'smallint', 120),
+    (120, 'INTEGER', 'smallint unsigned', 120),
+    (120, 'INTEGER', 'mediumint', 120),
+    (120, 'INTEGER', 'mediumint unsigned', 120),
+    (120, 'INTEGER', 'int', 120),
+    (120, 'INTEGER', 'int unsigned', 120),
+    (120, 'INTEGER', 'bigint', 120),
+    (120, 'INTEGER', 'bigint unsigned', 120),
+    (120, 'INTEGER', 'decimal(5,2)', 120.0),
+    (120, 'INTEGER', 'numeric(5,2)', 120.0),
+    (120, 'INTEGER', 'char(5)', '120'),
+    (120, 'INTEGER', 'varchar(5)', '120'),
+    (120, 'INTEGER', 'binary(5)', b'120\x00\x00'),
+    (120, 'INTEGER', 'varbinary(5)', b'120'),
+    (120, 'INTEGER', 'text', '120'),
+    (120, 'INTEGER', 'blob', b'120'),
+    # Long
+    (120, 'LONG', 'tinyint', 120),
+    (120, 'LONG', 'tinyint unsigned', 120),
+    (120, 'LONG', 'smallint', 120),
+    (120, 'LONG', 'smallint unsigned', 120),
+    (120, 'LONG', 'mediumint', 120),
+    (120, 'LONG', 'mediumint unsigned', 120),
+    (120, 'LONG', 'int', 120),
+    (120, 'LONG', 'int unsigned', 120),
+    (120, 'LONG', 'bigint', 120),
+    (120, 'LONG', 'bigint unsigned', 120),
+    (120, 'LONG', 'decimal(5,2)', 120.0),
+    (120, 'LONG', 'numeric(5,2)', 120.0),
+    (120, 'LONG', 'char(5)', '120'),
+    (120, 'LONG', 'varchar(5)', '120'),
+    (120, 'LONG', 'binary(5)', b'120\x00\x00'),
+    (120, 'LONG', 'varbinary(5)', b'120'),
+    (120, 'LONG', 'text', '120'),
+    (120, 'LONG', 'blob', b'120'),
+    # Float
+    (120.0, 'FLOAT', 'numeric(5,2)', 120.0),
+    (120.0, 'FLOAT', 'decimal(5,2)', 120.0),
+    (120.0, 'FLOAT', 'float', 120.0),
+    (120.0, 'FLOAT', 'double', 120.0),
+    (120.0, 'FLOAT', 'char(5)', '120.0'),
+    (120.0, 'FLOAT', 'varchar(5)', '120.0'),
+    (120.0, 'FLOAT', 'binary(5)', b'120.0'),
+    (120.0, 'FLOAT', 'varbinary(5)', b'120.0'),
+    (120.0, 'FLOAT', 'text', '120.0'),
+    (120.0, 'FLOAT', 'blob', b'120.0'),
+    # Double
+    (120.0, 'DOUBLE', 'numeric(5,2)', 120.0),
+    (120.0, 'DOUBLE', 'decimal(5,2)', 120.0),
+    (120.0, 'DOUBLE', 'float', 120.0),
+    (120.0, 'DOUBLE', 'double', 120.0),
+    (120.0, 'DOUBLE', 'char(5)', '120.0'),
+    (120.0, 'DOUBLE', 'varchar(5)', '120.0'),
+    (120.0, 'DOUBLE', 'binary(5)', b'120.0'),
+    (120.0, 'DOUBLE', 'varbinary(5)', b'120.0'),
+    (120.0, 'DOUBLE', 'text', '120.0'),
+    (120.0, 'DOUBLE', 'blob', b'120.0'),
+    # Decimal
+    (120.0, 'DECIMAL', 'numeric(5,2)', 120.00),
+    (120.0, 'DECIMAL', 'decimal(5,2)', 120.00),
+    (120.0, 'DECIMAL', 'float', 120.0),
+    (120.0, 'DECIMAL', 'double', 120.0),
+    (120.0, 'DECIMAL', 'char(5)', '120.0'),
+    (120.0, 'DECIMAL', 'varchar(5)', '120.0'),
+    (120.0, 'DECIMAL', 'binary(5)', b'120.0'),
+    (120.0, 'DECIMAL', 'varbinary(5)', b'120.0'),
+    (120.0, 'DECIMAL', 'text', '120.00'),
+    (120.0, 'DECIMAL', 'blob', b'120.00'),
+    # Date
+    ('2020-01-01 10:00:00', 'DATE', 'date', datetime.date(2020, 1, 1)),
+    ('2020-01-01 10:00:00', 'DATE', 'datetime', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01 10:00:00', 'DATE', 'timestamp', datetime.datetime(2020, 1, 1, 10, 0)),
+    # Time
+    ('2020-01-01 10:00:00', 'TIME', 'date', datetime.date(2020, 1, 1)),
+    ('2020-01-01 10:00:00', 'TIME', 'datetime', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01 10:00:00', 'TIME', 'timestamp', datetime.datetime(2020, 1, 1, 10, 0)),
+    # DateTime
+    ('2020-01-01 10:00:00', 'DATETIME', 'date', datetime.date(2020, 1, 1)),
+    ('2020-01-01 10:00:00', 'DATETIME', 'datetime', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01 10:00:00', 'DATETIME', 'timestamp', datetime.datetime(2020, 1, 1, 10, 0)),
+    # Zoned DateTime
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'date', datetime.date(2020, 1, 1)),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'datetime', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'timestamp', datetime.datetime(2020, 1, 1, 10, 0)),
+    # String
+    ('120', 'STRING', 'tinyint', 120),
+    ('120', 'STRING', 'tinyint unsigned', 120),
+    ('120', 'STRING', 'smallint', 120),
+    ('120', 'STRING', 'smallint unsigned', 120),
+    ('120', 'STRING', 'mediumint', 120),
+    ('120', 'STRING', 'mediumint unsigned', 120),
+    ('120', 'STRING', 'int', 120),
+    ('120', 'STRING', 'int unsigned', 120),
+    ('120', 'STRING', 'bigint', 120),
+    ('120', 'STRING', 'bigint unsigned', 120),
+    ('120.0', 'STRING', 'decimal(5,2)', 120.0),
+    ('120.0', 'STRING', 'numeric(5,2)', 120.0),
+    ('120.0', 'STRING', 'float', 120.0),
+    ('120.0', 'STRING', 'double', 120.0),
+    ('1998-01-01', 'STRING', 'date', datetime.date(1998, 1, 1)),
+    ('1998-01-01 06:11:22', 'STRING', 'datetime', datetime.datetime(1998, 1, 1, 6, 11, 22)),
+    ('1998-01-01 06:11:22', 'STRING', 'timestamp', datetime.datetime(1998, 1, 1, 6, 11, 22)),
+    ('06:11:22', 'STRING', 'time', datetime.timedelta(0, 22282)),
+    ('string', 'STRING', 'char(6)', 'string'),
+    ('string', 'STRING', 'varchar(6)', 'string'),
+    ('string', 'STRING', 'binary(6)', b'string'),
+    ('string', 'STRING', 'varbinary(6)', b'string'),
+    ('string', 'STRING', 'text', 'string'),
+    ('string', 'STRING', 'blob', b'string'),
+    ('a', 'STRING', "enum('a', 'b')", 'a'),
+    ('a', 'STRING', "set('a', 'b')", 'a'),
+    # Byte array
+    ('string', 'BYTE_ARRAY', 'blob', b'string'),
+]
+@database('mariadb')
+@pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_MARIADB, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_MARIADB])
+def test_data_types_mariadb(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
 
 
@@ -621,7 +774,7 @@ def test_data_types_sqlserver(sdc_builder, sdc_executor, input, converter_type, 
 def _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
-    if isinstance(database, MySqlDatabase):
+    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         connection.execute("SET sql_mode=ANSI_QUOTES")
 
     # Build pipeline
@@ -653,7 +806,7 @@ def _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_
     pipeline = builder.build().configure_for_environment(database)
     # Workarounds for STE,STF specific stuff
     target.table_name = table_name
-    if isinstance(database, MySqlDatabase):
+    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         target.init_query = "SET sql_mode=ANSI_QUOTES"
 
     sdc_executor.add_pipeline(pipeline)
@@ -725,6 +878,24 @@ def test_object_names_postgresql(sdc_builder, sdc_executor, database, test_name,
     _test_object_names(sdc_builder, sdc_executor, database, table_name, column_name, use_multi_row_operation, keep_data)
 
 
+# Rules: https://mariadb.com/kb/en/identifier-names/
+OBJECT_NAMES_MARIADB = [
+    ('keywords', 'table', 'column'),
+    ('lowercase', get_random_string(string.ascii_lowercase, 20), get_random_string(string.ascii_lowercase, 20)),
+    ('uppercase', get_random_string(string.ascii_uppercase, 20), get_random_string(string.ascii_uppercase, 20)),
+    ('mixedcase', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 20)),
+    ('max_table_name', get_random_string(string.ascii_letters, 64), get_random_string(string.ascii_letters, 20)),
+    ('max_column_name', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 64)),
+    ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
+    ('special', get_random_string(string.ascii_letters, 5) + "$_", get_random_string(string.ascii_letters, 5) + "$_"),
+]
+@database('mariadb')
+@pytest.mark.parametrize('use_multi_row_operation', [True, False])
+@pytest.mark.parametrize('test_name,table_name,column_name', OBJECT_NAMES_MARIADB, ids=[i[0] for i in OBJECT_NAMES_MARIADB])
+def test_object_names_mariadb(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data):
+    _test_object_names(sdc_builder, sdc_executor, database, table_name, column_name, use_multi_row_operation, keep_data)
+
+
 # Rules: https://dev.mysql.com/doc/refman/8.0/en/identifier-length.html
 # Rules: https://dev.mysql.com/doc/refman/8.0/en/identifiers.html
 OBJECT_NAMES_MYSQL = [
@@ -785,7 +956,7 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, column_n
     # Work-arounding STF behavior of upper-casing table name configuration
     target.table_name = table_name
     # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
-    if isinstance(database, MySqlDatabase):
+    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         target.init_query = "SET sql_mode=ANSI_QUOTES"
 
     metadata = sqlalchemy.MetaData()
@@ -849,7 +1020,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, da
     # Work-arounding STF behavior of upper-casing table name configuration
     target.table_name = table_name
     # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
-    if isinstance(database, MySqlDatabase):
+    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         target.init_query = "SET sql_mode=ANSI_QUOTES"
 
     sdc_executor.add_pipeline(pipeline)
