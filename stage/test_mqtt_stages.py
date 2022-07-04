@@ -14,6 +14,8 @@
 
 import logging
 import string
+
+import pytest
 import time
 
 from streamsets.testframework.markers import mqtt
@@ -23,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 @mqtt
-def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
+@pytest.mark.parametrize('persistence', ['MEMORY', 'FILE'])
+def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker, persistence):
     """Integration test for the MQTT destination stage.
 
      1) load a pipeline that has a raw data (text) origin and MQTT destination
@@ -44,9 +47,9 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
         dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
         dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_str, stop_after_first_batch=True)
 
-        mqtt_target = pipeline_builder.add_stage('MQTT Publisher')
-        mqtt_target.configuration.update({'publisherConf.topic': data_topic,
-                                          'publisherConf.dataFormat': 'TEXT'})
+        mqtt_target = pipeline_builder.add_stage('MQTT Publisher').set_attributes(topic=data_topic,
+                                                                                  data_format='TEXT',
+                                                                                  client_persistence_mechanism=persistence)
 
         dev_raw_data_source >> mqtt_target
 
@@ -66,7 +69,8 @@ def test_raw_to_mqtt(sdc_builder, sdc_executor, mqtt_broker):
 
 
 @mqtt
-def test_mqtt_to_wiretap(sdc_builder, sdc_executor, mqtt_broker):
+@pytest.mark.parametrize('persistence', ['MEMORY', 'FILE'])
+def test_mqtt_to_wiretap(sdc_builder, sdc_executor, mqtt_broker, persistence):
     """Integration test for the MQTT origin stage.
 
      1) load a pipeline that has an MQTT origin (text format) to wiretap
@@ -82,9 +86,9 @@ def test_mqtt_to_wiretap(sdc_builder, sdc_executor, mqtt_broker):
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
-        mqtt_source = pipeline_builder.add_stage('MQTT Subscriber')
-        mqtt_source.configuration.update({'subscriberConf.dataFormat': 'TEXT',
-                                          'subscriberConf.topicFilters': [data_topic]})
+        mqtt_source = pipeline_builder.add_stage('MQTT Subscriber').set_attributes(topic_filter=[data_topic],
+                                                                                   data_format='TEXT',
+                                                                                   client_persistence_mechanism=persistence)
 
         wiretap = pipeline_builder.add_wiretap()
 
