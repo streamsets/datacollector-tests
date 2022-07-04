@@ -4427,6 +4427,8 @@ def test_oracle_cdc_client_sorted_columns(sdc_builder,
         if target_table is not None:
             target_table.drop(database.engine)
 
+
+@sdc_min_version('5.1.0')
 @database('oracle')
 @pytest.mark.parametrize('test_case, setup_actions, tear_down_actions, expected_error', [
     ('Buffer directory does not exist.', [], [], 'JDBC_643'),
