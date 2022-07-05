@@ -194,7 +194,8 @@ def test_stop_start(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     sample_data = [dict(id=i, name=f'Takemiya{i}') for i in range(40)]
@@ -319,7 +320,8 @@ def test_start_not_from_latest(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     if start_from is 'LSN' and database.database_server_version.major < 10:
@@ -446,7 +448,8 @@ def test_postgres_cdc_client_basic(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -544,7 +547,8 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -635,7 +639,8 @@ def test_postgres_cdc_client_filtering_table(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name_allow = get_random_string(string.ascii_lowercase, 20)
@@ -747,7 +752,8 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -813,7 +819,8 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -959,9 +966,9 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
-
 
     table_name = [get_random_string(string.ascii_lowercase, 20) for _ in range(4)]
 
@@ -1067,7 +1074,8 @@ def test_postgres_cdc_wal_sender_status_metrics(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -1139,7 +1147,8 @@ def test_postgres_cdc_queue_buffering_metrics(sdc_builder,
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
     table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(9)]
@@ -1233,7 +1242,8 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
     if not database.ca_certificate:
         pytest.skip('Test only runs against PostgresSQL with SSL enabled.')
 
-    if Version(sdc_builder.version) < Version('5.1.0') and wal2json_format == 'OPERATION':
+    if Version(sdc_builder.version) < Version('5.1.0') and \
+            (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
 
