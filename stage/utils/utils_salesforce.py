@@ -789,14 +789,14 @@ def get_current_user_id(client):
     assert r.status_code == 200
     return r.json()['user_id']
 
-def assign_hard_delete(client):
+def assign_hard_delete(client, test_name):
     # Get Id of current user
     user_id = get_current_user_id(client)
 
     # Create a permission set to allow hard delete
     result = client.PermissionSet.create({
-        'Label': f'Hard Delete Allowed {TEST_DATA["STR_15_RANDOM"]}',
-        'Name': f'Hard_Delete_Allowed_{TEST_DATA["STR_15_RANDOM"]}',
+        'Label': f'Hard Delete {test_name} {TEST_DATA["STR_15_RANDOM"]}',
+        'Name': f'Hard_Delete_{test_name}_{TEST_DATA["STR_15_RANDOM"]}',
         'PermissionsBulkApiHardDelete': True
     })
     assert result['success']
@@ -810,25 +810,21 @@ def assign_hard_delete(client):
     assert result['success']
     permission_set_assignment_id = result['id']
 
+    return permission_set_id
 
-def revoke_hard_delete(client):
+
+def revoke_hard_delete(client, permission_set_id):
     # Get Id of current user
     user_id = get_current_user_id(client)
 
-    # Find permission set
-    result = client.query('SELECT Id FROM PermissionSet'
-                          f' WHERE Name = \'Hard_Delete_Allowed_{TEST_DATA["STR_15_RANDOM"]}\'')
+    # Find permission set assignment
+    result = client.query('SELECT Id FROM PermissionSetAssignment'
+                          f' WHERE AssigneeId = \'{user_id}\' AND PermissionSetId = \'{permission_set_id}\'')
     if len(result['records']) == 1:
-        permission_set_id = result['records'][0]['Id']
+        permission_set_assignment_id = result['records'][0]['Id']
+        client.PermissionSetAssignment.delete(permission_set_assignment_id)
 
-        # Find permission set assignment
-        result = client.query('SELECT Id FROM PermissionSetAssignment'
-                              f' WHERE AssigneeId = \'{user_id}\' AND PermissionSetId = \'{permission_set_id}\'')
-        if len(result['records']) == 1:
-            permission_set_assignment_id = result['records'][0]['Id']
-            client.PermissionSetAssignment.delete(permission_set_assignment_id)
-
-        client.PermissionSet.delete(permission_set_id)
+    client.PermissionSet.delete(permission_set_id)
 
 
 def verify_result_ids(expected_ids, result, result_key='Id'):

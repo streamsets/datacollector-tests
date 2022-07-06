@@ -65,7 +65,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_proc_data_types')
 
         custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
                                                         custom_field_type, parameters, uses_value_set)
@@ -143,7 +143,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
         delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -194,7 +194,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     record_ids = []
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_proc_multiple_batches')
 
         logger.info(f'Inserting data into Contacts ...')
         records = [{'FirstName': str(n), 'LastName': str(n * 10), 'Department' : test_name} for n in range(1, 4)]
@@ -230,7 +230,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce

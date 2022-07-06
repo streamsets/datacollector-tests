@@ -74,7 +74,7 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
     client = salesforce.client
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
 
         # Produce Salesforce records using pipeline.
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
@@ -97,7 +97,7 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -139,7 +139,7 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
     client = salesforce.client
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination_default_mapping')
 
         # Produce Salesforce records using pipeline.
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
@@ -163,7 +163,7 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -288,7 +288,7 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination_relationship')
 
         # Now the pipeline will make the contacts report to each other
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
@@ -307,7 +307,7 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -422,7 +422,7 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, de
         sdc_executor.add_pipeline(pipeline)
 
         if set_permission:
-            assign_hard_delete(client)
+            permission_set_id = assign_hard_delete(client, 'test_salesforce_destination_delete')
 
         logger.info('Starting Salesforce destination pipeline and waiting for it to delete records ...')
         if set_permission or delete_type == 'soft':
@@ -474,7 +474,7 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, de
     finally:
         if set_permission:
             clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
-            revoke_hard_delete(client)
+            revoke_hard_delete(client, permission_set_id)
         else:
             clean_up(sdc_executor, pipeline, client, inserted_ids)
 
@@ -514,7 +514,7 @@ def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, t
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination_timeout')
 
         sdc_executor.add_pipeline(pipeline)
 
@@ -541,4 +541,4 @@ def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, t
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)

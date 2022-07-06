@@ -279,7 +279,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     read_ids = []
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_data_types')
 
         custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
                                                         custom_field_type, parameters, uses_value_set)
@@ -297,7 +297,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
         delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -337,7 +337,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_dest_object_names')
 
         custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
                                                         custom_field_type, parameters)
@@ -355,7 +355,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -395,7 +395,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_dest_multiple_batches')
 
         # Wiretap generates one extra record per batch
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count((batches + 1) * batch_size,
@@ -418,7 +418,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce

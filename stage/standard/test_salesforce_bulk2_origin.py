@@ -81,7 +81,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_data_types')
 
         custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
                                                         custom_field_type, parameters, uses_value_set)
@@ -141,7 +141,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
         delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -178,7 +178,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_object_names')
 
         custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
                                                         custom_field_type,
@@ -214,7 +214,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         delete_custom_field_from_contact(client, custom_field_name)
         clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -255,7 +255,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_multiple_batches')
 
         logger.info('Inserting data into Contacts...')
         records = [{'FirstName': str(n), 'LastName': test_name} for n in range(1, max_batch_size * batches + 1)]
@@ -280,7 +280,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -314,7 +314,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_dataflow_events')
 
         logger.info('Adding a record into Salesforce ...')
         result = client.Contact.create({
@@ -365,7 +365,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -405,7 +405,7 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_resume_offset')
 
         for iteration in range(0, iterations):
             logger.info(f"Iteration: {iteration}")
@@ -432,4 +432,4 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)

@@ -131,7 +131,7 @@ def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, sale
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_lookup_max_columns')
 
         logger.info('Adding a Contact into Salesforce ...')
 
@@ -166,7 +166,7 @@ def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, sale
     finally:
         clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -209,7 +209,7 @@ def test_salesforce_lookup_processor_timeout(sdc_builder, sdc_executor, salesfor
 
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_lookup_timeout')
 
         logger.info('Adding a Contact into Salesforce ...')
 
@@ -244,4 +244,4 @@ def test_salesforce_lookup_processor_timeout(sdc_builder, sdc_executor, salesfor
     finally:
         clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
