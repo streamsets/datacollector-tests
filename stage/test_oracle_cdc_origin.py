@@ -1265,14 +1265,12 @@ def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder,
         pipeline.configuration["shouldRetry"] = False
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        if Version(sdc_builder.version) >= Version('5.0.0'):
-            # 330 seconds is what takes one pipeline to fail when init goes fine but then everything fails
-            # in a "normal" wal. (1 + 2) 3 tries for produce, having each one 6 tries (5 + 1) to start the
-            # generator thread, having each one 6 (5 + 1) tries to start a LogMiner session. Please check
-            # enum  OracleCDCConstants.RetryPolicy to check the current retry policies values.
-            sleep_time = 330
-        else:
-            sleep_time = 10
+
+        # 330 seconds is what takes one pipeline to fail when init goes fine but then everything fails
+        # in a "normal" wal. (1 + 2) 3 tries for produce, having each one 6 tries (5 + 1) to start the
+        # generator thread, having each one 6 (5 + 1) tries to start a LogMiner session. Please check
+        # enum  OracleCDCConstants.RetryPolicy to check the current retry policies values.
+        sleep_time = 330
         logger.info(f'Waiting {sleep_time} seconds before stopping the pipeline')
         sleep(sleep_time)
 
