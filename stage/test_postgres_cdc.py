@@ -1277,8 +1277,6 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
         expected_operations_data = _insert(connection=connection, table=table)
         expected_operations_data += _update(connection=connection, table=table)
         expected_operations_data += _delete(connection=connection, table=table)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
-        sdc_executor.stop_pipeline(pipeline)
 
         if record_contents == 'TRANSACTION':
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
