@@ -892,7 +892,7 @@ def test_s3_origin_timestamp_last_file_offset(sdc_builder, sdc_executor, aws, re
         assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == records_per_file * 2
 
         # Start pipeline again, wait some time and assert that no duplicated data has been read
-        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=70)
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=300)
 
         # Assert no more data has been read on the second run
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
