@@ -202,163 +202,120 @@ SAMPLE_PHONE = '111-222-3333'
 LONG_SAMPLE_TEXT = SAMPLE_TEXT * 50
 SAMPLE_URL   = 'https://www.example.com/'
 SAMPLE_HTML  = 'The <i>quick</i> brown fox <u>jumps</u> over the <b>lazy</b> dog'
-SAMPLE_LOCATION = {'testField__Latitude__s': 12.345, 'testField__Longitude__s': 54.321}
+SAMPLE_LOCATION = {'Location_field__Latitude__s': 12.345, 'Location_field__Longitude__s': 54.321}
 # Decimals appear in field._data['value'] as strings
-EXPECTED_LOCATION = {'testField__Latitude__s': '12.345', 'testField__Longitude__s': '54.321'}
-NULL_LOCATION = {'testField__Latitude__s': None, 'testField__Longitude__s': None}
+EXPECTED_LOCATION = {'Location_field__Latitude__s': '12.345', 'Location_field__Longitude__s': '54.321'}
+NULL_LOCATION = {'Location_field__Latitude__s': None, 'Location_field__Longitude__s': None}
 
 # https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_field_types.htm#meta_type_fieldtype
 DATA_TYPES = [
     {
-        'metadata': {'type': 'AutoNumber', 'startingNumber': 1, 'displayFormat': 'A-{0000}'},
+        'type': 'AutoNumber',
         'expected_type': 'STRING',
         'expected_value': 'A-0001',
         'null_value': 'A-0002'
     },
     {
-        'metadata': {'type': 'Checkbox', 'defaultValue': False},
+        'type': 'Checkbox',
         'data_to_insert': True,
         'expected_type': 'BOOLEAN',
         'expected_value': True,
         'null_value': False
     },
     {
-        'metadata': {'type': 'Currency', 'precision': 5, 'scale': 2},
+        'type': 'Currency',
         'data_to_insert': 123.45,
         'expected_type': 'DECIMAL',
         'expected_value': '123.45',
     },
     {
-        'metadata': {'type': 'Date'},
+        'type': 'Date',
         'data_to_insert': '2022-02-14',
         'expected_type': 'DATETIME',
         'expected_value': 1644796800000,
     },
     {
-        'metadata': {'type': 'DateTime'},
+        'type': 'DateTime',
         'data_to_insert': '2022-02-14T12:34:56Z',
         'expected_type': 'DATETIME',
         'expected_value': 1644842096000,
     },
     {
-        'metadata': {'type': 'Email'},
+        'type': 'Email',
         'data_to_insert': SAMPLE_EMAIL,
         'expected_type': 'STRING',
         'expected_value': SAMPLE_EMAIL,
     },
     {
-        'metadata': {'type': 'EncryptedText', 'length': 64, 'maskChar': 'X', 'maskType': 'all'},
+        'type': 'EncryptedText',
         'data_to_insert': SAMPLE_TEXT,
         'expected_type': 'STRING',
         'expected_value': MASKED_TEXT,
     },
     {
-        'metadata': {'type': 'Number', 'precision': 5, 'scale': 2},
+        'type': 'Number',
         'data_to_insert': 123.45,
         'expected_type': 'DECIMAL',
         'expected_value': '123.45',
     },
     {
-        'metadata': {'type': 'Percent', 'precision': 5, 'scale': 2},
+        'type': 'Percent',
         'data_to_insert': 123.45,
         'expected_type': 'DECIMAL',
         'expected_value': '123.45',
     },
     {
-        'metadata': {'type': 'Phone'},
+        'type': 'Phone',
         'data_to_insert': SAMPLE_PHONE,
         'expected_type': 'STRING',
         'expected_value': SAMPLE_PHONE,
     },
     {
-        'metadata': {
-            'type': 'Picklist',
-            'valueSet': {
-                'valueSetDefinition' : {
-                    'sorted': 'false',
-                    'value': [
-                        {
-                            'fullName': 'red',
-                            'default': 'true'
-                        },
-                        {
-                            'fullName': 'green',
-                            'default': 'false'
-                        },
-                        {
-                            'fullName': 'blue',
-                            'default': 'false'
-                        }
-                    ]
-                }
-            }
-        },
+        'type': 'Picklist',
         'data_to_insert': 'blue',
         'expected_type': 'STRING',
         'expected_value': 'blue',
         'null_value': 'red'
     },
     {
-        'metadata': {
-            'type': 'MultiselectPicklist',
-            'valueSet': {
-                'valueSetDefinition' : {
-                    'sorted': 'false',
-                    'value': [
-                        {
-                            'fullName': 'red',
-                            'default': 'true'
-                        },
-                        {
-                            'fullName': 'green',
-                            'default': 'false'
-                        },
-                        {
-                            'fullName': 'blue',
-                            'default': 'false'
-                        }
-                    ]
-                }
-            },
-            'visibleLines': 3
-        },
+        'type': 'MultiselectPicklist',
         'data_to_insert': 'blue;green',
         'expected_type': 'STRING',
         'expected_value': 'blue;green',
         'null_value': 'red'
     },
     {
-        'metadata': {'type': 'Text', 'length': 64},
+        'type': 'Text',
         'data_to_insert': SAMPLE_TEXT,
         'expected_type': 'STRING',
         'expected_value': SAMPLE_TEXT,
     },
     {
-        'metadata': {'type': 'TextArea'},
+        'type': 'TextArea',
         'data_to_insert': SAMPLE_TEXT,
         'expected_type': 'STRING',
         'expected_value': SAMPLE_TEXT,
     },
     {
-        'metadata': {'type': 'LongTextArea', 'length': 32000, 'visibleLines': 12},
+        'type': 'LongTextArea',
         'data_to_insert': LONG_SAMPLE_TEXT,
         'expected_type': 'STRING',
         'expected_value': LONG_SAMPLE_TEXT,
     },
     {
-        'metadata': {'type': 'Url'},
+        'type': 'Url',
         'data_to_insert': SAMPLE_URL,
         'expected_type': 'STRING',
         'expected_value': SAMPLE_URL,
     },
     {
-        'metadata': {'type': 'Html', 'length': 32768, 'visibleLines': 12},
+        'type': 'Html',
         'data_to_insert': SAMPLE_HTML,
         'expected_type': 'STRING',
         'expected_value': SAMPLE_HTML,
     },
     {
-        'metadata': {'type': 'Location', 'scale': 3},
+        'type': 'Location',
         'data_to_insert': SAMPLE_LOCATION,
         'expected_type': 'DECIMAL',
         'expected_value': EXPECTED_LOCATION,
@@ -366,11 +323,89 @@ DATA_TYPES = [
         'null_value': NULL_LOCATION
     },
     {
-        'metadata': {'type': 'Time'},
+        'type': 'Time',
         'data_to_insert': '12:34:56Z',
         'expected_type': 'DATETIME',
         'expected_value': 45296000,
     },
+]
+
+CREATE_DATA_TYPES = [
+    {
+        'label': 'AutoNumber_field', 'fullName': 'AutoNumber_field__c', 'required': False, 'type': 'AutoNumber',
+        'startingNumber': 1, 'displayFormat': 'A-{0000}'
+    },
+    {'label': 'Checkbox_field', 'fullName': 'Checkbox_field__c', 'required': False, 'type': 'Checkbox', 'defaultValue': False},
+    {'label': 'Currency_field', 'fullName': 'Currency_field__c', 'required': False, 'type': 'Currency', 'precision': 5, 'scale': 2},
+    {'label': 'Date_field', 'fullName': 'Date_field__c', 'required': False, 'type': 'Date'},
+    {'label': 'DateTime_field', 'fullName': 'DateTime_field__c', 'required': False, 'type': 'DateTime'},
+    {'label': 'Email_field', 'fullName': 'Email_field__c', 'required': False, 'type': 'Email'},
+    {
+        'label': 'EncryptedText_field', 'fullName': 'EncryptedText_field__c', 'required': False, 'type': 'EncryptedText',
+        'length': 64, 'maskChar': 'X', 'maskType': 'all'
+    },
+    {'label': 'Number_field', 'fullName': 'Number_field__c', 'required': False, 'type': 'Number', 'precision': 5, 'scale': 2},
+    {'label': 'Percent_field', 'fullName': 'Percent_field__c', 'required': False, 'type': 'Percent', 'precision': 5, 'scale': 2},
+    {'label': 'Phone_field', 'fullName': 'Phone_field__c', 'required': False, 'type': 'Phone'},
+    {
+        'label': 'Picklist_field', 'fullName': 'Picklist_field__c', 'required': False,
+        'type': 'Picklist',
+        'valueSet': {
+            'valueSetDefinition' : {
+                'sorted': 'false',
+                'value': [
+                    {
+                        'fullName': 'red',
+                        'default': 'true'
+                    },
+                    {
+                        'fullName': 'green',
+                        'default': 'false'
+                    },
+                    {
+                        'fullName': 'blue',
+                        'default': 'false'
+                    }
+                ]
+            }
+        }
+    },
+    {
+        'label': 'MultiselectPicklist_field', 'fullName': 'MultiselectPicklist_field__c', 'required': False,
+        'type': 'MultiselectPicklist',
+        'valueSet': {
+            'valueSetDefinition' : {
+                'sorted': 'false',
+                'value': [
+                    {
+                        'fullName': 'red',
+                        'default': 'true'
+                    },
+                    {
+                        'fullName': 'green',
+                        'default': 'false'
+                    },
+                    {
+                        'fullName': 'blue',
+                        'default': 'false'
+                    }
+                ]
+            }
+        },
+        'visibleLines': 3
+    },
+    {'label': 'Text_field', 'fullName': 'Text_field__c', 'required': False, 'type': 'Text', 'length': 64},
+    {'label': 'TextArea_field', 'fullName': 'TextArea_field__c', 'required': False, 'type': 'TextArea'},
+    {
+        'label': 'LongTextArea_field', 'fullName': 'LongTextArea_field__c', 'required': False, 'type': 'LongTextArea',
+        'length': 32000, 'visibleLines': 12
+    },
+    {'label': 'Url_field', 'fullName': 'Url_field__c', 'required': False, 'type': 'Url'},
+    {'label': 'Html_field', 'fullName': 'Html_field__c', 'required': False, 'type': 'Html', 'length': 32768, 'visibleLines': 12},
+    {'label': 'Location_field', 'fullName': 'Location_field__c', 'required': False, 'type': 'Location', 'scale': 3},
+    {'label': 'Time_field', 'fullName': 'Time_field__c', 'required': False, 'type': 'Time'},
+    {'label': 'Number_no_decimals_field', 'fullName': 'Number_no_decimals_field__c', 'required': False, 'type': 'Number',
+     'precision': 5, 'scale': 0},
 ]
 
 
@@ -380,20 +415,80 @@ DATA_TYPES = [
 # end with an underscore, and not contain two consecutive underscores."
 # https://help.salesforce.com/s/articleView?id=sf.adding_fields.htm&type=5
 OBJECT_NAMES = [
-    ('keywords', 'object', 'field'),
-    ('lowercase', get_random_string(string.ascii_lowercase, 20), get_random_string(string.ascii_lowercase, 20)),
-    ('uppercase', get_random_string(string.ascii_uppercase, 20), get_random_string(string.ascii_uppercase, 20)),
-    ('mixedcase', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 20)),
-    ('max_object_name', get_random_string(string.ascii_letters, 40), get_random_string(string.ascii_letters, 20)),
-    ('max_field_name', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 40)),
-    ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
-    (
-        'special',
-        get_random_string(string.ascii_letters, 5) + "_" + get_random_string(string.ascii_letters, 5),
-        get_random_string(string.ascii_letters, 5) + "_" + get_random_string(string.ascii_letters, 5)
-    ),
+    ('keywords', 'field'),
+    ('lowercase', get_random_string(string.ascii_lowercase, 20)),
+    ('uppercase', get_random_string(string.ascii_uppercase, 20)),
+    ('mixedcase', get_random_string(string.ascii_letters, 20)),
+    ('max_field_name', get_random_string(string.ascii_letters, 40)),
+    ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789"),
+    ('special', get_random_string(string.ascii_letters, 5) + "_" + get_random_string(string.ascii_letters, 5)),
 ]
 
+CUSTOM_OBJECT_NAME = get_random_string(string.ascii_letters, 20)
+
+def create_custom_object(client):
+    mdapi = client.mdapi
+
+    fields = [
+        mdapi.CustomField(
+            label='TestName',
+            fullName='TestName__c',
+            required=False,
+            type='Text',
+            length=80,
+        )
+    ]
+
+    name_fields = []
+
+    for field_name in OBJECT_NAMES:
+        name_fields.append(
+            mdapi.CustomField(
+                label=field_name[1],
+                fullName=field_name[1] + '__c',
+                required=False,
+                type='Number',
+                precision=5,
+                scale=0
+            )
+        )
+
+    fields.extend(name_fields)
+
+    dataype_fields = []
+
+    for datatype in CREATE_DATA_TYPES:
+        dataype_fields.append(
+            mdapi.CustomField(
+                # This syntax combines the standard fields we
+                # need for every type of custom field with the
+                # fields specific to this data type
+                **{**datatype}
+            ))
+
+    fields.extend(dataype_fields)
+
+    custom_object = mdapi.CustomObject(
+        fullName=f'{CUSTOM_OBJECT_NAME}__c',
+        label=f'{CUSTOM_OBJECT_NAME}',
+        pluralLabel=f'{CUSTOM_OBJECT_NAME}',
+        nameField=mdapi.CustomField(
+            label='Name',
+            type=mdapi.FieldType('Text')
+        ),
+        fields=fields,
+        deploymentStatus=mdapi.DeploymentStatus('Deployed'),
+        sharingModel=mdapi.SharingModel('Read')
+    )
+    mdapi.CustomObject.create(custom_object)
+
+    for field in fields:
+        set_field_permissions(mdapi, CUSTOM_OBJECT_NAME, field.label)
+
+
+def delete_custom_object(client):
+    mdapi = client.mdapi
+    mdapi.CustomObject.delete(f'{CUSTOM_OBJECT_NAME}__c')
 
 def set_up_random(salesforce):
     """" This function is used to generate unique set of values for each test.
@@ -514,7 +609,7 @@ def insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expect
     inserted_ids = None
     try:
         # Create a hard delete permission file for this client
-        assign_hard_delete(client)
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_verify_stage')
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
@@ -526,7 +621,7 @@ def insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expect
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client)
+        revoke_hard_delete(client, permission_set_id)
 
 
 def get_ids(records, key):

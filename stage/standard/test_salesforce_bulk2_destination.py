@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
 import logging
 import string
 import json
@@ -21,13 +20,22 @@ import pytest
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
-                                      get_ids, STANDARD_FIELDS, set_field_permissions,
-                                      OBJECT_NAMES, compare_values, set_up_random, assign_hard_delete,
-                                      revoke_hard_delete, add_custom_field_to_contact, delete_custom_field_from_contact,
-                                      get_current_user_id)
+from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up, get_ids, OBJECT_NAMES,
+                                      compare_values, set_up_random, assign_hard_delete, revoke_hard_delete,
+                                      create_custom_object, delete_custom_object, CUSTOM_OBJECT_NAME)
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _set_up_environment(salesforce):
+    client = salesforce.client
+    create_custom_object(client)
+
+    yield
+
+    delete_custom_object(client)
+
 
 @pytest.fixture(autouse=True)
 def _set_up_random(salesforce):
@@ -36,197 +44,133 @@ def _set_up_random(salesforce):
 
 LONG_TEXT_MIN_LENGTH = 256
 
-# (input,converter_type,database_type,expected)
 DATA_TYPES = [
     # Boolean
-    ('true', 'BOOLEAN', {'type': 'Text', 'length': 4}, 'true'),
-    ('true', 'BOOLEAN', {'type': 'EncryptedText', 'length': 4, 'maskChar': 'X', 'maskType': 'all'}, 'XXXX'),
-    ('true', 'BOOLEAN', {'type': 'TextArea'}, 'true'),
-    ('true', 'BOOLEAN', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, 'true'),
-    ('true', 'BOOLEAN', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, 'true'),
-    ('true', 'BOOLEAN', {'type': 'Checkbox', 'defaultValue': False}, True),
-    # Byte
-    ('65', 'BYTE', {'type': 'Text', 'length': 2}, '65'),
-    # Char
-    ('a', 'CHAR', {'type': 'Text', 'length': 1}, 'a'),
-    ('a', 'CHAR', {'type': 'EncryptedText', 'length': 1, 'maskChar': 'X', 'maskType': 'all'}, 'X'),
-    ('a', 'CHAR', {'type': 'TextArea'}, 'a'),
-    ('a', 'CHAR', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, 'a'),
-    ('a', 'CHAR', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, 'a'),
-    # Short
-    (120, 'SHORT', {'type': 'Number', 'precision': 5, 'scale': 0}, 120),
-    (120, 'SHORT', {'type': 'Currency', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'SHORT', {'type': 'Number', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'SHORT', {'type': 'Percent', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'SHORT', {'type': 'Text', 'length': 3}, '120'),
-    (120, 'SHORT', {'type': 'EncryptedText', 'length': 3, 'maskChar': 'X', 'maskType': 'all'}, 'XXX'),
-    (120, 'SHORT', {'type': 'TextArea'}, '120'),
-    (120, 'SHORT', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120'),
-    (120, 'SHORT', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120'),
-    # Integer
-    (120, 'INTEGER', {'type': 'Number', 'precision': 5, 'scale': 0}, 120),
-    (120, 'INTEGER', {'type': 'Currency', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'INTEGER', {'type': 'Number', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'INTEGER', {'type': 'Percent', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'INTEGER', {'type': 'Text', 'length': 3}, '120'),
-    (120, 'INTEGER', {'type': 'EncryptedText', 'length': 3, 'maskChar': 'X', 'maskType': 'all'}, 'XXX'),
-    (120, 'INTEGER', {'type': 'TextArea'}, '120'),
-    (120, 'INTEGER', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120'),
-    (120, 'INTEGER', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120'),
-    # Long
-    (120, 'LONG', {'type': 'Number', 'precision': 5, 'scale': 0}, 120),
-    (120, 'LONG', {'type': 'Currency', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'LONG', {'type': 'Number', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'LONG', {'type': 'Percent', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'LONG', {'type': 'Text', 'length': 3}, '120'),
-    (120, 'LONG', {'type': 'EncryptedText', 'length': 3, 'maskChar': 'X', 'maskType': 'all'}, 'XXX'),
-    (120, 'LONG', {'type': 'TextArea'}, '120'),
-    (120, 'LONG', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120'),
-    (120, 'LONG', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120'),
-    # Float
-    (120.0, 'FLOAT', {'type': 'Currency', 'precision': 5, 'scale': 2}, 120.00),
-    (120.0, 'FLOAT', {'type': 'Number', 'precision': 5, 'scale': 2}, 120.00),
-    (120.0, 'FLOAT', {'type': 'Percent', 'precision': 5, 'scale': 2}, 120.00),
-    (120.0, 'FLOAT', {'type': 'Text', 'length': 5}, '120.0'),
-    (120.0, 'FLOAT', {'type': 'EncryptedText', 'length': 5, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXX'),
-    (120.0, 'FLOAT', {'type': 'TextArea'}, '120.0'),
-    (120.0, 'FLOAT', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120.0'),
-    (120.0, 'FLOAT', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120.0'),
-    # Double
-    (120.0, 'DOUBLE', {'type': 'Currency', 'precision': 5, 'scale': 2}, 120.00),
-    (120.0, 'DOUBLE', {'type': 'Number', 'precision': 5, 'scale': 2}, 120.00),
-    (120.0, 'DOUBLE', {'type': 'Percent', 'precision': 5, 'scale': 2}, 120.00),
-    (120.0, 'DOUBLE', {'type': 'Text', 'length': 5}, '120.0'),
-    (120.0, 'DOUBLE', {'type': 'EncryptedText', 'length': 5, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXX'),
-    (120.0, 'DOUBLE', {'type': 'TextArea'}, '120.0'),
-    (120.0, 'DOUBLE', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120.0'),
-    (120.0, 'DOUBLE', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120.0'),
-    # # Decimal
-    (120, 'DECIMAL', {'type': 'Number', 'precision': 5, 'scale': 0}, 120),
-    (120, 'DECIMAL', {'type': 'Currency', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'DECIMAL', {'type': 'Number', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'DECIMAL', {'type': 'Percent', 'precision': 5, 'scale': 2}, 120.00),
-    (120, 'DECIMAL', {'type': 'Text', 'length': 6}, '120.00'),
-    (120, 'DECIMAL', {'type': 'EncryptedText', 'length': 6, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXXX'),
-    (120, 'DECIMAL', {'type': 'TextArea'}, '120.00'),
-    (120, 'DECIMAL', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120.00'),
-    (120, 'DECIMAL', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120.00'),
-    # Date
-    ('2020-01-01Z', 'DATE', {'type': 'Date'}, '2020-01-01'),
-    ('2020-01-01Z', 'DATE', {'type': 'Text', 'length': 30}, '2020-01-01'),
-    ('2020-01-01Z', 'DATE', {'type': 'EncryptedText', 'length': 30, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXXXXXXX'),
-    ('2020-01-01Z', 'DATE', {'type': 'TextArea'}, '2020-01-01'),
-    ('2020-01-01Z', 'DATE', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01'),
-    ('2020-01-01Z', 'DATE', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01'),
-    # Time - Need to specify the timezone, otherwise Field Type Converter will create times in the local zone
-    ('10:00:00Z', 'TIME', {'type': 'Time'}, '10:00:00.000Z'),
-    ('10:00:00Z', 'TIME', {'type': 'Text', 'length': 30}, '10:00:00'),
-    ('10:00:00Z', 'TIME', {'type': 'EncryptedText', 'length': 30, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXXXXX'),
-    ('10:00:00Z', 'TIME', {'type': 'TextArea'}, '10:00:00'),
-    ('10:00:00Z', 'TIME', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '10:00:00'),
-    ('10:00:00Z', 'TIME', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '10:00:00'),
-    # DateTime
-    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'Date'}, '2020-01-01'),
-    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'DateTime'}, '2020-01-01T10:00:00.000+0000'),
-    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'Text', 'length': 30}, '2020-01-01T10:00:00.000Z'),
-    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'EncryptedText', 'length': 30, 'maskChar': 'X', 'maskType': 'all'}, 'XXXXXXXXXXXXXXXXXXXXXXXX'),
-    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'TextArea'}, '2020-01-01T10:00:00.000Z'),
-    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01T10:00:00.000Z'),
-    ('2020-01-01 10:00:00Z', 'DATETIME', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '2020-01-01T10:00:00.000Z'),
-    # String
-    ('120', 'STRING', {'type': 'Number', 'precision': 5, 'scale': 0}, 120),
-    ('120', 'STRING', {'type': 'Currency', 'precision': 5, 'scale': 2}, 120.00),
-    ('120', 'STRING', {'type': 'Number', 'precision': 5, 'scale': 2}, 120.00),
-    ('120', 'STRING', {'type': 'Percent', 'precision': 5, 'scale': 2}, 120.00),
-    ('120', 'STRING', {'type': 'Text', 'length': 3}, '120'),
-    ('120', 'STRING', {'type': 'EncryptedText', 'length': 3, 'maskChar': 'X', 'maskType': 'all'}, 'XXX'),
-    ('120', 'STRING', {'type': 'TextArea'}, '120'),
-    ('120', 'STRING', {'type': 'LongTextArea', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120'),
-    ('120', 'STRING', {'type': 'Html', 'length': LONG_TEXT_MIN_LENGTH, 'visibleLines': 12}, '120'),
-    ('2003-04-12T04:05:06Z', 'STRING', {'type': 'DateTime'}, '2003-04-12T04:05:06.000+0000'),
-    ('2020-01-01', 'STRING', {'type': 'Date'}, '2020-01-01'),
-    ('10:00:00', 'STRING', {'type': 'Time'}, '10:00:00.000Z'),
-    ('true', 'STRING', {'type': 'Checkbox', 'defaultValue': False}, True),
-    ('a@b.com', 'STRING', {'type': 'Email'}, 'a@b.com'),
-    ('111-222-3333', 'STRING', {'type': 'Phone'}, '111-222-3333'),
-    ('green',
-     'STRING',
-     {
-         'type': 'Picklist',
-         'valueSet': {
-             'valueSetDefinition' : {
-                 'sorted': 'false',
-                 'value': [
-                     {
-                         'fullName': 'red',
-                         'default': 'true'
-                     },
-                     {
-                         'fullName': 'green',
-                         'default': 'false'
-                     },
-                     {
-                         'fullName': 'blue',
-                         'default': 'false'
-                     }
-                 ]
-             }
-         }
-     },
-     'green'),
-    ('green;blue',
-     'STRING',
-     {
-         'type': 'MultiselectPicklist',
-         'valueSet': {
-             'valueSetDefinition' : {
-                 'sorted': 'false',
-                 'value': [
-                     {
-                         'fullName': 'red',
-                         'default': 'true'
-                     },
-                     {
-                         'fullName': 'green',
-                         'default': 'false'
-                     },
-                     {
-                         'fullName': 'blue',
-                         'default': 'false'
-                     }
-                 ]
-             }
-         },
-         'visibleLines': 3
-     },
-     'green;blue'),
-    ('https://streamsets.com/', 'STRING', {'type': 'Url'}, 'https://streamsets.com/'),
+    ('true', 'BOOLEAN', 'Text', 'Text_field', 'true'),
+    ('true', 'BOOLEAN', 'EncryptedText', 'EncryptedText_field', 'XXXX'),
+    ('true', 'BOOLEAN', 'TextArea', 'TextArea_field', 'true'),
+    ('true', 'BOOLEAN', 'LongTextArea', 'LongTextArea_field', 'true'),
+    ('true', 'BOOLEAN', 'Html', 'Html_field', 'true'),
+    ('true', 'BOOLEAN', 'Checkbox', 'Checkbox_field', True),
+    # # Byte
+    ('65', 'BYTE', 'Text', 'Text_field', '65'),
+    # # Char
+    ('a', 'CHAR', 'Text', 'Text_field', 'a'),
+    ('a', 'CHAR', 'EncryptedText', 'EncryptedText_field', 'X'),
+    ('a', 'CHAR', 'TextArea', 'TextArea_field', 'a'),
+    ('a', 'CHAR', 'LongTextArea', 'LongTextArea_field', 'a'),
+    ('a', 'CHAR', 'Html', 'Html_field', 'a'),
+    # # Short
+    (120, 'SHORT', 'Number', 'Number_no_decimals_field', 120),
+    (120, 'SHORT', 'Currency', 'Currency_field', 120.00),
+    (120, 'SHORT', 'Number', 'Number_field', 120.00),
+    (120, 'SHORT', 'Percent', 'Percent_field', 120.00),
+    (120, 'SHORT', 'Text', 'Text_field', '120'),
+    (120, 'SHORT', 'EncryptedText', 'EncryptedText_field', 'XXX'),
+    (120, 'SHORT', 'TextArea', 'TextArea_field', '120'),
+    (120, 'SHORT', 'LongTextArea', 'LongTextArea_field', '120'),
+    (120, 'SHORT', 'Html', 'Html_field', '120'),
+    # # Integer
+    (120, 'INTEGER', 'Number', 'Number_no_decimals_field', 120),
+    (120, 'INTEGER', 'Currency', 'Currency_field', 120.00),
+    (120, 'INTEGER', 'Number', 'Number_field', 120.00),
+    (120, 'INTEGER', 'Percent', 'Percent_field', 120.00),
+    (120, 'INTEGER', 'Text', 'Text_field', '120'),
+    (120, 'INTEGER', 'EncryptedText', 'EncryptedText_field', 'XXX'),
+    (120, 'INTEGER', 'TextArea', 'TextArea_field', '120'),
+    (120, 'INTEGER', 'LongTextArea', 'LongTextArea_field', '120'),
+    (120, 'INTEGER', 'Html', 'Html_field', '120'),
+    # # Long
+    (120, 'LONG', 'Number', 'Number_no_decimals_field', 120),
+    (120, 'LONG', 'Currency', 'Currency_field', 120.00),
+    (120, 'LONG', 'Number', 'Number_field', 120.00),
+    (120, 'LONG', 'Percent', 'Percent_field', 120.00),
+    (120, 'LONG', 'Text', 'Text_field', '120'),
+    (120, 'LONG', 'EncryptedText', 'EncryptedText_field', 'XXX'),
+    (120, 'LONG', 'TextArea', 'TextArea_field', '120'),
+    (120, 'LONG', 'LongTextArea', 'LongTextArea_field', '120'),
+    (120, 'LONG', 'Html', 'Html_field', '120'),
+    # # Float
+    (120.0, 'FLOAT', 'Currency', 'Currency_field', 120.00),
+    (120.0, 'FLOAT', 'Number', 'Number_field', 120.00),
+    (120.0, 'FLOAT', 'Percent', 'Percent_field', 120.00),
+    (120.0, 'FLOAT', 'Text', 'Text_field', '120.0'),
+    (120.0, 'FLOAT', 'EncryptedText', 'EncryptedText_field', 'XXXXX'),
+    (120.0, 'FLOAT', 'TextArea', 'TextArea_field', '120.0'),
+    (120.0, 'FLOAT', 'LongTextArea', 'LongTextArea_field', '120.0'),
+    (120.0, 'FLOAT', 'Html', 'Html_field', '120.0'),
+    # # Double
+    (120.0, 'DOUBLE', 'Currency', 'Currency_field', 120.00),
+    (120.0, 'DOUBLE', 'Number', 'Number_field', 120.00),
+    (120.0, 'DOUBLE', 'Percent', 'Percent_field', 120.00),
+    (120.0, 'DOUBLE', 'Text', 'Text_field', '120.0'),
+    (120.0, 'DOUBLE', 'EncryptedText', 'EncryptedText_field', 'XXXXX'),
+    (120.0, 'DOUBLE', 'TextArea', 'TextArea_field', '120.0'),
+    (120.0, 'DOUBLE', 'LongTextArea', 'LongTextArea_field', '120.0'),
+    (120.0, 'DOUBLE', 'Html', 'Html_field', '120.0'),
+    # # # Decimal
+    (120, 'DECIMAL', 'Number', 'Number_no_decimals_field', 120),
+    (120, 'DECIMAL', 'Currency', 'Currency_field', 120.00),
+    (120, 'DECIMAL', 'Number', 'Number_field', 120.00),
+    (120, 'DECIMAL', 'Percent', 'Percent_field', 120.00),
+    (120, 'DECIMAL', 'Text', 'Text_field', '120.00'),
+    (120, 'DECIMAL', 'EncryptedText', 'EncryptedText_field', 'XXXXXX'),
+    (120, 'DECIMAL', 'TextArea', 'TextArea_field', '120.00'),
+    (120, 'DECIMAL', 'LongTextArea', 'LongTextArea_field', '120.00'),
+    (120, 'DECIMAL', 'Html', 'Html_field', '120.00'),
+    # # Date
+    ('2020-01-01Z', 'DATE', 'Date', 'Date_field', '2020-01-01'),
+    ('2020-01-01Z', 'DATE', 'Text', 'Text_field', '2020-01-01'),
+    ('2020-01-01Z', 'DATE', 'EncryptedText', 'EncryptedText_field', 'XXXXXXXXXX'),
+    ('2020-01-01Z', 'DATE', 'TextArea', 'TextArea_field', '2020-01-01'),
+    ('2020-01-01Z', 'DATE', 'LongTextArea', 'LongTextArea_field', '2020-01-01'),
+    ('2020-01-01Z', 'DATE', 'Html', 'Html_field', '2020-01-01'),
+    # # Time - Need to specify the timezone, otherwise Field Type Converter will create times in the local zone
+    ('10:00:00Z', 'TIME', 'Time', 'Time_field', '10:00:00.000Z'),
+    ('10:00:00Z', 'TIME', 'Text', 'Text_field', '10:00:00'),
+    ('10:00:00Z', 'TIME', 'EncryptedText', 'EncryptedText_field', 'XXXXXXXX'),
+    ('10:00:00Z', 'TIME', 'TextArea', 'TextArea_field', '10:00:00'),
+    ('10:00:00Z', 'TIME', 'LongTextArea', 'LongTextArea_field', '10:00:00'),
+    ('10:00:00Z', 'TIME', 'Html', 'Html_field', '10:00:00'),
+    # # DateTime
+    ('2020-01-01 10:00:00Z', 'DATETIME', 'Date', 'Date_field', '2020-01-01'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', 'DateTime', 'DateTime_field', '2020-01-01T10:00:00.000+0000'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', 'Text', 'Text_field', '2020-01-01T10:00:00.000Z'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', 'EncryptedText', 'EncryptedText_field', 'XXXXXXXXXXXXXXXXXXXXXXXX'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', 'TextArea', 'TextArea_field', '2020-01-01T10:00:00.000Z'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', 'LongTextArea', 'LongTextArea_field', '2020-01-01T10:00:00.000Z'),
+    ('2020-01-01 10:00:00Z', 'DATETIME', 'Html', 'Html_field', '2020-01-01T10:00:00.000Z'),
+    # # String
+    ('120', 'STRING', 'Number', 'Number_no_decimals_field', 120),
+    ('120', 'STRING', 'Currency', 'Currency_field', 120.00),
+    ('120', 'STRING', 'Number', 'Number_field', 120.00),
+    ('120', 'STRING', 'Percent', 'Percent_field', 120.00),
+    ('120', 'STRING', 'Text', 'Text_field', '120'),
+    ('120', 'STRING', 'EncryptedText', 'EncryptedText_field', 'XXX'),
+    ('120', 'STRING', 'TextArea', 'TextArea_field', '120'),
+    ('120', 'STRING', 'LongTextArea', 'LongTextArea_field', '120'),
+    ('120', 'STRING', 'Html', 'Html_field', '120'),
+    ('2003-04-12T04:05:06Z', 'STRING', 'DateTime', 'DateTime_field', '2003-04-12T04:05:06.000+0000'),
+    ('2020-01-01', 'STRING', 'Date', 'Date_field', '2020-01-01'),
+    ('10:00:00', 'STRING', 'Time', 'Time_field', '10:00:00.000Z'),
+    ('true', 'STRING', 'Checkbox', 'Checkbox_field', True),
+    ('a@b.com', 'STRING', 'Email', 'Email_field', 'a@b.com'),
+    ('111-222-3333', 'STRING', 'Phone', 'Phone_field', '111-222-3333'),
+    ('green', 'STRING', 'Picklist', 'Picklist_field', 'green'),
+    ('green;blue', 'STRING', 'MultiselectPicklist', 'MultiselectPicklist_field', 'green;blue'),
+    ('https://streamsets.com/', 'STRING', 'Url', 'Url_field', 'https://streamsets.com/'),
 ]
 @salesforce
 @sdc_min_version('5.0.0')
-@pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES, ids=[f"{i[1]}-{i[2]['type']}" for i in DATA_TYPES])
-def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type, database_type, expected):
-    test_name = 'sale_bulk2_origin_data_types_' + database_type['type'] + '_' + \
+@pytest.mark.parametrize('input,converter_type,database_type,field_name,expected', DATA_TYPES, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES])
+def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type, database_type, field_name, expected):
+    test_name = 'sale_bulk2_origin_data_types_' + field_name + '_' + \
                 get_random_string(string.ascii_lowercase, 10)
 
     client = salesforce.client
 
-    custom_field_name = get_random_string(string.ascii_lowercase, 10) + '__c'
-    custom_field_label = 'testField'
-    custom_field_type = database_type['type']
-
-    parameters = ''
-    for param in database_type:
-        if (param != 'type'):
-            parameters += '<' + param + '>'
-            parameters += str(database_type[param])
-            parameters += '</' + param + '>'
-
-    uses_value_set = (custom_field_type == 'Picklist') or (custom_field_type == 'MultiselectPicklist')
-    if custom_field_type == 'Picklist':
-        parameters = ''
-    elif custom_field_type == 'MultiselectPicklist':
-        parameters = '<visibleLines>3</visibleLines>'
+    custom_object_name = CUSTOM_OBJECT_NAME + '__c'
+    custom_field_name = field_name + '__c'
 
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
@@ -237,7 +181,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
 
     expression = builder.add_stage('Expression Evaluator')
     expression.field_expressions = [{
-        'fieldToSet': '/LastName',
+        'fieldToSet': '/TestName__c',
         'expression': test_name
     }]
 
@@ -266,7 +210,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     }]
 
     target = builder.add_stage('Salesforce Bulk API 2.0', type='destination')
-    target.sobject_type = 'Contact'
+    target.sobject_type = custom_object_name
     target.field_mapping = []
     target.on_record_error = 'STOP_PIPELINE'
 
@@ -281,37 +225,31 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
         # Create a hard delete permission file for this client
         permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_data_types')
 
-        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                        custom_field_type, parameters, uses_value_set)
-
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
 
-        query_str = f"SELECT Id, {custom_field_name} FROM Contact WHERE LastName = '{test_name}'"
+        query_str = f"SELECT Id, {custom_field_name} FROM {custom_object_name} WHERE TestName__c = '{test_name}'"
         result = client.query(query_str)
         logger.info(result['records'])
         read_ids = get_ids(result['records'], 'Id')
 
         assert len(result['records']) == 1
-        assert compare_values(expected, result['records'][0][custom_field_name], database_type['type'])
+        assert compare_values(expected, result['records'][0][custom_field_name], database_type)
     finally:
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True, object_name=custom_object_name)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
 @sdc_min_version('5.0.0')
-@pytest.mark.parametrize('test_name,object_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
-def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_name, field_name):
+@pytest.mark.parametrize('test_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
+def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, field_name):
     run_name = 'sale_bulk2_dest_object_names_' + test_name + '_' + get_random_string(string.ascii_lowercase, 10)
     client = salesforce.client
 
     custom_field_name = '{}__c'.format(field_name)
-    custom_field_label = 'Value'
-    custom_field_type = 'Number'
-    parameters = '<precision>5</precision>' \
-                 '<scale>0</scale>'
+    custom_object_name = CUSTOM_OBJECT_NAME + '__c'
+
     builder = sdc_builder.get_pipeline_builder()
 
     source = builder.add_stage('Dev Raw Data Source')
@@ -321,12 +259,12 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
 
     expression = builder.add_stage('Expression Evaluator')
     expression.field_expressions = [{
-        'fieldToSet': '/LastName',
+        'fieldToSet': '/TestName__c',
         'expression': run_name
     }]
 
     target = builder.add_stage('Salesforce Bulk API 2.0', type='destination')
-    target.sobject_type = 'Contact'
+    target.sobject_type = custom_object_name
     target.field_mapping = []
     target.on_record_error = 'STOP_PIPELINE'
 
@@ -339,21 +277,17 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         # Create a hard delete permission file for this client
         permission_set_id = assign_hard_delete(client, 'sale_bulk2_dest_object_names')
 
-        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                        custom_field_type, parameters)
-
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
 
         # Verify that the data were indeed inserted
-        result = client.query(f"SELECT Id, {custom_field_name} FROM Contact WHERE LastName = '{run_name}'")
+        result = client.query(f"SELECT Id, {custom_field_name} FROM {custom_object_name} WHERE TestName__c = '{run_name}'")
         read_ids = get_ids(result['records'], 'Id')
 
         assert len(result['records']) == 1
         assert result['records'][0][f'{custom_field_name}'] == 1
     finally:
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True, object_name=custom_object_name)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client, permission_set_id)
 

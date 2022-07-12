@@ -21,11 +21,19 @@ from streamsets.testframework.utils import get_random_string
 from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
                                       check_ids, get_ids, DATA_TYPES,
                                       compare_values, OBJECT_NAMES, assign_hard_delete, revoke_hard_delete,
-                                      set_up_random, add_custom_field_to_contact,
-                                      delete_custom_field_from_contact)
+                                      set_up_random, create_custom_object, CUSTOM_OBJECT_NAME, delete_custom_object)
 
 logger = logging.getLogger(__name__)
 
+
+@pytest.fixture(scope="module", autouse=True)
+def _set_up_environment(salesforce):
+    client = salesforce.client
+    create_custom_object(client)
+
+    yield
+
+    delete_custom_object(client)
 
 @pytest.fixture(autouse=True)
 def _set_up_random(salesforce):
@@ -34,38 +42,25 @@ def _set_up_random(salesforce):
 
 @salesforce
 @sdc_min_version('5.0.0')
-@pytest.mark.parametrize('type_data', DATA_TYPES, ids=[datatype['metadata']['type'] for datatype in DATA_TYPES])
+@pytest.mark.parametrize('type_data', DATA_TYPES, ids=[datatype['type'] for datatype in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
-    test_name = 'sale_bulk2_origin_data_types_' + type_data['metadata']['type'] + '_' + \
+    custom_field_type = type_data['type']
+    test_name = 'sale_bulk2_origin_data_types_' + custom_field_type + '_' + \
                 get_random_string(string.ascii_lowercase, 10)
 
     client = salesforce.client
 
-    custom_field_name = get_random_string(string.ascii_lowercase, 10) + '__c'
-    custom_field_label = 'testField'
-    custom_field_type = type_data['metadata']['type']
-
-    parameters = ''
-    for param in type_data['metadata']:
-        if (param != 'type'):
-            parameters += '<' + param + '>'
-            parameters += str(type_data['metadata'][param])
-            parameters += '</' + param + '>'
-
-    uses_value_set = (custom_field_type == 'Picklist') or (custom_field_type == 'MultiselectPicklist')
-    if custom_field_type == 'Picklist':
-        parameters = ''
-    elif custom_field_type == 'MultiselectPicklist':
-        parameters = '<visibleLines>3</visibleLines>'
+    custom_object_name = CUSTOM_OBJECT_NAME + '__c'
+    custom_field_name = custom_field_type + '_field__c'
 
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
     fields = ",".join(type_data['expected_value'].keys()) \
         if type_data.get('compound_field') else custom_field_name
-    query = (f"SELECT Id, FirstName, {fields} FROM Contact "
+    query = (f"SELECT Id, {fields} FROM {custom_object_name} "
              "WHERE Id > '${OFFSET}' "
-             f"AND LastName = '{test_name}' "
+             f"AND TestName__c = '{test_name}' "
              "ORDER BY Id")
     origin.set_attributes(soql_query=query,
                           incremental_mode=False)
@@ -83,13 +78,10 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
         # Create a hard delete permission file for this client
         permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_data_types')
 
-        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                        custom_field_type, parameters, uses_value_set)
-
         logger.info('Adding two records into Salesforce ...')
         record = {
-            'FirstName': '1',
-            'LastName': test_name,
+            'Name': 1,
+            'TestName__c': test_name,
         }
         # Not every data type wants data - e.g. auto number field
         if type_data.get('data_to_insert'):
@@ -98,13 +90,15 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
             else:
                 record[fields] = type_data['data_to_insert']
 
-        result = client.Contact.create(record)
+        object_type = getattr(client, custom_object_name)
+
+        result = object_type.create(record)
         record_ids.append({'Id': result['id']})
 
         # And a record without a value for the field
-        result = client.Contact.create({
-            'FirstName': '2',
-            'LastName': test_name
+        result = object_type.create({
+            'Name': 2,
+            'TestName__c': test_name
         })
         record_ids.append({'Id': result['id']})
 
@@ -130,39 +124,35 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
             assert type_data['expected_type'] == record.field[fields].type
             assert compare_values(type_data['expected_value'],
                                   record.field[fields]._data['value'],
-                                  type_data['metadata']['type'])
+                                  type_data['type'])
 
             assert type_data['expected_type'] == null_record.field[fields].type
             assert compare_values(type_data.get('null_value'),
                                   null_record.field[fields]._data['value'],
-                                  type_data['metadata']['type'])
+                                  type_data['type'])
 
     finally:
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
+        clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True, object_name=custom_object_name)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
 @sdc_min_version('5.0.0')
-@pytest.mark.parametrize('test_name,object_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
-def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_name, field_name):
+@pytest.mark.parametrize('test_name,field_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
+def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, field_name):
     run_name = 'sale_bulk2_origin_object_names_' + test_name + '_' + get_random_string(string.ascii_lowercase, 10)
     client = salesforce.client
 
+    custom_object_name = CUSTOM_OBJECT_NAME + '__c'
     custom_field_name = '{}__c'.format(field_name)
-    custom_field_label = 'Value'
-    custom_field_type = 'Number'
-    parameters = '<precision>5</precision>' \
-                 '<scale>0</scale>'
 
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
-    query = (f"SELECT Id, FirstName, {custom_field_name} FROM Contact "
+    query = (f"SELECT Id, {custom_field_name} FROM {custom_object_name} "
              "WHERE Id > '${OFFSET}' "
-             f"AND LastName = '{run_name}' "
+             f"AND TestName__c = '{run_name}' "
              "ORDER BY Id")
     origin.set_attributes(soql_query=query,
                           incremental_mode=False)
@@ -180,15 +170,13 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         # Create a hard delete permission file for this client
         permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_object_names')
 
-        custom_field_name = add_custom_field_to_contact(salesforce, custom_field_name, custom_field_label,
-                                                        custom_field_type,
-                                                        parameters)
+        logger.info('Adding a TestObject into Salesforce ...')
 
-        logger.info('Adding a Contact into Salesforce ...')
+        object_type = getattr(client, custom_object_name)
 
-        result = client.Contact.create({
-            'FirstName': '1',
-            'LastName': run_name,
+        result = object_type.create({
+            'Name': 1,
+            'TestName__c': run_name,
             f'{field_name}__c': 1
         })
         record_id = {'Id': result['id']}
@@ -211,8 +199,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, object_n
         assert wiretap.output_records[0].field[custom_field_name] == 1
 
     finally:
-        delete_custom_field_from_contact(client, custom_field_name)
-        clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
+        clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True, object_name=custom_object_name)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client, permission_set_id)
 
