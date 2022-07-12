@@ -509,12 +509,14 @@ def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasti
         # FIXME: This is just to copy a keystore file form the STF container to the SDC container.
         # We read a binary file, then we convert each byte to a hex string representation, e.g 127 becomes 7f, 64 -> 40
         # and then we insert \x before every two characters, e.g. \x7f\x40...
-        # This representation of the binary file will then be used by the printf command internally used by
-        # sdc_executor.write_file to write to a file in the SDC container.
-        with open(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'elasticsearch', 'keystore.jks'), 'rb') as f:
+        # This had to be changed when moving off Alpine to run the xxd command to convert the hex to jks again
+        # (yes, it installs an extra package which is not nice, but could not find another way of doing it)
+        with open(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'elasticsearch', stage_attributes['filename']), 'rb') as f:
             contents = f.read().hex()
-            contents = '\\x' + '\\x'.join(contents[i:i + 2] for i in range(0, len(contents), 2))
-            sdc_executor.write_file(keystore_file_path, contents)
+            sdc_executor.execute_shell(f'sudo apt-get install -y xxd')
+            command = sdc_executor.execute_shell(f'printf "{contents}" | xxd -r -p > {keystore_file_path}')
+            if command.exit_code != '0':
+                raise Exception(f'Error while writing file: {command.stderr}')
 
         builder = sdc_builder.get_pipeline_builder()
 
