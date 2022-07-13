@@ -511,7 +511,7 @@ def test_ssl_truststore_path(sdc_builder, sdc_executor, stage_attributes, elasti
         # and then we insert \x before every two characters, e.g. \x7f\x40...
         # This had to be changed when moving off Alpine to run the xxd command to convert the hex to jks again
         # (yes, it installs an extra package which is not nice, but could not find another way of doing it)
-        with open(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'elasticsearch', stage_attributes['filename']), 'rb') as f:
+        with open(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'elasticsearch', 'keystore.jks'), 'rb') as f:
             contents = f.read().hex()
             sdc_executor.execute_shell(f'sudo apt-get install -y xxd')
             command = sdc_executor.execute_shell(f'printf "{contents}" | xxd -r -p > {keystore_file_path}')
