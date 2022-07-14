@@ -96,7 +96,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
         lookup = builder.add_stage('Salesforce Bulk API 2.0 Lookup')
         lookup.soql_query = (f"SELECT {fields} FROM {custom_object_name} "
                              "WHERE Name = '${record:value(\"/id\")}'"
-                             f"AND TestName__c = '{test_name}' ")
+                             f" AND TestName__c = '{test_name}' ")
         lookup.field_mappings = [dict(dataType='USE_SALESFORCE_TYPE',
                                       salesforceField=f'{fields}',
                                       sdcField=f'/{fields}')]
@@ -151,7 +151,7 @@ def test_object_names(sdc_builder, sdc_executor, salesforce):
 @sdc_min_version('5.0.0')
 def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     batch_size = 40
-    batches = 50
+    batches = 5
     test_name = 'sale_bulk2_proc_multiple_batches_' + get_random_string(string.ascii_lowercase, 10)
 
     client = salesforce.client
@@ -173,7 +173,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     lookup = builder.add_stage('Salesforce Bulk API 2.0 Lookup')
     lookup.soql_query = (f"SELECT LastName FROM Contact "
                          "WHERE FirstName = '${record:value(\"/lookup\")}'"
-                         f"AND Department = '{test_name}' ")
+                         f" AND Department = '{test_name}' ")
     lookup.field_mappings = [dict(dataType='USE_SALESFORCE_TYPE',
                                   salesforceField=f'LastName',
                                   sdcField=f'/Last Name')]
@@ -190,11 +190,11 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
         permission_set_id = assign_hard_delete(client, 'sale_bulk2_proc_multiple_batches')
 
         logger.info(f'Inserting data into Contacts ...')
-        records = [{'FirstName': str(n), 'LastName': str(n * 10), 'Department' : test_name} for n in range(1, 4)]
+        records = [{'FirstName': str(n), 'LastName': str(n * 10), 'Department': test_name} for n in range(1, 4)]
         record_ids = check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
 
         # Wiretap generates one extra record per batch
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count((batches + 1) * batch_size)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count((batches + 1) * batch_size, timeout_sec=600)
         sdc_executor.stop_pipeline(pipeline)
 
         # Now the pipeline will write some amount of records that will be larger, so we get precise count from metrics
