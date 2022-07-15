@@ -194,7 +194,7 @@ def test_resume_offset(sdc_builder, sdc_executor, cluster, auto_offset_reset):
                     producer.send(topic, actual_data.encode())
                 producer.flush()
 
-            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_iteration, timeout_sec=60)
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', records_per_iteration, timeout_sec=300)
             sdc_executor.stop_pipeline(pipeline)
 
             first_iteration_records = [record.field['text'] for record in wiretap.output_records]
