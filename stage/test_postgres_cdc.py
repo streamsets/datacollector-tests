@@ -1489,3 +1489,206 @@ def test_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
         except:
             pass
         database_connection.close()
+
+@database('postgresql')
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('wal2json_format, record_contents', [('TRANSACTION', 'OPERATION'),
+                                                              ('CHUNKED_TRANSACTION', 'OPERATION'),
+                                                              ('OPERATION', 'OPERATION')])
+def test_postgres_cdc_client_primary_keys_headers(sdc_builder,
+                                                  sdc_executor,
+                                                  database,
+                                                  wal2json_format,
+                                                  record_contents):
+    """
+    Test to check all headers for primary keys are present in the output records.
+    """
+
+    try:
+
+        database_connection = database.engine.connect()
+
+        replication_slot_name = get_random_string(string.ascii_lowercase, 10)
+
+        table_name = get_random_string(string.ascii_uppercase, 16)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
+        postgres_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
+                                           max_batch_size_in_records=1,
+                                           remove_replication_slot_on_close=True,
+                                           poll_interval=1,
+                                           replication_slot=replication_slot_name,
+                                           ssl_mode='DISABLED',
+                                           record_contents=record_contents,
+                                           wal2json_format=wal2json_format)
+        wiretap = pipeline_builder.add_wiretap()
+        postgres_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+
+        database_transaction = database_connection.begin()
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('TYPE', sqlalchemy.String(64), primary_key=True, quote=False),
+                                 sqlalchemy.Column('ID', sqlalchemy.Integer, primary_key=True, quote=False),
+                                 sqlalchemy.Column('NAME', sqlalchemy.String(64), quote=False),
+                                 sqlalchemy.Column('SURNAME', sqlalchemy.String(64), quote=False),
+                                 sqlalchemy.Column('ADDRESS', sqlalchemy.String(64), quote=False),
+                                 quote=False)
+        table.create(database.engine)
+        database_transaction.commit()
+
+        column_type = "'" + "Hobbit" + "'"
+        column_id = 1
+        column_name = "'" + "Bilbo" + "'"
+        column_surname = "'" + "Baggins" + "'"
+
+        column_address = "'" + "Bag End 0" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"insert into {table} " \
+                   f"values ({column_type}, {column_id}, {column_name}, {column_surname}, {column_address})"
+        sql = sqlalchemy.text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 1" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, TYPE = 'Fallohide' where TYPE = 'Hobbit' and ID = 1"
+        sql = sqlalchemy.text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 2" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, ID = 2 where TYPE = 'Fallohide' and ID = 1"
+        sql = sqlalchemy.text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 3" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, TYPE = 'Hobbit - Fallohide', ID = 3 where TYPE = 'Fallohide' and ID = 2"
+        sql = sqlalchemy.text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 4" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, TYPE = 'Hobbit, Fallohide' where TYPE = 'Hobbit - Fallohide'"
+        sql = sqlalchemy.text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 5" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, ID = 4 where ID = 3"
+        sql = sqlalchemy.text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 6" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address} where ID = 4"
+        sql = sqlalchemy.text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        database_transaction = database_connection.begin()
+        sentence = f"delete from {table_name}"
+        sql = sqlalchemy.text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 8, timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+        records = wiretap.output_records
+        assert len(records) == 8
+
+        for record in records:
+            if record.header.values["postgres.cdc.operation"] == 'U' or \
+                    record.header.values["postgres.cdc.operation"] == 'UPDATE':
+
+                assert "jdbc.primaryKey.before.type" in record.header.values
+                assert "jdbc.primaryKey.before.id" in record.header.values
+                assert "jdbc.primaryKey.after.type" in record.header.values
+                assert "jdbc.primaryKey.after.id" in record.header.values
+
+                assert record.header.values["jdbc.primaryKey.before.type"] is not None
+                assert record.header.values["jdbc.primaryKey.before.id"] is not None
+                assert record.header.values["jdbc.primaryKey.after.type"] is not None
+                assert record.header.values["jdbc.primaryKey.after.id"] is not None
+
+                column_address = record.field['address'].value
+
+                if column_address == 'Bag End 1':
+                    assert record.header.values["jdbc.primaryKey.before.type"] == "Hobbit"
+                    assert record.header.values["jdbc.primaryKey.before.id"] == "1"
+                    assert record.header.values["jdbc.primaryKey.after.type"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.id"] == "1"
+                elif column_address == 'Bag End 2':
+                    assert record.header.values["jdbc.primaryKey.before.type"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.id"] == "1"
+                    assert record.header.values["jdbc.primaryKey.after.type"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.id"] == "2"
+                elif column_address == 'Bag End 3':
+                    assert record.header.values["jdbc.primaryKey.before.type"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.id"] == "2"
+                    assert record.header.values["jdbc.primaryKey.after.type"] == "Hobbit - Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.id"] == "3"
+                elif column_address == 'Bag End 4':
+                    assert record.header.values["jdbc.primaryKey.before.type"] == "Hobbit - Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.id"] == "3"
+                    assert record.header.values["jdbc.primaryKey.after.type"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.id"] == "3"
+                elif column_address == 'Bag End 5':
+                    assert record.header.values["jdbc.primaryKey.before.type"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.id"] == "3"
+                    assert record.header.values["jdbc.primaryKey.after.type"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.id"] == "4"
+                elif column_address == 'Bag End 6':
+                    assert record.header.values["jdbc.primaryKey.before.type"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.id"] == "4"
+                    assert record.header.values["jdbc.primaryKey.after.type"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.id"] == "4"
+
+            else:
+
+                assert "jdbc.primaryKey.before.type" not in record.header.values
+                assert "jdbc.primaryKey.before.id" not in record.header.values
+                assert "jdbc.primaryKey.after.type" not in record.header.values
+                assert "jdbc.primaryKey.after.id" not in record.header.values
+
+            logger.info(f".....................")
+            if record.header.values["postgres.cdc.operation"] == 'U' or \
+                    record.header.values["postgres.cdc.operation"] == 'UPDATE':
+                logger.info(f"column - address.................: {record.field['address'].value}")
+                logger.info(f"jdbc.primaryKey.before.type: {record.header.values['jdbc.primaryKey.before.type']}")
+                logger.info(f"jdbc.primaryKey.before.id..: {record.header.values['jdbc.primaryKey.before.id']}")
+                logger.info(f"jdbc.primaryKey.after.type.: {record.header.values['jdbc.primaryKey.after.type']}")
+                logger.info(f"jdbc.primaryKey.after.id...: {record.header.values['jdbc.primaryKey.after.id']}")
+                logger.info(f"----------------------------------")
+
+    finally:
+
+        if pipeline is not None:
+            if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+                sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
+
+        try:
+            database.deactivate_and_drop_replication_slot(replication_slot_name)
+        except:
+            pass
+
+        try:
+            if table is not None:
+                database_connection.execute(f'drop table {table_name}')
+        except:
+            pass
+
+        try:
+            database_connection.close()
+        except:
+            pass
