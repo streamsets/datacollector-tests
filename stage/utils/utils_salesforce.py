@@ -480,11 +480,15 @@ def create_custom_object(client):
         deploymentStatus=mdapi.DeploymentStatus('Deployed'),
         sharingModel=mdapi.SharingModel('Read')
     )
-    mdapi.CustomObject.create(custom_object)
 
-    for field in fields:
-        set_field_permissions(mdapi, CUSTOM_OBJECT_NAME, field.label)
-
+    try:
+        mdapi.CustomObject.create(custom_object)
+        for field in fields:
+            set_field_permissions(mdapi, CUSTOM_OBJECT_NAME, field.label)
+    except Exception as e:
+        # If the Custom Object creation fails, it might be because the object is already created. Don't raise an exception in that case
+        if not f'(DUPLICATE_DEVELOPER_NAME, There is already a field named TestName on {CUSTOM_OBJECT_NAME}.)' in str(e):
+            raise
 
 def delete_custom_object(client):
     mdapi = client.mdapi
