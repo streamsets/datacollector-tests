@@ -952,7 +952,7 @@ def test_s3_restart_with_file_offset(sdc_builder, sdc_executor, aws, read_order)
         input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
 
         # Restart the pipeline and wait until it reads all data
-        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=150)
+        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished(timeout_sec=300)
 
         # Check amount of records read in the second run
         history = sdc_executor.get_pipeline_history(s3_origin_pipeline)
