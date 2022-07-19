@@ -485,6 +485,10 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, de
 def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, timeout):
     # The test tries to set up Salesforce query timeout as 0 and as 60. Whith the timeout set to 0, the execution is
     # expected to fail with FORCE_59, otherwise it should execute just fine.
+
+    if timeout == 0:
+        pytest.skip("This test would take more than 25 minutes. Automatic test disabled. Test manually at will if you need so.")
+
     test_name = 'sale_bulk2_dest_timeout_' + get_random_string(string.ascii_lowercase, 10)
     client = salesforce.client
 
@@ -532,12 +536,12 @@ def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, t
             assert result['records'][0]['FirstName'] == '1'
         else:
             # This execution should fail as timeout=0
-            execution.wait_for_status('RUN_ERROR', timeout_sec=300, ignore_errors=True)
+            execution.wait_for_status('RUN_ERROR', timeout_sec=3600, ignore_errors=True)
 
             # Check that the error is the one we expect
             status = sdc_executor.get_pipeline_status(pipeline).response.json()
             assert status.get('status') == 'RUN_ERROR'
-            assert 'FORCE_59' in status.get('message')
+            assert 'FORCE_63' in status.get('message')
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
