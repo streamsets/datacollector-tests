@@ -542,3 +542,224 @@ def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, t
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client, permission_set_id)
+
+@salesforce
+@sdc_min_version('5.2.0')
+@pytest.mark.parametrize('default_operation', ['INSERT',
+                                               'UPDATE',
+                                               'UPSERT'])
+def test_salesforce_destination_error_records(sdc_builder, sdc_executor, salesforce, default_operation):
+
+    test_token = get_random_string(string.ascii_letters, 16)
+
+    test_data = [
+        {'Id': '0',
+         'FirstName': 'Georg',
+         'LastName': 'Cantor',
+         'Email': f'{test_token}.georg.cantor@saint.petesburg.mathematics.ru',
+         'LeadSource': 'Set Theory'},
+        {'Id': '1',
+         'FirstName': 'Evariste',
+         'LastName': 'Galois',
+         'Email': f'{test_token}.evariste.galosi@bourg.la.reine.mathematics.fr',
+         'LeadSource': 'Group Theory'},
+        {'Id': '2',
+         'FirstName': 'Kurt',
+         'LastName': 'Gödel',
+         'Email': f'{test_token}.kurt.godel@brunn.mathematics.at',
+         'LeadSource': 'Mathematical Logic'},
+        {'Id': '3',
+         'FirstName': 'Sofya',
+         'LastName': 'Kovalevskaya',
+         'Email': f'{test_token}.sofya.kovalevskaya@moscow.mathematics.ru',
+         'LeadSource': 'Complex Analysis'},
+        {'Id': '4',
+         'FirstName': 'Maryam',
+         'LastName': 'Mirzakhani',
+         'Email': f'{test_token}.maryamn.mirzakhani@teheran.mathematics.ir',
+         'LeadSource': 'Teichmüller Theory'},
+        {'Id': '5',
+         'FirstName': 'Emmy',
+         'LastName': 'Noether',
+         'Email': f'{test_token}.emmy.noether@erlangen.mathematics.de',
+         'LeadSource': 'Abstract Algebra'},
+        {'Id': '6',
+         'FirstName': 'Srinivasa',
+         'LastName': 'Ramanujan',
+         'Email': f'{test_token}.srinivasa.ramanujan@erode.mathematics.in',
+         'LeadSource': 'Infinite Series'},
+        {'Id': '7',
+         'FirstName': 'Maryna',
+         'LastName': 'Viazovska',
+         'Email': f'{test_token}.maryna.viazovska@kyiv.mathematics.ua',
+         'LeadSource': 'Number Theory'}
+    ]
+
+    input_data = [','.join(test_data[0].keys())] + [','.join(item.values()) for item in test_data]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, input_data)
+
+    field_mapping = [{'sdcField': '/Id', 'salesforceField': 'Id'},
+                     {'sdcField': '/FirstName', 'salesforceField': 'FirstName'},
+                     {'sdcField': '/LastName', 'salesforceField': 'LastName'},
+                     {'sdcField': '/Email', 'salesforceField': 'Email'},
+                     {'sdcField': '/LeadSource', 'salesforceField': 'LeadSource'}]
+    salesforce_destination = pipeline_builder.add_stage('Salesforce Bulk API 2.0', type='destination')
+    salesforce_destination.set_attributes(default_operation=default_operation,
+                                          external_id_field='Email',
+                                          field_mapping=field_mapping,
+                                          sobject_type='Contact')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> [salesforce_destination, wiretap.destination]
+
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    read_ids = None
+
+    client = salesforce.client
+    try:
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+
+        assert len(output_records) == 8
+        assert len(error_records) == 8
+
+    finally:
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        revoke_hard_delete(client, permission_set_id)
+
+
+@salesforce
+@sdc_min_version('5.2.0')
+@pytest.mark.parametrize('for_insert, for_update, expected_errors', [('1', '1', 0),
+                                                                     ('1', '3', 8),
+                                                                     ('3', '1', 8),
+                                                                     ('3', '3', 16)])
+def test_salesforce_destination_header_operation(sdc_builder,
+                                                 sdc_executor,
+                                                 salesforce,
+                                                 for_insert,
+                                                 for_update,
+                                                 expected_errors):
+
+    test_token = get_random_string(string.ascii_letters, 16)
+
+    test_data = [
+        {'FirstName': 'Georg',
+         'LastName': 'Cantor',
+         'Email': f'1_{test_token}.georg.cantor@saint.petesburg.mathematics.ru',
+         'LeadSource': 'Set Theory'},
+        {'FirstName': 'Evariste',
+         'LastName': 'Galois',
+         'Email': f'1_{test_token}.evariste.galosi@bourg.la.reine.mathematics.fr',
+         'LeadSource': 'Group Theory'},
+        {'FirstName': 'Kurt',
+         'LastName': 'Gödel',
+         'Email': f'1_{test_token}.kurt.godel@brunn.mathematics.at',
+         'LeadSource': 'Mathematical Logic'},
+        {'FirstName': 'Sofya',
+         'LastName': 'Kovalevskaya',
+         'Email': f'1_{test_token}.sofya.kovalevskaya@moscow.mathematics.ru',
+         'LeadSource': 'Complex Analysis'},
+        {'FirstName': 'Maryam',
+         'LastName': 'Mirzakhani',
+         'Email': f'1_{test_token}.maryamn.mirzakhani@teheran.mathematics.ir',
+         'LeadSource': 'Teichmüller Theory'},
+        {'FirstName': 'Emmy',
+         'LastName': 'Noether',
+         'Email': f'1_{test_token}.emmy.noether@erlangen.mathematics.de',
+         'LeadSource': 'Abstract Algebra'},
+        {'FirstName': 'Srinivasa',
+         'LastName': 'Ramanujan',
+         'Email': f'1_{test_token}.srinivasa.ramanujan@erode.mathematics.in',
+         'LeadSource': 'Infinite Series'},
+        {'FirstName': 'Maryna',
+         'LastName': 'Viazovska',
+         'Email': f'1_{test_token}.maryna.viazovska@kyiv.mathematics.ua',
+         'LeadSource': 'Number Theory'},
+        {'FirstName': 'Georg',
+         'LastName': 'Cantor',
+         'Email': f'2_{test_token}.georg.cantor@saint.petesburg.mathematics.ru',
+         'LeadSource': 'Set Theory'},
+        {'FirstName': 'Evariste',
+         'LastName': 'Galois',
+         'Email': f'2_{test_token}.evariste.galosi@bourg.la.reine.mathematics.fr',
+         'LeadSource': 'Group Theory'},
+        {'FirstName': 'Kurt',
+         'LastName': 'Gödel',
+         'Email': f'2_{test_token}.kurt.godel@brunn.mathematics.at',
+         'LeadSource': 'Mathematical Logic'},
+        {'FirstName': 'Sofya',
+         'LastName': 'Kovalevskaya',
+         'Email': f'2_{test_token}.sofya.kovalevskaya@moscow.mathematics.ru',
+         'LeadSource': 'Complex Analysis'},
+        {'FirstName': 'Maryam',
+         'LastName': 'Mirzakhani',
+         'Email': f'2_{test_token}.maryamn.mirzakhani@teheran.mathematics.ir',
+         'LeadSource': 'Teichmüller Theory'},
+        {'FirstName': 'Emmy',
+         'LastName': 'Noether',
+         'Email': f'2_{test_token}.emmy.noether@erlangen.mathematics.de',
+         'LeadSource': 'Abstract Algebra'},
+        {'FirstName': 'Srinivasa',
+         'LastName': 'Ramanujan',
+         'Email': f'2_{test_token}.srinivasa.ramanujan@erode.mathematics.in',
+         'LeadSource': 'Infinite Series'},
+        {'FirstName': 'Maryna',
+         'LastName': 'Viazovska',
+         'Email': f'2_{test_token}.maryna.viazovska@kyiv.mathematics.ua',
+         'LeadSource': 'Number Theory'}
+    ]
+
+    input_data = [','.join(test_data[0].keys())] + [','.join(item.values()) for item in test_data]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, input_data)
+
+    header_attribute_expressions = f"${{str:startsWith(record:value('/Email'), '1')? '{for_insert}' : '{for_update}'}}"
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {'attributeToSet': 'sdc.operation.type',
+         'headerAttributeExpression': header_attribute_expressions}
+    ])
+
+    field_mapping = [{'sdcField': '/FirstName', 'salesforceField': 'FirstName'},
+                     {'sdcField': '/LastName', 'salesforceField': 'LastName'},
+                     {'sdcField': '/Email', 'salesforceField': 'Email'},
+                     {'sdcField': '/LeadSource', 'salesforceField': 'LeadSource'}]
+    salesforce_destination = pipeline_builder.add_stage('Salesforce Bulk API 2.0', type='destination')
+    salesforce_destination.set_attributes(default_operation='DELETE',
+                                          field_mapping=field_mapping,
+                                          sobject_type='Contact')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source  >> expression_evaluator >> [salesforce_destination, wiretap.destination]
+
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    read_ids = None
+
+    client = salesforce.client
+    try:
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+
+        assert len(output_records) == 16
+        assert len(error_records) == expected_errors
+
+    finally:
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        revoke_hard_delete(client, permission_set_id)
