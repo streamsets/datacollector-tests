@@ -161,7 +161,7 @@ def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, sale
             # Check that the error is the one we expect
             status = sdc_executor.get_pipeline_status(pipeline).response.json()
             assert status.get('status') == 'RUN_ERROR'
-            assert 'FORCE_55' in status.get('message')
+            assert 'FORCE_65' in status.get('message')
 
     finally:
         clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
