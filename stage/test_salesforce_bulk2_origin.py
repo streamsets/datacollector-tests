@@ -388,7 +388,12 @@ def test_salesforce_origin_datetime_in_history(sdc_builder, sdc_executor, salesf
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              1,
+                                              timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
+        sdc_executor.stop_pipeline(pipeline)
 
         # There should be a single row with Id and NewValue fields. For Bulk API it's a STRING
         assert len(wiretap.output_records) == 1
