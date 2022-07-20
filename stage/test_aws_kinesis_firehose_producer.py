@@ -137,13 +137,15 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
         resp = firehose_client.describe_delivery_stream(DeliveryStreamName=stream_name)
         dests = resp['DeliveryStreamDescription']['Destinations'][0]
         wait_secs = dests['ExtendedS3DestinationDescription']['BufferingHints']['IntervalInSeconds']
+        logger.info(f'Waiting seconds configured to {wait_secs}')
         time.sleep(wait_secs + 15)  # an extra minute to wait to make sure S3 gets the data
 
         iteration = 0
-        while len(s3_put_keys) == 0 and iteration < 3:
+        while len(s3_put_keys) == 0 and iteration < 10:
+            logger.info(f'Waiting Iteration number: {iteration}')
             s3_put_keys = _get_firehose_data(s3_client, s3_bucket, random_raw_str)
             iteration = iteration + 1
-            time.sleep(30)
+            time.sleep(iteration * 5)
 
         assert len(s3_put_keys) == record_count
     finally:
