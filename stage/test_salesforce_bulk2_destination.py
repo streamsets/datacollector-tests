@@ -622,8 +622,6 @@ def test_salesforce_destination_error_records(sdc_builder, sdc_executor, salesfo
     pipeline = pipeline_builder.build().configure_for_environment(salesforce)
     sdc_executor.add_pipeline(pipeline)
 
-    read_ids = None
-
     client = salesforce.client
     try:
         permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
@@ -636,7 +634,15 @@ def test_salesforce_destination_error_records(sdc_builder, sdc_executor, salesfo
         assert len(error_records) == 8
 
     finally:
-        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        query = ("   select Id,"
+                 "          Email "
+                 "     from Contact "
+                 f"   where Email like '%{test_token}%' "
+                 "      and Email like '%mathematics%'"
+                 " order by Id")
+        result = client.query(query)
+        ids = get_ids(result['records'], 'Id')
+        clean_up(sdc_executor, pipeline, client, ids, hard_delete=True)
         revoke_hard_delete(client, permission_set_id)
 
 
@@ -765,5 +771,144 @@ def test_salesforce_destination_header_operation(sdc_builder,
         assert len(error_records) == expected_errors
 
     finally:
-        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+        query = ("   select Id,"
+                 "          Email "
+                 "     from Contact "
+                 f"   where Email like '%{test_token}%' "
+                 "      and Email like '%mathematics%'"
+                 " order by Id")
+        result = client.query(query)
+        ids = get_ids(result['records'], 'Id')
+        clean_up(sdc_executor, pipeline, client, ids, hard_delete=True)
+        revoke_hard_delete(client, permission_set_id)
+
+
+@salesforce
+@sdc_min_version('5.2.0')
+def test_salesforce_destination_special_characters(sdc_builder, sdc_executor, salesforce):
+
+    test_token = get_random_string(string.ascii_letters, 16)
+
+    test_data = [
+        {'FirstName': 'Pierre',
+         'LastName': 'Fermat',
+         'Email': f'{test_token}.pierre.fermat@beaumont.de.lomagne.fr',
+         'Jigsaw': get_random_string(string.ascii_letters, 8),
+         'LeadSource': 'Number Theory',
+         'Description': '"º!""#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ ¡¢£¤¥¦§¨©ª«¬­®¯°±²³´µ¶·¸¹º»¼½¾¿ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĲĳĴĵĶķĸĹĺĻļĽľĿŀŁłŃńŅņŇňŉŊŋŌōŎŏŐőŒœŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžſƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏƐƑƒƓƔƕƖƗƘƙƚƛƜƝƞƟƠơƢƣƤƥƦƧƨƩƪƫƬƭƮƯưƱƲƳƴƵƶƷƸƹƺƻƼƽƾƿǀǁǂǃǄǅǆǇǈǉǊǋǌǍǎǏǐǑǒǓǔǕǖǗǘǙǚǛǜǝǞǟǠǡǢǣǤǥǦǧǨǩǪǫǬǭǮǯǰǱǲǳǴǵǶǷǸǹǺǻǼǽǾǿ23456789abcdefȀȁȂȃȄȅȆȇȈȉȊȋȌȍȎȏȐȑȒȓȔȕȖȗȘșȚțȜȝȞȟȠȡȢȣȤȥȦȧȨȩȪȫȬȭȮȯȰȱȲȳȴȵȶȷȸȹȺȻȼȽȾȿɀɁɂɃɄɅɆɇɈɉɊɋɌɍɎɏɐɑɒɓɔɕɖɗɘəɚɛɜɝɞɟɠɡɢɣɤɥɦɧɨɩɪɫɬɭɮɯɰɱɲɳɴɵɶɷɸɹɺɻɼɽɾɿʀʁʂʃʄʅʆʇʈʉʊʋʌʍʎʏʐʑʒʓʔʕʖʗʘʙʚʛʜʝʞʟʠʡʢʣʤʥʦʧʨʩʪʫʬʭʮʯʰʱʲʳʴʵʶʷʸʹʺʻʼʽʾʿˀˁ˂˃˄˅ˆˇˈˉˊˋˌˍˎˏːˑ˒˓˔˕˖˗˘˙˚˛˜˝˞˟ˠˡˢˣˤ˥˦˧˨˩˪˫ˬ˭ˮ˯˰˱˲˳˴˵˶˷˸˹˺˻˼˽˾˿̴̵̶̷̸̡̢̧̨̛̖̗̘̙̜̝̞̟̠̣̤̥̦̩̪̫̬̭̮̯̰̱̲̳̹̺̻̼͇͈͉͍͎̀́̂̃̄̅̆̇̈̉̊̋̌̍̎̏̐̑̒̓̔̽̾̿̀́͂̓̈́͆͊͋͌̕̚ͅ͏͓͔͕͖͙͚͐͑͒͗͛ͣͤͥͦͧͨͩͪͫͬͭͮͯ͘͜͟͢͝͞͠͡ͰͱͲͳʹ͵Ͷͷ͸͹ͺͻͼͽ;Ϳ΀΁΂΃΄΅Ά·ΈΉΊ΋Ό΍ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ΢ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώϏϐϑϒϓϔϕϖϗϘϙϚϛϜϝϞϟϠϡϢϣϤϥϦϧϨϩϪϫϬϭϮϯ0123456789abcdef⁰ⁱ⁲⁳⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎₏ₐₑₒₓₔₕₖₗₘₙₚₛₜ₝₞₟₠₡₢₣₤₥₦₧₨₩₪₫€₭₮₯₰₱₲₳₴₵₶₷₸₹₺₻₼₽₾₿⃀⃁⃂⃃⃄⃅⃆⃇⃈⃉⃊⃋⃌⃍⃎⃏⃒⃓⃘⃙⃚⃐⃑⃔⃕⃖⃗⃛⃜⃝⃞⃟⃠⃡⃢⃣⃤⃥⃦⃪⃫⃨⃬⃭⃮⃯⃧⃩⃰⃱⃲⃳⃴⃵⃶⃷⃸⃹⃺⃻⃼⃽⃾⃿℀℁ℂ℃℄℅℆ℇ℈℉ℊℋℌℍℎℏℐℑℒℓ℔ℕ№℗℘ℙℚℛℜℝ℞℟℠℡™℣ℤ℥Ω℧ℨ℩KÅℬℭ℮ℯℰℱℲℳℴℵℶℷℸℹ℺℻ℼℽℾℿ⅀⅁⅂⅃⅄ⅅⅆⅇⅈⅉ⅊⅋⅌⅍ⅎ⅏⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞⅟ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫⅬⅭⅮⅯⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹⅺⅻⅼⅽⅾⅿↀↁↂↃↄↅↆↇↈ↉↊↋↌↍↎↏←↑→↓↔↕↖↗↘↙↚↛↜↝↞↟↠↡↢↣↤↥↦↧↨↩↪↫↬↭↮↯↰↱↲↳↴↵↶↷↸↹↺↻↼↽↾↿⇀⇁⇂⇃⇄⇅⇆⇇⇈⇉⇊⇋⇌⇍⇎⇏⇐⇑⇒⇓⇔⇕⇖⇗⇘⇙⇚⇛⇜⇝⇞⇟⇠⇡⇢⇣⇤⇥⇦⇧⇨⇩⇪⇫⇬⇭⇮⇯⇰⇱⇲⇳⇴⇵⇶⇷⇸⇹⇺⇻⇼⇽⇾⇿23456789abcdef∀∁∂∃∄∅∆∇∈∉∊∋∌∍∎∏∐∑−∓∔∕∖∗∘∙√∛∜∝∞∟∠∡∢∣∤∥∦∧∨∩∪∫∬∭∮∯∰∱∲∳∴∵∶∷∸∹∺∻∼∽∾∿≀≁≂≃≄≅≆≇≈≉≊≋≌≍≎≏≐≑≒≓≔≕≖≗≘≙≚≛≜≝≞≟≠≡≢≣≤≥≦≧≨≩≪≫≬≭≮≯≰≱≲≳≴≵≶≷≸≹≺≻≼≽≾≿⊀⊁⊂⊃⊄⊅⊆⊇⊈⊉⊊⊋⊌⊍⊎⊏⊐⊑⊒⊓⊔⊕⊖⊗⊘⊙⊚⊛⊜⊝⊞⊟⊠⊡⊢⊣⊤⊥⊦⊧⊨⊩⊪⊫⊬⊭⊮⊯⊰⊱⊲⊳⊴⊵⊶⊷⊸⊹⊺⊻⊼⊽⊾⊿⋀⋁⋂⋃⋄⋅⋆⋇⋈⋉⋊⋋⋌⋍⋎⋏⋐⋑⋒⋓⋔⋕⋖⋗⋘⋙⋚⋛⋜⋝⋞⋟⋠⋡⋢⋣⋤⋥⋦⋧⋨⋩⋪⋫⋬⋭⋮⋯⋰⋱⋲⋳⋴⋵⋶⋷⋸⋹⋺⋻⋼⋽⋾⋿⌀⌁⌂⌃⌄⌅⌆⌇⌈⌉⌊⌋⌌⌍⌎⌏⌐⌑⌒⌓⌔⌕⌖⌗⌘⌙⌚⌛⌜⌝⌞⌟⌠⌡⌢⌣⌤⌥⌦⌧⌨〈〉⌫⌬⌭⌮⌯⌰⌱⌲⌳⌴⌵⌶⌷⌸⌹⌺⌻⌼⌽⌾⌿⍀⍁⍂⍃⍄⍅⍆⍇⍈⍉⍊⍋⍌⍍⍎⍏⍐⍑⍒⍓⍔⍕⍖⍗⍘⍙⍚⍛⍜⍝⍞⍟⍠⍡⍢⍣⍤⍥⍦⍧⍨⍩⍪⍫⍬⍭⍮⍯⍰⍱⍲⍳⍴⍵⍶⍷⍸⍹⍺⍻⍼⍽⍾⍿⎀⎁⎂⎃⎄⎅⎆⎇⎈⎉⎊⎋⎌⎍⎎⎏⎐⎑⎒⎓⎔⎕⎖⎗⎘⎙⎚⎛⎜⎝⎞⎟⎠⎡⎢⎣⎤⎥⎦⎧⎨⎩⎪⎫⎬⎭⎮⎯⎰⎱⎲⎳⎴⎵⎶⎷⎸⎹⎺⎻⎼⎽⎾⎿⏀⏁⏂⏃⏄⏅⏆⏇⏈⏉⏊⏋⏌⏍⏎⏏⏐⏑⏒⏓⏔⏕⏖⏗⏘⏙⏚⏛⏜⏝⏞⏟23456789abcdef␀␁␂␃␄␅␆␇␈␉␊␋␌␍␎␏␐␑␒␓␔␕␖␗␘␙␚␛␜␝␞␟␠␡␢␣␤␥␦␧␨␩␪␫␬␭␮␯␰␱␲␳␴␵␶␷␸␹␺␻␼␽␾␿⑀⑁⑂⑃⑄⑅⑆⑇⑈⑉⑊⑋⑌⑍⑎⑏⑐⑑⑒⑓⑔⑕⑖⑗⑘⑙⑚⑛⑜⑝⑞⑟①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽⑾⑿⒀⒁⒂⒃⒄⒅⒆⒇⒈⒉⒊⒋⒌⒍⒎⒏⒐⒑⒒⒓⒔⒕⒖⒗⒘⒙⒚⒛⒜⒝⒞⒟⒠⒡⒢⒣⒤⒥⒦⒧⒨⒩⒪⒫⒬⒭⒮⒯⒰⒱⒲⒳⒴⒵ⒶⒷⒸⒹⒺⒻⒼⒽⒾⒿⓀⓁⓂⓃⓄⓅⓆⓇⓈⓉⓊⓋⓌⓍⓎⓏⓐⓑⓒⓓⓔⓕⓖⓗⓘⓙⓚⓛⓜⓝⓞⓟⓠⓡⓢⓣⓤⓥⓦⓧⓨⓩ⓪⓫⓬⓭⓮⓯⓰⓱⓲⓳⓴⓵⓶⓷⓸⓹⓺⓻⓼⓽⓾⓿─━│┃┄┅┆┇┈┉┊┋┌┍┎┏┐┑┒┓└┕┖┗┘┙┚┛├┝┞┟┠┡┢┣┤┥┦┧┨┩┪┫┬┭┮┯┰┱┲┳┴┵┶┷┸┹┺┻┼┽┾┿╀╁╂╃╄╅╆╇╈╉╊╋╌╍╎╏═║╒╓╔╕╖╗╘╙╚╛╜╝╞╟╠╡╢╣╤╥╦╧╨╩╪╫╬╭╮╯╰╱╲╳╴╵╶╷╸╹╺╻╼╽╾╿▀▁▂▃▄▅▆▇█▉▊▋▌▍▎▏▐░▒▓▔▕▖▗▘▙▚▛▜▝▞▟■□▢▣▤▥▦▧▨▩▪▫▬▭▮▯▰▱▲△▴▵▶▷▸▹►▻▼▽▾▿◀◁◂◃◄◅◆◇◈◉◊○◌◍◎●◐◑◒◓◔◕◖◗◘◙◚◛◜◝◞◟◠◡◢◣◤◥◦◧◨◩◪◫◬◭◮◯◰◱◲◳◴◵◶◷◸◹◺◻◼◽◾◿23456789abcdef☀☁☂☃☄★☆☇☈☉☊☋☌☍☎☏☐☑☒☓☔☕☖☗☘☙☚☛☜☝☞☟☠☡☢☣☤☥☦☧☨☩☪☫☬☭☮☯☰☱☲☳☴☵☶☷☸☹☺☻☼☽☾☿♀♁♂♃♄♅♆♇♈♉♊♋♌♍♎♏♐♑♒♓♔♕♖♗♘♙♚♛♜♝♞♟♠♡♢♣♤♥♦♧♨♩♪♫♬♭♮♯♰♱♲♳♴♵♶♷♸♹♺♻♼♽♾♿⚀⚁⚂⚃⚄⚅⚆⚇⚈⚉⚊⚋⚌⚍⚎⚏⚐⚑⚒⚓⚔⚕⚖⚗⚘⚙⚚⚛⚜⚝⚞⚟⚠⚡⚢⚣⚤⚥⚦⚧⚨⚩⚪⚫⚬⚭⚮⚯⚰⚱⚲⚳⚴⚵⚶⚷⚸⚹⚺⚻⚼⚽⚾⚿"'}
+    ]
+
+    input_data = [','.join(test_data[0].keys())] + [','.join(item.values()) for item in test_data]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, input_data)
+    dev_raw_data_source.set_attributes(max_record_length_in_chars=1024 * 1204)
+
+    field_mapping = [{'sdcField': '/FirstName', 'salesforceField': 'FirstName'},
+                     {'sdcField': '/LastName', 'salesforceField': 'LastName'},
+                     {'sdcField': '/Email', 'salesforceField': 'Email'},
+                     {'sdcField': '/Jigsaw', 'salesforceField': 'Jigsaw'},
+                     {'sdcField': '/LeadSource', 'salesforceField': 'LeadSource'},
+                     {'sdcField': '/Description', 'salesforceField': 'Description'}]
+    salesforce_destination = pipeline_builder.add_stage('Salesforce Bulk API 2.0', type='destination')
+    salesforce_destination.set_attributes(default_operation='INSERT',
+                                          field_mapping=field_mapping,
+                                          sobject_type='Contact')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> [salesforce_destination, wiretap.destination]
+
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    read_ids = None
+
+    client = salesforce.client
+    try:
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+
+        assert len(output_records) == 1
+        assert len(error_records) == 0
+
+    finally:
+        query = ("   select Id,"
+                 "          Email "
+                 "     from Contact "
+                 f"   where Email like '%{test_token}%' "
+                 "      and Email like '%mathematics%'"
+                 " order by Id")
+        result = client.query(query)
+        ids = get_ids(result['records'], 'Id')
+        clean_up(sdc_executor, pipeline, client, ids, hard_delete=True)
+        revoke_hard_delete(client, permission_set_id)
+
+
+@salesforce
+@sdc_min_version('5.2.0')
+def test_salesforce_destination_double_quotes(sdc_builder, sdc_executor, salesforce):
+
+    test_token = get_random_string(string.ascii_letters, 16)
+
+    test_data = [
+        {'FirstName': 'Pierre',
+         'LastName': 'Fermat',
+         'Email': f'{test_token}.pierre.fermat@beaumont.de.lomagne.fr',
+         'Jigsaw': '"x012345678901234567890x"",a"',
+         'LeadSource': 'Number Theory',
+         'Description': 'It is impossible for any number which is a power greater than the second to be written as the sum of two like powers. '
+                        'I have a truly marvelous demonstration of this proposition which this margin is too narrow to contain.'}
+    ]
+
+    input_data = [','.join(test_data[0].keys())] + [','.join(item.values()) for item in test_data]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = get_dev_raw_data_source(pipeline_builder, input_data)
+    dev_raw_data_source.set_attributes(max_record_length_in_chars=1024 * 1204)
+
+    field_mapping = [{'sdcField': '/FirstName', 'salesforceField': 'FirstName'},
+                     {'sdcField': '/LastName', 'salesforceField': 'LastName'},
+                     {'sdcField': '/Email', 'salesforceField': 'Email'},
+                     {'sdcField': '/Jigsaw', 'salesforceField': 'Jigsaw'},
+                     {'sdcField': '/LeadSource', 'salesforceField': 'LeadSource'},
+                     {'sdcField': '/Description', 'salesforceField': 'Description'}]
+    salesforce_destination = pipeline_builder.add_stage('Salesforce Bulk API 2.0', type='destination')
+    salesforce_destination.set_attributes(default_operation='INSERT',
+                                          field_mapping=field_mapping,
+                                          sobject_type='Contact')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> [salesforce_destination, wiretap.destination]
+
+    pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    read_ids = None
+
+    client = salesforce.client
+    try:
+        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+
+        assert len(output_records) == 1
+        assert len(error_records) == 1
+
+    finally:
+        query = ("   select Id,"
+                 "          Email "
+                 "     from Contact "
+                 f"   where Email like '%{test_token}%' "
+                 "      and Email like '%mathematics%'"
+                 " order by Id")
+        result = client.query(query)
+        ids = get_ids(result['records'], 'Id')
+        clean_up(sdc_executor, pipeline, client, ids, hard_delete=True)
         revoke_hard_delete(client, permission_set_id)
