@@ -104,7 +104,8 @@ def _update(connection, table, update_rows=rows_to_update):
 
     try:
         for row in update_rows:
-            connection.execute(table.update().where(table.c.id == row[table_column_id]).values(name=row[table_column_name]))
+            connection.execute(
+                table.update().where(table.c.id == row[table_column_id]).values(name=row[table_column_name]))
             logger.info('Updating row %s from %s table ...', row, table)
             # Prepare expected data to compare for verification against wiretap data.
             operations_data.append(data_for_operations(update_kind,
@@ -158,21 +159,45 @@ def _get_wal_sender_status(connection):
 def transaction_data_to_operation_data(transaction_data, wal2json_format, record_contents):
     wal2json_version = 2 if wal2json_format == 'OPERATION' and record_contents == 'OPERATION' else 1
     operations_data = []
-    for operation in transaction_data:
-        row_data = {}
-        if operation.columnnames is not None and operation.columnvalues is not None:
-            for column_name, column_value in zip(operation.columnnames, operation.columnvalues):
-                row_data[column_name] = column_value
-        primary_key_data = {}
-        if operation.oldkeys is not None:
-            for column_name, column_value in zip(operation.oldkeys.keynames, operation.oldkeys.keyvalues):
-                primary_key_data[column_name] = column_value
-        operation_code = operation.kind.upper() if wal2json_version == 1 else operation.kind.upper()[0]
-        operations_data.append({'operation': operation_code,
-                                'schema': 'public',
-                                'table': operation.table,
-                                'row_data': row_data,
-                                'primary_key_data': primary_key_data})
+    for operation_name, operation_records in transaction_data.items():
+        for operation in operation_records:
+            row_data = {}
+            if operation.columnnames is not None and operation.columnvalues is not None:
+                for column_name, column_value in zip(operation.columnnames, operation.columnvalues):
+                    row_data[column_name] = column_value
+            primary_key_data = {}
+            if operation.oldkeys is not None:
+                for column_name, column_value in zip(operation.oldkeys.keynames, operation.oldkeys.keyvalues):
+                    primary_key_data[column_name] = column_value
+            operation_code = operation.kind.upper() if wal2json_version == 1 else operation.kind.upper()[0]
+            operations_data.append({'operation': operation_code,
+                                    'schema': 'public',
+                                    'table': operation.table,
+                                    'row_data': row_data,
+                                    'primary_key_data': primary_key_data})
+    return operations_data
+
+
+def transaction_data_to_operation_data_with_multiple_tables(transaction_data, wal2json_format, record_contents):
+    wal2json_version = 2 if wal2json_format == 'OPERATION' and record_contents == 'OPERATION' else 1
+    operations_data = []
+    for operation_name, operation_records in transaction_data.items():
+        for table_name, records in operation_records.items():
+            for operation in records:
+                row_data = {}
+                if operation.columnnames is not None and operation.columnvalues is not None:
+                    for column_name, column_value in zip(operation.columnnames, operation.columnvalues):
+                        row_data[column_name] = column_value
+                primary_key_data = {}
+                if operation.oldkeys is not None:
+                    for column_name, column_value in zip(operation.oldkeys.keynames, operation.oldkeys.keyvalues):
+                        primary_key_data[column_name] = column_value
+                operation_code = operation.kind.upper() if wal2json_version == 1 else operation.kind.upper()[0]
+                operations_data.append({'operation': operation_code,
+                                        'schema': 'public',
+                                        'table': operation.table,
+                                        'row_data': row_data,
+                                        'primary_key_data': primary_key_data})
     return operations_data
 
 
@@ -190,7 +215,6 @@ def test_stop_start(sdc_builder,
                     poll_interval,
                     wal2json_format,
                     record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -226,14 +250,14 @@ def test_stop_start(sdc_builder,
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
         if record_contents == 'TRANSACTION':
             precondition = "${record:value('/change[0]/columnvalues[0]') == 9 " \
-                          "or record:value('/change[0]/columnvalues[0]') == 19 " \
-                          "or record:value('/change[0]/columnvalues[0]') == 29 " \
-                          "or record:value('/change[0]/columnvalues[0]') == 39}"
+                           "or record:value('/change[0]/columnvalues[0]') == 19 " \
+                           "or record:value('/change[0]/columnvalues[0]') == 29 " \
+                           "or record:value('/change[0]/columnvalues[0]') == 39}"
         else:
             precondition = "${record:value('/id') == 9 " \
-                          "or record:value('/id') == 19 " \
-                          "or record:value('/id') == 29 " \
-                          "or record:value('/id') == 39}"
+                           "or record:value('/id') == 19 " \
+                           "or record:value('/id') == 29 " \
+                           "or record:value('/id') == 39}"
         pipeline_finisher.set_attributes(preconditions=[precondition])
         postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build().configure_for_environment(database)
@@ -316,7 +340,6 @@ def test_start_not_from_latest(sdc_builder,
                                create_slot,
                                wal2json_format,
                                record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -384,12 +407,12 @@ def test_start_not_from_latest(sdc_builder,
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
         if record_contents == 'TRANSACTION':
             precondition = "${record:value('/change[0]/columnvalues[0]') == 219 " \
-                          "or record:value('/change[0]/columnvalues[0]') == 319 " \
-                          "or record:value('/change[0]/columnvalues[0]') == 419}"
+                           "or record:value('/change[0]/columnvalues[0]') == 319 " \
+                           "or record:value('/change[0]/columnvalues[0]') == 419}"
         else:
             precondition = "${record:value('/id') == 219 " \
-                          "or record:value('/id') == 319 " \
-                          "or record:value('/id') == 419}"
+                           "or record:value('/id') == 319 " \
+                           "or record:value('/id') == 419}"
         pipeline_finisher.set_attributes(preconditions=[precondition])
         postgresql_cdc_client >> [wiretap.destination, pipeline_finisher]
         pipeline = pipeline_builder.build().configure_for_environment(database)
@@ -406,11 +429,12 @@ def test_start_not_from_latest(sdc_builder,
                     connection.execute(table.insert(), row)
         sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=300)
         if record_contents == 'TRANSACTION':
-            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                    for record in wiretap.output_records] == expected_data
+            records = [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                       for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['name'])) == sorted(expected_data, key=lambda d: str(d['name']))
         else:
-            assert [{'id': record.field['id'], 'name': record.field['name']}
-                    for record in wiretap.output_records] == expected_data
+            records = [{'id': record.field['id'], 'name': record.field['name']} for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['name'])) == sorted(expected_data, key=lambda d: str(d['name']))
         wiretap.reset()
 
         with database.engine.connect().execution_options(autocommit=True) as connection:
@@ -419,11 +443,13 @@ def test_start_not_from_latest(sdc_builder,
             sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=300)
         if record_contents == 'TRANSACTION':
-            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                    for record in wiretap.output_records] == sample_data_3
+            records = [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                       for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['name'])) == sorted(sample_data_3, key=lambda d: str(d['name']))
         else:
-            assert [{'id': record.field['id'], 'name': record.field['name']}
-                    for record in wiretap.output_records] == sample_data_3
+            records = [{'id': record.field['id'], 'name': record.field['name']}
+                       for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['name'])) == sorted(sample_data_3, key=lambda d: str(d['name']))
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
@@ -444,7 +470,6 @@ def test_postgres_cdc_client_basic(sdc_builder,
                                    database,
                                    wal2json_format,
                                    record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -477,14 +502,15 @@ def test_postgres_cdc_client_basic(sdc_builder,
         sdc_executor.start_pipeline(pipeline)
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
-        expected_operations_data = _insert(connection=connection, table=table)
-        expected_operations_data += _update(connection=connection, table=table)
-        expected_operations_data += _delete(connection=connection, table=table)
+        expected_operations_data = {'insert': _insert(connection=connection, table=table),
+                                    'update': _update(connection=connection, table=table),
+                                    'delete': _delete(connection=connection, table=table)
+                                    }
 
         if record_contents == 'TRANSACTION':
-            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=600)
         else:
-            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=600)
         sdc_executor.stop_pipeline(pipeline)
         if record_contents == 'TRANSACTION':
             assert len(wiretap.output_records) == 3
@@ -493,21 +519,24 @@ def test_postgres_cdc_client_basic(sdc_builder,
         for record in wiretap.output_records:
             logger.info(f'Record :: {record}')
         if record_contents == 'TRANSACTION':
-            operation_index = 0
+            operation_count = 0
             for record in wiretap.output_records:
                 if record.get_field_data('/change'):
+                    operation = record.get_field_data(f'/change[0]/kind')
+                    expected_records = expected_operations_data[operation]
                     for i in range(3):
-                        expected = expected_operations_data[operation_index]
-                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        expected = expected_records[i]
+                        assert expected.kind == operation
                         assert expected.table == record.get_field_data(f'/change[{i}]/table')
                         if expected.kind != delete_kind:
                             assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
                             assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
                         if expected.kind != insert_kind:
                             assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                        operation_index += 1
-            assert operation_index == len(expected_operations_data)
+                            assert expected.oldkeys.keyvalues == record.get_field_data(
+                                f'/change[{i}]/oldkeys/keyvalues')
+                    operation_count += 1
+            assert operation_count == len(expected_operations_data)
         else:
             expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
                                                                           wal2json_format,
@@ -543,7 +572,6 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder,
                                         database,
                                         wal2json_format,
                                         record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -576,7 +604,7 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder,
         sdc_executor.start_pipeline(pipeline)
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
-        expected_operations_data = _insert(connection=connection, table=table)
+        expected_operations_data = {'insert': _insert(connection=connection, table=table)}
         sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
 
@@ -585,21 +613,24 @@ def test_postgres_cdc_max_poll_attempts(sdc_builder,
         else:
             assert len(wiretap.output_records) == 3
         if record_contents == 'TRANSACTION':
-            operation_index = 0
+            operation_count = 0
             for record in wiretap.output_records:
                 if record.get_field_data('/change'):
+                    operation = record.get_field_data(f'/change[0]/kind')
+                    expected_records = expected_operations_data[operation]
                     for i in range(3):
-                        expected = expected_operations_data[operation_index]
-                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        expected = expected_records[i]
+                        assert expected.kind == operation
                         assert expected.table == record.get_field_data(f'/change[{i}]/table')
                         if expected.kind != delete_kind:
                             assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
                             assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
                         if expected.kind != insert_kind:
                             assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                        operation_index += 1
-            assert operation_index == len(expected_operations_data)
+                            assert expected.oldkeys.keyvalues == record.get_field_data(
+                                f'/change[{i}]/oldkeys/keyvalues')
+                    operation_count += 1
+            assert operation_count == len(expected_operations_data)
         else:
             expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
                                                                           wal2json_format,
@@ -635,7 +666,6 @@ def test_postgres_cdc_client_filtering_table(sdc_builder,
                                              database,
                                              wal2json_format,
                                              record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -676,9 +706,10 @@ def test_postgres_cdc_client_filtering_table(sdc_builder,
         _insert(connection=connection, table=table_deny)
         _update(connection=connection, table=table_deny)
         _delete(connection=connection, table=table_deny)
-        expected_operations_data = _insert(connection=connection, table=table_allow)
-        expected_operations_data += _update(connection=connection, table=table_allow)
-        expected_operations_data += _delete(connection=connection, table=table_allow)
+        expected_operations_data = {'insert': _insert(connection=connection, table=table_allow),
+                                    'update': _update(connection=connection, table=table_allow),
+                                    'delete': _delete(connection=connection, table=table_allow)
+                                    }
 
         if record_contents == 'TRANSACTION':
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
@@ -692,21 +723,24 @@ def test_postgres_cdc_client_filtering_table(sdc_builder,
         for record in wiretap.output_records:
             logger.info(f'Record :: {record}')
         if record_contents == 'TRANSACTION':
-            operation_index = 0
+            operation_count = 0
             for record in wiretap.output_records:
                 if record.get_field_data('/change'):
+                    operation = record.get_field_data(f'/change[0]/kind')
+                    expected_records = expected_operations_data[operation]
                     for i in range(3):
-                        expected = expected_operations_data[operation_index]
-                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        expected = expected_records[i]
+                        assert expected.kind == operation
                         assert expected.table == record.get_field_data(f'/change[{i}]/table')
                         if expected.kind != delete_kind:
                             assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
                             assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
                         if expected.kind != insert_kind:
                             assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                        operation_index += 1
-            assert operation_index == len(expected_operations_data)
+                            assert expected.oldkeys.keyvalues == record.get_field_data(
+                                f'/change[{i}]/oldkeys/keyvalues')
+                    operation_count += 1
+            assert operation_count == len(expected_operations_data)
         else:
             expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
                                                                           wal2json_format,
@@ -744,7 +778,6 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder,
                                                      database,
                                                      wal2json_format,
                                                      record_contents):
-
     if database.database_server_version < databases.EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID:
         pytest.skip('Test only runs against PostgresSQL version >= '
                     f"{'.'.join(str(item) for item in databases.EARLIEST_POSTGRESQL_VERSION_WITH_ACTIVE_PID)}")
@@ -781,9 +814,10 @@ def test_postgres_cdc_client_remove_replication_slot(sdc_builder,
         sdc_executor.start_pipeline(pipeline)
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
-        expected_operations_data = _insert(connection=connection, table=table)
-        expected_operations_data += _update(connection=connection, table=table)
-        expected_operations_data += _delete(connection=connection, table=table)
+        expected_operations_data = {'insert': _insert(connection=connection, table=table),
+                                    'update': _update(connection=connection, table=table),
+                                    'delete': _delete(connection=connection, table=table)
+                                    }
         sdc_executor.stop_pipeline(pipeline=pipeline).wait_for_stopped(timeout_sec=60)
 
         listed_slots = connection.execute(check_replication_slot_query).fetchall()
@@ -815,7 +849,6 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
                                                             batch_size,
                                                             wal2json_format,
                                                             record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -863,6 +896,7 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
         table = _create_table_in_database(table_name, database)
         connections = [database.engine.connect() for _ in range(threads_count)]
         expected = []
+
         def inserter_thread(connection, table, id, amount):
             for i in range(amount):
                 insert_rows = [{table_column_id: id * amount + i,
@@ -879,6 +913,7 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
                 expected.append(_delete(connection=connection,
                                         table=table,
                                         delete_rows=insert_rows))
+
         thread_pool = [threading.Thread(target=inserter_thread,
                                         args=(connections[i],
                                               table,
@@ -899,7 +934,8 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
         if record_contents == 'TRANSACTION':
             for record in wiretap.output_records:
                 if record.get_field_data('/change[0]/kind') == 'delete':
-                    output_values.append({'type': 'delete', 'value': record.get_field_data('/change[0]/oldkeys/keyvalues')})
+                    output_values.append(
+                        {'type': 'delete', 'value': record.get_field_data('/change[0]/oldkeys/keyvalues')})
                 if record.get_field_data('/change[0]/kind') == 'insert':
                     output_values.append({'type': 'insert', 'value': record.get_field_data('/change[0]/columnvalues')})
                 if record.get_field_data('/change[0]/kind') == 'update':
@@ -907,11 +943,14 @@ def test_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
             output_sorted_values = sorted(output_values, key=lambda key: f'{key["value"][0]}|{key["type"]}')
         else:
             for record in wiretap.output_records:
-                if record.header.values['postgres.cdc.operation'] == 'DELETE' or   record.header.values['postgres.cdc.operation'] == 'D':
+                if record.header.values['postgres.cdc.operation'] == 'DELETE' or record.header.values[
+                    'postgres.cdc.operation'] == 'D':
                     output_values.append({'type': 'delete', 'value': record.field['id']})
-                if record.header.values['postgres.cdc.operation'] == 'INSERT' or record.header.values['postgres.cdc.operation'] == 'I':
+                if record.header.values['postgres.cdc.operation'] == 'INSERT' or record.header.values[
+                    'postgres.cdc.operation'] == 'I':
                     output_values.append({'type': 'insert', 'value': record.field['id']})
-                elif record.header.values['postgres.cdc.operation'] == 'UPDATE' or record.header.values['postgres.cdc.operation'] == 'U':
+                elif record.header.values['postgres.cdc.operation'] == 'UPDATE' or record.header.values[
+                    'postgres.cdc.operation'] == 'U':
                     output_values.append({'type': 'update', 'value': record.field['id']})
             output_sorted_values = sorted(output_values, key=lambda key: f'{key["value"]}|{key["type"]}')
 
@@ -962,7 +1001,6 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder,
                                                        database,
                                                        wal2json_format,
                                                        record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -998,14 +1036,20 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder,
         table = [_create_table_in_database(name, database) for name in table_name]
         sdc_executor.start_pipeline(pipeline)
         with database.engine.connect().execution_options(autocommit=False) as connection:
-            expected_operations_data = []
+            expected_insert_data = {}
+            expected_update_data = {}
+            expected_delete_data = {}
             for i in range(3):
-                expected_operations_data += _insert(connection=connection, table=table[i], create_txn=True)
+                expected_insert_data[table_name[i]] = _insert(connection=connection, table=table[i], create_txn=True)
                 time.sleep(1)
-                expected_operations_data += _update(connection=connection, table=table[i])
+                expected_update_data[table_name[i]] = _update(connection=connection, table=table[i])
                 time.sleep(1)
-                expected_operations_data += _delete(connection=connection, table=table[i])
+                expected_delete_data[table_name[i]] = _delete(connection=connection, table=table[i])
                 time.sleep(1)
+            expected_operations_data = {'insert': expected_insert_data,
+                                        'update': expected_update_data,
+                                        'delete': expected_delete_data}
+
             _insert(connection=connection, table=table[3], create_txn=True)
             _update(connection=connection, table=table[3])
             _delete(connection=connection, table=table[3])
@@ -1020,35 +1064,45 @@ def test_postgres_cdc_client_filtering_multiple_tables(sdc_builder,
             assert len(wiretap.output_records) == 27
 
         if record_contents == 'TRANSACTION':
-            operation_index = 0
             for record in wiretap.output_records:
                 if record.get_field_data('/change'):
+                    operation = record.get_field_data(f'/change[0]/kind')
+                    t_name = record.get_field_data(f'/change[0]/table').value
+                    expected_records = expected_operations_data[operation][t_name]
                     for i in range(3):
-                        expected = expected_operations_data[operation_index]
-                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        expected = expected_records[i]
+                        assert expected.kind == operation
                         assert expected.table == record.get_field_data(f'/change[{i}]/table')
                         if expected.kind != delete_kind:
                             assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
                             assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
                         if expected.kind != insert_kind:
                             assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                        operation_index += 1
-            assert operation_index == len(expected_operations_data)
+                            assert expected.oldkeys.keyvalues == record.get_field_data(
+                                f'/change[{i}]/oldkeys/keyvalues')
         else:
-            expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
-                                                                          wal2json_format,
-                                                                          record_contents)
-            for record, expected in zip(wiretap.output_records, expected_operations_data):
-                assert expected['operation'] == record.header.values['postgres.cdc.operation']
-                assert expected['schema'] == record.header.values['postgres.cdc.schema']
-                assert expected['table'] == record.header.values['postgres.cdc.table']
+            expected_operations_data = transaction_data_to_operation_data_with_multiple_tables(expected_operations_data,
+                                                                                               wal2json_format,
+                                                                                               record_contents)
+
+            records = [{"table": r.header.values["postgres.cdc.table"], "row_data": r.field,
+                        "operation": r.header.values["postgres.cdc.operation"],
+                        "schema": r.header.values["postgres.cdc.schema"]} for r in wiretap.output_records]
+
+            records = sorted(records, key=lambda x: f"{x['table']}_{x['operation']}_{x['row_data']['id']}")
+            expected_operations_data = sorted(expected_operations_data,
+                                              key=lambda x: f"{x['table']}_{x['operation']}_{x['row_data' if x['operation'] not in [delete_kind.upper(), 'D'] else 'primary_key_data']['id']}")
+
+            for record, expected in zip(records, expected_operations_data):
+                assert expected['operation'] == record['operation']
+                assert expected['schema'] == record['schema']
+                assert expected['table'] == record['table']
                 if expected['operation'] != delete_kind.upper():
                     for expected_column_name, expected_column_value in expected['row_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
                 if expected['operation'] != insert_kind.upper():
                     for expected_column_name, expected_column_value in expected['primary_key_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -1070,7 +1124,6 @@ def test_postgres_cdc_wal_sender_status_metrics(sdc_builder,
                                                 database,
                                                 wal2json_format,
                                                 record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -1104,12 +1157,11 @@ def test_postgres_cdc_wal_sender_status_metrics(sdc_builder,
     try:
         start_command = sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
-        expected_operations_data = []
-        expected_operations_data += _insert(connection=connection, table=table)
+        expected_operations_data = {'insert': _insert(connection=connection, table=table)}
         time.sleep(1)
-        expected_operations_data += _update(connection=connection, table=table)
+        expected_operations_data['update'] = _update(connection=connection, table=table)
         time.sleep(1)
-        expected_operations_data += _delete(connection=connection, table=table)
+        expected_operations_data['delete'] = _delete(connection=connection, table=table)
         if record_contents == 'TRANSACTION':
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
         else:
@@ -1143,7 +1195,6 @@ def test_postgres_cdc_queue_buffering_metrics(sdc_builder,
                                               database,
                                               wal2json_format,
                                               record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -1207,7 +1258,7 @@ def test_postgres_cdc_queue_buffering_metrics(sdc_builder,
             raise Exception('Timed out after `{}` seconds waiting for Output record metrics `{}` to reach `{}` '
                             .format(timeout, output_records_from_origin, len(expected_operations_data)))
 
-        wait_for_condition(condition=condition,  timeout=120, failure=failure)
+        wait_for_condition(condition=condition, timeout=120, failure=failure)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
         assert len(wiretap.output_records) == 9
@@ -1235,7 +1286,6 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
                                   ssl_mode,
                                   wal2json_format,
                                   record_contents):
-
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against PostgresSQL with CDC enabled.')
 
@@ -1245,7 +1295,6 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
     if Version(sdc_builder.version) < Version('5.1.0') and \
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
-
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -1274,9 +1323,10 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
         sdc_executor.start_pipeline(pipeline)
         table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
-        expected_operations_data = _insert(connection=connection, table=table)
-        expected_operations_data += _update(connection=connection, table=table)
-        expected_operations_data += _delete(connection=connection, table=table)
+        expected_operations_data = {'insert': _insert(connection=connection, table=table),
+                                    'update': _update(connection=connection, table=table),
+                                    'delete': _delete(connection=connection, table=table)
+                                    }
 
         if record_contents == 'TRANSACTION':
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
@@ -1290,21 +1340,24 @@ def test_postgres_cdc_ssl_enabled(sdc_builder,
         for record in wiretap.output_records:
             logger.info(f'Record :: {record}')
         if record_contents == 'TRANSACTION':
-            operation_index = 0
+            operation_count = 0
             for record in wiretap.output_records:
                 if record.get_field_data('/change'):
+                    operation = record.get_field_data(f'/change[0]/kind')
+                    expected_records = expected_operations_data[operation]
                     for i in range(3):
-                        expected = expected_operations_data[operation_index]
-                        assert expected.kind == record.get_field_data(f'/change[{i}]/kind')
+                        expected = expected_records[i]
+                        assert expected.kind == operation
                         assert expected.table == record.get_field_data(f'/change[{i}]/table')
                         if expected.kind != delete_kind:
                             assert expected.columnnames == record.get_field_data(f'/change[{i}]/columnnames')
                             assert expected.columnvalues == record.get_field_data(f'/change[{i}]/columnvalues')
                         if expected.kind != insert_kind:
                             assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
-                            assert expected.oldkeys.keyvalues == record.get_field_data(f'/change[{i}]/oldkeys/keyvalues')
-                        operation_index += 1
-            assert operation_index == len(expected_operations_data)
+                            assert expected.oldkeys.keyvalues == record.get_field_data(
+                                f'/change[{i}]/oldkeys/keyvalues')
+                    operation_count += 1
+            assert operation_count == len(expected_operations_data)
         else:
             expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
                                                                           wal2json_format,
@@ -1475,10 +1528,12 @@ def test_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
                 "my_time_with_time_zone":      {"currency": false, "datatype": "TIME",      "precision": 18,         "scale": 3,  "signed": false, "size": 18,         "type": 92}, 
                 "my_timestamp":                {"currency": false, "datatype": "TIMESTAMP", "precision": 26,         "scale": 3,  "signed": false, "size": 26,         "type": 93}, 
                 "my_timestamp_with_time_zone": {"currency": false, "datatype": "TIMESTAMP", "precision": 32,         "scale": 3,  "signed": false, "size": 32,         "type": 93}}'''
-        primary_key_specification_expected_json = json.dumps(json.loads(primary_key_specification_expected), sort_keys=True)
+        primary_key_specification_expected_json = json.dumps(json.loads(primary_key_specification_expected),
+                                                             sort_keys=True)
 
         for record in wiretap.output_records:
-            primary_key_specification_json = json.dumps(json.loads(record.header.values["jdbc.primaryKeySpecification"]), sort_keys=True)
+            primary_key_specification_json = json.dumps(
+                json.loads(record.header.values["jdbc.primaryKeySpecification"]), sort_keys=True)
             assert primary_key_specification_json == primary_key_specification_expected_json
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -1489,6 +1544,7 @@ def test_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
         except:
             pass
         database_connection.close()
+
 
 @database('postgresql')
 @sdc_min_version('5.1.0')
