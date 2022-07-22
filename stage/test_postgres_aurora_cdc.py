@@ -429,12 +429,11 @@ def test_start_not_from_latest(sdc_builder,
                     connection.execute(table.insert(), row)
         sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=300)
         if record_contents == 'TRANSACTION':
-            records = [{'id': record.field['id'], 'name': record.field['name']}
+            records = [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
                        for record in wiretap.output_records]
             assert sorted(records, key=lambda d: str(d['name'])) == sorted(expected_data, key=lambda d: str(d['name']))
         else:
-            records = [{'id': record.field['id'], 'name': record.field['name']}
-                       for record in wiretap.output_records]
+            records = [{'id': record.field['id'], 'name': record.field['name']} for record in wiretap.output_records]
             assert sorted(records, key=lambda d: str(d['name'])) == sorted(expected_data, key=lambda d: str(d['name']))
         wiretap.reset()
 
@@ -520,7 +519,6 @@ def test_aurora_postgres_cdc_client_basic(sdc_builder,
         for record in wiretap.output_records:
             logger.info(f'Record :: {record}')
         if record_contents == 'TRANSACTION':
-            operation_count = 0
             for record in wiretap.output_records:
                 if record.get_field_data('/change'):
                     operation = record.get_field_data(f'/change[0]/kind')
@@ -536,22 +534,31 @@ def test_aurora_postgres_cdc_client_basic(sdc_builder,
                             assert expected.oldkeys.keynames == record.get_field_data(f'/change[{i}]/oldkeys/keynames')
                             assert expected.oldkeys.keyvalues == record.get_field_data(
                                 f'/change[{i}]/oldkeys/keyvalues')
-                        operation_count += 1
-            assert operation_count == len(expected_operations_data)
         else:
             expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
                                                                           wal2json_format,
                                                                           record_contents)
-            for record, expected in zip(wiretap.output_records, expected_operations_data):
-                assert expected['operation'] == record.header.values['postgres.cdc.operation']
-                assert expected['schema'] == record.header.values['postgres.cdc.schema']
-                assert expected['table'] == record.header.values['postgres.cdc.table']
+
+            records = [{"table": r.header.values["postgres.cdc.table"], "row_data": r.field,
+                        "operation": r.header.values["postgres.cdc.operation"],
+                        "schema": r.header.values["postgres.cdc.schema"]} for r in wiretap.output_records]
+
+            records = sorted(records, key=lambda x: f"{x['table']}_{x['operation']}_{x['row_data']['id']}")
+            expected_operations_data = sorted(expected_operations_data,
+                                              key=lambda
+                                                  x: f"{x['table']}_{x['operation']}_{x['row_data' if x['operation'] not in [delete_kind.upper(), 'D'] else 'primary_key_data']['id']}")
+
+
+            for record, expected in zip(records, expected_operations_data):
+                assert expected['operation'] == record['operation']
+                assert expected['schema'] == record['schema']
+                assert expected['table'] == record['table']
                 if expected['operation'] != delete_kind.upper():
                     for expected_column_name, expected_column_value in expected['row_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
                 if expected['operation'] != insert_kind.upper():
                     for expected_column_name, expected_column_value in expected['primary_key_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -636,16 +643,27 @@ def test_aurora_postgres_cdc_max_poll_attempts(sdc_builder,
             expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
                                                                           wal2json_format,
                                                                           record_contents)
-            for record, expected in zip(wiretap.output_records, expected_operations_data):
-                assert expected['operation'] == record.header.values['postgres.cdc.operation']
-                assert expected['schema'] == record.header.values['postgres.cdc.schema']
-                assert expected['table'] == record.header.values['postgres.cdc.table']
+
+            records = [{"table": r.header.values["postgres.cdc.table"], "row_data": r.field,
+                        "operation": r.header.values["postgres.cdc.operation"],
+                        "schema": r.header.values["postgres.cdc.schema"]} for r in wiretap.output_records]
+
+            records = sorted(records, key=lambda x: f"{x['table']}_{x['operation']}_{x['row_data']['id']}")
+            expected_operations_data = sorted(expected_operations_data,
+                                              key=lambda
+                                                  x: f"{x['table']}_{x['operation']}_{x['row_data' if x['operation'] not in [delete_kind.upper(), 'D'] else 'primary_key_data']['id']}")
+
+
+            for record, expected in zip(records, expected_operations_data):
+                assert expected['operation'] == record['operation']
+                assert expected['schema'] == record['schema']
+                assert expected['table'] == record['table']
                 if expected['operation'] != delete_kind.upper():
                     for expected_column_name, expected_column_value in expected['row_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
                 if expected['operation'] != insert_kind.upper():
                     for expected_column_name, expected_column_value in expected['primary_key_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -746,16 +764,26 @@ def test_aurora_postgres_cdc_client_filtering_table(sdc_builder,
             expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
                                                                           wal2json_format,
                                                                           record_contents)
-            for record, expected in zip(wiretap.output_records, expected_operations_data):
-                assert expected['operation'] == record.header.values['postgres.cdc.operation']
-                assert expected['schema'] == record.header.values['postgres.cdc.schema']
-                assert expected['table'] == record.header.values['postgres.cdc.table']
+
+            records = [{"table": r.header.values["postgres.cdc.table"], "row_data": r.field,
+                        "operation": r.header.values["postgres.cdc.operation"],
+                        "schema": r.header.values["postgres.cdc.schema"]} for r in wiretap.output_records]
+
+            records = sorted(records, key=lambda x: f"{x['table']}_{x['operation']}_{x['row_data']['id']}")
+            expected_operations_data = sorted(expected_operations_data,
+                                              key=lambda
+                                                  x: f"{x['table']}_{x['operation']}_{x['row_data' if x['operation'] not in [delete_kind.upper(), 'D'] else 'primary_key_data']['id']}")
+
+            for record, expected in zip(records, expected_operations_data):
+                assert expected['operation'] == record['operation']
+                assert expected['schema'] == record['schema']
+                assert expected['table'] == record['table']
                 if expected['operation'] != delete_kind.upper():
                     for expected_column_name, expected_column_value in expected['row_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
                 if expected['operation'] != insert_kind.upper():
                     for expected_column_name, expected_column_value in expected['primary_key_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
@@ -1365,16 +1393,26 @@ def test_aurora_postgres_cdc_ssl_enabled(sdc_builder,
             expected_operations_data = transaction_data_to_operation_data(expected_operations_data,
                                                                           wal2json_format,
                                                                           record_contents)
-            for record, expected in zip(wiretap.output_records, expected_operations_data):
-                assert expected['operation'] == record.header.values['postgres.cdc.operation']
-                assert expected['schema'] == record.header.values['postgres.cdc.schema']
-                assert expected['table'] == record.header.values['postgres.cdc.table']
+
+            records = [{"table": r.header.values["postgres.cdc.table"], "row_data": r.field,
+                        "operation": r.header.values["postgres.cdc.operation"],
+                        "schema": r.header.values["postgres.cdc.schema"]} for r in wiretap.output_records]
+
+            records = sorted(records, key=lambda x: f"{x['table']}_{x['operation']}_{x['row_data']['id']}")
+            expected_operations_data = sorted(expected_operations_data,
+                                              key=lambda
+                                                  x: f"{x['table']}_{x['operation']}_{x['row_data' if x['operation'] not in [delete_kind.upper(), 'D'] else 'primary_key_data']['id']}")
+
+            for record, expected in zip(records, expected_operations_data):
+                assert expected['operation'] == record['operation']
+                assert expected['schema'] == record['schema']
+                assert expected['table'] == record['table']
                 if expected['operation'] != delete_kind.upper():
                     for expected_column_name, expected_column_value in expected['row_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
                 if expected['operation'] != insert_kind.upper():
                     for expected_column_name, expected_column_value in expected['primary_key_data'].items():
-                        assert record.field[expected_column_name] == expected_column_value
+                        assert record['row_data'][expected_column_name] == expected_column_value
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
