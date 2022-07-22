@@ -271,31 +271,34 @@ def test_stop_start(sdc_builder,
                 connection.execute(table.insert(), row)
         sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=300)
         if record_contents == 'TRANSACTION':
-            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                    for record in wiretap.output_records] == sample_data[:10]
+            records = [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                       for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[:10], key=lambda d: str(d['id']))
         else:
-            assert [{'id': record.field['id'], 'name': record.field['name']}
-                    for record in wiretap.output_records] == sample_data[:10]
+            records = [{'id': record.field['id'], 'name': record.field['name']} for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[:10], key=lambda d: str(d['id']))
         wiretap.reset()
 
         logger.info('Starting pipeline for the second time ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=300)
         if record_contents == 'TRANSACTION':
-            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                    for record in wiretap.output_records] == sample_data[10:20]
+            records = [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                       for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[10:20], key=lambda d: str(d['id']))
         else:
-            assert [{'id': record.field['id'], 'name': record.field['name']}
-                    for record in wiretap.output_records] == sample_data[10:20]
+            records = [{'id': record.field['id'], 'name': record.field['name']} for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[10:20], key=lambda d: str(d['id']))
         wiretap.reset()
 
         logger.info('Starting pipeline for the third time ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=300)
         if record_contents == 'TRANSACTION':
-            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                    for record in wiretap.output_records] == sample_data[20:30]
+            records = [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                       for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[20:30], key=lambda d: str(d['id']))
         else:
-            assert [{'id': record.field['id'], 'name': record.field['name']}
-                    for record in wiretap.output_records] == sample_data[20:30]
+            records = [{'id': record.field['id'], 'name': record.field['name']} for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[20:30], key=lambda d: str(d['id']))
         wiretap.reset()
 
         logger.info('Starting pipeline for the fourth time ...')
@@ -311,11 +314,12 @@ def test_stop_start(sdc_builder,
         logger.info('Starting pipeline for the fifth time ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=300)
         if record_contents == 'TRANSACTION':
-            assert [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
-                    for record in wiretap.output_records] == sample_data[30:40]
+            records = [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
+                       for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[30:40], key=lambda d: str(d['id']))
         else:
-            assert [{'id': record.field['id'], 'name': record.field['name']}
-                    for record in wiretap.output_records] == sample_data[30:40]
+            records = [{'id': record.field['id'], 'name': record.field['name']} for record in wiretap.output_records]
+            assert sorted(records, key=lambda d: str(d['id'])) == sorted(sample_data[30:40], key=lambda d: str(d['id']))
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
