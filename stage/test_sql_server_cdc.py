@@ -15,12 +15,13 @@
 import binascii
 import logging
 import string
-from time import sleep, time
-
 import pytest
 import sqlalchemy
+
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from time import sleep, time
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,26 @@ def assert_table_replicated(database, sample_data, schema_name, table_name):
     assert sorted(input_values) == sorted(target_result_list)
 
 
+def assert_recovered_data(initial_data, output_records, expected_number_of_records, combine_update_records):
+    assert len(output_records) == expected_number_of_records
+
+    recovered_information = []
+    if combine_update_records:
+        for record in output_records:
+            assert 'Data' in record.field
+            assert record.field['Data'] is not None
+            recovered_information.append({
+                'id': record.field['Data']['id'],
+                'name': record.field['Data']['name'],
+                'dt': record.field['Data']['dt']
+            })
+    else:
+        for record in output_records:
+            recovered_information.append(record.field)
+
+    assert initial_data.sort(key=lambda x: x['id']) == recovered_information.sort(key=lambda x: x['id'].value)
+
+
 def setup_sample_data(no_of_records):
     """Generate the given number of sample data with 'id', 'name', and 'dt'"""
     rows_in_database = [{'id': counter, 'name': get_random_string(string.ascii_lowercase, 20), 'dt': '2017-05-03'}
@@ -116,20 +137,30 @@ def wait_for_data_in_ct_table(ct_table_name, no_of_records, database=None, timeo
 
 @database('sqlserver')
 @pytest.mark.parametrize('no_of_threads', [1, 5])
+@pytest.mark.parametrize('combine_update_records', [True, False])
 @sdc_min_version('3.0.1.0')
-def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_executor, database, no_of_threads):
+def test_sql_server_cdc_with_specific_capture_instance_name(
+        sdc_builder,
+        sdc_executor,
+        database,
+        no_of_threads,
+        combine_update_records
+):
     """Test for SQL Server CDC origin stage when capture instance is configured.
     We do so by capturing Insert Operation on CDC enabled table
     using SQL Server CDC Origin and having a pipeline which reads that data using SQL Server CDC origin stage.
-    We setup no_of_tables of CDC tables in SQL Server and configured one specific capture instance name
+    We set up no_of_tables of CDC tables in SQL Server and configured one specific capture instance name
     so that the records from one table will be stored in SQL Server table using JDBC Producer.
     Data is then asserted for what is captured at SQL Server Job and what we read in the pipeline.
+
     The pipeline looks like:
-        sql_server_cdc_origin >= pipeline_finisher_executor
-        sql_server_cdc_origin >> jdbc_producer
+        sql_server_cdc_origin >> wiretap
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     try:
         connection = database.engine.connect()
@@ -145,7 +176,7 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
             table_name = get_random_string(string.ascii_lowercase, 20)
             # split the rows_in_database into no_of_records for each table
             # e.g. for no_of_records=5, the first table inserts rows_in_database[0:5]
-            # and the secord table inserts rows_in_database[5:10]
+            # and the second table inserts rows_in_database[5:10]
             table = setup_table(connection, schema_name, table_name,
                                 rows_in_database[(index * no_of_records): ((index + 1) * no_of_records)])
             tables.append(table)
@@ -159,18 +190,12 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
                                       number_of_threads=no_of_threads,
                                       table_configs=table_configs)
 
-        dest_table_name = get_random_string(string.ascii_uppercase, 9)
+        if Version(sdc_builder.version) >= Version('5.2.0'):
+            sql_server_cdc.combine_update_records = combine_update_records
 
-        dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
-        tables.append(dest_table)
-        jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
 
-        jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
-                                     table_name=dest_table_name,
-                                     default_operation='INSERT',
-                                     field_to_column_mapping=[])
-
-        sql_server_cdc >> jdbc_producer
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
@@ -179,10 +204,11 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
             ct_table_name = f'{table_config.get("capture_instance")}_CT'
             wait_for_data_in_ct_table(ct_table_name, no_of_records, database, timeout_sec=120)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(no_of_records * no_of_threads)
+        expected_no_of_records = no_of_records * no_of_threads
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(expected_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert_table_replicated(database, rows_in_database, DEFAULT_SCHEMA_NAME, dest_table_name)
+        assert_recovered_data(rows_in_database, wiretap.output_records, expected_no_of_records, combine_update_records)
 
     finally:
         for table in tables:
@@ -193,15 +219,25 @@ def test_sql_server_cdc_with_specific_capture_instance_name(sdc_builder, sdc_exe
 @database('sqlserver')
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
-def test_sql_server_cdc_with_empty_initial_offset(sdc_builder, sdc_executor, database, use_table):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_sql_server_cdc_with_empty_initial_offset(
+        sdc_builder,
+        sdc_executor,
+        database,
+        use_table,
+        combine_update_records
+):
     """Test for SQL Server CDC origin stage with the empty initial offset (fetch all changes)
     on both use table config is true and false
 
     The pipeline looks like:
-        sql_server_cdc_origin >> jdbc_producer
+        sql_server_cdc_origin >> wiretap
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     try:
         connection = database.engine.connect()
@@ -219,55 +255,50 @@ def test_sql_server_cdc_with_empty_initial_offset(sdc_builder, sdc_executor, dat
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(table_configs=[{'capture_instance': capture_instance_name}],
-                                      use_direct_table_query=use_table
-                                      )
+                                      use_direct_table_query=use_table)
 
-        # create the destination table
-        dest_table_name = get_random_string(string.ascii_uppercase, 9)
-        dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
+        if Version(sdc_builder.version) >= Version('5.2.0'):
+            sql_server_cdc.combine_update_records = combine_update_records
 
-        jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
 
-        jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
-                                     table_name=dest_table_name,
-                                     default_operation='INSERT',
-                                     field_to_column_mapping=[])
-
-        sql_server_cdc >> jdbc_producer
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-
-        # wait for data captured by cdc jobs in sql server before starting the pipeline
-        ct_table_name = f'{capture_instance_name}_CT'
-        wait_for_data_in_ct_table(ct_table_name, no_of_records, database)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(no_of_records)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert_table_replicated(database, rows_in_database, DEFAULT_SCHEMA_NAME, dest_table_name)
+        assert_recovered_data(rows_in_database, wiretap.output_records, no_of_records, combine_update_records)
 
     finally:
         if table is not None:
             logger.info('Dropping table %s in %s database...', table, database.type)
             table.drop(database.engine)
 
-        if dest_table is not None:
-            logger.info('Dropping table %s in %s database...', dest_table, database.type)
-            dest_table.drop(database.engine)
-
 
 @database('sqlserver')
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
-def test_sql_server_cdc_with_nonempty_initial_offset(sdc_builder, sdc_executor, database, use_table):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_sql_server_cdc_with_nonempty_initial_offset(
+        sdc_builder,
+        sdc_executor,
+        database,
+        use_table,
+        combine_update_records
+):
     """Test for SQL Server CDC origin stage with non-empty initial offset (fetch the data from the given LSN)
     on both use table config is true and false
 
     The pipeline looks like:
-        sql_server_cdc_origin >> jdbc_producer
+        sql_server_cdc_origin >> wiretap
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     try:
         connection = database.engine.connect()
@@ -301,35 +332,29 @@ def test_sql_server_cdc_with_nonempty_initial_offset(sdc_builder, sdc_executor, 
                                       use_direct_table_query=use_table
                                       )
 
-        # create the destination table
-        dest_table_name = get_random_string(string.ascii_uppercase, 9)
-        dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
+        if Version(sdc_builder.version) >= Version('5.2.0'):
+            sql_server_cdc.combine_update_records = combine_update_records
 
-        jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
 
-        jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
-                                     table_name=dest_table_name,
-                                     default_operation='INSERT',
-                                     field_to_column_mapping=[])
-
-        sql_server_cdc >> jdbc_producer
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(second_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert_table_replicated(database, rows_in_database[first_no_of_records:total_no_of_records],
-                                DEFAULT_SCHEMA_NAME, dest_table_name)
+        assert_recovered_data(
+            rows_in_database[first_no_of_records:total_no_of_records],
+            wiretap.output_records,
+            second_no_of_records,
+            combine_update_records
+        )
 
     finally:
         if table is not None:
             logger.info('Dropping table %s in %s database...', table, database.type)
             table.drop(database.engine)
-
-        if dest_table is not None:
-            logger.info('Dropping table %s in %s database...', dest_table, database.type)
-            dest_table.drop(database.engine)
 
         if connection is not None:
             connection.close()
@@ -498,8 +523,15 @@ def test_sql_server_cdc_insert_update_delete(sdc_builder, sdc_executor, database
 @database('sqlserver')
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
+@pytest.mark.parametrize('combine_update_records', [True, False])
 @pytest.mark.timeout(180)
-def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use_table):
+def test_sql_server_cdc_multiple_tables(
+        sdc_builder,
+        sdc_executor,
+        database,
+        use_table,
+        combine_update_records
+):
     """Test for SQL Server CDC origin stage with multiple transactions on multiple CDC tables (SDC-10926)
 
     The pipeline looks like:
@@ -507,6 +539,9 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     try:
         connection = database.engine.connect()
@@ -516,12 +551,12 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
 
         rows_in_database = setup_sample_data(3)
 
+        updated_name = 'jisun'
         for index in range(0, no_of_tables):
             # create the table and insert 1 row and update the row
             table_name = get_random_string(string.ascii_lowercase, 20)
             table = setup_table(connection, DEFAULT_SCHEMA_NAME, table_name, rows_in_database[index:index + 1])
 
-            updated_name = 'jisun'
             connection.execute(table.update()
                                .values(name=updated_name))
 
@@ -529,7 +564,8 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
             tables.append(table)
 
         # update the row from the first table
-        connection.execute(tables[0].update().values(name='sdc'))
+        new_updated_name = 'sdc'
+        connection.execute(tables[0].update().values(name=new_updated_name))
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
@@ -538,41 +574,60 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
                                       use_direct_table_query=use_table
                                       )
 
-        # create the destination table
-        dest_table_name = get_random_string(string.ascii_uppercase, 9)
-        dest_table = create_table(database, DEFAULT_SCHEMA_NAME, dest_table_name)
+        if Version(sdc_builder.version) >= Version('5.2.0'):
+            sql_server_cdc.combine_update_records = combine_update_records
 
-        jdbc_producer = pipeline_builder.add_stage('JDBC Producer')
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
 
-        jdbc_producer.set_attributes(schema_name=DEFAULT_SCHEMA_NAME,
-                                     table_name=dest_table_name,
-                                     default_operation='INSERT',
-                                     field_to_column_mapping=[])
-
-        sql_server_cdc >> jdbc_producer
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        total_no_of_records = 11
+        total_no_of_records = 7 if combine_update_records else 11
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
-        expected_rows_in_database = [{'id': 0, 'name': 'sdc', 'dt': '2017-05-03'},
-                                     {'id': 1, 'name': 'jisun', 'dt': '2017-05-03'},
-                                     {'id': 2, 'name': 'jisun', 'dt': '2017-05-03'}]
-        assert_table_replicated(database, expected_rows_in_database, DEFAULT_SCHEMA_NAME, dest_table_name)
 
-        sqlserver_cdc_pipeline_history = sdc_executor.get_pipeline_history(pipeline)
-        msgs_sent_count = sqlserver_cdc_pipeline_history.latest.metrics.counter(
-            'pipeline.batchOutputRecords.counter').count
-        assert msgs_sent_count == total_no_of_records
+        records = wiretap.output_records
+        assert len(records) == total_no_of_records
+
+        records.sort(key=lambda record: _get_data_field_from_record(record, 'id', combine_update_records).value)
+
+        date = '2017-05-03'
+        if combine_update_records:
+            index = 0
+            for row_id in range(0, 3):
+                data = rows_in_database[row_id]
+                _check_record(records[index], '1', row_id, data['name'], data['dt'], True, 'Data')
+                _check_record(records[index + 1], '3', row_id, data['name'], data['dt'], True, 'OldData')
+                _check_record(records[index + 1], '3', row_id, updated_name, date, True, 'Data')
+                index += 2
+
+                if row_id == 0:
+                    _check_record(records[index], '3', row_id, updated_name, date, True, 'OldData')
+                    _check_record(records[index], '3', row_id, new_updated_name, date, True, 'Data')
+                    index += 1
+        else:
+            index = 0
+            for row_id in range(0, 3):
+                data = rows_in_database[row_id]
+                _check_record(records[index], '1', row_id, data['name'], data['dt'], False)
+                _check_record(records[index + 1], '5', row_id, data['name'], data['dt'], False)
+                _check_record(records[index + 2], '3', row_id, updated_name, date, False)
+                index += 3
+
+                if row_id == 0:
+                    _check_record(records[index], '5', row_id, updated_name, date, False)
+                    _check_record(records[index + 1], '3', row_id, new_updated_name, date, False)
+                    index += 2
+
+        sqlserver_cdc_pipeline_history_metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
+        records_sent = sqlserver_cdc_pipeline_history_metrics.counter('pipeline.batchInputRecords.counter').count
+        assert records_sent == total_no_of_records
     finally:
         for index in range(0, no_of_tables):
             logger.info('Dropping table %s in %s database...', tables[index], database.type)
             tables[index].drop(database.engine)
-
-        logger.info('Dropping table %s in %s database...', dest_table, database.type)
-        dest_table.drop(database.engine)
 
         if connection is not None:
             connection.close()
@@ -580,7 +635,13 @@ def test_sql_server_cdc_multiple_tables(sdc_builder, sdc_executor, database, use
 
 @database('sqlserver')
 @pytest.mark.timeout(180)
-def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_sql_server_cdc_source_table_in_record_header(
+        sdc_builder,
+        sdc_executor,
+        database,
+        combine_update_records
+):
     """Test for SQL Server CDC origin stage puts the source table in a record header attribute,
         * jdbc.cdc.source_schema_name = <source schema>
         * jdbc.cdc.source_name = <source table>
@@ -588,6 +649,10 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
     The pipeline looks like:
         sql_server_cdc_origin >> wiretap
     """
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
+
     table = None
     connection = None
     if not database.is_cdc_enabled:
@@ -615,6 +680,9 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
                                       table_configs=[{'capture_instance': capture_instance_name}]
                                       )
 
+        if Version(sdc_builder.version) >= Version('5.2.0'):
+            sql_server_cdc.combine_update_records = combine_update_records
+
         wiretap = pipeline_builder.add_wiretap()
 
         sql_server_cdc >> wiretap.destination
@@ -632,9 +700,10 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
 
         # assert all the data captured have the same raw_data
         for record in wiretap.output_records:
-            assert record.field['id'] == rows_in_database[0].get('id')
-            assert record.field['name'] == rows_in_database[0].get('name')
-            assert record.field['dt'] == rows_in_database[0].get('dt')
+            field_data = record.field['Data'] if combine_update_records else record.field
+            assert field_data['id'] == rows_in_database[0].get('id')
+            assert field_data['name'] == rows_in_database[0].get('name')
+            assert field_data['dt'] == rows_in_database[0].get('dt')
             assert record.header['values']['jdbc.cdc.source_schema_name'] == schema_name
             assert record.header['values']['jdbc.cdc.source_name'] == table_name
     finally:
@@ -653,13 +722,23 @@ def test_sql_server_cdc_source_table_in_record_header(sdc_builder, sdc_executor,
 @database('sqlserver')
 @sdc_min_version('3.8.0')
 @pytest.mark.timeout(180)
-def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder, sdc_executor, database):
-    """Test for SQL Server CDC origin stage runningn on missing __$operation in the committed offset
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_sql_server_cdc_starting_without_operation_committed_offset(
+        sdc_builder,
+        sdc_executor,
+        database,
+        combine_update_records
+):
+    """Test for SQL Server CDC origin stage running on missing __$operation in the committed offset
         __$operation field was introduced after 3.8.0
 
     The pipeline looks like:
         sql_server_cdc_origin >> wiretap
     """
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
+
     table = None
     connection = None
     if not database.is_cdc_enabled:
@@ -682,7 +761,11 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(fetch_size=1,
                                       max_batch_size_in_records=1,
-                                      table_configs=[{'capture_instance': capture_instance_name}])
+                                      table_configs=[{'capture_instance': capture_instance_name}]
+                                      )
+
+        if Version(sdc_builder.version) >= Version('5.2.0'):
+            sql_server_cdc.combine_update_records = combine_update_records
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -712,9 +795,10 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
 
         # assert all the data captured have the same raw_data
         for record in wiretap.output_records:
-            assert record.field['id'] == rows_in_database[0].get('id')
-            assert record.field['name'] == rows_in_database[0].get('name')
-            assert record.field['dt'] == rows_in_database[0].get('dt')
+            field_data = record.field['Data'] if combine_update_records else record.field
+            assert field_data['id'] == rows_in_database[0].get('id')
+            assert field_data['name'] == rows_in_database[0].get('name')
+            assert field_data['dt'] == rows_in_database[0].get('dt')
     finally:
         if table is not None:
             logger.info('Dropping table %s in %s database...', table, database.type)
@@ -727,17 +811,27 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(sdc_builder,
 @database('sqlserver')
 @sdc_min_version('3.0.0.0')
 @pytest.mark.timeout(180)
-def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
-    """Test for SQL Server CDC origin stage when schema change is enabled.
-    We do so by capturing Insert Operation on CDC enabled table(s)
-    using SQL Server CDC Origin and having a pipeline which reads that data using SQL Server CDC origin stage.
-    The records in the pipeline will be stored in SQL Server table using JDBC Producer.
-    While the pipeline is running the source table schema is changed by dropping or adding the columns,
-    the dest table will be dropping or adding the columns respectively.
-    Data is then asserted for what is captured at SQL Server Job and what we read in the pipeline.
-    The pipeline looks like:
-        sql_server_cdc_origin >> jdbc_producer
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_schema_change(
+        sdc_builder,
+        sdc_executor,
+        database,
+        keep_data,
+        combine_update_records
+):
     """
+    Test for SQL Server CDC origin stage when schema change is enabled. We do so by capturing Insert Operation on CDC
+    enabled table(s) using SQL Server CDC Origin and having a pipeline which reads that data using SQL Server CDC origin
+    stage. The records in the pipeline are captured with wiretap and its contents are checked to see if the schema
+    changes are correctly reflected in the record fields returned.
+
+    The pipeline looks like:
+        sql_server_cdc_origin >> wiretap
+    """
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
+
     num_of_tables = 2
     schema_name = DEFAULT_SCHEMA_NAME
     table_prefix = get_random_string(string.ascii_lowercase, 10)
@@ -753,6 +847,8 @@ def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
     origin.new_table_discovery_interval = '${1 * SECONDS}'
     origin.table_configs = [{'capture_instance': f'dbo_{table_prefix}_%'}]
     origin.number_of_threads = num_of_tables
+    if Version(sdc_builder.version) >= Version('5.2.0'):
+        origin.combine_update_records = combine_update_records
 
     wiretap = builder.add_wiretap()
 
@@ -781,9 +877,9 @@ def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
 
         records = wiretap.output_records
         assert len(records) == num_of_tables
-        records.sort(key=_sort_records)
+        records.sort(key=_sort_combined_records if combine_update_records else _sort_records)
         for i in range(0, num_of_tables):
-            assert records[i].field['id'] == i
+            assert _get_data_field_from_record(records[i], 'id', combine_update_records) == i
 
         # Add a new column to the tables
         for table_name in tables:
@@ -810,10 +906,11 @@ def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
         # All data were read
         records = wiretap.output_records
         assert len(records) == num_of_tables
-        records.sort(key=_sort_records)
+        records.sort(key=_sort_combined_records if combine_update_records else _sort_records)
         for i in range(0, num_of_tables):
-            assert records[i].field['id'] == num_of_tables + i
-            assert records[i].field['new_column'] == num_of_tables + i
+            record_field_data = records[i].field['Data'] if combine_update_records else records[i].field
+            assert record_field_data['id'] == num_of_tables + i
+            assert record_field_data['new_column'] == num_of_tables + i
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
@@ -823,8 +920,110 @@ def test_schema_change(sdc_builder, sdc_executor, database, keep_data):
                 connection.execute(f"DROP TABLE {schema_name}.{table}")
 
 
+@database('sqlserver')
+@sdc_min_version('5.2.0')
+@pytest.mark.parametrize('use_table', [True, False])
+@pytest.mark.timeout(180)
+def test_combined_update_record_format(sdc_builder, sdc_executor, database, use_table):
+    """
+    Tests the format of the data returned in insert, update and delete records for the SQL Server CDC origin stage when
+    the "Combine Update Records" option is activated.
+
+    The pipeline looks like:
+        sql_server_cdc_origin >> jdbc_producer
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    table = None
+    pipeline = None
+    connection = database.engine.connect()
+
+    try:
+        # Create a table, insert 1 row, update it and then delete it
+        table_name = get_random_string(string.ascii_lowercase, 20)
+        rows_in_database = setup_sample_data(1)
+        table = setup_table(connection, DEFAULT_SCHEMA_NAME, table_name, rows_in_database)
+        updated_name = 'new_updated_name'
+        connection.execute(table.update().where(table.c.id == 0).values(name=updated_name))
+        connection.execute(table.delete())
+
+        total_number_of_records = 3
+        capture_instance_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}'
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(
+            table_configs=[{'capture_instance': capture_instance_name}],
+            use_direct_table_query=use_table,
+            fetch_size=1,
+            combine_update_records=True
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Wait for the data to be captured by CDC jobs in SQL Server before starting the pipeline
+        ct_table_name = f'{capture_instance_name}_CT'
+        wait_for_data_in_ct_table(ct_table_name, total_number_of_records, database)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_number_of_records)
+
+        assert len(wiretap.output_records) == total_number_of_records
+
+        old_row = rows_in_database[0]
+        new_row = rows_in_database[0]
+        new_row['name'] = updated_name
+
+        for record in wiretap.output_records:
+            operation = record.header.values['sdc.operation.type']
+            if operation == '1':
+                assert 'OldData' not in record.field
+                assert 'Data' in record.field
+                assert record.field['Data'] is not None
+                assert sorted(record.field['Data']) == sorted(old_row)
+
+            elif operation == '2':
+                assert 'OldData' in record.field
+                assert record.field['OldData'] is not None
+                assert 'Data' not in record.field
+                assert sorted(record.field['OldData']) == sorted(new_row)
+
+            elif operation == '3':
+                assert 'OldData' in record.field
+                assert record.field['OldData'] is not None
+                assert sorted(record.field['OldData']) == sorted(old_row)
+
+                assert 'Data' in record.field
+                assert record.field['Data'] is not None
+                assert sorted(record.field['Data']) == sorted(new_row)
+
+            else:
+                assert False, 'Should not reach here. An unexpected value has been set for "sdc.operation.type".'
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table, database.type)
+            table.drop(database.engine)
+
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+        if connection is not None:
+            connection.close()
+
+
 def _sort_records(entry):
     return entry.field['id'].value
+
+
+def _sort_combined_records(entry):
+    return entry.field['Data']['id'].value
 
 
 def _enable_cdc(connection, schema_name, table_name, capture_instance=None):
@@ -863,3 +1062,15 @@ def _wait_until_is_tracked_by_cdc(connection, table_name, is_tracked_by_cdc):
         else:
             logger.info(f'Waiting until CDC is enabled/disabled for the table {table_name}')
             sleep(1)
+
+
+def _get_data_field_from_record(record, field_name, combine_update_records):
+    return record.field['Data'][field_name] if combine_update_records else record.field[field_name]
+
+
+def _check_record(record, sdc_operation_type, id, name, dt, combine_update_records, combine_update_records_field=None):
+    assert record.header.values['sdc.operation.type'] == sdc_operation_type
+    record_field_data = record.field[combine_update_records_field] if combine_update_records else record.field
+    assert record_field_data['id'].value == id
+    assert record_field_data['name'].value == name
+    assert record_field_data['dt'].value == dt

@@ -70,14 +70,28 @@ DATA_TYPES_SQLSERVER = [
 
 UNSUPPORTED_DATA_TYPES_SQLSERVER_AS_PRIMARY_KEY = ["TEXT", "NTEXT", "IMAGE", "XML"]
 
-
 @sdc_min_version('3.0.0.0')
 @database('sqlserver')
 @pytest.mark.parametrize('fetch_size', [0, 1])
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_SQLSERVER, ids=[i[0] for i in DATA_TYPES_SQLSERVER])
-def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data, fetch_size):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_data_types(
+        sdc_builder,
+        sdc_executor,
+        database,
+        sql_type,
+        insert_fragment,
+        expected_type,
+        expected_value,
+        keep_data,
+        fetch_size,
+        combine_update_records
+):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
@@ -101,6 +115,8 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         origin = builder.add_stage('SQL Server CDC Client')
         origin.fetch_size = fetch_size
         origin.table_configs = [{'capture_instance': f"{DEFAULT_SCHEMA_NAME}_{table_name}"}]
+        if Version(sdc_builder.version) >= Version('5.2.0'):
+            origin.combine_update_records = combine_update_records
 
         wiretap = builder.add_wiretap()
 
@@ -134,11 +150,14 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         # wrappers.
         # TLKT-177: Add ability for field to return raw value
 
-        assert record.field['data_column'].type == expected_type
-        assert null_record.field['data_column'].type == expected_type
+        record_field_data_column = _get_data_field_from_record(record, 'data_column', combine_update_records)
+        null_record_field_data_column = _get_data_field_from_record(null_record, 'data_column', combine_update_records)
 
-        assert record.field['data_column']._data['value'] == expected_value
-        assert null_record.field['data_column'] == None
+        assert record_field_data_column.type == expected_type
+        assert null_record_field_data_column.type == expected_type
+
+        assert record_field_data_column._data['value'] == expected_value
+        assert null_record_field_data_column == None
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
@@ -152,12 +171,27 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
 @database('sqlserver')
 @pytest.mark.parametrize('fetch_size', [0, 1])
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_SQLSERVER, ids=[i[0] for i in DATA_TYPES_SQLSERVER])
-def test_data_types_as_primary_keys(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data, fetch_size):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_data_types_as_primary_keys(
+        sdc_builder,
+        sdc_executor,
+        database,
+        sql_type,
+        insert_fragment,
+        expected_type,
+        expected_value,
+        keep_data,
+        fetch_size,
+        combine_update_records
+):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
 
     if sql_type in UNSUPPORTED_DATA_TYPES_SQLSERVER_AS_PRIMARY_KEY:
         pytest.skip('Test only runs against valid SQL Server Primary Key.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
@@ -180,6 +214,8 @@ def test_data_types_as_primary_keys(sdc_builder, sdc_executor, database, sql_typ
         origin = builder.add_stage('SQL Server CDC Client')
         origin.fetch_size = fetch_size
         origin.table_configs = [{'capture_instance': f"{DEFAULT_SCHEMA_NAME}_{table_name}"}]
+        if Version(sdc_builder.version) >= Version('5.2.0'):
+            origin.combine_update_records = combine_update_records
 
         wiretap = builder.add_wiretap()
 
@@ -208,13 +244,12 @@ def test_data_types_as_primary_keys(sdc_builder, sdc_executor, database, sql_typ
 
         record = records[0]
 
-        # Since we are controlling types, we want to check explicit values inside the record rather the the python
-        # wrappers.
+        # Since we are controlling types, we want to check explicit values inside the record rather the python wrappers.
         # TLKT-177: Add ability for field to return raw value
 
-        assert record.field['data_column'].type == expected_type
-
-        assert record.field['data_column']._data['value'] == expected_value
+        data_column = _get_data_field_from_record(record, 'data_column', combine_update_records)
+        assert data_column.type == expected_type
+        assert data_column._data['value'] == expected_value
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
@@ -239,9 +274,22 @@ OBJECT_NAMES_SQLSERVER = [
 ]
 @database('sqlserver')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_SQLSERVER, ids=[i[0] for i in OBJECT_NAMES_SQLSERVER])
-def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, offset_name, keep_data):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_object_names(
+        sdc_builder,
+        sdc_executor,
+        database,
+        test_name,
+        table_name,
+        offset_name,
+        keep_data,
+        combine_update_records
+):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     connection = database.engine.connect()
     builder = sdc_builder.get_pipeline_builder()
@@ -249,6 +297,8 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
     origin = builder.add_stage('SQL Server CDC Client')
     origin.fetch_size = 1
     origin.table_configs = [{'capture_instance': f"{DEFAULT_SCHEMA_NAME}_{table_name}"}]
+    if Version(sdc_builder.version) >= Version('5.2.0'):
+        origin.combine_update_records = combine_update_records
 
     wiretap = builder.add_wiretap()
 
@@ -279,10 +329,8 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
         assert len(records) == 1
 
         # SDC Will escape field names with certain characters, but not always...
-        if "$" in offset_name:
-            assert records[0].field[f'"{offset_name}"'] == 1
-        else:
-            assert records[0].field[offset_name] == 1
+        field_name = f'"{offset_name}"' if "$" in offset_name else offset_name
+        assert _get_data_field_from_record(records[0], field_name, combine_update_records) == 1
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -294,13 +342,17 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
 
 @database('sqlserver')
 @pytest.mark.parametrize('number_of_threads', [1, 10])
-def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads, keep_data):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads, keep_data, combine_update_records):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
 
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
+
     connection = database.engine.connect()
-    max_batch_size = 1000
-    batches = 50
+    max_batch_size = 100
+    batches = 5
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     metadata = sqlalchemy.MetaData()
@@ -319,6 +371,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads
     origin.max_batch_size_in_records = max_batch_size
     origin.number_of_threads = number_of_threads
     origin.maximum_pool_size = number_of_threads
+    if Version(sdc_builder.version) >= Version('5.2.0'):
+        origin.combine_update_records = combine_update_records
 
     wiretap = builder.add_wiretap()
     origin >> wiretap.destination
@@ -342,11 +396,11 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads
 
         records = wiretap.output_records
         assert len(records) == max_batch_size * batches
-        records.sort(key=_sort_records)
+        records.sort(key=_sort_combined_records if combine_update_records else _sort_records)
 
         expected_number = 1
         for record in records:
-            assert record.field['id'] == expected_number
+            assert _get_data_field_from_record(record, 'id', combine_update_records).value == expected_number
             expected_number = expected_number + 1
     finally:
         if not keep_data:
@@ -358,9 +412,13 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads
 
 
 @database('sqlserver')
-def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data, combine_update_records):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     connection = database.engine.connect()
     table_prefix = get_random_string(string.ascii_lowercase, 20)
@@ -372,6 +430,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
     builder = sdc_builder.get_pipeline_builder()
     source = builder.add_stage('SQL Server CDC Client')
     source.fetch_size = 1
+    if Version(sdc_builder.version) >= Version('5.2.0'):
+        source.combine_update_records = combine_update_records
     source.table_configs = [
         {'capture_instance': f"{DEFAULT_SCHEMA_NAME}_{table_a}"},
         {'capture_instance': f"{DEFAULT_SCHEMA_NAME}_{table_b}"}
@@ -507,9 +567,13 @@ def test_data_format(sdc_builder, sdc_executor, database, keep_data):
 
 
 @database('sqlserver')
-def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_resume_offset(sdc_builder, sdc_executor, database, keep_data, combine_update_records):
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     iterations = 3
     records_per_iteration = 10
@@ -525,6 +589,8 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     origin = builder.add_stage('SQL Server CDC Client')
     origin.fetch_size = 1
     origin.table_configs = [{'capture_instance': f"{DEFAULT_SCHEMA_NAME}_{table_name}"}]
+    if Version(sdc_builder.version) >= Version('5.2.0'):
+        origin.combine_update_records = combine_update_records
 
     wiretap = builder.add_wiretap()
 
@@ -556,7 +622,7 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
 
             expected_number = iteration * records_per_iteration + 1
             for record in records:
-                assert record.field['id'].value == expected_number
+                assert _get_data_field_from_record(record, 'id', combine_update_records).value == expected_number
                 expected_number = expected_number + 1
     finally:
         if not keep_data:
@@ -569,6 +635,10 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
 
 def _sort_records(entry):
     return entry.field['id'].value
+
+
+def _sort_combined_records(entry):
+    return entry.field['Data']['id'].value
 
 
 def _enable_cdc(connection, schema_name, table_name, capture_instance=None):
@@ -593,3 +663,7 @@ def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
         f'@source_schema=N\'{schema_name}\', '
         f'@source_name=N\'{table_name}\','
         f'@capture_instance={capture_instance}')
+
+
+def _get_data_field_from_record(record, field_name, combine_update_records):
+    return record.field['Data'][field_name] if combine_update_records else record.field[field_name]

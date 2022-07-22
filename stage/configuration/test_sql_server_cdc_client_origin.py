@@ -15,6 +15,7 @@ import pytest
 import logging
 import string
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -67,7 +68,14 @@ def test_convert_timestamp_to_string(sdc_builder, sdc_executor, stage_attributes
 @database('sqlserver')
 @sdc_min_version('4.0.0')
 @pytest.mark.parametrize('enable_schema_changes_event', [False, True])
-def test_enable_schema_changes_event(sdc_builder, sdc_executor, database, enable_schema_changes_event):
+@pytest.mark.parametrize('combine_update_records', [True, False])
+def test_enable_schema_changes_event(
+        sdc_builder,
+        sdc_executor,
+        database,
+        enable_schema_changes_event,
+        combine_update_records
+):
     """Test for SQL Server CDC origin stage 'Enable Schema Changes Event' parameter.
     Create a table and enable CDC on it, then add some data and change the table schema. If the parameter is true,
     we should receive an extra event indicating the schema has changed.
@@ -76,6 +84,10 @@ def test_enable_schema_changes_event(sdc_builder, sdc_executor, database, enable
     And for events:
         sql_server_cdc_origin >= wiretap
     """
+
+    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
+        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
+
     num_of_tables = 1
     schema_name = DEFAULT_SCHEMA_NAME
     table_prefix = get_random_string(string.ascii_lowercase, 10)
@@ -84,6 +96,8 @@ def test_enable_schema_changes_event(sdc_builder, sdc_executor, database, enable
     origin = builder.add_stage('SQL Server CDC Client')
     origin.enable_schema_changes_event = enable_schema_changes_event
     origin.table_configs = [{'capture_instance': f'dbo_{table_prefix}_%'}]
+    if Version(sdc_builder.version) >= Version('5.2.0'):
+        origin.combine_update_records = combine_update_records
 
     wiretap_out = builder.add_wiretap()
     wiretap_event = builder.add_wiretap()
@@ -110,7 +124,8 @@ def test_enable_schema_changes_event(sdc_builder, sdc_executor, database, enable
 
         records = wiretap_out.output_records
         assert len(records) == 1
-        assert records[0].field['id'] == test_value
+        record_field_data = records[0].field['Data'] if combine_update_records else records[0].field
+        assert record_field_data['id'] == test_value
 
         # Add a new column to the tables
         logger.info('Adding the column new_column varchar(10) on %s.%s...', schema_name, table_name)
@@ -134,7 +149,8 @@ def test_enable_schema_changes_event(sdc_builder, sdc_executor, database, enable
         events = wiretap_event.output_records
 
         assert len(records) == num_of_tables
-        assert records[0].field['id'] == test_value
+        record_field_data = records[0].field['Data'] if combine_update_records else records[0].field
+        assert record_field_data['id'] == test_value
 
         changes = 0
         event_message = ['source-table-name']
