@@ -18,21 +18,36 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 
 
+# Definition of various groovy libraries and since when they were included in Data Collector
+GROOVY_LIBS = [
+  ("2.4", "streamsets-datacollector-groovy_2_4-lib", Version("1.0")),
+  ("4.0", "streamsets-datacollector-groovy_4_0-lib", Version("5.2.0"))
+]
+
+
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
-        data_collector.add_stage_lib('streamsets-datacollector-groovy_2_4-lib')
+      sdc_version = Version(data_collector.version)
+
+      for info in GROOVY_LIBS:
+        if sdc_version >= info[2]:
+          data_collector.add_stage_lib(info[1])
+
     return hook
 
 
 @sdc_min_version('3.10.0')
-def test_send_events(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
+def test_send_events(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Test event generation from a groovy script. It uses a script that generates 10 events and then checks they
     are correctly sent to the event stream.
 
     Pipeline: groovy >> wiretap
 
     """
+    if Version(sdc_builder.version) < min_sdc_version:
+      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     builder_api_version = _get_scripting_api_version(sdc_builder.version)
     executor_api_version = _get_scripting_api_version(sdc_executor.version)
@@ -51,7 +66,7 @@ def test_send_events(sdc_builder, sdc_executor):
     batch_size = 10
     builder = sdc_builder.get_pipeline_builder()
 
-    groovy = builder.add_stage('Groovy Scripting')
+    groovy = builder.add_stage('Groovy Scripting', library=library)
     groovy.set_attributes(record_type='NATIVE_OBJECTS',
                           user_script=script,
                           batch_size=batch_size)
@@ -76,13 +91,16 @@ def test_send_events(sdc_builder, sdc_executor):
 
 
 @sdc_min_version('3.10.0')
-def test_send_error_records(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
+def test_send_error_records(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Test error records generation from a groovy script. It uses a script that generates 10 error records and
     then checks they are correctly sent to the error stream.
 
     Pipeline: groovy >> wiretap
 
     """
+    if Version(sdc_builder.version) < min_sdc_version:
+      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     builder_api_version = _get_scripting_api_version(sdc_builder.version)
     executor_api_version = _get_scripting_api_version(sdc_executor.version)
@@ -101,7 +119,7 @@ def test_send_error_records(sdc_builder, sdc_executor):
     batch_size = 10
     builder = sdc_builder.get_pipeline_builder()
 
-    groovy = builder.add_stage('Groovy Scripting')
+    groovy = builder.add_stage('Groovy Scripting', library=library)
     groovy.set_attributes(record_type='NATIVE_OBJECTS',
                           user_script=script,
                           batch_size=batch_size)

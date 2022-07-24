@@ -16,22 +16,34 @@ import json
 import logging
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 
 logger = logging.getLogger(__name__)
 
 # pylint: disable=pointless-statement, redefined-outer-name, too-many-locals
 
+# Definition of various groovy libraries and since when they were included in Data Collector
+GROOVY_LIBS = [
+  ("2.4", "streamsets-datacollector-groovy_2_4-lib", Version("1.0")),
+  ("4.0", "streamsets-datacollector-groovy_4_0-lib", Version("5.2.0"))
+]
+
 
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
-        data_collector.add_stage_lib('streamsets-datacollector-groovy_2_4-lib')
+      sdc_version = Version(data_collector.version)
+
+      for info in GROOVY_LIBS:
+        if sdc_version >= info[2]:
+          data_collector.add_stage_lib(info[1])
 
     return hook
 
 
-def test_groovy_evaluator(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
+def test_groovy_evaluator(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Test Groovy Evaluator processor. We test by setting up a template object in initialization script, then
     main processing script which access the template to create a Groovy object per record and to create a new record
     attribute. Finally in destroy script, we collate all the records for its new attribute and Groovy assert its value.
@@ -39,6 +51,9 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
 
         dev_raw_data_source >> groovy_evaluator >> wiretap
     """
+    if Version(sdc_builder.version) < min_sdc_version:
+      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+
     raw_company_1 = dict(name='StreamSets', floors=3)
     raw_company_2 = dict(name='Example Inc.', floors=1)
     raw_company_3 = dict(name='ASDF', floors=10)
@@ -49,7 +64,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
                                        stop_after_first_batch=True)
-    groovy_evaluator = pipeline_builder.add_stage('Groovy Evaluator', type='processor')
+    groovy_evaluator = pipeline_builder.add_stage('Groovy Evaluator', type='processor', library=library)
     # in the init script we create a 'Building' template object which can be cloned per each pipeline record processing
     init_script = """
         import groovy.transform.*
@@ -116,8 +131,12 @@ def test_groovy_evaluator(sdc_builder, sdc_executor):
 
 
 # SDC-10353: Unable to delete record headers in Scripting Evaluators
-def test_delete_header_attribute(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
+def test_delete_header_attribute(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Make sure that deleted attributes stays deleted."""
+    if Version(sdc_builder.version) < min_sdc_version:
+      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
@@ -128,7 +147,7 @@ def test_delete_header_attribute(sdc_builder, sdc_executor):
         {'attributeToSet': 'remove', 'headerAttributeExpression': 'I should be deleted'}
     ]
 
-    groovy = builder.add_stage('Groovy Evaluator')
+    groovy = builder.add_stage('Groovy Evaluator', library=library)
     groovy.init_script = ''
     groovy.destroy_script = ''
     groovy.script =  """
@@ -151,9 +170,13 @@ def test_delete_header_attribute(sdc_builder, sdc_executor):
 
 
 # SDC-11546: Expose the underlying Data Collector Record in Scripting processors
+@pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
 @sdc_min_version('3.9.0')
-def test_expose_sdc_record(sdc_builder, sdc_executor):
+def test_expose_sdc_record(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Ensure that underlying SDC record is accessible."""
+    if Version(sdc_builder.version) < min_sdc_version:
+      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
@@ -164,7 +187,7 @@ def test_expose_sdc_record(sdc_builder, sdc_executor):
         {"fieldToSet": "/text", "attributeToSet": "attr", "fieldAttributeExpression": "is-here"}
     ]
 
-    groovy = builder.add_stage('Groovy Evaluator')
+    groovy = builder.add_stage('Groovy Evaluator', library=library)
     groovy.init_script = ''
     groovy.destroy_script = ''
     groovy.script =  """
@@ -189,15 +212,19 @@ def test_expose_sdc_record(sdc_builder, sdc_executor):
 
 # SDC-11555: Provide ability to use direct SDC record in scripting processors
 @sdc_min_version('3.9.0')
-def test_sdc_record(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
+def test_sdc_record(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Iterate over SDC record directly rather then JSR-223 wrapper."""
+    if Version(sdc_builder.version) < min_sdc_version:
+      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Dev Raw Data Source')
     origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
     origin.stop_after_first_batch = True
 
-    groovy = builder.add_stage('Groovy Evaluator')
+    groovy = builder.add_stage('Groovy Evaluator', library=library)
     groovy.record_type = 'SDC_RECORDS'
     groovy.init_script = ''
     groovy.destroy_script = ''
@@ -223,15 +250,18 @@ def test_sdc_record(sdc_builder, sdc_executor):
     assert 'attr-value' == wiretap.output_records[0].get_field_data('/old').attributes['attr']
 
 
-def test_event_creation(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
+def test_event_creation(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Ensure that the process is able to create events."""
     builder = sdc_builder.get_pipeline_builder()
+    if Version(sdc_builder.version) < min_sdc_version:
+      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     origin = builder.add_stage('Dev Raw Data Source')
     origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
     origin.stop_after_first_batch = True
 
-    groovy = builder.add_stage('Groovy Evaluator')
+    groovy = builder.add_stage('Groovy Evaluator', library=library)
     groovy.init_script = ''
     groovy.destroy_script = ''
     groovy.script =  """
@@ -259,11 +289,15 @@ sdcFunctions.toEvent(event)
 @pytest.mark.parametrize('on_script_error', [(True, 'STOP_PIPELINE'),
                                              (True, 'TO_ERROR'),
                                              (False, 'TO_ERROR')])
-def test_script_error(sdc_builder, sdc_executor, on_script_error):
+@pytest.mark.parametrize('groovy_version,library,min_sdc_version', GROOVY_LIBS, ids=[i[0] for i in GROOVY_LIBS])
+def test_script_error(sdc_builder, sdc_executor, on_script_error, groovy_version, library, min_sdc_version):
     """Evaluate batches with 5 records and write 4 of them and send the first one to error. Check if pipeline stops or
     send the error to log depends on Groovy Evaluator configuration. The pipeline looks like:
         groovy_origin >> groovy_evaluator >> wiretap.destination
     """
+    if Version(sdc_builder.version) < min_sdc_version:
+      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+
     batch_size = 5
     pipeline_builder = sdc_builder.get_pipeline_builder()
     script_origin = """
@@ -303,7 +337,7 @@ def test_script_error(sdc_builder, sdc_executor, on_script_error):
         }
         """
 
-    groovy_origin = pipeline_builder.add_stage('Groovy Scripting')
+    groovy_origin = pipeline_builder.add_stage('Groovy Scripting', library=library)
     groovy_origin.set_attributes(record_type='NATIVE_OBJECTS',
                                  user_script=script_origin,
                                  batch_size=batch_size,
