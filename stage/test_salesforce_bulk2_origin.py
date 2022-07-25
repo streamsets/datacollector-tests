@@ -146,7 +146,6 @@ def test_salesforce_origin_datetime(sdc_builder, sdc_executor, salesforce):
     salesforce_origin = pipeline_builder.add_stage('Salesforce Bulk API 2.0', type='origin')
     salesforce_origin.set_attributes(soql_query=query,
                                      incremental_mode=True,
-                                     query_interval='${24 * HOURS}',
                                      initial_offset='2018-10-16T00:00:00.000Z',
                                      offset_field='SystemModstamp')
 
