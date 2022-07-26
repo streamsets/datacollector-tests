@@ -1802,7 +1802,8 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
 @pytest.mark.parametrize('stop_condition',
                          [
                              'value',
-                             'existence'
+                             'existence',
+                             'none'
                          ])
 @sdc_min_version("4.0.0")
 @pytest.mark.parametrize("one_request_per_batch", [True, False])
@@ -1820,6 +1821,10 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
     if Version(sdc_builder.version) < Version("4.4.0"):
         if one_request_per_batch:
             pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
+    elif stop_condition == 'none' and pagination_mode == 'LINK_FIELD':
+        pytest.skip("The tests with pagination mode 'Link in Response Field' need a 'Stop Condition'.")
+    elif stop_condition != 'none' and pagination_mode != 'LINK_FIELD':
+        pytest.skip("The 'Stop Condition' only applies to the tests with pagination mode 'Link in Response Field'.")
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
@@ -2032,14 +2037,21 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         if pagination_end_mode == 'void' or pagination_end_mode == 'null':
-            expected_output = 0
-            expected_error = 1
             expected_message = 0
             if pagination_end_mode == 'null' and (pagination_mode != 'LINK_FIELD' or
                                                   pagination_mode == 'LINK_FIELD' and stop_condition == 'existence'):
-                expected_error_code = 'HTTP_34'
+                # As of version 5.2.0, empty response bodies do not arise an exception
+                if Version(sdc_builder.version) < Version("5.2.0"):
+                    expected_output = 0
+                    expected_error = 1
+                    expected_error_code = 'HTTP_34'
+                else:
+                    expected_output = 1
+                    expected_error = 0
             else:
                 expected_error_code = 'HTTP_00'
+                expected_output = 0
+                expected_error = 1
         elif pagination_end_mode == 'vacuum':
             if pagination_mode == 'LINK_FIELD' and stop_condition == 'value':
                 expected_output = 0
@@ -3394,3 +3406,104 @@ def test_http_processor_json_list_root_with_pagination(sdc_builder, sdc_executor
 
     finally:
         http_mock_server.delete_mock()
+
+
+@http
+@sdc_min_version("5.2.0")
+@pytest.mark.parametrize('method', ['GET', 'PUT', 'POST'])
+@pytest.mark.parametrize('status', [200, 201, 204])
+@pytest.mark.parametrize('data_format', ['JSON', 'TEXT'])
+def test_http_processor_empty_response(sdc_builder, sdc_executor, http_client, keep_data, method, status, data_format):
+    """
+    Tests the HTTP Client Processor when the response body is empty. An empty record should be created without arising
+    any errors if its status is between 200 and 300.
+    """
+    pipeline = None
+    record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'{method} /{mock_path}').reply("", status=status, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy', stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(
+            data_format=data_format,
+            http_method=method,
+            resource_url=mock_uri,
+            output_field=f'/{record_output_field}'
+        )
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert len(wiretap.error_records) == 0
+        assert len(wiretap.output_records) == 1
+
+    finally:
+        if not keep_data:
+            http_mock.delete_mock()
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+@http
+@sdc_min_version("5.2.0")
+def test_http_processor_empty_response_when_expected(sdc_builder, sdc_executor, http_client, keep_data):
+    """
+    Tests the HTTP Client Processor when the response body is empty. An error should be arisen in case the response body
+    is expected.
+    """
+    pipeline = None
+    record_output_field = 'result'
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply("", status=404, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data='dummy', stop_after_first_batch=True)
+
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(
+            data_format='JSON',
+            http_method='GET',
+            resource_url=mock_uri,
+            output_field=f'/{record_output_field}'
+        )
+        http_client_processor.per_status_actions = [
+            {
+                "statusCode": 404,
+                "action": "ERROR_RECORD"
+            }
+        ]
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert len(wiretap.error_records) > 0
+        assert len(wiretap.output_records) == 0
+        assert "HTTP_34" in wiretap.error_records[1].header['errorMessage']
+
+    finally:
+        if not keep_data:
+            http_mock.delete_mock()
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
