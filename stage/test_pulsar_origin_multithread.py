@@ -1340,3 +1340,69 @@ for record in records: output.write(record);sleep({busy_time});
         producer.close()  # all producer/consumers need to be closed before topic can be deleted without force
         pulsar.client.close()
         pulsar.admin.delete_topic(producer.topic())
+
+@pulsar
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('number_of_threads', [1, 2, 4])
+def test_pulsar_consumer_schemas_wrong_dataformat(sdc_builder, sdc_executor, pulsar, number_of_threads):
+    topic_name = get_random_string()
+    data_format = "JSON"  # Wrong data format
+    schema_info = {
+        "type": "AVRO",
+        "schema": '{\"type\":\"record\",\"name\":\"schema\",\"fields\":'
+                  '[{\"name\":\"number\",\"type\":[\"null\", \"int\"]},'
+                  '{\"name\":\"topic\",\"type\":[\"null\", \"string\"]}]}',
+        "properties": {}
+    }
+    message_data = {"number": 10, "topic": "some_topic"}
+    n_messages = 10
+
+    builder = sdc_builder.get_pipeline_builder()
+    pulsar_consumer = builder.add_stage(name=PULSAR_PUSH_ORIGIN_STAGE_NAME)
+    pulsar_consumer.set_attributes(subscription_name=get_random_string(),
+                                   consumer_name=get_random_string(),
+                                   topic=topic_name,
+                                   schema="USER_SCHEMA",
+                                   schema_info=json.dumps(schema_info),
+                                   data_format=data_format,
+                                   max_batch_size_in_records=1,
+                                   initial_offset='EARLIEST',
+                                   number_of_threads=number_of_threads)
+    if schema_info["type"] == "AVRO":
+        pulsar_consumer.set_attributes(avro_schema_location="INLINE",
+                                       avro_schema=schema_info["schema"])
+    wiretap = builder.add_wiretap()
+
+    pulsar_consumer >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(pulsar)
+    sdc_executor.add_pipeline(pipeline)
+
+    # Prepare Pulsar
+    pulsar_schema = schema.AvroSchema(ComplexSchemaClass)
+
+    set_schema_validation_enforced(pulsar.admin, False)
+    enable_auto_update_schema(pulsar.admin)
+
+    create_topic_with_schema(pulsar.admin, topic_name, schema_info)
+    producer = pulsar.client.create_producer(topic_name, schema=pulsar_schema)
+
+    # To be sure the pipeline does not upload the schema and so respect the schema
+    # we set for the topic
+    set_schema_validation_enforced(pulsar.admin)
+    disable_auto_update_schema(pulsar.admin)
+
+    try:
+        for _ in range(n_messages):
+            producer.send(ComplexSchemaClass(**message_data))
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', n_messages)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert 0 == len(wiretap.output_records)
+        assert n_messages == len(wiretap.error_records)
+    finally:
+        producer.close()
+        pulsar.admin.delete_topic(producer.topic())
+        sdc_executor.remove_pipeline(pipeline)
