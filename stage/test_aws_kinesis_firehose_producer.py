@@ -165,11 +165,19 @@ def _get_firehose_data(s3_client, s3_bucket, random_raw_str):
     s3_put_keys = []
     # Firehose S3 object naming http://docs.aws.amazon.com/firehose/latest/dev/basic-deliver.html#s3-object-name
     # read data to assert
-    list_s3_objs = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=datetime.utcnow().strftime("%Y/%m/%d"))
+    prefix = datetime.utcnow().strftime("%Y/%m/%d")
+    list_s3_objs = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=prefix)
+
+    logger.info(f'Bucket name for firehose : {s3_bucket}')
+    logger.info(f'Prefix name for firehose : {prefix}')
+    logger.info(f'Random raw string : {random_raw_str}')
+
     for s3_content in list_s3_objs['Contents']:
         akey = s3_content['Key']
         aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
-        if aobj['Body'].read().decode().strip() == random_raw_str:
+        aobj_body = aobj['Body'].read().decode().strip()
+        logger.info(f'Body : {aobj_body} for Key : {akey}')
+        if aobj_body == random_raw_str:
             s3_put_keys.append(akey)
 
     return s3_put_keys
