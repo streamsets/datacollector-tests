@@ -3942,9 +3942,26 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(8)
 
-        assert len(wiretap.output_records) == 8
+        sleep(30)
 
-        for record in wiretap.output_records:
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_retries = 0
+        wiretap_output_records_control_length = 8
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            logger.info(
+                f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+            logger.info(
+                f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        assert len(wiretap_output_records) == 8
+
+        for record in wiretap_output_records:
             assert "schema" in record.header.values
             assert "oracle.cdc.table" in record.header.values
             assert "oracle.cdc.operation" in record.header.values
