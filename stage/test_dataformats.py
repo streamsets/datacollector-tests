@@ -277,6 +277,78 @@ def test_excel_with_duplicated_headers(sdc_builder, sdc_executor):
             sdc_executor.stop_pipeline(pipeline)
 
 
+HEADERS_DATA = [
+    ('text', 'abcd', 'abcd'),
+    ('number', 1234, '1234'),
+    ('currency', '1024,00€', '\"1024,00â\x82¬\"'),
+    ('short_date', '14/03/93', '93\"'),
+    ('long_date', 'Friday, 14 June 2002', '\"Friday, 14 June 2002\"'),
+    ('time', '00:00:00', '\"00:00:00\"'),
+    ('percentage', '1024,97%', '\"1024,97%\"'),
+    ('scientific', '1024E+06', '\"1024E+06\"')
+]
+@sdc_min_version('5.1.0')
+@pytest.mark.parametrize('header_data_type, header_data, expected_header', HEADERS_DATA, ids=[i[0] for i in HEADERS_DATA])
+def test_excel_dataformats_headers(sdc_builder, sdc_executor, header_data_type, header_data, expected_header):
+    """
+    Tests that the Excel parser can read different dataformats in the headers.
+
+    The pipeline would look like:
+        directory >> wiretap.destination
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    try:
+        # Create the Directory
+        files_directory = os.path.join('/tmp', get_random_string())
+        file_name = f'{get_random_string()}.xls'
+        file_path = os.path.join(files_directory, file_name)
+
+        # Create the Excel file with a repeated column name
+        sdc_executor.execute_shell(f'mkdir {files_directory}')
+        file_excel = io.BytesIO()
+        workbook = Workbook(encoding='utf-8')
+        sheet = workbook.add_sheet('sheet1')
+
+        sheet.write(0, 0, header_data)
+        sheet.write(1, 0, 'Hello World')
+
+        workbook.save(file_excel)
+        file_writer(sdc_executor, file_path, file_excel.getvalue())
+
+        # Create a pipeline Directory -> Wiretap
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(
+            excel_header_option='WITH_HEADER',
+            data_format='EXCEL',
+            files_directory=files_directory,
+            file_name_pattern='*.xls'
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+        directory >> wiretap.destination
+
+        pipeline = pipeline_builder.build()
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        # Check the record has been read
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field.get(expected_header) == 'Hello World'
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        if files_directory is not None:
+            logger.info('Delete directory in %s...', files_directory)
+            sdc_executor.execute_shell(f'rm -r {files_directory}')
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
 def file_writer(sdc_executor, file_path, file_contents):
     encoding = 'utf8'
     FILE_WRITER_SCRIPT_BINARY = """
