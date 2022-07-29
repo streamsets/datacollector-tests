@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import datetime
+import json
 import logging
 import os
 import random
@@ -27,6 +28,16 @@ from streamsets.sdk.utils import Version
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+
+from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METADATA_MYSQL, \
+    PRIMARY_KEY_NUMERIC_METADATA_MYSQL, \
+    PRIMARY_KEY_NON_NUMERIC_METADATA_ORACLE, PRIMARY_KEY_NON_NUMERIC_METADATA_SQLSERVER, \
+    PRIMARY_KEY_NON_NUMERIC_METADATA_POSTGRESQL, \
+    PRIMARY_KEY_NUMERIC_METADATA_POSTGRESQL, PRIMARY_KEY_NUMERIC_METADATA_ORACLE, \
+    PRIMARY_KEY_NUMERIC_METADATA_SQLSERVER, \
+    PRIMARY_KEY_ORACLE_TABLE, PRIMARY_KEY_SQLSERVER_TABLE, PRIMARY_KEY_POSTGRESQL_TABLE, PRIMARY_KEY_MYSQL_TABLE, \
+    get_create_table_query_non_numeric, get_create_table_query_numeric, get_insert_query_non_numeric, \
+    get_insert_query_numeric
 
 logger = logging.getLogger(__name__)
 
@@ -1286,7 +1297,7 @@ def test_jdbc_schema_settings(sdc_builder, sdc_executor, database, schema_value)
     ]
     metadata = sqlalchemy.MetaData()
     table = sqlalchemy.Table(table_name, metadata, *columns)
-        
+
     try:
         logger.info('Creating table %s in %s database ...', table_name, database.type)
         table.create(database.engine)
@@ -1307,6 +1318,238 @@ def test_jdbc_schema_settings(sdc_builder, sdc_executor, database, schema_value)
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         table.drop(database.engine)
+
+
+@sdc_min_version('5.2.0')
+@database
+def test_jdbc_primary_keys_headers(sdc_builder, sdc_executor, database):
+    """Validate that the primary key (and no other columns) information is present in the record headers. """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+    primary_key_specification = f"jdbc.primaryKeySpecification"
+
+    INPUT_DATA = [
+        {'id': 1, 'name': 'The Lich King', 'game': 'World of Warcraft'},
+        {'id': 2, 'name': 'Bowser', 'game': 'Super Mario Bros'},
+        {'id': 3, 'name': 'Handsome Jack', 'game': 'Borderlands 2'}
+    ]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    origin = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs = [{"tablePattern": table_name}]
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), primary_key=True),
+        sqlalchemy.Column('game', sqlalchemy.String(64))
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), INPUT_DATA)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              len(INPUT_DATA),
+                                              timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # We should have 3 records
+        assert len(wiretap.output_records) == len(INPUT_DATA)
+
+        # Check the primary keys metadata
+        for record in wiretap.output_records:
+            assert primary_key_specification in record.header.values
+            assert record.header.values[primary_key_specification] is not None
+
+            if database.type is 'Oracle':
+                primary_key_specification_expected = PRIMARY_KEY_ORACLE_TABLE
+            elif database.type is 'SQLServer':
+                primary_key_specification_expected = PRIMARY_KEY_SQLSERVER_TABLE
+            elif database.type is 'PostgreSQL':
+                primary_key_specification_expected = PRIMARY_KEY_POSTGRESQL_TABLE
+            else:
+                primary_key_specification_expected = PRIMARY_KEY_MYSQL_TABLE
+
+            primary_key_specification_json = json.dumps(
+                json.loads(record.header.values[primary_key_specification]),
+                sort_keys=True
+            )
+
+            primary_key_specification_expected_json = json.dumps(
+                json.loads(primary_key_specification_expected),
+                sort_keys=True
+            )
+
+            assert primary_key_specification_json == primary_key_specification_expected_json
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@sdc_min_version('5.2.0')
+@database
+def test_jdbc_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database):
+    """Validate that the primary key (and no other columns) information is present in the record headers. """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+    primary_key_specification = f"jdbc.primaryKeySpecification"
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    if database.type is 'Oracle':
+        offsetCol = "MY_NUMBER_1"
+    elif database.type is 'PostgreSQL':
+        offsetCol = "my_integer"
+    else:
+        offsetCol = "my_int"
+
+    origin = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs = [{"tablePattern": table_name, "enableNonIncremental": True,
+                             "overrideDefaultOffsetColumns": True,
+                             "offsetColumns": [offsetCol]} ]
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        connection = database.engine.connect()
+        connection.execute(get_create_table_query_numeric(table_name, database))
+
+        logger.info('Adding a record into the table')
+        connection.execute(get_insert_query_numeric(table_name, database))
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              1,
+                                              timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # We should have at least one record
+        assert len(wiretap.output_records) == 1
+
+        record = wiretap.output_records[0]
+        assert primary_key_specification in record.header.values
+        assert record.header.values[primary_key_specification] is not None
+
+        primary_key_specification_json = json.dumps(
+            json.loads(record.header.values[primary_key_specification]),
+            sort_keys=True
+        )
+
+        if database.type is 'Oracle':
+            primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_ORACLE
+        elif database.type is 'SQLServer':
+            primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_SQLSERVER
+        elif database.type is 'PostgreSQL':
+            primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_POSTGRESQL
+        else:
+            primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_MYSQL
+
+        primary_key_specification_expected_json = json.dumps(
+            json.loads(primary_key_specification_expected),
+            sort_keys=True
+        )
+
+        assert primary_key_specification_json == primary_key_specification_expected_json
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f'drop table {table_name}')
+
+
+@sdc_min_version('5.2.0')
+@database
+def test_jdbc_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database):
+    """Validate that the primary key (and no other columns) information is present in the record headers. """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+    primary_key_specification = f"jdbc.primaryKeySpecification"
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    if database.type is 'Oracle':
+        offsetCol = "MY_DATE"
+    else:
+        offsetCol = "my_date"
+
+    origin = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs = [{"tablePattern": table_name, "enableNonIncremental": True,
+                             "overrideDefaultOffsetColumns": True,
+                             "offsetColumns": [offsetCol]}]
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        connection = database.engine.connect()
+        connection.execute(get_create_table_query_non_numeric(table_name, database))
+
+        logger.info('Adding a record into the table')
+        connection.execute(get_insert_query_non_numeric(table_name, database))
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              1,
+                                              timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # We should have at least one record
+        assert len(wiretap.output_records) == 1
+
+        record = wiretap.output_records[0]
+        assert primary_key_specification in record.header.values
+        assert record.header.values[primary_key_specification] is not None
+
+        primary_key_specification_json = json.dumps(
+            json.loads(record.header.values[primary_key_specification]),
+            sort_keys=True
+        )
+
+        if database.type is 'Oracle':
+            primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_ORACLE
+        elif database.type is 'SQLServer':
+            primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_SQLSERVER
+        elif database.type is 'PostgreSQL':
+            primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_POSTGRESQL
+        else:
+            primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_MYSQL
+
+        primary_key_specification_expected_json = json.dumps(
+            json.loads(primary_key_specification_expected),
+            sort_keys=True
+        )
+
+        assert primary_key_specification_json == primary_key_specification_expected_json
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f'drop table {table_name}')
 
 
 #
