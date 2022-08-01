@@ -2469,6 +2469,11 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, ap
     if api == 'soap' and delete_type == 'hard':
         pytest.skip('Skipping... Hard delete is not supported in the Salesforce SOAP API')
 
+    if delete_type == 'hard' and not set_permission:
+        pytest.skip('This test cannot be run in automatic executions, since most Salesforce tests also use hard deletes'
+                    'to clean up the environment and the permission is set at account level, so this scenario does not'
+                    'fail as the test expects it to do. Test manually if needed.')
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     inserted_ids = None
@@ -2514,7 +2519,7 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, ap
             # Check hard delete fails if we didn't assign the permission
             with pytest.raises(StatusError) as run_error:
                 sdc_executor.start_pipeline(pipeline).wait_for_finished()
-            assert FORCE_60 in str(run_error.value)
+            assert 'FORCE_59' in str(run_error.value)
 
         logger.info('Querying for records...')
         query_str = (f"SELECT Id FROM Contact WHERE Lastname = '{last_name}'")
