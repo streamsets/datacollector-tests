@@ -390,6 +390,11 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, de
         sdc_executor (:py:class:`streamsets.sdk.DataCollector`): Data Collector executor instance
         salesforce (:py:class:`testframework.environments.SalesforceInstance`): Salesforce environment
     """
+    if delete_type == 'hard' and not set_permission:
+        pytest.skip('This test cannot be run in automatic executions, since most Salesforce tests also use hard deletes'
+                    'to clean up the environment and the permission is set at account level, so this scenario does not'
+                    'fail as the test expects it to do. Test manually if needed.')
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     inserted_ids = None
