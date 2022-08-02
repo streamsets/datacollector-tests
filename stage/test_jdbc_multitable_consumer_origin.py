@@ -1258,12 +1258,12 @@ def test_jdbc_schema_settings(sdc_builder, sdc_executor, database, schema_value)
     databases to test this "default" case.
     """
 
-    # At the time of this writing, only MySQL has the requirement that the schema be blank or
+    # At the time of this writing, MySQL/MariaDB has the requirement that the schema be blank or
     # the same as the database
-    dbs_with_this_behavior = {'MySQL'}
+    dbs_with_this_behavior = {'MySQL', 'MariaDB'}
 
-    # only MySQL gives a default schema to a database - so the test case where the default
-    # schema name is automatically the database name is only applicable to MySQL
+    # MySQL/MariDB gives a default schema to a database - so the test case where the default
+    # schema name is automatically the database name is only applicable to MySQL/MariaDB
     if schema_value == '{database}' and database.type not in dbs_with_this_behavior:
         logger.info('skipping database as schema test for database type ' + database.type)
         pytest.skip('database as schema test not valid for database type ' + database.type + ' ...skipping')
