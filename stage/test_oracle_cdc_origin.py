@@ -4489,20 +4489,14 @@ def test_buffer_directory(sdc_builder, sdc_executor, database, test_case, setup_
                 sdc_executor.start_pipeline(pipeline)
             assert e.value.message.startswith(expected_error)
         else:
+            pipeline_buffer_directory = f'{buffer_directory}/{sdc_executor.id}/{pipeline.id}'
+
             sdc_executor.start_pipeline(pipeline)
             # assert that buffer directory is used by Oracle CDC.
-            assert int(sdc_executor.execute_shell(f'ls {buffer_directory} | wc -l').stdout) > 0
+            assert int(sdc_executor.execute_shell(f'ls {pipeline_buffer_directory} | wc -l').stdout) > 0
             sdc_executor.stop_pipeline(pipeline=pipeline).wait_for_stopped()
-            # JVM sometimes takes some seconds to effectively remove a directory
             # make sure the directory gets cleaned after pipeline stops.
-            remaining_attempts = 10
-            while (int(sdc_executor.execute_shell(f'ls {buffer_directory} | wc -l').stdout) != 0
-                   and remaining_attempts > 0):
-                logger.info(f'Waiting for the buffer dir. to be removed... Remaining attempts: {remaining_attempts}')
-                remaining_attempts -= 1
-                sleep(1)
-
-            assert int(sdc_executor.execute_shell(f'ls {buffer_directory} | wc -l').stdout) == 0
+            assert int(sdc_executor.execute_shell(f'ls {pipeline_buffer_directory} | wc -l').stdout) == 0
 
     finally:
         for tear_down_action in tear_down_actions:
