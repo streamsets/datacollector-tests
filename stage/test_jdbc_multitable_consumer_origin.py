@@ -1552,6 +1552,82 @@ def test_jdbc_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, datab
         connection.execute(f'drop table {table_name}')
 
 
+@sdc_min_version('5.2.0')
+@database
+def test_jdbc_vendor_header(sdc_builder, sdc_executor, database):
+    """Validate that the primary key (and no other columns) information is present in the record headers. """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+    vendor_specification = f"jdbc.vendor"
+
+    INPUT_DATA = [
+        {'id': 1, 'name': 'The Lich King', 'game': 'World of Warcraft'},
+        {'id': 2, 'name': 'Bowser', 'game': 'Super Mario Bros'},
+        {'id': 3, 'name': 'Handsome Jack', 'game': 'Borderlands 2'}
+    ]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    origin = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    origin.table_configs = [{"tablePattern": table_name}]
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), primary_key=True),
+        sqlalchemy.Column('game', sqlalchemy.String(64))
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), INPUT_DATA)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline,
+                                              'input_record_count',
+                                              len(INPUT_DATA),
+                                              timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # We should have 3 records
+        assert len(wiretap.output_records) == len(INPUT_DATA)
+
+        # Check the vendor metadata
+        for record in wiretap.output_records:
+            assert vendor_specification in record.header.values
+            assert record.header.values[vendor_specification] is not None
+
+            vendor_metadata = record.header.values[vendor_specification]
+
+            if database.type is 'Oracle':
+                vendor_metadata_expected = 'Oracle'
+            elif database.type is 'SQLServer':
+                vendor_metadata_expected = 'Microsoft SQL Server'
+            elif database.type is 'PostgreSQL':
+                vendor_metadata_expected = 'PostgreSQL'
+            elif database.type is 'MariaDB':
+                vendor_metadata_expected = 'MariaDB'
+            else:
+                vendor_metadata_expected = 'MySQL'
+
+            assert vendor_metadata == vendor_metadata_expected
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
 #
 # Auxiliary methods
 #
