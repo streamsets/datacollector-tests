@@ -95,6 +95,30 @@ PRIMARY_KEY_NUMERIC_METADATA_ORACLE = f'''{{
             {_primary_key_specification_json("MY_NUMBER_4", 2, "NUMERIC", 32, 30, 10, "true", "true")}
         }}'''
 
+PRIMARY_KEY_NON_NUMERIC_METADATA_MARIADB = f'''{{
+            {_primary_key_specification_json("my_date", 91, "DATE", 10, 10, 0, "true", "false")},
+            {_primary_key_specification_json("my_datetime", 93, "TIMESTAMP", 19, 19, 0, "true", "false")},
+            {_primary_key_specification_json("my_timestamp", 93, "TIMESTAMP", 19, 19, 0, "false", "false")},
+            {_primary_key_specification_json("my_time", 92, "TIME", 10, 10, 0, "true", "false")},
+            {_primary_key_specification_json("my_year", 91, "DATE", 4, 4, 0, "false", "false")},
+            {_primary_key_specification_json("my_char", 1, "CHAR", 10, 10, 0, "true", "false")},
+            {_primary_key_specification_json("my_varchar", 12, "VARCHAR", 32, 32, 0, "true", "false")},
+            {_primary_key_specification_json("my_binary", -3, "VARBINARY", 32, 32, 0, "true", "false")},
+            {_primary_key_specification_json("my_text", 12, "VARCHAR", 255, 255, 0, "true", "false")}
+        }}'''
+
+PRIMARY_KEY_NUMERIC_METADATA_MARIADB = f'''{{
+            {_primary_key_specification_json("my_boolean", -7, "BIT", 1, 1, 0, "true", "false")},
+            {_primary_key_specification_json("my_tinyint", -6, "TINYINT", 4, 4, 0, "true", "false")},
+            {_primary_key_specification_json("my_smallint", 5, "SMALLINT", 6, 6, 0, "true", "false")},
+            {_primary_key_specification_json("my_int", 4, "INTEGER", 11, 11, 0, "true", "false")},
+            {_primary_key_specification_json("my_bigint", -5, "BIGINT", 20, 20, 0, "true", "false")},
+            {_primary_key_specification_json("my_decimal", 3, "DECIMAL", 12, 10, 5, "true", "false")},
+            {_primary_key_specification_json("my_numeric", 3, "DECIMAL", 10, 8, 4, "true", "false")},
+            {_primary_key_specification_json("my_float", 7, "REAL", 12, 12, 31, "true", "false")},
+            {_primary_key_specification_json("my_double", 8, "DOUBLE", 22, 22, 31, "true", "false")}
+        }}'''
+
 id_metadata_mysql = _primary_key_specification_json("id", 4, "INTEGER", 10, 10, 0, "true", "false")
 name_metadata_mysql = _primary_key_specification_json("name", 12, "VARCHAR", 32, 32, 0, "false", "false")
 PRIMARY_KEY_MYSQL_TABLE = f'{{ {id_metadata_mysql}, {name_metadata_mysql} }}'
@@ -110,6 +134,10 @@ PRIMARY_KEY_POSTGRESQL_TABLE = f'{{ {id_metadata_postgresql}, {name_metadata_pos
 id_metadata_oracle = _primary_key_specification_json("ID", 2, "NUMERIC", 39, 38, 0, "true", "true")
 name_metadata_oracle = _primary_key_specification_json("NAME", 12, "VARCHAR", 32, 32, 0, "true", "false")
 PRIMARY_KEY_ORACLE_TABLE = f'{{ {id_metadata_oracle}, {name_metadata_oracle} }}'
+
+id_metadata_mariadb = _primary_key_specification_json("id", 4, "INTEGER", 11, 11, 0, "true", "false")
+name_metadata_mariadb = _primary_key_specification_json("name", 12, "VARCHAR", 32, 32, 0, "true", "false")
+PRIMARY_KEY_MARIADB_TABLE = f'{{ {id_metadata_mariadb}, {name_metadata_mariadb} }}'
 
 CREATE_MYSQL_NUMERIC = '''
         create table $TABLE(
@@ -303,6 +331,60 @@ INSERT_ORACLE_NON_NUMERIC = '''insert into $TABLE
             values (' ', ' ', ' ', ' ', '23-NOV-04', current_timestamp)
         '''
 
+CREATE_MARIADB_NUMERIC = '''
+        create table $TABLE(
+            my_boolean boolean,
+            my_tinyint tinyint,
+            my_smallint smallint,
+            my_int int,
+            my_bigint bigint,
+            my_decimal decimal(10, 5),
+            my_numeric numeric(8, 4),
+            my_float float,
+            my_double double,
+            primary key (
+                my_boolean,
+                my_tinyint,
+                my_smallint,
+                my_int,
+                my_bigint,
+                my_decimal,
+                my_numeric,
+                my_float,
+                my_double
+            )
+        )
+    '''
+
+CREATE_MARIADB_NON_NUMERIC = '''
+        create table $TABLE(
+            my_date date,
+            my_datetime datetime,
+            my_timestamp timestamp,
+            my_time time,
+            my_year year,
+            my_char char(10),
+            my_varchar varchar(32),
+            my_binary binary(32),
+            my_text text(16),
+            primary key (
+                my_date,
+                my_datetime,
+                my_timestamp,
+                my_time,
+                my_year,
+                my_char,
+                my_varchar,
+                my_binary,
+                my_text(16)
+            )
+        )
+'''
+
+INSERT_MARIADB_NUMERIC = '''insert into $TABLE values (1, 1, 1, 1, 1, 1.1, 1, 1.1, 1.1)'''
+INSERT_MARIADB_NON_NUMERIC = '''insert into $TABLE
+            values ('2011-12-18', '2011-12-18 9:17:17', current_timestamp, current_time, 2022, ' ', ' ', ' ', ' ')
+        '''
 
 CREATE_MYSQL_NUMERIC_TEMPLATE = Template(CREATE_MYSQL_NUMERIC)
 CREATE_MYSQL_NON_NUMERIC_TEMPLATE = Template(CREATE_MYSQL_NON_NUMERIC)
@@ -324,6 +406,10 @@ CREATE_ORACLE_NON_NUMERIC_TEMPLATE = Template(CREATE_ORACLE_NON_NUMERIC)
 INSERT_ORACLE_NUMERIC_TEMPLATE = Template(INSERT_ORACLE_NUMERIC)
 INSERT_ORACLE_NON_NUMERIC_TEMPLATE = Template(INSERT_ORACLE_NON_NUMERIC)
 
+CREATE_MARIADB_NUMERIC_TEMPLATE = Template(CREATE_MARIADB_NUMERIC)
+CREATE_MARIADB_NON_NUMERIC_TEMPLATE = Template(CREATE_MARIADB_NON_NUMERIC)
+INSERT_MARIADB_NUMERIC_TEMPLATE = Template(INSERT_MARIADB_NUMERIC)
+INSERT_MARIADB_NON_NUMERIC_TEMPLATE = Template(INSERT_MARIADB_NON_NUMERIC)
 
 def get_create_table_query_numeric(table, database):
     if database.type is 'Oracle':
@@ -332,6 +418,8 @@ def get_create_table_query_numeric(table, database):
         query = CREATE_SQLSERVER_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
     elif database.type is 'PostgreSQL':
         query = CREATE_POSTGRESQL_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
+    elif database.type is 'MariaDB':
+        query = CREATE_MARIADB_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
     else:
         query = CREATE_MYSQL_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
 
@@ -344,6 +432,8 @@ def get_create_table_query_non_numeric(table, database):
         query = CREATE_SQLSERVER_NON_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
     elif database.type is 'PostgreSQL':
         query = CREATE_POSTGRESQL_NON_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
+    elif database.type is 'MariaDB':
+        query = CREATE_MARIADB_NON_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
     else:
         query = CREATE_MYSQL_NON_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
 
@@ -356,6 +446,8 @@ def get_insert_query_numeric(table, database):
         query = INSERT_SQLSERVER_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
     elif database.type is 'PostgreSQL':
         query = INSERT_POSTGRESQL_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
+    elif database.type is 'MariaDB':
+        query = INSERT_MARIADB_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
     else:
         query = INSERT_MYSQL_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
 
@@ -368,6 +460,8 @@ def get_insert_query_non_numeric(table, database):
         query = INSERT_SQLSERVER_NON_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
     elif database.type is 'PostgreSQL':
         query = INSERT_POSTGRESQL_NON_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
+    elif database.type is 'MariaDB':
+        query = INSERT_MARIADB_NON_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
     else:
         query = INSERT_MYSQL_NON_NUMERIC_TEMPLATE.safe_substitute({'TABLE': table})
 

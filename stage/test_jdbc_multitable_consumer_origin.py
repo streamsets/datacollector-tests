@@ -37,7 +37,8 @@ from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METAD
     PRIMARY_KEY_NUMERIC_METADATA_SQLSERVER, \
     PRIMARY_KEY_ORACLE_TABLE, PRIMARY_KEY_SQLSERVER_TABLE, PRIMARY_KEY_POSTGRESQL_TABLE, PRIMARY_KEY_MYSQL_TABLE, \
     get_create_table_query_non_numeric, get_create_table_query_numeric, get_insert_query_non_numeric, \
-    get_insert_query_numeric
+    get_insert_query_numeric, PRIMARY_KEY_MARIADB_TABLE, PRIMARY_KEY_NUMERIC_METADATA_MARIADB, \
+    PRIMARY_KEY_NON_NUMERIC_METADATA_MARIADB
 
 logger = logging.getLogger(__name__)
 
@@ -1382,6 +1383,8 @@ def test_jdbc_primary_keys_headers(sdc_builder, sdc_executor, database):
                 primary_key_specification_expected = PRIMARY_KEY_SQLSERVER_TABLE
             elif database.type is 'PostgreSQL':
                 primary_key_specification_expected = PRIMARY_KEY_POSTGRESQL_TABLE
+            elif database.type is 'MariaDB':
+                primary_key_specification_expected = PRIMARY_KEY_MARIADB_TABLE
             else:
                 primary_key_specification_expected = PRIMARY_KEY_MYSQL_TABLE
 
@@ -1463,6 +1466,8 @@ def test_jdbc_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database)
             primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_SQLSERVER
         elif database.type is 'PostgreSQL':
             primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_POSTGRESQL
+        elif database.type is 'MariaDB':
+            primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_MARIADB
         else:
             primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_MYSQL
 
@@ -1537,6 +1542,8 @@ def test_jdbc_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, datab
             primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_SQLSERVER
         elif database.type is 'PostgreSQL':
             primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_POSTGRESQL
+        elif database.type is 'MariaDB':
+            primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_MARIADB
         else:
             primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_MYSQL
 
