@@ -13,11 +13,15 @@
 # limitations under the License.
 
 import binascii
+import json
 import logging
-import string
 import pytest
 import sqlalchemy
+import string
 
+from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METADATA_SQLSERVER, \
+    PRIMARY_KEY_NUMERIC_METADATA_SQLSERVER, get_create_table_query_non_numeric, get_create_table_query_numeric, \
+    get_insert_query_non_numeric, get_insert_query_numeric
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -1016,6 +1020,309 @@ def test_combined_update_record_format(sdc_builder, sdc_executor, database, use_
 
         if connection is not None:
             connection.close()
+
+
+@sdc_min_version('5.2.0')
+@database('sqlserver')
+@pytest.mark.parametrize('use_table', [True, False])
+def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table):
+    """
+    Test to check the primary keys are present in the headers of the output records.
+
+    SQL Server does not consider an update as such if the primary keys are changed (in such case it is considered a
+    delete + an insert), so the before and after values will always match.
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        # Create the table
+        connection = database.engine.connect()
+
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(
+            table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('name', sqlalchemy.String(64), primary_key=True),
+            sqlalchemy.Column('pokedex_id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('type', sqlalchemy.String(64)),
+            sqlalchemy.Column('generation', sqlalchemy.Integer)
+        )
+
+        table.create(database.engine)
+        capture_instance_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}'
+        _enable_cdc(connection, DEFAULT_SCHEMA_NAME, table_name, capture_instance_name)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(
+            table_configs=[{'capture_instance': capture_instance_name}],
+            use_direct_table_query=use_table,
+            combine_update_records=True
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Define the data for each statement
+        initial_data = {'name': 'Azurill', 'pokedex_id': 298, 'type': 'Normal', 'generation': 3}
+        updated_data = {'name': 'Azurill', 'pokedex_id': 298, 'type': 'Normal/Fairy', 'generation': 6}
+
+        # Insert some data and update it
+        connection.execute(f"""
+            insert into {table_name}
+            values (
+                '{initial_data.get("name")}',
+                {initial_data.get("pokedex_id")},
+                '{initial_data.get("type")}',
+                {initial_data.get("generation")}
+            )
+        """)
+
+        connection.execute(f"""
+            update {table_name}
+            set type = '{updated_data.get("type")}', generation = {updated_data.get("generation")}
+            where name = '{updated_data.get("name")}' and pokedex_id = {updated_data.get("pokedex_id")}
+        """)
+
+        connection.execute(f"delete from {table_name}")
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        assert len(wiretap.output_records) == 3
+
+        primary_key_before_prefix = "jdbc.primaryKey.before."
+        primary_key_after_prefix = "jdbc.primaryKey.after."
+
+        for index in range(0, 3):
+            header_values = wiretap.output_records[index].header.values
+
+            assert primary_key_before_prefix + "type" not in header_values
+            assert primary_key_before_prefix + "generation" not in header_values
+            assert primary_key_after_prefix + "type" not in header_values
+            assert primary_key_after_prefix + "generation" not in header_values
+
+            if index == 1:
+                assert header_values['sdc.operation.type'] == '3'
+
+                assert primary_key_before_prefix + "name" in header_values
+                assert primary_key_before_prefix + "pokedex_id" in header_values
+                assert primary_key_after_prefix + "name" in header_values
+                assert primary_key_after_prefix + "pokedex_id" in header_values
+
+                assert header_values[primary_key_before_prefix + "name"] is not None
+                assert header_values[primary_key_before_prefix + "pokedex_id"] is not None
+                assert header_values[primary_key_after_prefix + "name"] is not None
+                assert header_values[primary_key_after_prefix + "pokedex_id"] is not None
+
+                assert header_values[f"{primary_key_before_prefix}name"] == initial_data.get("name")
+                assert header_values[f"{primary_key_before_prefix}pokedex_id"] == f'{initial_data.get("pokedex_id")}'
+                assert header_values[f"{primary_key_after_prefix}name"] == updated_data.get("name")
+                assert header_values[f"{primary_key_after_prefix}pokedex_id"] == f'{updated_data.get("pokedex_id")}'
+            else:
+                if index == 0:
+                    assert header_values['sdc.operation.type'] == '1'
+                else:
+                    assert header_values['sdc.operation.type'] == '2'
+
+                assert primary_key_before_prefix + "name" not in header_values
+                assert primary_key_before_prefix + "pokedex_id" not in header_values
+                assert primary_key_after_prefix + "name" not in header_values
+                assert primary_key_after_prefix + "pokedex_id" not in header_values
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f'drop table if exists {table_name}')
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@sdc_min_version('5.2.0')
+@database('sqlserver')
+@pytest.mark.parametrize('values', ['numeric', 'non-numeric'])
+@pytest.mark.parametrize('use_table', [True, False])
+def test_primary_keys_metadata(sdc_builder, sdc_executor, database, use_table, values):
+    """
+    Test to check the metadata of the primary keys is correctly set in the headers of the output records.
+    """
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        connection = database.engine.connect()
+        capture_instance_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}'
+
+        if values == 'numeric':
+            connection.execute(get_create_table_query_numeric(table_name, database))
+            _enable_cdc(connection, DEFAULT_SCHEMA_NAME, table_name, capture_instance_name)
+            connection.execute(get_insert_query_numeric(table_name, database))
+            primary_key_specification_expected = PRIMARY_KEY_NUMERIC_METADATA_SQLSERVER
+        else:
+            connection.execute(get_create_table_query_non_numeric(table_name, database))
+            _enable_cdc(connection, DEFAULT_SCHEMA_NAME, table_name, capture_instance_name)
+            connection.execute(get_insert_query_non_numeric(table_name, database))
+            primary_key_specification_expected = PRIMARY_KEY_NON_NUMERIC_METADATA_SQLSERVER
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(
+            table_configs=[{'capture_instance': capture_instance_name}],
+            use_direct_table_query=use_table,
+            fetch_size=1,
+            combine_update_records=True
+        )
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
+
+        pipeline = pipeline_builder.build("SQL Server CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
+        assert len(wiretap.output_records) == 1
+
+        record = wiretap.output_records[0]
+        assert "jdbc.primaryKeySpecification" in record.header.values
+        assert record.header.values["jdbc.primaryKeySpecification"] is not None
+
+        primary_key_specification_json = json.dumps(
+            json.loads(record.header.values["jdbc.primaryKeySpecification"]),
+            sort_keys=True
+        )
+
+        primary_key_specification_expected_json = json.dumps(
+            json.loads(primary_key_specification_expected),
+            sort_keys=True
+        )
+
+        assert primary_key_specification_json == primary_key_specification_expected_json
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f'drop table if exists {table_name}')
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
+@sdc_min_version('5.2.0')
+@database('sqlserver')
+@pytest.mark.parametrize('use_table', [True, False])
+def test_no_primary_keys_information_when_not_combining_update_records(sdc_builder, sdc_executor, database, use_table):
+    """
+    Test to check the primary keys' information is not present in the headers of the output records when the 'Combine
+    Update Records' option is turned off.
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        # Create the table
+        connection = database.engine.connect()
+
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(
+            table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('name', sqlalchemy.String(64), primary_key=True),
+            sqlalchemy.Column('pokedex_id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('type', sqlalchemy.String(64)),
+            sqlalchemy.Column('generation', sqlalchemy.Integer)
+        )
+
+        table.create(database.engine)
+        capture_instance_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}'
+        _enable_cdc(connection, DEFAULT_SCHEMA_NAME, table_name, capture_instance_name)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(
+            table_configs=[{'capture_instance': capture_instance_name}],
+            use_direct_table_query=use_table,
+            combine_update_records=False
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Define the data for each statement
+        initial_data = {'name': 'Azurill', 'pokedex_id': 298, 'type': 'Normal', 'generation': 3}
+        updated_data = {'name': 'Azurill', 'pokedex_id': 298, 'type': 'Normal/Fairy', 'generation': 6}
+
+        # Insert some data and update it
+        connection.execute(f"""
+            insert into {table_name}
+            values (
+                '{initial_data.get("name")}',
+                {initial_data.get("pokedex_id")},
+                '{initial_data.get("type")}',
+                {initial_data.get("generation")}
+            )
+        """)
+
+        connection.execute(f"""
+            update {table_name}
+            set type = '{updated_data.get("type")}', generation = {updated_data.get("generation")}
+            where name = '{updated_data.get("name")}' and pokedex_id = {updated_data.get("pokedex_id")}
+        """)
+
+        connection.execute(f"delete from {table_name}")
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        assert len(wiretap.output_records) == 4
+
+        primary_key_before_prefix = "jdbc.primaryKey.before."
+        primary_key_after_prefix = "jdbc.primaryKey.after."
+
+        for index in range(0, 4):
+            header_values = wiretap.output_records[index].header.values
+
+            if index == 0:
+                assert header_values['sdc.operation.type'] == '1'
+            elif index == 1:
+                assert header_values['sdc.operation.type'] == '5'
+            elif index == 2:
+                assert header_values['sdc.operation.type'] == '3'
+            else:
+                assert header_values['sdc.operation.type'] == '2'
+
+            assert "jdbc.primaryKeySpecification" not in header_values
+            assert primary_key_before_prefix + "type" not in header_values
+            assert primary_key_before_prefix + "generation" not in header_values
+            assert primary_key_after_prefix + "type" not in header_values
+            assert primary_key_after_prefix + "generation" not in header_values
+            assert primary_key_before_prefix + "name" not in header_values
+            assert primary_key_before_prefix + "pokedex_id" not in header_values
+            assert primary_key_after_prefix + "name" not in header_values
+            assert primary_key_after_prefix + "pokedex_id" not in header_values
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f'drop table if exists {table_name}')
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
 
 
 def _sort_records(entry):
