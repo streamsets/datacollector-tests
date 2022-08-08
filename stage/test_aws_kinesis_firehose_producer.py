@@ -179,7 +179,7 @@ def _get_firehose_data(s3_client, s3_bucket, random_raw_str):
         aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
         aobj_body = aobj['Body'].read().decode().strip()
         logger.info(f'Body : {aobj_body} for Key : {akey}')
-        if aobj_body in random_raw_str:
+        if random_raw_str in aobj_body:
             s3_put_keys.append(akey)
 
     return s3_put_keys
