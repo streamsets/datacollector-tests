@@ -39,6 +39,31 @@ PRIMARY_KEY_NUMERIC_METADATA_MYSQL = f'''{{
             {_primary_key_specification_json("my_double", 8, "DOUBLE", 22, 22, 0, "true", "false")}
         }}'''
 
+PRIMARY_KEY_NON_NUMERIC_METADATA_MYSQL_PRE_V8 = f'''{{
+            {_primary_key_specification_json("my_boolean", -7, "BIT", 1, 1, 0, "false", "false")},
+            {_primary_key_specification_json("my_date", 91, "DATE", 10, 10, 0, "false", "false")},
+            {_primary_key_specification_json("my_datetime", 93, "TIMESTAMP", 19, 19, 0, "false", "false")},
+            {_primary_key_specification_json("my_timestamp", 93, "TIMESTAMP", 19, 19, 0, "false", "false")},
+            {_primary_key_specification_json("my_time", 92, "TIME", 10, 10, 0, "false", "false")},
+            {_primary_key_specification_json("my_year", 91, "DATE", 4, 4, 0, "false", "false")},
+            {_primary_key_specification_json("my_char", 1, "CHAR", 10, 10, 0, "false", "false")},
+            {_primary_key_specification_json("my_varchar", 12, "VARCHAR", 32, 32, 0, "false", "false")},
+            {_primary_key_specification_json("my_varchar2", 12, "VARCHAR", 64, 64, 0, "false", "false")},
+            {_primary_key_specification_json("my_text", -1, "LONGVARCHAR", 255, 255, 0, "false", "false")}
+        }}'''
+
+PRIMARY_KEY_NUMERIC_METADATA_MYSQL_PRE_V8 = f'''{{
+            {_primary_key_specification_json("my_bit", -7, "BIT", 1, 1, 0, "false", "false")},
+            {_primary_key_specification_json("my_tinyint", -6, "TINYINT", 4, 4, 0, "true", "false")},
+            {_primary_key_specification_json("my_smallint", 5, "SMALLINT", 6, 6, 0, "true", "false")},
+            {_primary_key_specification_json("my_int", 4, "INTEGER", 11, 11, 0, "true", "false")},
+            {_primary_key_specification_json("my_bigint", -5, "BIGINT", 20, 20, 0, "true", "false")},
+            {_primary_key_specification_json("my_decimal", 3, "DECIMAL", 12, 10, 5, "true", "false")},
+            {_primary_key_specification_json("my_numeric", 3, "DECIMAL", 10, 8, 4, "true", "false")},
+            {_primary_key_specification_json("my_float", 7, "REAL", 12, 12, 31, "true", "false")},
+            {_primary_key_specification_json("my_double", 8, "DOUBLE", 22, 22, 31, "true", "false")}
+        }}'''
+
 PRIMARY_KEY_NON_NUMERIC_METADATA_SQLSERVER = f'''{{
             {_primary_key_specification_json("my_date", 91, "DATE", 10, 10, 0, "false", "false")},
             {_primary_key_specification_json("my_datetime", 93, "TIMESTAMP", 23, 23, 3, "false", "false")},
@@ -122,6 +147,10 @@ PRIMARY_KEY_NUMERIC_METADATA_MARIADB = f'''{{
 id_metadata_mysql = _primary_key_specification_json("id", 4, "INTEGER", 10, 10, 0, "true", "false")
 name_metadata_mysql = _primary_key_specification_json("name", 12, "VARCHAR", 32, 32, 0, "false", "false")
 PRIMARY_KEY_MYSQL_TABLE = f'{{ {id_metadata_mysql}, {name_metadata_mysql} }}'
+
+id_metadata_mysql_pre_v8 = _primary_key_specification_json("id", 4, "INTEGER", 11, 11, 0, "true", "false")
+name_metadata_mysql_pre_v8 = _primary_key_specification_json("name", 12, "VARCHAR", 32, 32, 0, "false", "false")
+PRIMARY_KEY_MYSQL_PRE_V8_TABLE = f'{{ {id_metadata_mysql_pre_v8}, {name_metadata_mysql_pre_v8} }}'
 
 id_metadata_sqlserver = _primary_key_specification_json("id", 4, "INTEGER", 11, 10, 0, "true", "false")
 name_metadata_sqlserver = _primary_key_specification_json("name", 12, "VARCHAR", 32, 32, 0, "false", "false")
