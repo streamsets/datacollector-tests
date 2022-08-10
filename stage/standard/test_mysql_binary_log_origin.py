@@ -19,6 +19,7 @@ import string
 import pytest
 import sqlalchemy
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.databases import MySqlDatabase, MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -70,8 +71,8 @@ DATA_TYPES = [
     ('VARBINARY(5)', "'Hello'", 'STRING', 'Hello'),
     ('BLOB', "'Hello'", 'BYTE_ARRAY', 'SGVsbG8='),
     ('TEXT', "'Hello'", 'STRING', 'Hello'),
-    ("ENUM('a', 'b')", "'a'", 'INTEGER', '1'),
-    ("set('a', 'b', 'c')", "'a,c'", 'LONG', '5'),
+    ("ENUM('a', 'b')", "'a'", 'STRING', '1'),
+    ("set('a', 'b', 'c')", "'a,c'", 'STRING', '5'),
 #    ("POINT", "POINT(1, 1)", 'STRING', 'AAAAAAEBAAAAAAAAAAAA8D8AAAAAAADwPw=='),
 #    ("LINESTRING", "LineString(Point(0,0), Point(10,10), Point(20,25), Point(50,60))", 'STRING', 'AAAAAAECAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkQAAAAAAAACRAAAAAAAAANEAAAAAAAAA5QAAAAAAAAElAAAAAAAAATkA='),
 #    ("POLYGON", "Polygon(LineString(Point(0,0),Point(10,0),Point(10,10),Point(0,10),Point(0,0)),LineString(Point(5,5),Point(7,5),Point(7,7),Point(5,7),Point(5,5)))", 'STRING', 'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
@@ -82,9 +83,33 @@ DATA_TYPES = [
 @database('mysql')
 @sdc_min_version('3.0.0.0')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES, ids=[i[0] for i in DATA_TYPES])
-def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
+@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
+def test_data_types(
+        sdc_builder,
+        sdc_executor,
+        database,
+        sql_type,
+        insert_fragment,
+        expected_type,
+        expected_value,
+        keep_data,
+        table_loading_option
+):
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
+
+    if table_loading_option == 'via_event':
+        if Version(database.version) < Version('8.0.0'):
+            pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
+
+        connection.execute('SET GLOBAL binlog_row_metadata=FULL')
+
+        if sql_type == 'TEXT':
+            # The connector we are using converts Text types to Byte Arrays, but this is only used when the table is
+            # loaded via event. This cannot be changed for tables loaded via catalog as this would affect the default
+            # mapping of unsupported types and there would be more types that would not match
+            expected_type = 'BYTE_ARRAY'
+            expected_value = 'SGVsbG8='
 
     try:
         # Create Pipeline.
@@ -132,6 +157,9 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         assert record.field['Data']['data_column']._data['value'] == expected_value
         assert null_record.field['Data']['data_column'] == None
     finally:
+        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
+            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
+
         if not keep_data:
             if connection is not None:
                 logger.info('Dropping table %s in %s database ...', table_name, database.type)
@@ -157,7 +185,24 @@ OBJECT_NAMES = [
 
 @database('mysql')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
-def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, offset_name, keep_data):
+@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
+def test_object_names(
+        sdc_builder,
+        sdc_executor,
+        database,
+        test_name,
+        table_name,
+        offset_name,
+        keep_data,
+        table_loading_option
+):
+    connection = database.engine.connect()
+    if table_loading_option == 'via_event':
+        if Version(database.version) < Version('8.0.0'):
+            pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
+
+        connection.execute('SET GLOBAL binlog_row_metadata=FULL')
+
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('MySQL Binary Log')
@@ -182,7 +227,6 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
         table.create(database.engine)
 
         logger.info('Adding three rows into %s database ...', database.type)
-        connection = database.engine.connect()
         connection.execute(table.insert(), [{offset_name: 1}])
 
         sdc_executor.add_pipeline(pipeline)
@@ -196,6 +240,9 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
         assert len(wiretap.output_records) == 1
         assert wiretap.output_records[0].field['Data'][offset_name] == 1
     finally:
+        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
+            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
+
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
             table.drop(database.engine)

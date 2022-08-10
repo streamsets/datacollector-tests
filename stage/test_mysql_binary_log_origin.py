@@ -1295,7 +1295,9 @@ def test_mysql_binary_log_altering_columns(
 
     try:
         connection = database.engine.connect()
-        connection.execute('SET GLOBAL binlog_row_metadata=FULL')
+
+        if table_loading_option == 'via_event':
+            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
 
         # Create the table
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
