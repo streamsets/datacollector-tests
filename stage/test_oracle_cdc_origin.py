@@ -15,6 +15,8 @@
 
 import json
 import logging
+from contextlib import ExitStack
+
 import pytest
 import sqlalchemy
 import string
@@ -1425,6 +1427,76 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
         if table is not None:
             table.drop(db_engine)
             logger.info('Table: %s dropped.', src_table_name)
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("buffer_locally", [True, False])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+@pytest.mark.parametrize("timestamp_as_string", [True, False])
+@pytest.mark.parametrize("timezone_type", ["WITH TIME ZONE", "WITH LOCAL TIME ZONE"])
+def test_oracle_cdc_client_timestamp_null_values(
+    sdc_builder, sdc_executor, database, buffer_locally, buffer_location, timestamp_as_string, timezone_type
+):
+    """Basic test that tests for ESC-1794. This test ensures that timezoned timestamps with value 'null' are
+    treated correctly.
+
+    Runs oracle_cdc_client >> wiretap
+    """
+    table_name = f"{get_random_string(string.ascii_uppercase, 20)}"
+    primary_field = 42
+
+    with ExitStack() as on_exit:
+        # Create the database
+        connection = database.engine.connect()
+        connection.execute(
+            f"""CREATE TABLE {table_name} (
+            PRIMARY_FIELD NUMBER PRIMARY KEY,
+            TIMESTAMP_FIELD TIMESTAMP {timezone_type})"""
+        )
+        # Defer table drop
+        on_exit.callback(connection.execute, f"DROP TABLE {table_name}")
+
+        # Create the pipeline and the Oracle CDC Client stage
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = _get_oracle_cdc_client_origin(
+            connection=connection,
+            database=database,
+            sdc_builder=sdc_builder,
+            src_table_name=table_name,
+            pipeline_builder=pipeline_builder,
+            buffer_locally=buffer_locally,
+            buffer_location=buffer_location,
+            convert_timestamp_to_string=timestamp_as_string,
+        )
+
+        # Insert values
+        try:
+            txn = connection.begin()
+            connection.execute(f"INSERT INTO {table_name} VALUES ({primary_field}, null)")
+            txn.commit()
+        except:
+            txn.rollback()
+            raise
+
+        # Build the rest of the pipeline
+        wiretap = pipeline_builder.add_wiretap()
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        # Start the pipeline
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, "output_record_count", 1, timeout_sec=60)
+        # Defer pipeline stop
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+
+        # Verify that there is only one record, it is the correct record and it has a null timestamp value
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].field["PRIMARY_FIELD"].value == primary_field, "Unexpected record"
+        timestamp_value = wiretap.output_records[0].field["TIMESTAMP_FIELD"].value
+        assert timestamp_value is None, f"Expected null value, got '{timestamp_value}'"
 
 
 @database('oracle')
