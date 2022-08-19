@@ -19,7 +19,8 @@ import pytest
 import sqlalchemy
 from streamsets import sdk
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, MySqlDatabase
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, MySqlDatabase, \
+    MariaDBDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -88,7 +89,7 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     query_str = f'SELECT "name" as "columnName" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
-    if type(database) == MySqlDatabase:
+    if type(database) in [MySqlDatabase, MariaDBDatabase]:
         query_str = f'SELECT `name` as `columnName` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
                             columnName=column_name_config,
