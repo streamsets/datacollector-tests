@@ -16,7 +16,7 @@ import logging
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.environments.databases import MySqlDatabase
+from streamsets.testframework.environments.databases import MySqlDatabase, MariaDBDatabase
 from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
@@ -150,7 +150,7 @@ def test_required_fields(sdc_builder, sdc_executor, database, keep_data):
     # Work-arounding STF behavior of upper-casing table name configuration
     jdbc_producer.table_name = table_name
     # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
-    if isinstance(database, MySqlDatabase):
+    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         jdbc_producer.init_query = "SET sql_mode=ANSI_QUOTES"
 
     sdc_executor.add_pipeline(pipeline)

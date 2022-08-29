@@ -21,7 +21,7 @@ import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, PostgreSqlDatabase, \
-    MySqlDatabase
+    MySqlDatabase, MariaDBDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -216,7 +216,7 @@ def test_jdbc_lookup_processor(sdc_builder, sdc_executor, database, credential_s
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
     query_str = f'SELECT "name" FROM "{table_name}" WHERE "id" = ${{record:value("/id")}}'
-    if type(database) == MySqlDatabase:
+    if type(database) in [MySqlDatabase, MariaDBDatabase]:
         query_str = f'SELECT `name` FROM `{table_name}` WHERE `id` = ${{record:value("/id")}}'
     column_mappings = [dict(dataType='USE_COLUMN_TYPE',
                             columnName='name',
@@ -1079,7 +1079,7 @@ def test_jdbc_lookup_processor_incorrect_query_for_data(sdc_builder, sdc_executo
         wiretap = builder.add_wiretap()
         source >> lookup >> wiretap.destination
         pipeline = builder.build().configure_for_environment(database)
-        if isinstance(database, MySqlDatabase):
+        if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
             lookup.init_query = "SET sql_mode=ANSI_QUOTES"
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()

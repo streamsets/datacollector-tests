@@ -156,14 +156,14 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
     table = _create_table(table_name, database, None)
 
     if table_type == 'known':
-        if type(database) == MySqlDatabase:
+        if type(database) in [MySqlDatabase, MariaDBDatabase]:
             table_name = f'`{table_name}`'
         else:
             table_name = f'"{table_name}"'
     elif table_type == 'el_var':
         table_name = "${table_name}"
     elif table_type == 'wrong':
-        if type(database) == MySqlDatabase:
+        if type(database) in [MySqlDatabase, MariaDBDatabase]:
             table_name = f'`wrong_table_name`'
         else:
             table_name = f'"wrong_table_name"'
@@ -176,7 +176,7 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
                                        stop_after_first_batch=True)
 
     jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
-    if type(database) == MySqlDatabase:
+    if type(database) in [MySqlDatabase, MariaDBDatabase]:
         query_str = f'SELECT `name` FROM {table_name} WHERE `id` = ${{record:value("/id")}}'
     else:
         query_str = f'SELECT "name" FROM {table_name} WHERE "id" = ${{record:value("/id")}}'
