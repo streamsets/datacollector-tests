@@ -1200,8 +1200,8 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
         jdbc_multitable_consumer.table_configs[0]["tablePattern"] = f'{table_prefix}%'
 
         sdc_executor.add_pipeline(pipeline)
-        status = sdc_executor.start_pipeline(pipeline)
-        status.wait_for_pipeline_output_records_count(all_row_count + all_row_count / 1000 + 9)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', all_row_count)
 
         for i, rows in enumerate(all_rows):
             assert len(rows) == len(wiretaps[i].output_records)
