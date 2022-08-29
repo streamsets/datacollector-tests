@@ -16,6 +16,7 @@ import logging
 import string
 import json
 import pytest
+import time
 
 from pulsar import MessageId
 from streamsets.testframework.markers import pulsar, sdc_min_version
@@ -149,7 +150,7 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
 
 @pulsar
 @sdc_min_version('5.0.0')
-@pytest.mark.parametrize("input_data_json, input_data_avro, topic_type_pipeline, topic_type_pulsar, error_code", [
+@pytest.mark.parametrize("input_data_json, input_data_avro, topic_type_pipeline, topic_type_pulsar", [
     (
         {"name": "Fran", "age": 32}, 
         '\x08Fran@',
@@ -157,29 +158,10 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
         '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
         '{"type":"record","name":"schema","doc":"",'
         '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
-        None
-    ),
-    (
-        {"name": "Fran", "age": 32}, 
-        '\x08Fran@',
-        '{"type":"record","name":"schema","doc":"",'
-        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
-        '{"type":"record","name":"schema","doc":"",'
-        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"string"}]}',
-        'PULSAR_21'
-    ),
-    (
-        {"name": "Fran", "age": "thirty-two"}, 
-        '\x08Fran@',
-        '{"type":"record","name":"schema","doc":"",'
-        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
-        '{"type":"record","name":"schema","doc":"",'
-        '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
-        'PULSAR_24'
     ),
 ])
 def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, input_data_json, input_data_avro,
-                                          topic_type_pipeline, topic_type_pulsar, error_code):
+                                          topic_type_pipeline, topic_type_pulsar):
     topic_name = get_random_string(string.ascii_letters, 10)
 
     topic_schema_pipeline = {"name": "complex-schema", "type": "AVRO", "schema": topic_type_pipeline, "properties": {}}
@@ -224,15 +206,77 @@ def test_pulsar_producer_with_avro_schema(sdc_builder, sdc_executor, pulsar, inp
             reader.close()  # reader needs to be closed before topic can be deleted without force
             client.close()
 
-        assert error_code is None
         assert msgs_sent_count == number_generated_records
         assert msgs_sent_count == len(msgs_received)
         assert msgs_received[0] == input_data_avro
-    except sdk.sdc_api.RunError as e:
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
+        pulsar.admin.delete_topic(f"persistent://public/default/{topic_name}")
+
+
+@pulsar
+@sdc_min_version('5.0.0')
+@pytest.mark.parametrize("input_data_json, input_data_avro, topic_type_pipeline, topic_type_pulsar, error_code", [
+    (
+            {"name": "Fran", "age": 32},
+            '\x08Fran@',
+            '{"type":"record","name":"schema","doc":"",'
+            '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
+            '{"type":"record","name":"schema","doc":"",'
+            '"fields":[{"name":"name","type":"string"},{"name":"age","type":"string"}]}',
+            'PULSAR_21'
+    ),
+    (
+            {"name": "Fran", "age": "thirty-two"},
+            '\x08Fran@',
+            '{"type":"record","name":"schema","doc":"",'
+            '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
+            '{"type":"record","name":"schema","doc":"",'
+            '"fields":[{"name":"name","type":"string"},{"name":"age","type":"int"}]}',
+            'PULSAR_24'
+    ),
+])
+def test_pulsar_producer_with_avro_schema_negative(sdc_builder, sdc_executor, pulsar, input_data_json, input_data_avro,
+                                          topic_type_pipeline, topic_type_pulsar, error_code):
+    topic_name = get_random_string(string.ascii_letters, 10)
+
+    topic_schema_pipeline = {"name": "complex-schema", "type": "AVRO", "schema": topic_type_pipeline, "properties": {}}
+    topic_schema_pulsar = {"name": "complex-schema", "type": "AVRO", "schema": topic_type_pulsar, "properties": {}}
+
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  json_content='MULTIPLE_OBJECTS',
+                                                                                  raw_data=json.dumps(input_data_json))
+    pulsar_producer = builder.add_stage('Pulsar Producer')
+    pulsar_producer.set_attributes(topic=topic_name,
+                                   schema='USER_SCHEMA',
+                                   schema_info=json.dumps(topic_schema_pipeline),
+                                   data_format='AVRO',
+                                   avro_schema_location='INLINE',
+                                   avro_schema=topic_type_pipeline,
+                                   include_schema=False)
+
+    dev_raw_data_source >> pulsar_producer
+    pipeline = builder.build(title='Pulsar Producer pipeline').configure_for_environment(pulsar)
+    enforce_schema_validation_for_pulsar_topic(pulsar.admin, topic_name, topic_schema_pulsar)
+    disable_auto_update_schema(pulsar.admin)
+
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(10)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert False, "The pipeline did not fail when expected"
+    except (sdk.sdc_api.RunningError, sdk.sdc_api.RunError) as e:
         # StageException because in this case the pulsar schema is a stage level configuration
-        assert error_code is not None
         assert error_code in e.message
     finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING_ERROR':
+            attempts = 0
+            while (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') != 'RUN_ERROR'
+                   and attempts < 5):
+                time.sleep(1)
+                attempts += 1
         sdc_executor.remove_pipeline(pipeline)
         pulsar.admin.delete_topic(f"persistent://public/default/{topic_name}")
 
