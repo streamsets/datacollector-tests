@@ -1201,7 +1201,7 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', all_row_count)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', all_row_count, timeout_sec=300)
 
         for i, rows in enumerate(all_rows):
             assert len(rows) == len(wiretaps[i].output_records)
