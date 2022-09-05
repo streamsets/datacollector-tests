@@ -50,8 +50,8 @@ logger = logging.getLogger(__name__)
 #    ('timestamp with local time zone', "TIMESTAMP'1998-1-4 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-04T07:00:00Z'),
     ('timestamp with local time zone', "null", 'ZONED_DATETIME', None),
 #    ('long', "'LONG'", 'STRING', 'LONG'),
-#    ('blob', "utl_raw.cast_to_raw('BLOB')", 'BYTE_ARRAY', 'QkxPQg=='),
-#    ('clob', "'CLOB'", 'STRING', 'CLOB'),
+   ('blob', "utl_raw.cast_to_raw('BLOB')", 'BYTE_ARRAY', 'QkxPQg=='),
+   ('clob', "'CLOB'", 'STRING', 'CLOB'),
 #    ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
 #    ('XMLType', "xmltype('<a></a>')", 'STRING', '<a></a>')
 ])
@@ -82,7 +82,8 @@ def test_data_types(sdc_builder, sdc_executor, database, buffer_location, sql_ty
                                                pipeline_builder=builder,
                                                buffer_locally=True,
                                                buffer_location=buffer_location,
-                                               src_table_name=table_name)
+                                               src_table_name=table_name,
+                                               enable_blob_and_clob_columns_processing=True)
         wiretap = builder.add_wiretap()
         origin >> wiretap.destination
 

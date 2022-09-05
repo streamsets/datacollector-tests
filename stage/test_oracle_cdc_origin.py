@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-
 import json
 import logging
 import pytest
@@ -21,9 +19,14 @@ import string
 import uuid
 
 from collections import namedtuple
+from contextlib import ExitStack
 from datetime import datetime, timedelta
+from pytest import fixture
+from random import randint
 from sqlalchemy import text
 from time import sleep
+
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
@@ -41,6 +44,10 @@ OTHER_COLUMN = 'NAME'
 BATCH_SIZE = 10  # Max limit imposed
 Operations = namedtuple('Operations', ['rows', 'cdc_op_types', 'sdc_op_types', 'change_count'])
 LAST_NON_MULTITENANT_ORACLE_VERSION = 11
+
+EMPTY_BLOB = b"EMPTY_BLOB()"
+EMPTY_BLOB_STRING = "EMPTY_BLOB()"
+EMPTY_CLOB = "EMPTY_CLOB()"
 
 
 # pylint: disable=pointless-statement, too-many-locals
@@ -1852,8 +1859,6 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
     ('timestamp with time zone', "TIMESTAMP'1998-1-3 6:00:00-5:00'", ['1998-01-03T06:00:00-05:00']),
     ('timestamp with local time zone', "TIMESTAMP'1998-1-4 6:00:00-5:00'", ['1998-01-04T11:00:00Z[UTC]']),
     ('long', "'VALUE EXAMPLE'", ['VALUE EXAMPLE']),
-    ('blob', "utl_raw.cast_to_raw('BLOB')", ['EMPTY_BLOB()', "HEXTORAW('424c4f42')"]),
-    ('clob', "'VALUE EXAMPLE'", ['EMPTY_CLOB()', 'VALUE EXAMPLE']),
     ('nclob', "'VALUE EXAMPLE'", ['EMPTY_CLOB()', 'VALUE EXAMPLE']),
     # ('XMLType', "xmltype('<a></a>')", ['<a></a>'])  # Not fully supported by LogMiner
 ])
@@ -1873,6 +1878,9 @@ def test_unsupported_types_send_to_pipeline(sdc_builder,
     NOTE: parameter 'expected_values' is a list because for some data types Oracle generates two CDC records
     per row insertion (e.g. BLOB type). The first CDC record is a SQL insertion with a void value
     (e.g. EMPTY_BLOB()), the second one is a SQL update with the actual value (e.g. HEXTORAW('424c4f42')).
+
+    NOTE: COLLECTOR-1215 added support for BLOB and CLOB as long as the "Enable BLOB and CLOB columns processing"
+    configuration is enabled. This test keeps it disabled so the behaviour is the same as before adding support.
 
     More info about the supported Oracle data types:
     - https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm
@@ -1908,7 +1916,8 @@ def test_unsupported_types_send_to_pipeline(sdc_builder,
                                                    start_scn=start_scn,
                                                    src_table_name=table_name,
                                                    unsupported_field_type='SEND_TO_PIPELINE',
-                                                   add_unsupported_fields_to_records=True)
+                                                   add_unsupported_fields_to_records=True,
+                                                   enable_blob_and_clob_columns_processing=True)
         wiretap = builder.add_wiretap()
         oracle_cdc >> wiretap.destination
 
@@ -1958,21 +1967,18 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, bu
     base_name = get_random_string(string.ascii_lowercase, 20)
     table_name1 = f'{base_name}_table1'
     table_name2 = f'{base_name}_table2'
-    input_value1 = "utl_raw.cast_to_raw('BLOB')"
+    input_value1 = "'AAAAAAAABAAAA3VAAA'"
     input_value2 = 'just plain text'
     expected_output = [{'ID': 1, 'DATA_COLUMN': input_value2}]
     if action == 'TO_ERROR':
-        # For BLOB insertions, Oracle logs two CDC records: a SQL insertion with an empty blob, then a SQL
-        # update over the inserted row with the actual value.
-        expected_error_output = [{'ID': 1, 'DATA_COLUMN': 'EMPTY_BLOB()'},
-                                 {'ID': 1, 'DATA_COLUMN': "HEXTORAW('424c4f42')"}]
+        expected_error_output = [{'ID': 1, 'DATA_COLUMN': "AAAAAAAABAAAA3VAAA"}]
     else:
         # When action is 'DISCARD' the stage ignores CDC records for tables with unsupported types.
         expected_error_output = []
 
     try:
         # Create tables and insert one record into each table.
-        connection.execute(f'CREATE TABLE {table_name1} (ID NUMBER PRIMARY KEY, DATA_COLUMN BLOB NULL)')
+        connection.execute(f'CREATE TABLE {table_name1} (ID NUMBER PRIMARY KEY, DATA_COLUMN ROWID NULL)')
         connection.execute(f'CREATE TABLE {table_name2} (ID NUMBER PRIMARY KEY, DATA_COLUMN VARCHAR(50) NULL)')
         start_scn = _get_last_scn(connection)
         connection.execute(f"INSERT INTO {table_name1} VALUES (1, {input_value1})")
@@ -2296,6 +2302,7 @@ def test_empty_redo_log_record_is_ignored(sdc_builder, sdc_executor, database, b
 
         assert len(wiretap.output_records) == num_records
         sdc_executor.stop_pipeline(pipeline)
+
         for i in range(num_records):
             assert wiretap.output_records[i].field['ID_EX'] == i
             assert wiretap.output_records[i].field['NAME_EX'] == 'TONI'
@@ -4534,6 +4541,1451 @@ def test_buffer_directory(sdc_builder, sdc_executor, database, test_case, setup_
         for tear_down_action in tear_down_actions:
             logger.info('Deleting buffer directory %s', buffer_directory)
             sdc_executor.execute_shell(tear_down_action % buffer_directory)
+
+
+@fixture(scope="module")  # Cache the fixture to avoid reading/writing the BLOB each time the fixture is called
+def blob_file_specs(sdc_builder, sdc_executor, database):
+    """Retrieve data about a binary file in the filesystem, namely path, filename, content and size.
+    The 'ls' executable has been chosen as it will be available in most testing environments.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    size_column_name = "SIZECOL"
+    blob_column_name = "BLOBCOL"
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path = "/usr/bin/"
+    file_name = "ls"
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+
+    logger.info(f"Retrieving data for binary file {dir_path}{dir_name}")
+
+    with ExitStack() as on_exit:
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(size_column_name, sqlalchemy.Integer),
+            sqlalchemy.Column(blob_column_name, sqlalchemy.BLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        try:
+            txn = connection.begin()
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        lobFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        b_lob BLOB;
+                    BEGIN
+                        f_lob := bfilename(dir, lobFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key},  DBMS_LOB.GETLENGTH(f_lob), EMPTY_BLOB())
+                        RETURNING {blob_column_name} INTO b_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        length, content = connection.execute(
+            f"SELECT {size_column_name}, {blob_column_name} FROM {source_table_name}"
+        ).fetchall()[0]
+
+    return dir_path, file_name, length, content
+
+
+@fixture(scope="module")  # Cache the fixture to avoid reading/writing the CLOB each time the fixture is called
+def clob_file_specs(sdc_builder, sdc_executor, database):
+    """Retrieve data about a text executable file in the filesystem, namely path, filename, content and size.
+    The 'gpg-zip' executable script has been chosen as it should be available in most testing environments.
+
+    IMPORTANT: if this test fails, it is probably due to the gpg-zip file not being available in the testing
+    environment. Change the file_name variable to point to another text file that is big enough for
+    oracle to split the LOB_WRITE into multiple records.
+
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    clob_column_name = "CLOBCOL"
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path = "/usr/bin/"
+    file_name = "gpg-zip"
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+
+    logger.info(f"Retrieving data for binary file {dir_path}{dir_name}")
+
+    with ExitStack() as on_exit:
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(clob_column_name, sqlalchemy.CLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        try:
+            txn = connection.begin()
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            load_parameters = "c_lob, f_lob, DBMS_LOB.LOBMAXSIZE, v_dest_offset, v_src_offset,"\
+                              " DBMS_LOB.DEFAULT_CSID, v_lang_context, v_warning"
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        lobFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        c_lob CLOB;
+                        v_dest_offset NUMBER := 1;
+                        v_src_offset NUMBER := 1;
+                        v_warning NUMBER;
+                        v_lang_context NUMBER := DBMS_LOB.DEFAULT_LANG_CTX;
+                    BEGIN
+                        f_lob := bfilename(dir, lobFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_CLOB())
+                        RETURNING {clob_column_name} INTO c_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADCLOBFROMFILE({load_parameters});
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        content = connection.execute(
+            f"SELECT {clob_column_name} FROM {source_table_name}"
+        ).fetchall()[0][0]
+
+    return dir_path, file_name, len(content), content
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+def test_enabling_lobs_without_local_buffering(sdc_builder, sdc_executor, database):
+    """Create a pipeline with LOB support enabled and local buffering disabled and
+    check that the correct configuration error is raised."""
+
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column("IDCOL", sqlalchemy.Integer, primary_key=True),
+        )
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=False,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=False
+        )
+
+        trash = pipeline_builder.add_stage('Trash')
+        oracle_cdc_client >> trash
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+
+        sdc_executor.add_pipeline(pipeline)
+
+        with pytest.raises(ValidationError) as validation_error:
+            sdc_executor.validate_pipeline(pipeline)
+        logger.warning(validation_error)
+        assert validation_error is not None
+        assert validation_error.value.issues is not None
+        assert validation_error.value.issues['issueCount'] == 1
+        assert validation_error.value.issues['stageIssues']["OracleCDCClient_01"][0]['configName'] == "oracleCDCConfigBean.lobsEnabled"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_lob_insert(sdc_builder, sdc_executor, database, lob_type, buffer_location):
+    """Do a simple LOB insert and check that a single record is outputted and said record contains
+    the inserted value. The pipeline is the following:
+        oracle_cdc_client >> wiretap
+    """
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    lob_column_name = "LOBCOL"
+    test_values = {
+        "BLOB": {
+            "insert_value": "utl_raw.cast_to_raw('Hello there')",
+            "expected": b"Hello there",
+            "column_type": sqlalchemy.BLOB,
+        },
+        "CLOB": {"insert_value": f"TO_CLOB('Hello there')", "expected": "Hello there", "column_type": sqlalchemy.CLOB},
+    }
+
+    test_value = test_values[lob_type]
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column("IDCOL", sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(lob_column_name, test_value["column_type"]),
+        )
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"INSERT INTO {source_table_name} VALUES ({primary_key}, {test_value['insert_value']})")
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 1, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 1, f"Expected a single record, got {len(wiretap.output_records)}"
+        output_lob = wiretap.output_records[0].field[lob_column_name]
+        assert output_lob == test_value["expected"], f"Mismatched LOB values {output_lob} and {test_value['expected']}"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("lob_types", [["BLOB", "BLOB"], ["BLOB", "CLOB"], ["CLOB", "BLOB"], ["CLOB", "CLOB"]])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_lob_insert_multicolumn(sdc_builder, sdc_executor, database, lob_types, buffer_location):
+    """Do simple LOB inserts to multiple columns  and check that a single record is outputted
+    and said record contains the inserted values. The pipeline is the following:
+        oracle_cdc_client >> wiretap
+    """
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    test_values = {
+        "BLOB": {
+            "insert_value": "utl_raw.cast_to_raw('Hello there')",
+            "expected": b"Hello there",
+            "column_type": sqlalchemy.BLOB,
+        },
+        "CLOB": {"insert_value": f"TO_CLOB('Hello there')", "expected": "Hello there", "column_type": sqlalchemy.CLOB},
+    }
+
+    test_value_A = test_values[lob_types[0]]
+    test_value_B = test_values[lob_types[1]]
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column("IDCOL", sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column("LOBCOLA", test_value_A["column_type"]),
+            sqlalchemy.Column("LOBCOLB", test_value_B["column_type"]),
+        )
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(
+                f"INSERT INTO {source_table_name} VALUES ({primary_key}, {test_value_A['insert_value']}, {test_value_B['insert_value']})"
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 1, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 1, f"Expected a single record, got {len(wiretap.output_records)}"
+        lob_a = wiretap.output_records[0].field["LOBCOLA"]
+        assert lob_a == test_value_A["expected"], "Mismatched LOB A value"
+        lob_b = wiretap.output_records[0].field["LOBCOLB"]
+        assert lob_b == test_value_B["expected"], "Mismatched LOB B value"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+@pytest.mark.parametrize("disable_continuous_mine", [True, False])
+def test_lob_insert_mixed(sdc_builder, sdc_executor, database, lob_type, buffer_location, disable_continuous_mine):
+    """Mixed the LOB insert with other operations to ensure LOBs do not affect other records.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    test_values = {
+        "BLOB": {
+            "column_type": sqlalchemy.BLOB,
+            "items": [
+                {"insert_value": "utl_raw.cast_to_raw('Hello there')", "expected": b"Hello there"},
+                {
+                    "insert_value": "utl_raw.cast_to_raw('ereht olleH')",
+                    "expected": b"ereht olleH",
+                    "column_type": sqlalchemy.BLOB,
+                },
+            ],
+        },
+        "CLOB": {
+            "column_type": sqlalchemy.CLOB,
+            "items": [
+                {"insert_value": f"TO_CLOB('Hello there')", "expected": "Hello there"},
+                {"insert_value": f"TO_CLOB('ereht olleH')", "expected": "Hello there"},
+            ],
+        },
+    }
+
+    test_value = test_values[lob_type]
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column("IDCOL", sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column("LOBCOL", test_value["column_type"]),
+            sqlalchemy.Column("STRCOL", sqlalchemy.String(20)),
+        )
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=disable_continuous_mine,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(
+                f"INSERT INTO {source_table_name} VALUES ({primary_key}, {test_value['items'][0]['insert_value']}, 'General Kenobi')"
+            )
+            connection.execute(
+                f"UPDATE {source_table_name} SET STRCOL = 'You are a bold one' WHERE IDCOL = {primary_key}"
+            )
+            connection.execute(f"DELETE FROM {source_table_name} WHERE IDCOL = {primary_key}")
+            connection.execute(
+                f"INSERT INTO {source_table_name} VALUES ({primary_key + 1}, {test_value['items'][1]['insert_value']}, 'iboneK lareneG')"
+            )
+            connection.execute(
+                f"UPDATE {source_table_name} SET STRCOL = 'eno dlob a era uoY' WHERE IDCOL = {primary_key + 1}"
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 4, timeout_sec=120)
+
+        expected_blob_values = [item["expected"] for item in test_value["items"]]
+        lob_values = {record.field["LOBCOL"] for record in wiretap.output_records if "LOBCOL" in record.field.keys()}
+
+        assert len(wiretap.output_records) == 5, f"Expected 5 records, got {len(wiretap.output_records)}"
+        assert len(lob_values) == 2, f"Expected two non-empty LOB values, got {len(lob_values)}"
+        assert all(expected_blob in lob_values for expected_blob in expected_blob_values), "Missing expected LOB values"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+@pytest.mark.parametrize("disable_continuous_mine", [True, False])
+def test_lob_consecutive_writes(sdc_builder, sdc_executor, database, blob_file_specs, buffer_location, disable_continuous_mine):
+    """Write several (n) times to a BLOB before committing and check that n records are outputted.
+    The main goal is to test that the RsIdSsnSql implementation is correct.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    blob_column_name = "BLOBCOL"
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path, file_name, ls_file_length, ls_file_content = blob_file_specs
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    n = 3
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(blob_column_name, sqlalchemy.BLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=disable_continuous_mine,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        b_lob BLOB;
+                    BEGIN
+                        f_lob := bfilename(dir, imgFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_BLOB())
+                        RETURNING {blob_column_name} INTO b_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        {'DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));' * n}
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 2, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 1 + n, f"Expected {1 + n} records, got {len(wiretap.output_records)}"
+        blob_values = [record.field[blob_column_name].value for record in wiretap.output_records]
+        assert blob_values.count(EMPTY_BLOB) == 1, "Missing or incorrect empty blob"
+        assert blob_values.count(ls_file_content) == n, "Missing or incorrect LOB values"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+@pytest.mark.parametrize("disable_continuous_mine", [True, False])
+def test_blob_write(sdc_builder, sdc_executor, database, buffer_location, blob_file_specs, disable_continuous_mine):
+    """Wrote a BLOB from a binary file and check the contents. The pipeline is the following:
+    oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    blob_column_name = "BLOBCOL"
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path, file_name, ls_file_length, ls_file_content = blob_file_specs
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(blob_column_name, sqlalchemy.BLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=disable_continuous_mine,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        b_lob BLOB;
+                    BEGIN
+                        f_lob := bfilename(dir, imgFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_BLOB())
+                        RETURNING {blob_column_name} INTO b_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 2, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 2, f"Expected 2 records, got {len(wiretap.output_records)}"
+        blob_values = [record.field[blob_column_name].value for record in wiretap.output_records]
+        assert blob_values.count(EMPTY_BLOB) == 1, "Missing or incorrect empty blob"
+        assert blob_values.count(ls_file_content) == 1, "Missing or incorrect LOB value"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+@pytest.mark.parametrize("disable_continuous_mine", [True, False])
+def test_blob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, buffer_location, disable_continuous_mine):
+    """Mix other operations with BLOB loads from the filesystem to ensure other operations are not affected.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    blob_column_name = "BLOBCOL"
+    string_column_name = "STRCOL"
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path, file_name, ls_file_length, ls_file_content = blob_file_specs
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(blob_column_name, sqlalchemy.BLOB),
+            sqlalchemy.Column(string_column_name, sqlalchemy.String(20)),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=100,
+            initial_change="LATEST",
+            disable_continuous_mine=disable_continuous_mine,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        b_lob BLOB;
+                    BEGIN
+                        f_lob := bfilename(dir, imgFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_BLOB(), 'Hello there')
+                        RETURNING {blob_column_name} INTO b_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            connection.execute(
+                f"UPDATE {source_table_name} SET {string_column_name} = 'You are a bold one' WHERE IDCOL = {primary_key}"
+            )
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        b_lob BLOB;
+                    BEGIN
+                        f_lob := bfilename(dir, imgFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key+1}, EMPTY_BLOB(), 'ereht olleH')
+                        RETURNING {blob_column_name} INTO b_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            connection.execute(f"DELETE FROM {source_table_name} WHERE IDCOL = {primary_key}")
+            connection.execute(
+                f"UPDATE {source_table_name} SET {string_column_name} = 'eno dlob a era uoY' WHERE IDCOL = {primary_key + 1}"
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 7, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 7
+        blob_values = [
+            record.field[blob_column_name]
+            for record in wiretap.output_records
+            if blob_column_name in record.field.keys()
+        ]
+        # There must be four BLOBs
+        assert len(blob_values) == 4
+        # Two of them are empty BLOBs
+        assert blob_values.count(EMPTY_BLOB) == 2, "Unexpected number of empty BLOBs"
+        # Two of them are the content of the LS file
+        assert blob_values.count(ls_file_content) == 2, "Unexpected number of BLOBs"
+        # Check that every other value is present
+        expected_strings = {"Hello there": 2, "You are a bold one": 2, "ereht olleH": 2, "eno dlob a era uoY": 1}
+        string_values = [record.field[string_column_name] for record in wiretap.output_records]
+        for value, expected_count in expected_strings.items():
+            count = string_values.count(value)
+            assert count == expected_count, f"Expected {expected_count} occurrences of {value}, got {count}"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("max_lob_size", [0, 64, 128, 4096])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_blob_max_size(sdc_builder, sdc_executor, database, max_lob_size, blob_file_specs, buffer_location):
+    """Set different maximum lob sizes and verify that BLOBs are split into the appropriate records.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    blob_column_name = "BLOBCOL"
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path, file_name, ls_file_length, ls_file_content = blob_file_specs
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+
+    expected_value_big = ls_file_content
+    small_insert_value = "Did you ever hear the tragedy of Darth Plagueis The Wise? I thought not."
+    expected_value_small = b"Did you ever hear the tragedy of Darth Plagueis The Wise? I thought not."
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(blob_column_name, sqlalchemy.BLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=True,
+            maximum_lob_size=max_lob_size,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(
+                f"INSERT INTO {source_table_name} VALUES ({primary_key}, utl_raw.cast_to_raw('{small_insert_value}'))"
+            )
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        b_lob BLOB;
+                    BEGIN
+                        f_lob := bfilename(dir, imgFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key+1}, EMPTY_BLOB())
+                        RETURNING {blob_column_name} INTO b_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(
+            pipeline, "input_record_count", 1 if max_lob_size == 0 else 2, timeout_sec=120
+        )
+
+        blob_values = []
+        empty_blob_values = []
+        null_values = []
+        for record in wiretap.output_records:
+            blob = record.field[blob_column_name].value
+            if blob is None:
+                null_values.append(blob)
+            elif blob == EMPTY_BLOB:
+                empty_blob_values.append(blob)
+            else:
+                blob_values.append(blob)
+
+        if max_lob_size >= len(EMPTY_BLOB) or max_lob_size == 0:
+            assert len(empty_blob_values) == 1
+
+        if max_lob_size == 0 or max_lob_size >= len(expected_value_big):
+            assert len(null_values) == 0
+            assert expected_value_big in blob_values
+            assert expected_value_small in blob_values
+        elif len(expected_value_small) <= max_lob_size < len(expected_value_big):
+            assert len(null_values) == 1
+            assert expected_value_small in blob_values
+        else:
+            if max_lob_size >= len(EMPTY_BLOB):
+                assert len(null_values) == 2
+                assert len(blob_values) == 0
+            else:
+                assert len(null_values) == 3
+                assert len(blob_values) == 0
+                assert len(empty_blob_values) == 0
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("method", ["RAW", "FROM_FILE"])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+@pytest.mark.parametrize("disable_continuous_mine", [True, False])
+def test_clob_write(sdc_builder, sdc_executor, database, method, clob_file_specs, buffer_location, disable_continuous_mine):
+    """Write a CLOB of enough size that it will be internally split into multiple LOB_WRITE operations
+    and ensure a single record is produced. The file must be bigger than 1022 characters or it will not be
+    split by Oracle. The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    clob_column_name = "CLOBCOL"
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    n = 2900
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path, file_name, content_size, content = clob_file_specs
+
+    # Single quotation marks will be duplicated by the QL
+    expected_value = "A" * n + "B" * n if method == "RAW" else content.replace("'", "''")
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(clob_column_name, sqlalchemy.CLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=disable_continuous_mine,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            if method == "RAW":
+                connection.execute(
+                    f"INSERT INTO {source_table_name} VALUES ({primary_key}, TO_CLOB('{'A' * n}') || '{'B' * n}')"
+                )
+            else:
+                connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+                load_parameters = "c_lob, f_lob, DBMS_LOB.LOBMAXSIZE, v_dest_offset, v_src_offset," \
+                                  " DBMS_LOB.DEFAULT_CSID, v_lang_context, v_warning"
+                connection.execute(
+                    f"""DECLARE
+                            dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                            imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                            f_lob BFILE;
+                            c_lob CLOB;
+                            v_dest_offset NUMBER := 1;
+                            v_src_offset NUMBER := 1;
+                            v_warning NUMBER;
+                            v_lang_context NUMBER := DBMS_LOB.DEFAULT_LANG_CTX;
+                        BEGIN
+                            f_lob := bfilename(dir, imgFile);
+                            INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_CLOB())
+                            RETURNING {clob_column_name} INTO c_lob;
+
+                            DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                            DBMS_LOB.LOADCLOBFROMFILE({load_parameters});
+                            COMMIT;
+                            DBMS_LOB.FILECLOSE(f_lob);
+                        END;"""
+                )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 2, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 2, f"Expected 2 records, got {len(wiretap.output_records)}"
+        clob_values = [record.field[clob_column_name].value for record in wiretap.output_records]
+        assert clob_values.count(EMPTY_CLOB) == 1, "Missing or incorrect empty blob"
+        assert clob_values.count(expected_value) == 1, "Missing or incorrect LOB value"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+@pytest.mark.parametrize("disable_continuous_mine", [True, False])
+def test_clob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, buffer_location, disable_continuous_mine):
+    """Mix big CLOB writes with other instruction to verify they are not affected by each other.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    clob_column_name = "CLOBCOL"
+    string_column_name = "STRCOL"
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    n = 2900
+    expected_value = "A" * n + "B" * n
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(clob_column_name, sqlalchemy.CLOB),
+            sqlalchemy.Column(string_column_name, sqlalchemy.String(20)),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=100,
+            initial_change="LATEST",
+            disable_continuous_mine=disable_continuous_mine,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(
+                f"INSERT INTO {source_table_name} VALUES ({primary_key}, TO_CLOB('{'A' * n}') || '{'B' * n}', 'Hello there')"
+            )
+            connection.execute(
+                f"UPDATE {source_table_name} SET {string_column_name} = 'You are a bold one' WHERE IDCOL = {primary_key}"
+            )
+            connection.execute(
+                f"INSERT INTO {source_table_name} VALUES ({primary_key+1}, TO_CLOB('{'A' * n}') || '{'B' * n}', 'ereht olleH')"
+            )
+            connection.execute(f"DELETE FROM {source_table_name} WHERE IDCOL = {primary_key}")
+            connection.execute(
+                f"UPDATE {source_table_name} SET {string_column_name} = 'eno dlob a era uoY' WHERE IDCOL = {primary_key + 1}"
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 7, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 7
+        clob_values = [
+            record.field[clob_column_name]
+            for record in wiretap.output_records
+            if clob_column_name in record.field.keys()
+        ]
+        # There must be four BLOBs
+        assert len(clob_values) == 4
+        # Two of them are empty BLOBs
+        assert clob_values.count(EMPTY_CLOB) == 2, "Unexpected number of empty BLOBs"
+        # Two of them are the content of the LS file
+        assert clob_values.count(expected_value) == 2, "Unexpected number of CLOBs"
+        # Check that every other value is present
+        expected_strings = {"Hello there": 2, "You are a bold one": 2, "ereht olleH": 2, "eno dlob a era uoY": 1}
+        string_values = [record.field[string_column_name] for record in wiretap.output_records]
+        for value, expected_count in expected_strings.items():
+            count = string_values.count(value)
+            assert count == expected_count, f"Expected {expected_count} occurrences of {value}, got {count}"
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("max_lob_size", [0, 16, 64, 4096])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_clob_max_size(sdc_builder, sdc_executor, database, max_lob_size, buffer_location):
+    """Set different maximum lob sizes and verify that CLOBs are split into the appropriate records.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    clob_column_name = "CLOBCOL"
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    many = 2900  # There is a limit of 4000 characters per string
+    expected_value_big = "A" * many + "B" * many
+    few = 32
+    expected_value_small = "A" * few
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(clob_column_name, sqlalchemy.CLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=True,
+            maximum_lob_size=max_lob_size,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"INSERT INTO {source_table_name} VALUES ({primary_key}, TO_CLOB('{'A' * few}'))")
+            # This big CLOB will be split into an initial empty INSERT followed by several LOB_WRITEs.
+            connection.execute(
+                f"INSERT INTO {source_table_name} VALUES ({primary_key+1}, TO_CLOB('{'A' * many}') || '{'B' * many}')"
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 3, timeout_sec=120)
+
+        clob_values = []
+        empty_clob_values = []
+        null_values = []
+        for record in wiretap.output_records:
+            clob = record.field[clob_column_name].value
+            if clob is None:
+                null_values.append(clob)
+            elif clob == EMPTY_CLOB:
+                empty_clob_values.append(clob)
+            else:
+                clob_values.append(clob)
+
+        if max_lob_size >= len(EMPTY_CLOB) or max_lob_size == 0:
+            assert len(empty_clob_values) == 1
+
+        if max_lob_size == 0 or max_lob_size >= len(expected_value_big):
+            assert len(null_values) == 0
+            assert expected_value_big in clob_values
+            assert expected_value_small in clob_values
+        elif len(expected_value_small) <= max_lob_size < len(expected_value_big):
+            assert len(null_values) == 1
+            assert expected_value_small in clob_values
+        else:
+            if max_lob_size >= len(EMPTY_CLOB):
+                assert len(null_values) == 2
+                assert len(clob_values) == 0
+            else:
+                assert len(null_values) == 3
+                assert len(clob_values) == 0
+                assert len(empty_clob_values) == 0
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
+@pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_lob_disabled_insert(
+    sdc_builder, sdc_executor, database, lob_type, add_unsupported_fields_to_records, buffer_location
+):
+    """Do a simple LOB insert and check that a single record is outputted and said record contains
+    the inserted value. The pipeline is the following:
+        oracle_cdc_client >> wiretap
+    """
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    lob_column_name = "LOBCOL"
+    test_values = {
+        "BLOB": {
+            "insert_value": "utl_raw.cast_to_raw('Hello there')",
+            "expected": "HEXTORAW('48656c6c6f207468657265')",
+            "column_type": sqlalchemy.BLOB,
+        },
+        "CLOB": {"insert_value": f"TO_CLOB('Hello there')", "expected": "Hello there", "column_type": sqlalchemy.CLOB},
+    }
+
+    test_value = test_values[lob_type]
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column("IDCOL", sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(lob_column_name, test_value["column_type"]),
+        )
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=False,
+            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
+            unsupported_field_type="SEND_TO_PIPELINE",
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"INSERT INTO {source_table_name} VALUES ({primary_key}, {test_value['insert_value']})")
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 2, timeout_sec=120)
+
+        logger.warning([record for record in wiretap.output_records])
+
+        assert len(wiretap.output_records) == 2, f"Expected 2 records, got {len(wiretap.output_records)}"
+        values = [record.field[lob_column_name].value for record in wiretap.output_records]
+        if add_unsupported_fields_to_records:
+            assert EMPTY_BLOB_STRING in values or EMPTY_CLOB in values
+            assert test_value["expected"] in values
+        else:
+            assert values.count(None) == 2
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_lob_disabled_blob_write(
+    sdc_builder, sdc_executor, database, add_unsupported_fields_to_records, blob_file_specs, buffer_location
+):
+    """Write a LOB from a file while LOB support is disabled and ensure no LOB records are produced.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    blob_column_name = "BLOBCOL"
+    dir_name = get_random_string(string.ascii_uppercase, 16)
+    dir_path, file_name, ls_file_length, ls_file_content = blob_file_specs
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(blob_column_name, sqlalchemy.BLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=100,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=False,
+            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
+            unsupported_field_type="SEND_TO_PIPELINE",
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"CREATE OR REPLACE DIRECTORY {dir_name} AS '{dir_path}'")
+            connection.execute(
+                f"""DECLARE
+                        dir VARCHAR2({len(dir_name)}) := '{dir_name}';
+                        imgFile VARCHAR2({len(file_name)}) := '{file_name}';
+                        f_lob BFILE;
+                        b_lob BLOB;
+                    BEGIN
+                        f_lob := bfilename(dir, imgFile);
+                        INSERT INTO {source_table_name} VALUES ({primary_key}, EMPTY_BLOB())
+                        RETURNING {blob_column_name} INTO b_lob;
+
+                        DBMS_LOB.FILEOPEN(f_lob,  DBMS_LOB.FILE_READONLY);
+                        DBMS_LOB.LOADFROMFILE(b_lob, f_lob, DBMS_LOB.GETLENGTH(f_lob));
+                        COMMIT;
+                        DBMS_LOB.FILECLOSE(f_lob);
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 1, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 1, "LOB records were produced with LOB support disabled"
+        blob_content = wiretap.output_records[0].field[blob_column_name].value
+        if add_unsupported_fields_to_records:
+            assert blob_content == EMPTY_BLOB_STRING
+        else:
+            assert blob_content is None
+
+
+@sdc_min_version("5.2.0")
+@database("oracle")
+@pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_lob_disabled_clob_write(
+    sdc_builder, sdc_executor, database, add_unsupported_fields_to_records, buffer_location
+):
+    """Write a big CLOB while LOB support is disabled an ensure no CLOB records are produced.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap"""
+    id_column_name = "IDCOL"
+    clob_column_name = "CLOBCOL"
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    n = 2900
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(clob_column_name, sqlalchemy.CLOB),
+        )
+
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=False,
+            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
+            unsupported_field_type="SEND_TO_PIPELINE",
+            buffer_changes_locally=True,
+            buffer_location=buffer_location
+        )
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(
+                f"INSERT INTO {source_table_name} VALUES ({primary_key}, TO_CLOB('{'A' * n}') || '{'B' * n}')"
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 1, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 1, "LOB records were produced with LOB support disabled"
+        clob_content = wiretap.output_records[0].field[clob_column_name].value
+        if add_unsupported_fields_to_records:
+            assert clob_content == EMPTY_CLOB
+        else:
+            assert clob_content is None
 
 
 def _get_oracle_cdc_client_origin(connection,
