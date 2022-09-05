@@ -123,10 +123,13 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database, buffer_location
         pipeline = pipeline_builder.build('Oracle CDC: Decimal Attributes').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+
         # assert all the data captured have the same raw_data
-        assert len(wiretap.output_records) == 1
-        attributes = wiretap.output_records[0].get_field_attributes(f'/{OTHER_COLUMN}')
+        wiretap_output_records = wiretap.output_records
+        assert len(wiretap_output_records) == 1
+        attributes = wiretap_output_records[0].get_field_attributes(f'/{OTHER_COLUMN}')
         assert '20' == attributes['precision']
         assert '2' == attributes['scale']
 
@@ -219,7 +222,8 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, buffer_locat
         # So we wait until the time here is past the time at which all data was written out to the DB (current time).
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(2)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
         # Assert all the data captured have the same raw_data.
@@ -332,7 +336,8 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(change_count)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', change_count)
 
         sleep(30)
 
@@ -476,7 +481,8 @@ def test_oracle_cdc_client_bulk(sdc_builder,
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3 * number_of_rows)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows)
 
         q_insert = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.operation"] == 'INSERT')
         q_update = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.operation"] == 'UPDATE')
@@ -601,7 +607,8 @@ def test_oracle_cdc_client_headers(sdc_builder,
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3 * number_of_rows)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows)
 
         for record in wiretap.output_records:
             assert {record.header.values["oracle.cdc.scn"]} is not None
@@ -727,7 +734,9 @@ def test_oracle_cdc_client_sequence(sdc_builder,
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3 * number_of_rows)
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows)
 
         sequence = 0
         operation_types = {'INSERT', 'UPDATE', 'DELETE'}
@@ -865,7 +874,8 @@ def test_sql_parser_pseudocolumns(sdc_builder,
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3 * number_of_rows)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows)
 
         for record in wiretap.output_records:
             record_operation = record.header.values["oracle.cdc.operation"]
@@ -992,7 +1002,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         wiretap.reset()
 
         # Run: 01
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(rows))
 
         sleep(30)
 
@@ -1119,7 +1130,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
         wiretap.reset()
 
         # Run 02
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(new_rows))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(new_rows))
 
         sleep(30)
 
@@ -1380,7 +1392,8 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(rows))
 
         sleep(30)
 
@@ -1485,7 +1498,8 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database, buffer_locatio
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(input_data))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(input_data))
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
         # Check there is no data loss.
@@ -1572,7 +1586,8 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows_c1))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(rows_c1))
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
         def compare_output(output_records, rows):
@@ -1591,7 +1606,8 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, buffer_lo
         wiretap.reset()
 
         # Pre-3.1.0.0, this times out
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(rows_c2))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(rows_c2))
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
         # assert all the data captured have the same raw_data
@@ -1665,18 +1681,18 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
 
         inserts = _insert(connection=connection, table=src_table, count=batch_size).rows
 
-        start_pipeline_cmd = sdc_executor.start_pipeline(pipeline)
-        start_pipeline_cmd.wait_for_pipeline_output_records_count(10)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
 
         assert [tuple(row.values()) for row in inserts] == _select_from_table(db_engine=db_engine, dest_table=dest_table)
 
         updates = _update(connection=connection, table=src_table, count=batch_size).rows
-        start_pipeline_cmd.wait_for_pipeline_output_records_count(20)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 20)
 
         assert [tuple(row.values()) for row in updates] == _select_from_table(db_engine=db_engine, dest_table=dest_table)
 
         _delete(connection=connection, table=src_table, count=batch_size)
-        start_pipeline_cmd.wait_for_pipeline_output_records_count(30)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 30)
 
         assert len(_select_from_table(db_engine=db_engine, dest_table=dest_table)) == 0
 
@@ -1777,7 +1793,8 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
 
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(5)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 5)
 
         assert len(wiretap.output_records) == 5
 
@@ -1899,7 +1916,8 @@ def test_unsupported_types_send_to_pipeline(sdc_builder,
         sdc_executor.add_pipeline(pipeline)
 
         # Capture the output and check the record is correctly generated.
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(expected_output))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_output))
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
         actual_output = [record.field
@@ -1980,7 +1998,8 @@ def test_unsupported_types_other_actions(sdc_builder, sdc_executor, database, bu
         sdc_executor.add_pipeline(pipeline)
 
         # Capture and check the output.
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(expected_output))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_output))
 
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
@@ -2082,7 +2101,7 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, buffer_locat
             # Version 12 LogMiner has support for Redo Logs that contain ADT columns
             if peg_parser:
                 # With peg parser we expect n output records with the update we did on the table
-                status.wait_for_pipeline_output_records_count(num_records)
+                sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records)
                 sdc_executor.stop_pipeline(pipeline)
                 for i in range(num_records):
                     assert wiretap.output_records[i].field['ID_EX'] == i
@@ -2176,11 +2195,11 @@ def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, b
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        status = sdc_executor.start_pipeline(pipeline);
+        sdc_executor.start_pipeline(pipeline);
         connection.execute(f"UPDATE {table_name} set ADT_EX = TPE_{table_name}("f"ARRAY_{table_name}(null),"
                            f"'EXAMPLE')")
 
-        status.wait_for_pipeline_error_records_count(num_records)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records)
         sdc_executor.stop_pipeline(pipeline)
         for i in range(num_records):
             assert wiretap.error_records[i].header['errorCode'] == 'JDBC_85'
@@ -2267,13 +2286,13 @@ def test_empty_redo_log_record_is_ignored(sdc_builder, sdc_executor, database, b
 
         pipeline = builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        status = sdc_executor.start_pipeline(pipeline);
+        sdc_executor.start_pipeline(pipeline);
 
         connection.execute(f"UPDATE {table_name} set ADT_EX = TPE_{table_name}("f"ARRAY_{table_name}(null),"
                            f"'EXAMPLE')")
         connection.execute(f"UPDATE {table_name} SET NAME_EX = 'TONI'");
 
-        status.wait_for_pipeline_output_records_count(num_records)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records)
 
         assert len(wiretap.output_records) == num_records
         sdc_executor.stop_pipeline(pipeline)
@@ -2334,7 +2353,8 @@ def test_event_startup(sdc_builder, sdc_executor, database, buffer_location):
         connection.execute(f"INSERT INTO {table_name} VALUES(1)")
         txn.commit()
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
         assert len(event_wiretap.output_records) == 1
@@ -2423,7 +2443,8 @@ def test_oracle_cdc_exclusion_pattern(sdc_builder, sdc_executor, database, buffe
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline and check only cities data is consumed by Oracle CDC origin.
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(sports_data2))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(sports_data2), timeout_sec=380)
         sdc_executor.stop_pipeline(pipeline)
 
         records = sorted(wiretap.output_records,
@@ -2530,7 +2551,8 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, buffe
 
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_records)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_records)
 
         sleep(30)
 
@@ -2649,7 +2671,7 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database, buffer
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline, create table and populate
-        status = sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
 
         connection.execute(f'CREATE TABLE {sports_table} (ID NUMBER PRIMARY KEY, '
                            'PLAYER VARCHAR2(50), SPORT VARCHAR2(50))')
@@ -2660,7 +2682,8 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database, buffer
         for id, name, sport in sports_data2:
             connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
 
-        status.wait_for_pipeline_output_records_count(len(sports_data1+sports_data2))
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(sports_data1 + sports_data2),
+                                              timeout_sec=380)
         sdc_executor.stop_pipeline(pipeline)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
@@ -2759,7 +2782,8 @@ def test_oracle_cdc_ignores_dropped_table(sdc_builder, sdc_executor, database, b
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline, create table and populate
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(sports_data))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(sports_data), timeout_sec=380)
         sdc_executor.stop_pipeline(pipeline)
 
         sdc_events = [(event.header.values['oracle.cdc.table'],
@@ -2859,7 +2883,8 @@ def test_initial_change(sdc_builder, sdc_executor, database, buffer_location, in
         txn3.commit()
 
         # Check the data consumed by the pipeline is the expected one.
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_data))
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(expected_data),
+                                              timeout_sec=380)
         consumed_data = [rec.field['ID'].value for rec in wiretap.output_records]
         sdc_executor.stop_pipeline(pipeline=pipeline)
         assert sorted(consumed_data) == expected_data
@@ -2932,7 +2957,8 @@ def test_dictionary_extraction(sdc_builder, sdc_executor, database, buffer_locat
         sdc_executor.add_pipeline(pipeline)
 
         # Start pipeline and check the data consumed by the pipeline is the expected one.
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(input_data))
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(input_data), timeout_sec=380)
         sdc_executor.stop_pipeline(pipeline)
         consumed_data = [rec.field['ID'].value for rec in wiretap.output_records]
         assert sorted(consumed_data) == input_data
@@ -3088,7 +3114,8 @@ def test_disable_continuous_mine(sdc_builder,
         for val in input_values:
             connection.execute(f'INSERT INTO {table_name} VALUES ({val})')
 
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(num_records, timeout_sec=360)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records, timeout_sec=360)
         sdc_executor.stop_pipeline(pipeline)
 
         records = sorted(wiretap.output_records,
@@ -3426,8 +3453,8 @@ def test_oracle_cdc_offset_chain(sdc_builder,
             q = database_connection.execute(sql).fetchone()
             logger.info(f'(5) Total in source table: {q}')
 
-            pipeline_command = sdc_executor.start_pipeline(pipeline)
-            pipeline_command.wait_for_pipeline_output_records_count(3 * number_of_rows)
+            sdc_executor.start_pipeline(pipeline)
+            sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows)
 
             q_insert = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.operation"] == 'INSERT')
             q_update = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.operation"] == 'UPDATE')
@@ -3571,8 +3598,9 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
         sleep(10)
         database_transaction_enclosed.commit()
 
-        pipeline_command = sdc_executor.start_pipeline(pipeline)
-        pipeline_command.wait_for_pipeline_output_records_count(number_of_rows_enclosed)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', number_of_rows_enclosed)
+
         q_insert = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.operation"] == 'INSERT')
         logger.info(f'Total INSERT\'s {q_insert}')
         for record in wiretap.output_records:
@@ -3614,8 +3642,8 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
 
         wiretap.reset()
 
-        pipeline_command = sdc_executor.start_pipeline(pipeline)
-        pipeline_command.wait_for_pipeline_output_records_count(3 * number_of_rows_enclosing)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows_enclosing)
 
         sleep(30)
 
@@ -3940,7 +3968,8 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(8)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 8)
 
         sleep(30)
 
@@ -4171,7 +4200,8 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(1)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
 
         assert len(wiretap.output_records) == 1
 
