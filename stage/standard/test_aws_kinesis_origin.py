@@ -91,7 +91,8 @@ def test_stream_name(sdc_builder, sdc_executor, aws, test_name, stream_generator
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_input_records_count(10)
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', 10)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         output_records = [record.field['text'].value
@@ -150,7 +151,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, aws):
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_input_records_count(100)
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', 100)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         output_records = [record.field['text'].value
@@ -208,7 +210,8 @@ def test_resume_offset(sdc_builder, sdc_executor, aws):
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline
-        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_input_records_count(10)
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', 10)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         expected_messages_1 = set('Message {0}'.format(i) for i in range(10,20))
@@ -217,7 +220,8 @@ def test_resume_offset(sdc_builder, sdc_executor, aws):
         client.put_records(Records=put_records, StreamName=stream_name)
 
         # messages are published, read through the pipeline and assert
-        sdc_executor.start_pipeline(consumer_origin_pipeline).wait_for_pipeline_input_records_count(10)
+        sdc_executor.start_pipeline(consumer_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(consumer_origin_pipeline, 'input_record_count', 10)
         sdc_executor.stop_pipeline(consumer_origin_pipeline)
 
         output_records = [record.field['text'].value
