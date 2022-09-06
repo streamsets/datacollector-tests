@@ -853,10 +853,15 @@ def test_resume_offset(sdc_builder, sdc_executor, csv_parser):
     pipeline = builder.build()
     sdc_executor.add_pipeline(pipeline)
 
+    # we need to sort because of wiretap flakiness
+    def sort_func(entry):
+        return entry.field['B'].value
+
     # Now we will do series of pipeline stop/start and verify what we're seeing in the output
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     records = wiretap.output_records
     assert len(records) == 2
+    records.sort(key=sort_func, reverse=True)
     assert records[0].field['A'] == "1"
     assert records[0].field['B'] == "2"
     assert records[1].field['A'] == "STOP"
@@ -866,6 +871,7 @@ def test_resume_offset(sdc_builder, sdc_executor, csv_parser):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     records = wiretap.output_records
     assert len(records) == 2
+    records.sort(key=sort_func, reverse=True)
     assert records[0].field['A'] == "3"
     assert records[0].field['B'] == "4"
     assert records[1].field['A'] == "STOP"
@@ -875,6 +881,7 @@ def test_resume_offset(sdc_builder, sdc_executor, csv_parser):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     records = wiretap.output_records
     assert len(records) == 2
+    records.sort(key=sort_func, reverse=True)
     assert records[0].field['A'] == "5"
     assert records[0].field['B'] == "6"
     assert records[1].field['A'] == "STOP"
