@@ -161,6 +161,13 @@ def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_build
 
 
     try:
+        # MariaDB do support double quotes and brackets. Just needs to be configured for that.
+        if database.type == 'MariaDB':
+            if quote_character == 'DOUBLE_QUOTES':
+                origin.init_query = "SET sql_mode=ANSI_QUOTES"
+            elif quote_character == 'SQUARE_BRACKETS':
+                origin.init_query = "SET sql_mode=MSSQL"
+
         logger.info('Creating table %s in %s database ...', table_name, database.type)
         table.create(database.engine)
 
