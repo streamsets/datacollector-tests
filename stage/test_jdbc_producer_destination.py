@@ -1152,17 +1152,18 @@ def test_mssql_producer_decimal_precision(sdc_builder, sdc_executor, database):
     table_name_origin = get_random_string(string.ascii_lowercase, 20)
     table_name_dest = get_random_string(string.ascii_lowercase, 20)
 
-    rows_in_table = [{'data': 11.11},
-                     {'data': 22.22},
-                     {'data': 33.33},
-                     {'data': 55.55555},
-                     {'data': 66.66666},
-                     {'data': 77.77777}]
+    rows_in_table = [{'id': 1, 'data': 11.11},
+                     {'id': 2, 'data': 22.22},
+                     {'id': 3, 'data': 33.33},
+                     {'id': 4, 'data': 55.55555},
+                     {'id': 5, 'data': 66.66666},
+                     {'id': 6, 'data': 77.77777}]
 
     # Create origin table and add some values to it
     table_origin = sqlalchemy.Table(
         table_name_origin,
         sqlalchemy.MetaData(),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
         sqlalchemy.Column('data', sqlalchemy.Numeric(7,5), primary_key=True)
     )
     table_origin.create(database.engine)
@@ -1174,6 +1175,7 @@ def test_mssql_producer_decimal_precision(sdc_builder, sdc_executor, database):
     table_dest = sqlalchemy.Table(
         table_name_dest,
         sqlalchemy.MetaData(),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
         sqlalchemy.Column('data', sqlalchemy.Numeric(7,5), primary_key=True)
     )
     table_dest.create(database.engine)
@@ -1223,7 +1225,8 @@ def test_mssql_producer_decimal_precision(sdc_builder, sdc_executor, database):
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(6)
         sdc_executor.stop_pipeline(pipeline)
 
-        result = database.engine.execute(table_dest.select())
+        query = f'SELECT data FROM {table_name_dest}'
+        result = database.engine.execute(query)
         data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by value
         result.close()
 
