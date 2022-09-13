@@ -94,6 +94,34 @@ def test_delimited_quote_mode(sdc_builder, sdc_executor, quote_mode, expected):
     assert wiretap.output_records[0].get_field_data('/target') == expected
 
 
+@sdc_min_version('5.3.0')
+def test_delimited_record_separator(sdc_builder, sdc_executor):
+    """Ensure that Separator Record works properly."""
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source')
+    source.stop_after_first_batch = True
+    source.data_format = 'DELIMITED'
+    source.header_line = 'NO_HEADER'
+    source.raw_data = 'a,b,c\ne,f,g'
+
+    temp_dir = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.directory_template = temp_dir
+    local_fs.data_format = 'DELIMITED'
+    local_fs.delimiter_format = 'CUSTOM'
+    local_fs.record_separator_string = "X42X"
+
+    source >> local_fs
+
+    pipeline = builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert 'a|b|cX42Xe|f|gX42X' == sdc_executor.execute_shell(f'cat {temp_dir}/*').stdout
+
+
 @sdc_min_version('3.8.0')
 def test_delimited_quoted_newline(sdc_builder, sdc_executor):
     """Ensure that delimited data with newlines between quotes are correctly parsed"""
