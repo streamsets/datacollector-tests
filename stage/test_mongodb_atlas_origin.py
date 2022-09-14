@@ -106,7 +106,7 @@ def test_mongodb_atlas_origin(sdc_builder, sdc_executor, mongodb):
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -155,7 +155,7 @@ def test_mongodb_atlas_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -221,7 +221,7 @@ def test_mongodb_atlas_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, 
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -265,7 +265,7 @@ def test_mongodb_atlas_origin_simple_with_decimal(sdc_builder, sdc_executor, mon
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -317,7 +317,7 @@ def test_mongodb_atlas_origin_nested_field_offset(sdc_builder, sdc_executor, mon
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -395,7 +395,7 @@ def test_mongodb_atlas_origin_bson_types(sdc_builder, sdc_executor, mongodb,
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -452,7 +452,7 @@ def test_mongodb_atlas_origin_auto_flatten(sdc_builder, sdc_executor, mongodb):
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -524,7 +524,7 @@ def test_mongodb_atlas_origin_custom_query(sdc_builder, sdc_executor, mongodb, t
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -592,7 +592,7 @@ def test_mongodb_atlas_origin_bson_offset(sdc_builder, sdc_executor, mongodb, bs
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -652,7 +652,7 @@ def test_mongodb_atlas_origin_capped_cursor_types(sdc_builder, sdc_executor, mon
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -689,10 +689,14 @@ def test_mongodb_atlas_origin_capped_cursor_types(sdc_builder, sdc_executor, mon
         mongodb.engine.drop_database(mongodb_atlas_origin.database)
 
 
-def test_mongodb_atlas_origin_max_batch_time(sdc_builder, sdc_executor, mongodb):
+@pytest.mark.parametrize('capped_cursor', [
+    'NONTAILABLE',
+    'TAILABLE'
+])
+def test_mongodb_atlas_origin_max_batch_time(sdc_builder, sdc_executor, mongodb, capped_cursor):
     """
     Create 1 simple document in MongoDB Atlas with 60 seconds as max batch wait time and confirm that MongoDB Atlas
-    origin takes +-5 seconds to read them around the max batch wait time.
+    origin with Tailable cursor takes +-5 seconds to read them around the max batch wait time.
 
     The pipeline looks like:
         mongodb_atlas_origin >> wiretap
@@ -712,12 +716,12 @@ def test_mongodb_atlas_origin_max_batch_time(sdc_builder, sdc_executor, mongodb)
     mongodb_atlas_origin.set_attributes(database=database,
                                         collection=collection,
                                         batch_size_in_records=100,
-                                        max_batch_wait_time='${' + str(max_wait_time) + ' * SECONDS}')
+                                        max_batch_wait_time_in_sec='${' + str(max_wait_time) + ' * SECONDS}')
 
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -727,7 +731,15 @@ def test_mongodb_atlas_origin_max_batch_time(sdc_builder, sdc_executor, mongodb)
 
     try:
         # Write data in a MongoDB Atlas database
-        _write_in_mongodb_atlas(mongodb, mongodb_atlas_origin, data)
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_atlas_origin.collection)
+        mongodb_database = mongodb.engine[database]
+        if capped_cursor.startswith('TAILABLE'):
+            mongodb_collection = mongodb_database.create_collection(collection, capped=True, size=1000, max=3)
+        else:
+            mongodb_collection = mongodb_database.create_collection(collection, capped=False)
+        for document in data:
+            document_to_insert = copy.deepcopy(document)
+            mongodb_collection.insert_one(document_to_insert)
 
         # Start pipeline and verify the documents using snapshot.
         sdc_executor.add_pipeline(pipeline)
@@ -739,7 +751,12 @@ def test_mongodb_atlas_origin_max_batch_time(sdc_builder, sdc_executor, mongodb)
 
         # Execution time is around +-5 seconds around the max batch wait time, which is what we expect it to wait
         total_time = (end - start)
-        assert (max_wait_time + 5) > total_time > (max_wait_time - 5)
+        if capped_cursor.startswith('TAILABLE'):
+            assert (max_wait_time + 5) > total_time > (max_wait_time - 5)
+        else:
+            # Since it's a normal collection (Non Tailable Cursor), the origin didn't depend of the max batch wait
+            # time and take less than few seconds on read the documents from MongoDB
+            assert total_time < 5
 
         records = wiretap.output_records
         assert [data == {'name': record.field['name'].value} for record in records]
@@ -772,7 +789,7 @@ def test_mongodb_atlas_origin_multiple_documents(sdc_builder, sdc_executor, mong
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
