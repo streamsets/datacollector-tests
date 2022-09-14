@@ -68,7 +68,7 @@ def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
     mongodb_atlas_origin >> wiretap.destination
@@ -134,7 +134,7 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
     mongodb_atlas_origin >> wiretap.destination
@@ -191,7 +191,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     # Pipeline Finisher Executor, note the precondition
     pipeline_finished_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
@@ -268,7 +268,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb, batch_size):
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -334,7 +334,7 @@ def test_resume_offset(sdc_builder, sdc_executor, mongodb):
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
-        mongodb_atlas_origin.authentication_mechanism = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
 
     wiretap = pipeline_builder.add_wiretap()
 
