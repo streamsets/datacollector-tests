@@ -64,7 +64,7 @@ def test_mongodb_atlas_destination(sdc_builder, sdc_executor, mongodb, operation
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
 
@@ -140,7 +140,7 @@ def test_mongodb_atlas_destination_update_on_nested_unique_key(sdc_builder, sdc_
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
 
@@ -207,7 +207,7 @@ def test_mongodb_atlas_destination_unique_keys(sdc_builder, sdc_executor, mongod
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
 
@@ -264,7 +264,7 @@ def test_mongodb_atlas_destination_collection_database_expression(sdc_builder, s
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
 
