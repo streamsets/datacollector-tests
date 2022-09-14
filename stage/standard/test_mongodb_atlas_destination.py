@@ -86,7 +86,7 @@ def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, e
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     origin >> converter >> expression_evaluator >> mongodb_atlas_destination
 
@@ -150,7 +150,7 @@ def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash = pipeline_builder.add_stage('Trash')
@@ -214,7 +214,7 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     trash = pipeline_builder.add_stage('Trash')
@@ -271,7 +271,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
 
@@ -334,7 +334,7 @@ def test_push_pull(sdc_builder, sdc_executor, mongodb):
     # Configure MongoDB Atlas origin to connect to old MongoDB version
     if not mongodb.atlas:
         mongodb_atlas_destination.tls_mode = 'NONE'
-        mongodb_atlas_destination.authentication_mechanism = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
     dev_data_generator >> expression_evaluator >> mongodb_atlas_destination
 
