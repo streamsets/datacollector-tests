@@ -3317,6 +3317,7 @@ def test_user_configuration_checks(sdc_builder,
         table.drop(engine)
 
 
+@pytest.mark.skip('Skipping for now. It takes too much time that makes the environment to timeout.')
 @sdc_min_version('4.0.0')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
@@ -3689,6 +3690,7 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
             target_table.drop(database.engine)
 
 
+@pytest.mark.skip('Skipping for now. It takes too much time that makes the environment to timeout.')
 @sdc_min_version('5.1.0')
 @database('oracle')
 def test_oracle_cdc_offset_commit_only(sdc_builder, sdc_executor, database):
