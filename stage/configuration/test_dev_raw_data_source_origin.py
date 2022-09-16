@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import textwrap
+import string
 
 import pytest
 
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.utils import get_random_string
+from streamsets.sdk.exceptions import ValidationError
 
 
 @pytest.mark.parametrize('stage_attributes', [{'allow_extra_columns': False,
@@ -66,6 +68,29 @@ def test_allow_extra_columns(sdc_builder, sdc_executor, stage_attributes):
         assert (len(wiretap.error_records) == 1
                 and CANNOT_PARSE_RECORD_ERROR_CODE in wiretap.error_records[0].header['errorMessage'])
         assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT_DISALLOW_EXTRA_COLUMNS
+
+def test_missing_file(sdc_builder, sdc_executor, shell_executor):
+    """Check for proper error when file do not exist using runtime:loadResource().
+    """
+    random_str = get_random_string(string.ascii_letters, 10)
+    MESSAGE = textwrap.dedent("${runtime:loadResource(\"" + random_str + "\",false)}")
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(raw_data=MESSAGE,
+                                                                                           stop_after_first_batch=True)
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> trash
+
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.validate_pipeline(pipeline)
+        assert False, 'Should not reach here. File "' + random_str + "' should not exist."
+    except ValidationError as error:
+        assert "CTRCMN_0100" in error.issues
 
 
 @stub
