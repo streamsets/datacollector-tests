@@ -47,7 +47,7 @@ def test_send_events(sdc_builder, sdc_executor, groovy_version, library, min_sdc
 
     """
     if Version(sdc_builder.version) < min_sdc_version:
-      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+      pytest.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     builder_api_version = _get_scripting_api_version(sdc_builder.version)
     executor_api_version = _get_scripting_api_version(sdc_executor.version)
@@ -100,7 +100,7 @@ def test_send_error_records(sdc_builder, sdc_executor, groovy_version, library, 
 
     """
     if Version(sdc_builder.version) < min_sdc_version:
-      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+      pytest.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     builder_api_version = _get_scripting_api_version(sdc_builder.version)
     executor_api_version = _get_scripting_api_version(sdc_executor.version)

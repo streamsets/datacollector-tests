@@ -52,7 +52,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor, groovy_version, library, mi
         dev_raw_data_source >> groovy_evaluator >> wiretap
     """
     if Version(sdc_builder.version) < min_sdc_version:
-      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+      pytest.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     raw_company_1 = dict(name='StreamSets', floors=3)
     raw_company_2 = dict(name='Example Inc.', floors=1)
@@ -135,7 +135,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor, groovy_version, library, mi
 def test_delete_header_attribute(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Make sure that deleted attributes stays deleted."""
     if Version(sdc_builder.version) < min_sdc_version:
-      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+      pytest.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -175,7 +175,7 @@ def test_delete_header_attribute(sdc_builder, sdc_executor, groovy_version, libr
 def test_expose_sdc_record(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Ensure that underlying SDC record is accessible."""
     if Version(sdc_builder.version) < min_sdc_version:
-      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+      pytest.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -216,7 +216,7 @@ def test_expose_sdc_record(sdc_builder, sdc_executor, groovy_version, library, m
 def test_sdc_record(sdc_builder, sdc_executor, groovy_version, library, min_sdc_version):
     """Iterate over SDC record directly rather then JSR-223 wrapper."""
     if Version(sdc_builder.version) < min_sdc_version:
-      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+      pytest.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -255,7 +255,7 @@ def test_event_creation(sdc_builder, sdc_executor, groovy_version, library, min_
     """Ensure that the process is able to create events."""
     builder = sdc_builder.get_pipeline_builder()
     if Version(sdc_builder.version) < min_sdc_version:
-      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+      pytest.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     origin = builder.add_stage('Dev Raw Data Source')
     origin.set_attributes(data_format='JSON', raw_data='{"old": "old-value"}')
@@ -296,7 +296,7 @@ def test_script_error(sdc_builder, sdc_executor, on_script_error, groovy_version
         groovy_origin >> groovy_evaluator >> wiretap.destination
     """
     if Version(sdc_builder.version) < min_sdc_version:
-      python.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
+      pytest.skip(f"Data Collector {sdc_builder.version} doesn't support Groovy {groovy_version}")
 
     batch_size = 5
     pipeline_builder = sdc_builder.get_pipeline_builder()
