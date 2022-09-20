@@ -102,15 +102,20 @@ def test_mysql_binary_log_json_column(sdc_builder, sdc_executor, database, keep_
 @database('mysql')
 def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
     """Verify that we properly disconnect from the database on error (such as second slave with the same id)."""
+    connection = database.engine.connect()
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if binlog_row_metadata == "FULL":
+            pytest.skip('This test is only executed in environments with binlog_row_metadata set to MINIMAL to avoid'
+                        ' unnecessary executions given the fact this variable is irrelevant to the test.')
+
     table = None
-    connection = None
 
     try:
         server_id = _get_server_id()
         initial_offset = _get_initial_offset(database)
 
         # Create table.
-        connection = database.engine.connect()
         table_name = get_random_string(string.ascii_lowercase, 20)
         table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
                                  sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False, autoincrement=False, quote=True),
@@ -240,6 +245,12 @@ def test_auto_recovery_from_lost_connectivity(sdc_builder,
     Pipeline: mysql_binary_log_origin >> wiretap.destination
 
     """
+    connection = database.engine.connect()
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if binlog_row_metadata == "FULL":
+            pytest.skip('This test is only executed in environments with binlog_row_metadata set to MINIMAL to avoid'
+                        ' unnecessary executions given the fact this variable is irrelevant to the test.')
 
     try:
 
@@ -267,7 +278,6 @@ def test_auto_recovery_from_lost_connectivity(sdc_builder,
 
         logger.info(f'Inserting data into the table {table_name}...')
 
-        connection = database.engine.connect()
         transaction = connection.begin()
         partial_records = 0
         needs_commit = False
@@ -371,13 +381,17 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database):
     data and then rolls back to the savepoint. Finally, it validates that only the data before the save point and
     after the rollback is read.
     """
+    connection = database.engine.connect()
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if binlog_row_metadata == "FULL":
+            pytest.skip('This test is only executed in environments with binlog_row_metadata set to MINIMAL to avoid'
+                        ' unnecessary executions given the fact this variable is irrelevant to the test.')
 
     pipeline = None
     table = None
 
     try:
-        connection = database.engine.connect()
-
         # Create the table
         table_name = get_random_string(string.ascii_uppercase, 20)
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
@@ -459,13 +473,18 @@ def test_mysql_binary_log_bulk(sdc_builder, sdc_executor, database):
     """
     Tests inserts/updates/deletes to a table with bulk sentences and verifies that no record is lost .
     """
+    connection = database.engine.connect()
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if binlog_row_metadata == "FULL":
+            pytest.skip('This test is only executed in environments with binlog_row_metadata set to MINIMAL to avoid'
+                        ' unnecessary executions given the fact this variable is irrelevant to the test.')
+
     source_table = None
     target_table = None
     pipeline = None
 
     try:
-        connection = database.engine.connect()
-
         source_table_name = get_random_string(string.ascii_uppercase, 20)
         logger.info('Creating source table %s in %s database ...', source_table_name, database.type)
         source_table = sqlalchemy.Table(
@@ -548,8 +567,7 @@ def test_mysql_binary_log_bulk(sdc_builder, sdc_executor, database):
 
 
 @database('mysql')
-@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
-def test_mysql_binary_log_record_information(sdc_builder, sdc_executor, database, table_loading_option):
+def test_mysql_binary_log_record_information(sdc_builder, sdc_executor, database):
     """
     Test to check the contents of the record field.
     """
@@ -559,12 +577,6 @@ def test_mysql_binary_log_record_information(sdc_builder, sdc_executor, database
     try:
         # Create the table
         connection = database.engine.connect()
-
-        if table_loading_option == 'via_event':
-            if Version(database.version) < Version('8.0.0'):
-                pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
-
-            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
 
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
         table = sqlalchemy.Table(
@@ -667,9 +679,6 @@ def test_mysql_binary_log_record_information(sdc_builder, sdc_executor, database
                 assert sorted(record.field['OldData']) == sorted(spiderman)
 
     finally:
-        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
-            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
-
         connection.execute(f'drop table if exists {table_name}')
 
         if pipeline is not None:
@@ -681,13 +690,18 @@ def test_mysql_binary_log_include_tables(sdc_builder, sdc_executor, database):
     """
     Test to check the 'Include Tables' filter.
     """
+    connection = database.engine.connect()
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if binlog_row_metadata == "FULL":
+            pytest.skip('This test is only executed in environments with binlog_row_metadata set to MINIMAL to avoid'
+                        ' unnecessary executions given the fact this variable is irrelevant to the test.')
+
     pipeline = None
     included_table_name = get_random_string(string.ascii_lowercase, 20)
     excluded_table_name = get_random_string(string.ascii_lowercase, 20)
 
     try:
-        connection = database.engine.connect()
-
         logger.info('Creating table %s in %s database ...', included_table_name, database.type)
         included_table = sqlalchemy.Table(
             included_table_name,
@@ -757,14 +771,19 @@ def test_mysql_binary_log_ignore_tables(sdc_builder, sdc_executor, database):
     """
     Test to check the 'Ignore Tables' filter.
     """
+    connection = database.engine.connect()
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if binlog_row_metadata == "FULL":
+            pytest.skip('This test is only executed in environments with binlog_row_metadata set to MINIMAL to avoid'
+                        ' unnecessary executions given the fact this variable is irrelevant to the test.')
+
     pipeline = None
     included_table_name = get_random_string(string.ascii_lowercase, 20)
     excluded_table_name = get_random_string(string.ascii_lowercase, 20)
 
     try:
         # Create the table
-        connection = database.engine.connect()
-
         logger.info('Creating source table %s in %s database ...', included_table_name, database.type)
         included_table = sqlalchemy.Table(
             included_table_name,
@@ -831,13 +850,7 @@ def test_mysql_binary_log_ignore_tables(sdc_builder, sdc_executor, database):
 
 @sdc_min_version('5.1.0')
 @database('mysql')
-@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
-def test_mysql_binary_log_primary_keys_headers(
-        sdc_builder,
-        sdc_executor,
-        database,
-        table_loading_option
-):
+def test_mysql_binary_log_primary_keys_headers(sdc_builder, sdc_executor, database):
     """
     Test to check the primary keys are present in the headers of the output records.
     """
@@ -847,12 +860,6 @@ def test_mysql_binary_log_primary_keys_headers(
     try:
         # Create the table
         connection = database.engine.connect()
-
-        if table_loading_option == 'via_event':
-            if Version(database.version) < Version('8.0.0'):
-                pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
-
-            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
 
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
         table = sqlalchemy.Table(
@@ -992,9 +999,6 @@ def test_mysql_binary_log_primary_keys_headers(
                 assert primary_key_after_prefix + "ID" not in record.header.values
 
     finally:
-        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
-            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
-
         connection.execute(f'drop table if exists {table_name}')
 
         if pipeline is not None:
@@ -1003,13 +1007,7 @@ def test_mysql_binary_log_primary_keys_headers(
 
 @sdc_min_version('5.1.0')
 @database('mysql')
-@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
-def test_mysql_binary_log_numeric_primary_keys_metadata(
-        sdc_builder,
-        sdc_executor,
-        database,
-        table_loading_option
-):
+def test_mysql_binary_log_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database):
     """
     Test to check the metadata of numeric primary keys are present in the headers of the output records with the
     expected values.
@@ -1019,12 +1017,6 @@ def test_mysql_binary_log_numeric_primary_keys_metadata(
 
     try:
         connection = database.engine.connect()
-
-        if table_loading_option == 'via_event':
-            if Version(database.version) < Version('8.0.0'):
-                pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
-
-            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
 
         # Create the table
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
@@ -1125,9 +1117,6 @@ def test_mysql_binary_log_numeric_primary_keys_metadata(
         assert primary_key_specification_json == primary_key_specification_expected_json
 
     finally:
-        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
-            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
-
         connection.execute(f'drop table if exists {table_name}')
 
         if pipeline is not None:
@@ -1136,13 +1125,7 @@ def test_mysql_binary_log_numeric_primary_keys_metadata(
 
 @sdc_min_version('5.1.0')
 @database('mysql')
-@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
-def test_mysql_binary_log_non_numeric_primary_keys_metadata(
-        sdc_builder,
-        sdc_executor,
-        database,
-        table_loading_option
-):
+def test_mysql_binary_log_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database):
     """
     Test to check the metadata of non-numeric primary keys are present in the headers of the output records with the
     expected values.
@@ -1152,12 +1135,6 @@ def test_mysql_binary_log_non_numeric_primary_keys_metadata(
 
     try:
         connection = database.engine.connect()
-
-        if table_loading_option == 'via_event':
-            if Version(database.version) < Version('8.0.0'):
-                pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
-
-            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
 
         # Create the table
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
@@ -1264,9 +1241,6 @@ def test_mysql_binary_log_non_numeric_primary_keys_metadata(
         assert primary_key_specification_json == primary_key_specification_expected_json
 
     finally:
-        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
-            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
-
         connection.execute(f"drop table if exists {table_name}")
 
         if pipeline is not None:
@@ -1275,13 +1249,7 @@ def test_mysql_binary_log_non_numeric_primary_keys_metadata(
 
 @sdc_min_version('5.1.0')
 @database('mysql')
-@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
-def test_mysql_binary_log_altering_columns(
-        sdc_builder,
-        sdc_executor,
-        database,
-        table_loading_option
-):
+def test_mysql_binary_log_altering_columns(sdc_builder, sdc_executor, database):
     """
     Test to check the record values and primary keys headers after adding columns and deleting and changing the columns
     defined as primary keys. The rows added to the table before adding a column should have no value for the newly added
@@ -1295,9 +1263,6 @@ def test_mysql_binary_log_altering_columns(
 
     try:
         connection = database.engine.connect()
-
-        if table_loading_option == 'via_event':
-            connection.execute('SET GLOBAL binlog_row_metadata=FULL')
 
         # Create the table
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
@@ -1400,9 +1365,6 @@ def test_mysql_binary_log_altering_columns(
                 assert record.field['Data']['code_name'] == "Captain America"
 
     finally:
-        if table_loading_option == 'via_event':
-            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
-
         connection.execute(f"drop table if exists {table_name}")
 
         if pipeline is not None:

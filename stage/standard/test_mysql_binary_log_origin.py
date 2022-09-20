@@ -83,7 +83,6 @@ DATA_TYPES = [
 @database('mysql')
 @sdc_min_version('3.0.0.0')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES, ids=[i[0] for i in DATA_TYPES])
-@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
 def test_data_types(
         sdc_builder,
         sdc_executor,
@@ -92,19 +91,14 @@ def test_data_types(
         insert_fragment,
         expected_type,
         expected_value,
-        keep_data,
-        table_loading_option
+        keep_data
 ):
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
 
-    if table_loading_option == 'via_event':
-        if Version(database.version) < Version('8.0.0'):
-            pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
-
-        connection.execute('SET GLOBAL binlog_row_metadata=FULL')
-
-        if sql_type == 'TEXT':
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if (binlog_row_metadata == 'FULL') and (sql_type == 'TEXT'):
             # The connector we are using converts Text types to Byte Arrays, but this is only used when the table is
             # loaded via event. This cannot be changed for tables loaded via catalog as this would affect the default
             # mapping of unsupported types and there would be more types that would not match
@@ -157,9 +151,6 @@ def test_data_types(
         assert record.field['Data']['data_column']._data['value'] == expected_value
         assert null_record.field['Data']['data_column'] == None
     finally:
-        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
-            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
-
         if not keep_data:
             if connection is not None:
                 logger.info('Dropping table %s in %s database ...', table_name, database.type)
@@ -185,7 +176,6 @@ OBJECT_NAMES = [
 
 @database('mysql')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
-@pytest.mark.parametrize('table_loading_option', ['via_event', 'via_catalog'])
 def test_object_names(
         sdc_builder,
         sdc_executor,
@@ -193,15 +183,9 @@ def test_object_names(
         test_name,
         table_name,
         offset_name,
-        keep_data,
-        table_loading_option
+        keep_data
 ):
     connection = database.engine.connect()
-    if table_loading_option == 'via_event':
-        if Version(database.version) < Version('8.0.0'):
-            pytest.skip('Historical table structures tracking is unsupported for MySQL versions older than 8.0.0')
-
-        connection.execute('SET GLOBAL binlog_row_metadata=FULL')
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -240,9 +224,6 @@ def test_object_names(
         assert len(wiretap.output_records) == 1
         assert wiretap.output_records[0].field['Data'][offset_name] == 1
     finally:
-        if table_loading_option == 'via_event' and Version(database.version) >= Version('8.0.0'):
-            connection.execute('SET GLOBAL binlog_row_metadata=MINIMAL')
-
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
             table.drop(database.engine)
@@ -250,6 +231,13 @@ def test_object_names(
 
 @database('mysql')
 def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
+    connection = database.engine.connect()
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if binlog_row_metadata == "FULL":
+            pytest.skip('This test is only executed in environments with binlog_row_metadata set to MINIMAL to avoid'
+                        ' unnecessary executions given the fact this variable is irrelevant to the test.')
+
     max_batch_size = 1000
     batches = 50
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -281,7 +269,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
         table.create(database.engine)
 
         logger.info('Inserting data into %s', table_name)
-        connection = database.engine.connect()
         connection.execute(table.insert(), [{'id': n} for n in range(1, max_batch_size * batches + 1)])
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(max_batch_size * batches)
@@ -317,6 +304,13 @@ def test_data_format(sdc_builder, sdc_executor, database, keep_data):
 
 @database('mysql')
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
+    connection = database.engine.connect()
+    if Version(database.version) >= Version('8.0.0'):
+        binlog_row_metadata = connection.execute("SELECT @@GLOBAL.binlog_row_metadata").fetchall()[0][0]
+        if binlog_row_metadata == "FULL":
+            pytest.skip('This test is only executed in environments with binlog_row_metadata set to MINIMAL to avoid'
+                        ' unnecessary executions given the fact this variable is irrelevant to the test.')
+
     iterations = 3
     records_per_iteration = 10
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -352,7 +346,6 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
             wiretap.reset()
 
             logger.info('Inserting data into %s', table_name)
-            connection = database.engine.connect()
             connection.execute(table.insert(), [{'id': n} for n in range(iteration * records_per_iteration + 1,
                                                                          iteration * records_per_iteration + 1 + records_per_iteration)])
 
