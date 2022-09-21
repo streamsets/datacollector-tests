@@ -24,7 +24,7 @@ PRIMARY_KEY_NON_NUMERIC_METADATA_MYSQL = f'''{{
             {_primary_key_specification_json("my_char", 1, "CHAR", 10, 10, 0, "false", "false")},
             {_primary_key_specification_json("my_varchar", 12, "VARCHAR", 32, 32, 0, "false", "false")},
             {_primary_key_specification_json("my_varchar2", 12, "VARCHAR", 64, 64, 0, "false", "false")},
-            {_primary_key_specification_json("my_text", 12, "VARCHAR", 255, 255, 0, "false", "false")}
+            {_primary_key_specification_json("my_text", 12, "VARCHAR", 63, 63, 0, "false", "false")}
         }}'''
 
 PRIMARY_KEY_NUMERIC_METADATA_MYSQL = f'''{{
