@@ -22,7 +22,7 @@ import tempfile
 import time
 import csv
 import textwrap
-import shutil
+import re
 
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -1758,7 +1758,6 @@ def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
     assert len(data_from_csv_files) == len(output_records_text_fields)
     assert sorted(data_from_csv_files) == sorted(output_records_text_fields)
 
-
 def _write_pipeline(sdc_executor, number_files, tmp_write_directory, tmp_in_directory):
     """Pipeline to write.
     The pipelines looks like:
@@ -1906,3 +1905,79 @@ def test_directory_origin_read_while_writing(sdc_builder, sdc_executor):
         sdc_executor.execute_shell(f'rm -fr {tmp_write_directory}')
         sdc_executor.execute_shell(f'rm -fr {tmp_in_directory}')
         sdc_executor.execute_shell(f'rm -fr {tmp_out_directory}')
+
+
+@pytest.mark.parametrize('total_time', [10])
+@pytest.mark.parametrize('num_of_dirs', [100])
+@sdc_min_version('5.3.0')
+def test_directory_origin_add_missing_dirs(sdc_builder, sdc_executor, total_time, num_of_dirs):
+    """Run two pipelines in parallel. One creates and deletes multiple directories. The other one reads these
+    newly created directories avoiding to fail if it is removed while reading."""
+
+    temp_dir = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
+
+    mkdir_builder = sdc_builder.get_pipeline_builder()
+    mkdir_source = mkdir_builder.add_stage('Jython Scripting')
+    mkdir_script = """
+    try:
+        sdc.importLock()
+        import random
+        import string
+        import os
+        import shutil
+    finally:
+        sdc.importUnlock()
+    from timeit import default_timer as timer
+
+
+    def randomword(length):
+        letters = string.ascii_lowercase
+        return ''.join(random.choice(letters) for i in range(length))
+
+
+    PREFIX = "%s"
+    TOTAL_TIME = %d
+    NUM_OF_DIRS = %d
+    start = timer()
+    while timer() - start < TOTAL_TIME:
+        dirs = []
+        for i in range(NUM_OF_DIRS):
+            dir_name = PREFIX + "/" + randomword(10)
+            os.mkdir(dir_name)
+            dirs.append( dir_name )
+        for dir_name in dirs:
+            shutil.rmtree(dir_name)
+    """ % (temp_dir, total_time, num_of_dirs)
+    # textwrap.dedent helps to strip leading whitespaces for valid Python indentation
+    mkdir_source.set_attributes(user_script=textwrap.dedent(mkdir_script))
+    mkdir_wiretap = mkdir_builder.add_wiretap()
+    mkdir_source >> mkdir_wiretap.destination
+    mkdir_pipeline = mkdir_builder.build()
+
+    rddir_builder = sdc_builder.get_pipeline_builder()
+    rddir_source = rddir_builder.add_stage('Directory')
+    rddir_source.set_attributes(files_directory=temp_dir,
+                                file_name_pattern="*",
+                                read_order='TIMESTAMP',
+                                process_subdirectories=True,
+                                data_format="DELIMITED")
+    rddir_wiretap = rddir_builder.add_wiretap()
+    rddir_source >> rddir_wiretap.destination
+    rddir_pipeline = rddir_builder.build()
+
+    sdc_executor.add_pipeline(mkdir_pipeline)
+    sdc_executor.add_pipeline(rddir_pipeline)
+    sdc_executor.start_pipeline(rddir_pipeline)
+    sdc_executor.start_pipeline(mkdir_pipeline).wait_for_finished()
+    sdc_executor.stop_pipeline(rddir_pipeline, force=True)
+    sdc_executor.execute_shell(f'rm -rf {temp_dir}')
+
+    # look for an IOException related to temp_dir in the pipeline logs
+    logs = sdc_executor.get_logs(pipeline=rddir_pipeline)
+    pattern = ".*IOException.+" + temp_dir
+    regex = re.compile(pattern)
+    matches = re.findall(regex, str(logs))
+    if len(matches) > 0:
+        for match in matches:
+            logger.debug("Try to access a deleted directory: '%s'", match)
+        assert False, 'Should not reach here. Tried to read some directory that have been deleted.'
