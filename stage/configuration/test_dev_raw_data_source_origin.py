@@ -19,6 +19,7 @@ import pytest
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.utils import get_random_string
 from streamsets.sdk.exceptions import ValidationError
+from streamsets.testframework.markers import sdc_min_version
 
 
 @pytest.mark.parametrize('stage_attributes', [{'allow_extra_columns': False,
@@ -92,6 +93,28 @@ def test_missing_file(sdc_builder, sdc_executor, shell_executor):
     except ValidationError as error:
         assert "CTRCMN_0100" in error.issues
 
+@sdc_min_version('5.3.0')
+def test_raw_data_is_empty(sdc_builder, sdc_executor):
+    """
+    Verify that error DEV_002 is thrown when Raw Data field is empty.
+
+    The pipeline looks like:
+      dev_raw_data_source >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(raw_data="",
+                                                                                           stop_after_first_batch=False)
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> trash
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.validate_pipeline(pipeline)
+        pytest.fail('This point should not be reached')
+    except ValidationError as error:
+        assert error.issues['issueCount'] == 1
+        assert 'DEV_002' in error.issues['stageIssues']["DevRawDataSource_01"][0]['message']
 
 @stub
 def test_event_data(sdc_builder, sdc_executor):
