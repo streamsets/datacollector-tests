@@ -70,6 +70,7 @@ def test_allow_extra_columns(sdc_builder, sdc_executor, stage_attributes):
                 and CANNOT_PARSE_RECORD_ERROR_CODE in wiretap.error_records[0].header['errorMessage'])
         assert [record.field for record in wiretap.output_records] == EXPECTED_OUTPUT_DISALLOW_EXTRA_COLUMNS
 
+@sdc_min_version('5.3.0')
 def test_missing_file(sdc_builder, sdc_executor, shell_executor):
     """Check for proper error when file do not exist using runtime:loadResource().
     """
