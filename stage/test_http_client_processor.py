@@ -2039,9 +2039,10 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
         if pagination_end_mode == 'void' or pagination_end_mode == 'null':
             expected_message = 0
             if pagination_end_mode == 'null' and (pagination_mode != 'LINK_FIELD' or
-                                                  pagination_mode == 'LINK_FIELD' and stop_condition == 'existence'):
+                                                  pagination_mode == 'LINK_FIELD' and
+                                                  stop_condition in ('existence', 'none')):
                 # As of version 5.2.0, empty response bodies do not arise an exception
-                if Version(sdc_builder.version) < Version("5.2.0"):
+                if Version(sdc_executor.version) < Version("5.2.0"):
                     expected_output = 0
                     expected_error = 1
                     expected_error_code = 'HTTP_34'
