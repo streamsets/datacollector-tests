@@ -65,6 +65,8 @@ def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, i
 
     if Version(sdc_builder.version) <= Version('4.0.2') and improve_types:
         pytest.skip('Improved Type Conversion is not present on that SDC version')
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
 
     database = get_random_string(string.ascii_letters, 5)
     collection = get_random_string(string.ascii_letters, 10)
@@ -149,6 +151,9 @@ def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name
     """
     Verify that we can respect all the documented database names possible
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     database = database_name_category
     collection = get_random_string(string.ascii_letters, 10)
 
@@ -209,6 +214,9 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
     """
     Verify that we can respect all the documented collection names possible
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     database = get_random_string(string.ascii_letters, 5)
     collection = collection_name_category
 
@@ -262,6 +270,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
     """
     Test for MongoDB target stage. We verify that the destination work fine with more than one batch.
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     database = get_random_string(string.ascii_letters, 5)
     collection = get_random_string(string.ascii_letters, 10)
 
@@ -318,6 +329,9 @@ def test_push_pull(sdc_builder, sdc_executor, mongodb):
     and push strategies, so as we already verified Dev Raw Data Source, we will use Dev Data Generator here to complete
     the coverage.
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     database = get_random_string(string.ascii_letters, 5)
     collection = get_random_string(string.ascii_letters, 10)
 

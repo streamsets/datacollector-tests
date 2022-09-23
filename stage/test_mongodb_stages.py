@@ -79,6 +79,9 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
     The pipeline looks like:
         mongodb_oplog >> wiretap
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     input_rec_count = 6
     input_rec_count2 = 2
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -141,6 +144,9 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
     The pipeline looks like:
         mongodb_origin >> wiretap
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
@@ -191,6 +197,9 @@ def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
     The pipeline looks like:
         mongodb_origin >> wiretap
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     database_name = get_random_string(ascii_letters, 5)
     collection1 = get_random_string(ascii_letters, 10)
     collection2 = get_random_string(ascii_letters, 10)
@@ -250,6 +259,8 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
     The pipeline looks like:
         mongodb_origin >> wiretap
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
 
     ORIG_BINARY_DOCS = [
         {'data': binary.Binary(b'Binary Data Flute')},
@@ -305,6 +316,9 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
     The pipeline looks like:
         mongodb_origin >> wiretap
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     ORIG_BINARY_DOCS = [{'data': decimal128.Decimal128("0.5")}]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -359,6 +373,9 @@ def test_mongodb_origin_nested_field_offset(sdc_builder, sdc_executor, mongodb):
     The pipeline looks like:
         mongodb_origin >> wiretap
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
@@ -426,6 +443,9 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
     The pipeline looks like:
         dev_raw_data_source >> MongoDB Lookup Processor >> wiretap
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
@@ -486,6 +506,9 @@ def test_mongodb_lookup_processor_implicit_port(sdc_builder, sdc_executor, mongo
     The pipeline looks like:
         dev_raw_data_source >> MongoDB Lookup Processor >> trash
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
@@ -537,6 +560,9 @@ def test_mongodb_lookup_processor_invalid_url(sdc_builder, sdc_executor, mongodb
     The pipeline looks like:
         dev_raw_data_source >> MongoDB Lookup Processor >> trash
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
@@ -583,6 +609,9 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
     The pipeline looks like:
         dev_raw_data_source >> MongoDB Lookup Processor >> wiretap
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
@@ -644,6 +673,9 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
         dev_raw_data_source >> record_deduplicator >> expression_evaluator >> mongodb_dest
                                record_deduplicator >> trash
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
@@ -691,6 +723,9 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
 @mongodb
 def test_mongodb_destination_update_on_nested_key(sdc_builder, sdc_executor, mongodb):
     """Ensure that an update on a document with a nested unique field is correctly executed"""
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
     record = {"f1": {"f2": "a"}, "f3": "b"}

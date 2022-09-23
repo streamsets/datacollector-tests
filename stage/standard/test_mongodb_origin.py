@@ -50,6 +50,9 @@ def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name
     """
     Verify that we can respect all the documented buckets names possible
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     database = database_name_category
     collection = get_random_string(string.ascii_letters, 10)
 
@@ -109,6 +112,9 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
     """
     Verify that we can respect all the documented buckets names possible
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     database = get_random_string(string.ascii_letters, 5)
     collection = collection_name_category
 
@@ -161,6 +167,9 @@ def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
     Test that an empty origin linked to a Pipeline Finisher Executor which ends the pipeline when
     a no-more-data is received actually emits this event.
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     database = get_random_string(string.ascii_letters, 5)
     collection = get_random_string(string.ascii_letters, 10)
 
@@ -231,6 +240,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb, batch_size):
     Test that using multithreaded pipeline we can start our pipeline multiple times adding more objects in between
     without reading any duplicated record neither missing them.
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     max_batch_size = batch_size
     database = get_random_string(string.ascii_letters, 5)
     collection = get_random_string(string.ascii_letters, 10)
@@ -289,6 +301,9 @@ def test_resume_offset(sdc_builder, sdc_executor, mongodb):
     """
     Test that we can start our pipeline multiple times without reading any duplicated record neither missing them.
     """
+    if mongodb.atlas:
+        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
+
     iterations = 1
     records_per_iteration = 10
     database = get_random_string(string.ascii_letters, 5)
