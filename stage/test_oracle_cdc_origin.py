@@ -1003,7 +1003,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
 
         # Run: 01
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(rows))
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(rows), timeout=300)
 
         sleep(30)
 
@@ -1131,7 +1131,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
 
         # Run 02
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(new_rows))
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(new_rows), timeout=300)
 
         sleep(30)
 
@@ -2101,7 +2101,7 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, buffer_locat
             # Version 12 LogMiner has support for Redo Logs that contain ADT columns
             if peg_parser:
                 # With peg parser we expect n output records with the update we did on the table
-                sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records)
+                sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records, timeout_sec=300)
                 sdc_executor.stop_pipeline(pipeline)
                 for i in range(num_records):
                     assert wiretap.output_records[i].field['ID_EX'] == i
@@ -2110,12 +2110,12 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, buffer_locat
                 # With default parser throws the exception SDC-15822"""
                 with pytest.raises(sdc_api.RunningError) as exception_info:
                     status.wait_for_status('RUN_ERROR', timeout_sec=300)
-                assert 'JDBC_93 - ' in f'{exception_info.value}'
+                assert 'JDBC_405 - ' in f'{exception_info.value}'
                 assert 'UPDATE' in f'{exception_info.value}'
         else:
             # Version 11 LogMiner does not support Redo Logs for ADT columns, we check we have no output records
             connection.execute(f"TRUNCATE TABLE {table_name}");
-            status.wait_for_status('FINISHED')
+            status.wait_for_status('FINISHED', timeout_sec=300)
             assert len(wiretap.output_records) == 0
 
     finally:
@@ -2199,7 +2199,7 @@ def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, b
         connection.execute(f"UPDATE {table_name} set ADT_EX = TPE_{table_name}("f"ARRAY_{table_name}(null),"
                            f"'EXAMPLE')")
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records, timeout=300)
         sdc_executor.stop_pipeline(pipeline)
         for i in range(num_records):
             assert wiretap.error_records[i].header['errorCode'] == 'JDBC_85'
@@ -2494,7 +2494,7 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, buffe
 
     total_records = 10
 
-    table_prefix = f'STF_{get_random_string(string.ascii_lowercase, 16)}$'
+    table_prefix = f'STF{get_random_string(string.ascii_lowercase, 16)}$'
 
     pattern = f'{table_prefix}{scenario["pattern"]}'
     records = scenario["records"]
@@ -2552,7 +2552,7 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, buffe
         sdc_executor.add_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_records)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_records, timeout=300)
 
         sleep(30)
 
@@ -3600,7 +3600,7 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
         database_transaction_enclosed.commit()
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', number_of_rows_enclosed)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', number_of_rows_enclosed, timeout=300)
 
         q_insert = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.operation"] == 'INSERT')
         logger.info(f'Total INSERT\'s {q_insert}')
@@ -3644,7 +3644,7 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
         wiretap.reset()
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows_enclosing)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows_enclosing, timeout=300)
 
         sleep(30)
 
@@ -4203,7 +4203,7 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout=300)
 
         assert len(wiretap.output_records) == 1
 
