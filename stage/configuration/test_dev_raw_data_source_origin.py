@@ -89,10 +89,11 @@ def test_missing_file(sdc_builder, sdc_executor, shell_executor):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        sdc_executor.validate_pipeline(pipeline)
-        assert False, 'Should not reach here. File "' + random_str + "' should not exist."
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert False, f'Should not reach here. File "{random_str}" should not exist.'
     except ValidationError as error:
-        assert "CTRCMN_0100" in error.issues
+        assert error.issues['issueCount'] == 1
+        assert "CTRCMN_0100" in error.issues['stageIssues']["DevRawDataSource_01"][0]['message']
 
 @sdc_min_version('5.3.0')
 def test_raw_data_is_empty(sdc_builder, sdc_executor):
