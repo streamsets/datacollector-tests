@@ -41,8 +41,8 @@ def test_mapr_json_db_cdc_origin(sdc_builder, sdc_executor, cluster):
     mapr_db_cdc_consumer >> wiretap
     mapr_db_json >> wiretap
     """
-    if not cluster.version[len('mapr'):].startswith('6'):
-        pytest.skip('MapR CDC test only runs against cluster with MapR version 6.')
+    if not cluster.version[len('mapr'):].startswith('6') and not cluster.version[len('mapr'):].startswith('7'):
+        pytest.skip('MapR CDC test only runs against cluster with MapR version > 6.')
     if cluster.mep_version == "4.0":
         pytest.skip('MapR CDC test are written only for MEP 5 and above.')
 
@@ -183,7 +183,8 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON',
-                                       raw_data=raw_data)
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
 
     mapr_db = pipeline_builder.add_stage('MapR DB', type='destination')
     mapr_db.set_attributes(table_name=table_name,
@@ -205,7 +206,7 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
                                 data={'path': table_name, 'cfname': 'cf1'})
 
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(len(bike_brands))
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         table = cluster.mapr_db.client.table(name=table_name)
         # Due to the following bug in MapR 6.0.1 MEP 5.0, MapR DB table.scan() call hangs and times out.
@@ -221,7 +222,6 @@ def test_mapr_db_destination(sdc_builder, sdc_executor, cluster):
     finally:
         logger.info('Deleting MapR-DB table %s ...', table_name)
         cluster.execute_command('table', 'delete', http_request_method='POST', data={'path': table_name})
-        sdc_executor.stop_pipeline(pipeline)
 
 
 @cluster('mapr')
@@ -366,7 +366,9 @@ def test_mapr_fs_destination(sdc_builder, sdc_executor, cluster):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
 
     record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
     to_error = pipeline_builder.add_stage('To Error')
@@ -384,9 +386,7 @@ def test_mapr_fs_destination(sdc_builder, sdc_executor, cluster):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(len(giro_stages))
-        # Wait for pipeline to be stopped in order to ensure file has been written.
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         mapr_fs_files = cluster.mapr_fs.client.list(str(output_folder_path))
         # With only 3 unique records, there should only be one file written.
@@ -419,8 +419,8 @@ def test_mapr_standalone_streams(sdc_builder, sdc_executor, cluster):
     MapR Streams consumer pipeline:
         mapr_streams_consumer >> wiretap
     """
-    if cluster.mep_version != '6.0':
-        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
+    if cluster.mep_version < '6.0':
+        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP > 6)')
     # MapR Stream name has to be pre-created in MapR cluster. Clusterdock MapR image has this already.
     stream_name = '/sample-stream'
     stream_topic_name = stream_name + ':' + get_random_string(string.ascii_letters, 10)
@@ -566,8 +566,8 @@ def test_mapr_standalone_multitopic_streams(sdc_builder, sdc_executor, cluster):
     MapR Streams consumer pipeline:
         mapr_streams_consumer >> wiretap
     """
-    if cluster.mep_version != '6.0':
-        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
+    if cluster.mep_version < '6.0':
+        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP > 6)')
     _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, cluster, False)
 
 
@@ -584,8 +584,8 @@ def test_mapr_standalone_multitopic_streams_with_timestamp(sdc_builder, sdc_exec
     MapR Streams consumer pipeline:
         mapr_streams_consumer >> wiretap
     """
-    if cluster.mep_version != '6.0':
-        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP 6)')
+    if cluster.mep_version < '6.0':
+        pytest.skip('MapR Streams are currently only supported on latest version of MEP (e.g. MEP > 6)')
     _test_mapr_standalone_multitopic_streams_generic(sdc_builder, sdc_executor, cluster, True)
 
 
@@ -618,8 +618,8 @@ def test_mapr_db_cdc_origin_preview(sdc_builder, sdc_executor, cluster, input_re
     dev_data_generator >> expression evaluator >> field_remover >> mapr_db_json
     mapr_db_cdc_consumer >> wiretap
     """
-    if not cluster.version[len('mapr'):].startswith('6'):
-        pytest.skip('MapR CDC test only runs against cluster with MapR version 6.')
+    if not cluster.version[len('mapr'):].startswith('6') and not cluster.version[len('mapr'):].startswith('7'):
+        pytest.skip('MapR CDC test only runs against cluster with MapR version > 6.')
     if cluster.mep_version == "4.0":
         pytest.skip('MapR CDC test are written only for MEP 5 and above.')
 
