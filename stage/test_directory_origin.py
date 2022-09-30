@@ -1981,3 +1981,57 @@ def test_directory_origin_add_missing_dirs(sdc_builder, sdc_executor, total_time
         for match in matches:
             logger.debug("Try to access a deleted directory: '%s'", match)
         assert False, 'Should not reach here. Tried to read some directory that have been deleted.'
+
+
+@sdc_min_version('5.3.0')
+@pytest.mark.parametrize('_delay_between_batches', [100])
+@pytest.mark.parametrize('_records_to_be_generated', [100])
+@pytest.mark.parametrize('_batch_size', [1])
+@pytest.mark.parametrize('_ignore_temporary_files', [True,False])
+def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
+                                           _ignore_temporary_files):
+    """Run two pipelines in parallel. One creates multiples records and stores them into a LocalFS destination.
+    The other reads from a Directory origin which points to the same path as the previous LocalFS destination.
+    We set the flag to ignore temporary files to avoid generating duplicates.
+        Dev Data Generator >> Local FS
+        Directory >> Wiretrap
+    """
+
+    temp_dir = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
+
+    producer_builder = sdc_builder.get_pipeline_builder()
+    producer_origin = producer_builder.add_stage('Dev Data Generator')
+    producer_origin.set_attributes(delay_between_batches=_delay_between_batches,
+                                   records_to_be_generated=_records_to_be_generated,
+                                   batch_size=_batch_size)
+    producer_origin.fields_to_generate = [{'field': 'foo', 'type': 'STRING'}]
+    producer_destination = producer_builder.add_stage('Local FS')
+    producer_destination.set_attributes(directory_template=temp_dir,
+                                        data_format="JSON")
+    producer_origin >> producer_destination
+    producer_pipeline = producer_builder.build()
+
+    consumer_builder = sdc_builder.get_pipeline_builder()
+    consumer_origin = consumer_builder.add_stage('Directory')
+    consumer_origin.set_attributes(files_directory=temp_dir,
+                                   file_name_pattern="*",
+                                   ignore_temporary_files=_ignore_temporary_files,
+                                   data_format="JSON")
+    consumer_wiretap = consumer_builder.add_wiretap()
+    consumer_origin >> consumer_wiretap.destination
+    consumer_pipeline = consumer_builder.build()
+
+    sdc_executor.add_pipeline(producer_pipeline)
+    sdc_executor.add_pipeline(consumer_pipeline)
+    sdc_executor.start_pipeline(consumer_pipeline)
+    sdc_executor.start_pipeline(producer_pipeline).wait_for_finished()
+
+    try:
+        if _ignore_temporary_files:
+            assert len(consumer_wiretap.output_records) == _records_to_be_generated
+        else:
+            assert len(consumer_wiretap.output_records) > _records_to_be_generated
+    finally:
+        sdc_executor.stop_pipeline(consumer_pipeline, force=True)
+        sdc_executor.execute_shell(f'rm -rf {temp_dir}')
+
