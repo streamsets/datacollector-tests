@@ -16,6 +16,7 @@ import logging
 import os
 import string
 import tempfile
+import time
 
 import pytest
 from streamsets.testframework.markers import sdc_min_version
@@ -253,13 +254,11 @@ def test_empty_object_file(sdc_builder, sdc_executor):
        Wiretap is used to assert no data was generated.
        One file empty file is created and then processed.
        Pipeline structure: directory_origin >> wiretap.destination
-                          directory_origin >= pipeline_finished_executor
    """
 
-    raw_str = ''
     file_path = tempfile.gettempdir()
     file_name = get_random_string(string.ascii_letters, 10)
-    _write_file_with_pipeline(sdc_executor, file_path, file_name, raw_str)
+    _create_empty_file(sdc_executor, file_path, file_name)
 
     builder = sdc_builder.get_pipeline_builder()
     directory_origin = builder.add_stage('Directory', type='origin')
@@ -270,17 +269,23 @@ def test_empty_object_file(sdc_builder, sdc_executor):
                                     batch_size_in_recs=100)
     wiretap = builder.add_wiretap()
 
-    pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
-    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
-
     directory_origin >> wiretap.destination
-    directory_origin >= pipeline_finished_executor
 
     directory_origin_pipeline = builder.build()
     sdc_executor.add_pipeline(directory_origin_pipeline)
 
     try:
-        sdc_executor.start_pipeline(directory_origin_pipeline).wait_for_finished()
+        sdc_executor.start_pipeline(directory_origin_pipeline)
+
+        tries = 0
+        is_file_deleted = False
+        # Waiting for the Directory origin to delete the file in post-processing
+        while is_file_deleted is False or tries < 5:
+            time.sleep(1)
+            logger.info(f'Checking if file has been deleted - number of tries = {tries}')
+            is_file_deleted = not os.path.exists(os.path.join(file_path, file_name))
+            tries += 1
+        assert is_file_deleted
 
         records = [record.field['text'] for record in wiretap.output_records]
         expected_raw = []
@@ -288,6 +293,7 @@ def test_empty_object_file(sdc_builder, sdc_executor):
 
     finally:
         _stop_pipeline(sdc_executor, directory_origin_pipeline)
+
 
 @stub
 def test_data_format_avro(sdc_builder, sdc_executor):
@@ -370,6 +376,33 @@ def test_data_format_whole_file(sdc_builder, sdc_executor):
 @stub
 def test_data_format_xml(sdc_builder, sdc_executor):
     pass
+
+
+def _create_empty_file(sdc_executor, file_path, file_name):
+    """
+    Help function to create an empty file - File system in directory file_path
+    and file_name name.
+    Pipeline structure:
+            dev_data_generator >> trash
+            dev_data_generator >= shell
+    """
+    script = f'touch {os.path.join(file_path, file_name)}'
+
+    builder = sdc_executor.get_pipeline_builder()
+    dev_data_generator = builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(records_to_be_generated=1, batch_size=1)
+    shell_executor = builder.add_stage('Shell')
+    shell_executor.set_attributes(script=script)
+
+    trash = builder.add_stage('Trash')
+
+    dev_data_generator >> trash
+    dev_data_generator >= shell_executor
+    files_pipeline = builder.build(f'Generate files pipeline {file_path}')
+    sdc_executor.add_pipeline(files_pipeline)
+
+    sdc_executor.start_pipeline(files_pipeline).wait_for_finished()
+    sdc_executor.remove_pipeline(files_pipeline)
 
 
 def _write_file_with_pipeline(sdc_executor, file_path, file_name, file_contents):

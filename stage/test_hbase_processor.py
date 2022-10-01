@@ -102,12 +102,16 @@ def test_hbase_lookup_processor(sdc_builder, sdc_executor, cluster):
 @cluster('cdh', 'hdp')
 def test_hbase_lookup_processor_empty_batch(sdc_builder, sdc_executor, cluster):
     """HBase Lookup processor test.
-    pipeline will receive an empty batch, not errors would be shown
-    dev_raw_data_source >> hbase_lookup >> trash
+    pipeline will receive an empty batch using JavaScript Scripting origin, not errors would be shown
+    javascript_scripting >> hbase_lookup >> trash
     """
-    # Create empty input data.
-    raw_data = ""
 
+    # Send empty batch
+    script = """
+// Send one empty batch
+batch = sdc.createBatch();
+batch.process(" ", "0");
+"""
     # Generate HBase Lookup's attributes.
     lookup_parameters = [dict(rowExpr="${record:value('/text')}",
                               columnExpr='info:empty',
@@ -119,9 +123,10 @@ def test_hbase_lookup_processor_empty_batch(sdc_builder, sdc_executor, cluster):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    # Create Dev Raw Data Source stage.
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data)
+    # Create JavaScript Scripting origin
+    javascript_scripting = pipeline_builder.add_stage('JavaScript Scripting')
+    javascript_scripting.set_attributes(record_type='NATIVE_OBJECTS',
+                                        user_script=script)
 
     # Create HBase Lookup processor.
     hbase_lookup = pipeline_builder.add_stage('HBase Lookup')
@@ -131,7 +136,7 @@ def test_hbase_lookup_processor_empty_batch(sdc_builder, sdc_executor, cluster):
     trash = pipeline_builder.add_stage('Trash')
 
     # Build pipeline.
-    dev_raw_data_source >> hbase_lookup >> trash
+    javascript_scripting >> hbase_lookup >> trash
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
@@ -140,19 +145,14 @@ def test_hbase_lookup_processor_empty_batch(sdc_builder, sdc_executor, cluster):
         logger.info('Creating HBase table %s ...', table_name)
         cluster.hbase.client.create_table(name=table_name, families={'info': {}})
 
-        # Start pipeline.
-        sdc_executor.start_pipeline(pipeline)
-        sdc_executor.stop_pipeline(pipeline)
+        # Start pipeline
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         assert 0 == len(list(cluster.hbase.client.table(table_name).scan()))
-
-        status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
-        assert 'STOPPED' == status
     finally:
         # Delete HBase table.
         logger.info('Deleting HBase table %s ...', table_name)
         cluster.hbase.client.delete_table(name=table_name, disable=True)
-
 
 @cluster('cdh', 'hdp')
 def test_hbase_lookup_processor_invalid_url(sdc_builder, sdc_executor, cluster):
