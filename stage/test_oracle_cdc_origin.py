@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from pytest import fixture
 from random import randint
 from sqlalchemy import text
+from sqlalchemy.exc import DatabaseError
 from time import sleep
 
 from streamsets.sdk.exceptions import ValidationError
@@ -1010,7 +1011,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
 
         # Run: 01
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(rows), timeout=300)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(rows), timeout_sec=300)
 
         sleep(30)
 
@@ -1138,7 +1139,7 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
 
         # Run 02
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(new_rows), timeout=300)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(new_rows), timeout_sec=300)
 
         sleep(30)
 
@@ -2205,7 +2206,7 @@ def test_unsupported_types_empty_redo_log(sdc_builder, sdc_executor, database, b
         connection.execute(f"UPDATE {table_name} set ADT_EX = TPE_{table_name}("f"ARRAY_{table_name}(null),"
                            f"'EXAMPLE')")
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records, timeout=300)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
         for i in range(num_records):
             assert wiretap.error_records[i].header['errorCode'] == 'JDBC_85'
@@ -2559,7 +2560,7 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, buffe
         sdc_executor.add_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_records, timeout=300)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_records, timeout_sec=300)
 
         sleep(30)
 
@@ -3607,7 +3608,7 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
         database_transaction_enclosed.commit()
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', number_of_rows_enclosed, timeout=300)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', number_of_rows_enclosed, timeout_sec=300)
 
         q_insert = sum(1 for record in wiretap.output_records if record.header.values["oracle.cdc.operation"] == 'INSERT')
         logger.info(f'Total INSERT\'s {q_insert}')
@@ -3651,7 +3652,7 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
         wiretap.reset()
 
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows_enclosing, timeout=300)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3 * number_of_rows_enclosing, timeout_sec=300)
 
         sleep(30)
 
@@ -3694,7 +3695,10 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
     finally:
 
         if target_table is not None:
-            target_table.drop(database.engine)
+            try:
+                target_table.drop(database.engine)
+            except DatabaseError as error:
+                logger.warning(f"Failed to drop table '{target_table_name}': {error}")
 
 
 @pytest.mark.skip('Skipping for now. It takes too much time that makes the environment to timeout.')
@@ -4210,7 +4214,7 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout=300)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=300)
 
         assert len(wiretap.output_records) == 1
 

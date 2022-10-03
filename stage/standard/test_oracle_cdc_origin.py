@@ -194,7 +194,7 @@ def test_object_names_tables(sdc_builder, sdc_executor, database, keep_data, buf
 
         assert len(output_values) == wiretap_output_records_control_length
 
-        assert input_values == output_values
+        assert all(input_value in output_values for input_value in input_values)
 
     finally:
         try:
@@ -288,7 +288,7 @@ def test_object_names_columns(sdc_builder, sdc_executor, database, keep_data, bu
 
         assert len(output_values) == wiretap_output_records_control_length
 
-        assert input_values == output_values
+        assert all(input_value in output_values for input_value in input_values)
 
     finally:
         try:
