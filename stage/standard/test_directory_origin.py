@@ -280,7 +280,7 @@ def test_empty_object_file(sdc_builder, sdc_executor):
         tries = 0
         is_file_deleted = False
         # Waiting for the Directory origin to delete the file in post-processing
-        while is_file_deleted is False or tries < 5:
+        while not is_file_deleted and tries < 5:
             time.sleep(1)
             logger.info(f'Checking if file has been deleted - number of tries = {tries}')
             is_file_deleted = not os.path.exists(os.path.join(file_path, file_name))
