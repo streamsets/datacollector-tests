@@ -1989,6 +1989,7 @@ def test_directory_origin_add_missing_dirs(sdc_builder, sdc_executor, total_time
 @pytest.mark.parametrize('_batch_size', [1])
 @pytest.mark.parametrize('_ignore_temporary_files', [True,False])
 def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
+                                           _delay_between_batches, _records_to_be_generated, _batch_size,
                                            _ignore_temporary_files):
     """Run two pipelines in parallel. One creates multiples records and stores them into a LocalFS destination.
     The other reads from a Directory origin which points to the same path as the previous LocalFS destination.
@@ -2034,4 +2035,5 @@ def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
     finally:
         sdc_executor.stop_pipeline(consumer_pipeline, force=True)
         sdc_executor.execute_shell(f'rm -rf {temp_dir}')
+
 
