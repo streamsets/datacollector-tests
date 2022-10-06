@@ -74,9 +74,9 @@ def test_parse_multichar_delimited(sdc_builder, sdc_executor):
 # SDC-11869: Add ability to specify quote mode when generating CSV data
 @sdc_min_version('3.10.0')
 @pytest.mark.parametrize('quote_mode,expected', [
-    ('ALL', '"a"|"b"|" c"\n'),
-    ('MINIMAL', 'a|b|" c"\n'),
-    ('NONE', 'a|b| c\n')
+    ('ALL', '"a"|"b"|" c"\r\n'),
+    ('MINIMAL', 'a|b|" c"\r\n'),
+    ('NONE', 'a|b| c\r\n')
 ])
 def test_delimited_quote_mode(sdc_builder, sdc_executor, quote_mode, expected):
     """Ensure that delimited quote mode works properly."""
