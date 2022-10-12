@@ -24,7 +24,7 @@ from streamsets.testframework.utils import get_random_string
 
 DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_bigquery_enterprise_destination_BigQueryDTarget'
 
-pytestmark = [gcp, sdc_min_version('5.3.0')]
+pytestmark = [gcp, sdc_min_version('5.3.0'), pytest.mark.category('nonstandard')]
 
 logger = logging.getLogger(__name__)
 

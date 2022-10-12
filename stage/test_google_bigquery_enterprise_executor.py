@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 EXECUTOR_STAGE_NAME = 'com_streamsets_pipeline_stage_bigquery_enterprise_executor_BigQueryDExecutor'
 SCHEMA = [SchemaField('title', 'STRING')]
 
-pytestmark = [gcp, sdc_min_version('5.3.0')]
+pytestmark = [gcp, sdc_min_version('5.3.0'), pytest.mark.category('nonstandard')]
 
 
 @pytest.mark.parametrize("queries", [
