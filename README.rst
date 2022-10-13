@@ -1,7 +1,7 @@
 ===============================
 StreamSets Data Collector tests
 ===============================
-
+ 
 This repository houses StreamSets Test Framework (STF) tests for StreamSets Data Collector.
 
 Quickstart
