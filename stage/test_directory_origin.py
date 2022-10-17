@@ -1995,7 +1995,7 @@ def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
     The other reads from a Directory origin which points to the same path as the previous LocalFS destination.
     We set the flag to ignore temporary files to avoid generating duplicates.
         Dev Data Generator >> Local FS
-        Directory >> Wiretrap
+        Directory >> Trash
     """
 
     temp_dir = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
@@ -2018,8 +2018,8 @@ def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
                                    file_name_pattern="*",
                                    ignore_temporary_files=_ignore_temporary_files,
                                    data_format="JSON")
-    consumer_wiretap = consumer_builder.add_wiretap()
-    consumer_origin >> consumer_wiretap.destination
+    consumer_trash = consumer_builder.add_stage('Trash')
+    consumer_origin >> consumer_trash
     consumer_pipeline = consumer_builder.build()
 
     sdc_executor.add_pipeline(producer_pipeline)
@@ -2027,11 +2027,9 @@ def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
     sdc_executor.start_pipeline(consumer_pipeline)
     sdc_executor.start_pipeline(producer_pipeline).wait_for_finished()
 
+    record_count = _records_to_be_generated + 0 if _ignore_temporary_files else 1
     try:
-        if _ignore_temporary_files:
-            assert len(consumer_wiretap.output_records) == _records_to_be_generated
-        else:
-            assert len(consumer_wiretap.output_records) > _records_to_be_generated
+        sdc_executor.wait_for_pipeline_metric(consumer_pipeline, 'output_record_count', record_count)
     finally:
         sdc_executor.stop_pipeline(consumer_pipeline, force=True)
         sdc_executor.execute_shell(f'rm -rf {temp_dir}')
