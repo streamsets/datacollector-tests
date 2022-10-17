@@ -29,6 +29,9 @@ def test_kafka_headers(sdc_builder, sdc_executor, cluster,
     """Run two pipelines in parallel. One creates multiples records with their headers and sends to a Kafka destination.
     The other reads from the same Kafka instance as an origin. We check headers are preserved through all the pipelines.
     """
+    kafka_version = cluster.version
+    if kafka_version.startswith("0.") or kafka_version.startswith("1."):
+        pytest.skip(f'kafka version {kafka_version} not supported')
 
     topic = get_random_string(string.ascii_letters, 10)
     key = get_random_string(string.ascii_letters, 10)
@@ -54,9 +57,9 @@ def test_kafka_headers(sdc_builder, sdc_executor, cluster,
     consumer_pipeline = consumer_builder.build().configure_for_environment(cluster)
 
     sdc_executor.add_pipeline(producer_pipeline)
+    sdc_executor.start_pipeline(producer_pipeline).wait_for_finished()
     sdc_executor.add_pipeline(consumer_pipeline)
     sdc_executor.start_pipeline(consumer_pipeline)
-    sdc_executor.start_pipeline(producer_pipeline)
     sdc_executor.wait_for_pipeline_metric(consumer_pipeline, 'output_record_count', records_to_be_generated)
 
     output_records = consumer_wiretap.output_records
