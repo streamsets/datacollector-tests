@@ -69,7 +69,7 @@ def test_groovy_evaluator(sdc_builder, sdc_executor, groovy_version, library, mi
     init_script = """
         import groovy.transform.*
 
-        @Canonical
+        @AutoClone(style=AutoCloneStyle.COPY_CONSTRUCTOR)
         class Building implements Cloneable{
             String name
             int floors
