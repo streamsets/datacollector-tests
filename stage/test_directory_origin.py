@@ -2030,8 +2030,15 @@ def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
     record_count = _records_to_be_generated + 0 if _ignore_temporary_files else 1
     try:
         sdc_executor.wait_for_pipeline_metric(consumer_pipeline, 'output_record_count', record_count)
-    finally:
         sdc_executor.stop_pipeline(consumer_pipeline, force=True)
+        if _ignore_temporary_files:
+            assert_record_count(sdc_executor, consumer_pipeline, record_count)
+
+    finally:
         sdc_executor.execute_shell(f'rm -rf {temp_dir}')
 
 
+def assert_record_count(sdc_executor, pipeline, expected_count):
+    history = sdc_executor.get_pipeline_history(pipeline)
+    output_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+    assert output_record_count == expected_count
