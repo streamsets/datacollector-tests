@@ -46,7 +46,7 @@ def test_s3_executor_create_object(sdc_builder, sdc_executor, aws):
     dev_raw_data_source >> record_deduplicator >> s3_executor >= wiretap.destination
                            record_deduplicator >> to_error
     """
-    _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, False)
+    _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, False, False)
 
 
 @aws('s3')
@@ -63,10 +63,28 @@ def test_s3_executor_create_object_anonymous(sdc_builder, sdc_executor, aws):
     dev_raw_data_source >> record_deduplicator >> s3_executor >= wiretap.destination
                            record_deduplicator >> to_error
     """
-    _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, True)
+    _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, False, True)
 
 
-def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, anonymous):
+@aws('s3', 'kms')
+@sdc_min_version('5.3.0')
+def test_s3_executor_create_object_sse_kms(sdc_builder, sdc_executor, aws):
+    """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 executor
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been created by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    and S3 destination in order to limit number of objects to one. Uses SSE-KMS encryption options, and check
+    they are properly set up.
+
+    For recent SDC versions we also check that the corresponding 'file-created' event is generated.
+
+    S3 Destination pipeline:
+    dev_raw_data_source >> record_deduplicator >> s3_executor >= wiretap.destination
+                           record_deduplicator >> to_error
+    """
+    _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, True, False)
+
+
+def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, sse_kms, anonymous):
     # Setup test static.
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
@@ -87,6 +105,11 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, anonymou
                                task='CREATE_NEW_OBJECT',
                                object=s3_key,
                                content='${record:value("/company")}')
+    if sse_kms:
+        # Use SSE with KMS
+        s3_executor.set_attributes(use_server_side_encryption=True,
+                                   server_side_encryption_option='KMS',
+                                   aws_kms_key_arn=aws.kms_key_arn)
     if anonymous:
         configure_stage_for_anonymous(s3_executor)
 
@@ -124,6 +147,11 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, anonymou
             assert len(wiretap.output_records) == 1
             assert wiretap.output_records[0].header.values['sdc.event.type'] == 'file-created'
 
+        if sse_kms:
+            s3_obj_key = client_to_read.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+            # assert that the data was stored with SSE using the KMS
+            assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
+            assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, s3_exec_pipeline)
         restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
@@ -142,6 +170,26 @@ def test_s3_executor_copy_object(sdc_builder, sdc_executor, aws):
         dev_raw_data_source >> s3_executor >= wiretap.destination
 
     """
+    _run_test_s3_executor_copy_object(sdc_builder, sdc_executor, aws, False)
+
+
+@aws('s3', 'kms')
+@sdc_min_version('5.3.0')
+def test_s3_executor_copy_object_sse_kms(sdc_builder, sdc_executor, aws):
+    """Test the copy action of S3 executor stage and its corresponding event. We configure the S3 executor stage
+    to copy S3 objects according to the 'key_src' and 'key_dst' values provided in the record. We use the S3
+    client to create an S3 object with key 'key_src' and check that the stage copies that object into the
+    'key_dst' key and generate the corresponding event. Uses SSE-KMS encryption options, and check they are properly
+     set up.
+
+    Pipeline:
+        dev_raw_data_source >> s3_executor >= wiretap.destination
+
+    """
+    _run_test_s3_executor_copy_object(sdc_builder, sdc_executor, aws, True)
+
+
+def _run_test_s3_executor_copy_object(sdc_builder, sdc_executor, aws, sse_kms):
     object_content = get_random_string(string.ascii_letters, 10)
     key_suffix = get_random_string(string.ascii_letters, 10)
     s3_key_src = f'{S3_SANDBOX_PREFIX}/src_{key_suffix}'
@@ -160,6 +208,12 @@ def test_s3_executor_copy_object(sdc_builder, sdc_executor, aws):
                                task='COPY_OBJECT',
                                object='${record:value("/key_src")}',
                                new_object_path='${record:value("/key_dst")}')
+
+    if sse_kms:
+        # Use SSE with KMS
+        s3_executor.set_attributes(use_server_side_encryption=True,
+                                   server_side_encryption_option='KMS',
+                                   aws_kms_key_arn=aws.kms_key_arn)
 
     wiretap = builder.add_wiretap()
 
@@ -189,6 +243,11 @@ def test_s3_executor_copy_object(sdc_builder, sdc_executor, aws):
         assert len(wiretap.output_records) == 1
         assert wiretap.output_records[0].header.values['sdc.event.type'] == 'file-moved'
 
+        if sse_kms:
+            s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+            # assert that the data was stored with SSE using the KMS
+            assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
+            assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, pipeline)
         client.delete_object(Bucket=s3_bucket, Key=s3_key_src)
@@ -209,6 +268,28 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
         dev_raw_data_source >> record_deduplicator >> s3_executor >= wiretap.destination
                                                    >> to_error
     """
+    _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, False)
+
+
+@aws('s3', 'kms')
+@sdc_min_version('5.3.0')
+def test_s3_executor_tag_object_sse_kms(sdc_builder, sdc_executor, aws):
+    """Test for S3 executor stage. We do so by running a dev raw data source generator to S3 destination
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been created by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    and S3 destination in order to limit number of objects to one. Uses SSE-KMS encryption options, and check
+    they are properly set up.
+
+    For recent SDC versions we also check that the corresponding 'file-changed' event is generated.
+
+    S3 Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> s3_executor >= wiretap.destination
+                                                   >> to_error
+    """
+    _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, True)
+
+
+def _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, sse_kms):
     s3_bucket = aws.s3_bucket_name
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
     raw_str = f'{{"bucket": "{s3_bucket}", "key": "{s3_key}"}}'
@@ -228,6 +309,11 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
                                task='CHANGE_EXISTING_OBJECT',
                                object='${record:value("/key")}',
                                tags=Configuration(property_key='key', company='${record:value("/company")}'))
+    if sse_kms:
+        # Use SSE with KMS
+        s3_executor.set_attributes(use_server_side_encryption=True,
+                                   server_side_encryption_option='KMS',
+                                   aws_kms_key_arn=aws.kms_key_arn)
 
     wiretap = builder.add_wiretap()
 
@@ -251,6 +337,13 @@ def test_s3_executor_tag_object(sdc_builder, sdc_executor, aws):
         if Version(sdc_builder.version) >= MIN_SDC_VERSION_WITH_EXECUTOR_EVENTS:
             assert len(wiretap.output_records) == 1
             assert wiretap.output_records[0].header.values['sdc.event.type'] == 'file-changed'
+
+        if sse_kms:
+            list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)
+            s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+            # assert that the data was stored with SSE using the KMS
+            assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
+            assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
 
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, s3_exec_pipeline)
