@@ -27,29 +27,30 @@ logger = logging.getLogger(__name__)
 MONGODB_ATLAS_DESTINATION = 'com_streamsets_pipeline_stage_destination_mongodb_atlas_MongoDBAtlasDTarget'
 pytestmark = [mongodb, sdc_min_version('5.2.0')]
 
+# BSON types: https://www.mongodb.com/docs/manual/reference/bson-types/
 DATA_TYPES = [
-    ('true', 'BOOLEAN', True),
-    ('a', 'CHAR', 'a'),
+    ('true', 'BOOLEAN', 'bool', True),
+    ('a', 'CHAR', 'string', 'a'),
     # ('a', 'BYTE', None),  # Not supported today
-    (120, 'SHORT', 120),
-    (120, 'INTEGER', 120),
-    (120, 'LONG', 120),
-    (20.1, 'FLOAT', 20.100000381469727),
-    (20.1, 'DOUBLE', 20.1),
-    (20.1, 'DECIMAL', Decimal128('20.10')),
-    ('2020-01-01 10:00:00', 'DATE', datetime.datetime(2020, 1, 1, 10, 0)),
-    ('2020-01-01 10:00:00', 'TIME', datetime.datetime(2020, 1, 1, 10, 0)),
-    ('2020-01-01 10:00:00', 'DATETIME', datetime.datetime(2020, 1, 1, 10, 0)),
-    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', datetime.datetime(2020, 1, 1, 10, 0)),
-    ('string', 'STRING', 'string'),
-    ('string', 'BYTE_ARRAY', b'string')
+    (120, 'SHORT', 'int', 120),
+    (120, 'INTEGER', 'int', 120),
+    (120, 'LONG', 'long', 120),
+    (20.1, 'FLOAT', 'double', 20.100000381469727),
+    (20.1, 'DOUBLE', 'double', 20.1),
+    (20.1, 'DECIMAL', 'decimal', Decimal128('20.10')),
+    ('2020-01-01 10:00:00', 'DATE', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01 10:00:00', 'TIME', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('2020-01-01 10:00:00', 'DATETIME', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
+    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('hello', 'STRING', 'string', 'hello'),
+    ('string', 'BYTE_ARRAY', 'array', b'string')
 ]
 
 
 @mongodb
-@pytest.mark.parametrize('input,converter_type,expected', DATA_TYPES,
+@pytest.mark.parametrize('input,converter_type,bson_type,expected', DATA_TYPES,
                          ids=[f'{i[2]}_{i[1]}' for i in DATA_TYPES])
-def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, expected):
+def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, bson_type, expected):
     """
     Test all feasible data types MongoDB Atlas can write
     """
@@ -77,7 +78,9 @@ def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, e
 
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
-                                                          'headerAttributeExpression': '1'}]
+                                                          'headerAttributeExpression': '1'},
+                                                         {'attributeToSet': 'bson.type',
+                                                          'headerAttributeExpression': bson_type}]
 
     mongodb_atlas_destination = pipeline_builder.add_stage(name=MONGODB_ATLAS_DESTINATION)
     mongodb_atlas_destination.set_attributes(database=database,
