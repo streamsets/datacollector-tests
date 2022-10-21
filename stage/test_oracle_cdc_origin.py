@@ -5770,16 +5770,24 @@ def test_clob_max_size(sdc_builder, sdc_executor, database, max_lob_size, buffer
 
 @sdc_min_version("5.2.0")
 @database("oracle")
-@pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
 @pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
+@pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
-def test_lob_disabled_insert(
-    sdc_builder, sdc_executor, database, lob_type, add_unsupported_fields_to_records, buffer_location
+def test_lob_disabled_lob_insert(
+        sdc_builder,
+        sdc_executor,
+        database,
+        add_unsupported_fields_to_records,
+        lob_type,
+        buffer_location
 ):
     """Do a simple LOB insert and check that a single record is outputted and said record contains
     the inserted value. The pipeline is the following:
         oracle_cdc_client >> wiretap
-    """
+
+    SDC 5.2.0 added support for BLOB/CLOB data types, but still gave the option to treat them as unsupported types.
+    This test also checks that that is no longer the case."""
+
     source_table_name = get_random_string(string.ascii_uppercase, 16)
     primary_key = randint(10000, 100000)
     lob_column_name = "LOBCOL"
@@ -5819,10 +5827,10 @@ def test_lob_disabled_insert(
             initial_change="LATEST",
             disable_continuous_mine=True,
             enable_blob_and_clob_columns_processing=False,
-            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
-            unsupported_field_type="SEND_TO_PIPELINE",
             buffer_changes_locally=True,
-            buffer_location=buffer_location
+            buffer_location=buffer_location,
+            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
+            unsupported_field_type="SEND_TO_PIPELINE"
         )
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
@@ -5848,13 +5856,9 @@ def test_lob_disabled_insert(
 
         logger.warning([record for record in wiretap.output_records])
 
-        assert len(wiretap.output_records) == 2, f"Expected 2 records, got {len(wiretap.output_records)}"
-        values = [record.field[lob_column_name].value for record in wiretap.output_records]
-        if add_unsupported_fields_to_records:
-            assert EMPTY_BLOB_STRING in values or EMPTY_CLOB in values
-            assert test_value["expected"] in values
-        else:
-            assert values.count(None) == 2
+        output_records = [record for record in wiretap.output_records]
+        assert len(output_records) == 2, f"Expected 2 records, got {len(output_records)}"
+        assert all(lob_column_name not in record.field for record in output_records)
 
 
 @sdc_min_version("5.2.0")
@@ -5862,11 +5866,20 @@ def test_lob_disabled_insert(
 @pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 def test_lob_disabled_blob_write(
-    sdc_builder, sdc_executor, database, add_unsupported_fields_to_records, blob_file_specs, buffer_location
+        sdc_builder,
+        sdc_executor,
+        database,
+        blob_file_specs,
+        add_unsupported_fields_to_records,
+        buffer_location
 ):
     """Write a LOB from a file while LOB support is disabled and ensure no LOB records are produced.
     The pipeline is the following:
-        oracle_cdc_client >> wiretap"""
+        oracle_cdc_client >> wiretap
+
+    SDC 5.2.0 added support for BLOB/CLOB data types, but still gave the option to treat them as unsupported types.
+    This test also checks that that is no longer the case."""
+
     id_column_name = "IDCOL"
     blob_column_name = "BLOBCOL"
     dir_name = get_random_string(string.ascii_uppercase, 16)
@@ -5900,10 +5913,10 @@ def test_lob_disabled_blob_write(
             initial_change="LATEST",
             disable_continuous_mine=True,
             enable_blob_and_clob_columns_processing=False,
-            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
-            unsupported_field_type="SEND_TO_PIPELINE",
             buffer_changes_locally=True,
-            buffer_location=buffer_location
+            buffer_location=buffer_location,
+            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
+            unsupported_field_type="SEND_TO_PIPELINE"
         )
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
@@ -5945,11 +5958,7 @@ def test_lob_disabled_blob_write(
         sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 1, timeout_sec=120)
 
         assert len(wiretap.output_records) == 1, "LOB records were produced with LOB support disabled"
-        blob_content = wiretap.output_records[0].field[blob_column_name].value
-        if add_unsupported_fields_to_records:
-            assert blob_content == EMPTY_BLOB_STRING
-        else:
-            assert blob_content is None
+        assert blob_column_name not in wiretap.output_records[0].field, "Didn't expect to find LOB field"
 
 
 @sdc_min_version("5.2.0")
@@ -5957,11 +5966,18 @@ def test_lob_disabled_blob_write(
 @pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 def test_lob_disabled_clob_write(
-    sdc_builder, sdc_executor, database, add_unsupported_fields_to_records, buffer_location
+        sdc_builder,
+        sdc_executor,
+        database,
+        add_unsupported_fields_to_records,
+        buffer_location
 ):
     """Write a big CLOB while LOB support is disabled an ensure no CLOB records are produced.
     The pipeline is the following:
-        oracle_cdc_client >> wiretap"""
+        oracle_cdc_client >> wiretap
+
+    SDC 5.2.0 added support for BLOB/CLOB data types, but still gave the option to treat them as unsupported types.
+    This test also checks that that is no longer the case."""
     id_column_name = "IDCOL"
     clob_column_name = "CLOBCOL"
     source_table_name = get_random_string(string.ascii_uppercase, 16)
@@ -5994,10 +6010,10 @@ def test_lob_disabled_clob_write(
             initial_change="LATEST",
             disable_continuous_mine=True,
             enable_blob_and_clob_columns_processing=False,
-            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
-            unsupported_field_type="SEND_TO_PIPELINE",
             buffer_changes_locally=True,
-            buffer_location=buffer_location
+            buffer_location=buffer_location,
+            add_unsupported_fields_to_records=add_unsupported_fields_to_records,
+            unsupported_field_type="SEND_TO_PIPELINE"
         )
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
@@ -6024,11 +6040,7 @@ def test_lob_disabled_clob_write(
         sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 1, timeout_sec=120)
 
         assert len(wiretap.output_records) == 1, "LOB records were produced with LOB support disabled"
-        clob_content = wiretap.output_records[0].field[clob_column_name].value
-        if add_unsupported_fields_to_records:
-            assert clob_content == EMPTY_CLOB
-        else:
-            assert clob_content is None
+        assert clob_column_name not in wiretap.output_records[0].field, "Didn't expect to find LOB field"
 
 
 def _get_oracle_cdc_client_origin(connection,
