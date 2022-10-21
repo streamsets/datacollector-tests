@@ -46,12 +46,24 @@ BATCH_SIZE = 10  # Max limit imposed
 Operations = namedtuple('Operations', ['rows', 'cdc_op_types', 'sdc_op_types', 'change_count'])
 LAST_NON_MULTITENANT_ORACLE_VERSION = 11
 
+SHORT_WAIT_TIME = 0
+LONG_WAIT_TIME = 2000
+SESSION_WAIT_TIME_MIN_VERSION = "5.3.0"
+
 EMPTY_BLOB = b"EMPTY_BLOB()"
 EMPTY_BLOB_STRING = "EMPTY_BLOB()"
 EMPTY_CLOB = "EMPTY_CLOB()"
 
 
 # pylint: disable=pointless-statement, too-many-locals
+
+
+def set_session_wait_times(sdc_builder, oracle_cdc_client_stage, wait_time=SHORT_WAIT_TIME):
+    if Version(sdc_builder.version) >= Version(SESSION_WAIT_TIME_MIN_VERSION):
+        oracle_cdc_client_stage.set_attributes(
+            time_after_session_window_start_in_ms=wait_time,
+            time_between_session_windows_in_ms=wait_time,
+        )
 
 
 @pytest.fixture(scope='module', autouse=True)
@@ -475,16 +487,17 @@ def test_oracle_cdc_client_bulk(sdc_builder,
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
-        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
-                                         tables=[{'schema': database.username.upper(), 'table': target_table_name, 'excludePattern': ''}],
+        oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
+                                         tables=[{"schema": database.username.upper(), "table": target_table_name, "excludePattern": ""}],
                                          buffer_changes_locally=buffer_locally,
                                          buffer_location=buffer_location,
-                                         logminer_session_window='${10 * MINUTES}',
-                                         maximum_transaction_length='${2 * MINUTES}',
-                                         db_time_zone='UTC',
+                                         logminer_session_window="${10 * MINUTES}",
+                                         maximum_transaction_length="${2 * MINUTES}",
+                                         db_time_zone="UTC",
                                          max_batch_size_in_records=1,
-                                         initial_change='SCN',
+                                         initial_change="SCN",
                                          start_scn=database_last_scn)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
@@ -611,6 +624,7 @@ def test_oracle_cdc_client_headers(sdc_builder,
                                          initial_change='SCN',
                                          start_scn=database_last_scn,
                                          send_redo_query_in_headers=True)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
@@ -727,17 +741,19 @@ def test_oracle_cdc_client_sequence(sdc_builder,
         database_transaction.commit()
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
-        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
-                                         tables=[{'schema': database.username.upper(), 'table': target_table_name, 'excludePattern': ''}],
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
+                                         tables=[{"schema": database.username.upper(), "table": target_table_name, "excludePattern": ""}],
                                          buffer_changes_locally=True,
                                          buffer_location=buffer_location,
-                                         logminer_session_window='${10 * MINUTES}',
-                                         maximum_transaction_length='${2 * MINUTES}',
-                                         db_time_zone='UTC',
+                                         logminer_session_window="${10 * MINUTES}",
+                                         maximum_transaction_length="${2 * MINUTES}",
+                                         db_time_zone="UTC",
                                          max_batch_size_in_records=1,
-                                         initial_change='SCN',
+                                         initial_change="SCN",
                                          start_scn=database_last_scn)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
+
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
@@ -864,20 +880,21 @@ def test_sql_parser_pseudocolumns(sdc_builder,
         database_transaction.commit()
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
-        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
-                                         tables=[{'schema': database.username.upper(), 'table': target_table_name, 'excludePattern': ''}],
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
+                                         tables=[{"schema": database.username.upper(), "table": target_table_name, "excludePattern": ""}],
                                          buffer_changes_locally=True,
                                          buffer_location=buffer_location,
-                                         logminer_session_window='${10 * MINUTES}',
-                                         maximum_transaction_length='${2 * MINUTES}',
-                                         db_time_zone='UTC',
+                                         logminer_session_window="${10 * MINUTES}",
+                                         maximum_transaction_length="${2 * MINUTES}",
+                                         db_time_zone="UTC",
                                          max_batch_size_in_records=1,
-                                         initial_change='SCN',
+                                         initial_change="SCN",
                                          start_scn=database_last_scn,
                                          parse_sql_query=True,
                                          case_sensitive_names=case_sensitive,
-                                         pseudocolumns_in_header=pseudocolumns_in_header)
+                                        pseudocolumns_in_header=pseudocolumns_in_header)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
@@ -962,11 +979,12 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
                                                           pipeline_builder=pipeline_builder,
                                                           buffer_locally=buffer_locally,
                                                           buffer_location=buffer_location,
-                                                          logminer_session_window='${2 * MINUTES}',
-                                                          maximum_transaction_length='${1 * MINUTES}',
+                                                          logminer_session_window="${2 * MINUTES}",
+                                                          maximum_transaction_length="${1 * MINUTES}",
                                                           src_table_name=src_table_name,
-                                                          initial_change='SCN',
+                                                          initial_change="SCN",
                                                           start_scn=start_scn)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Client Pipeline').configure_for_environment(database)
@@ -1268,14 +1286,15 @@ def test_oracle_cdc_client_stop_pipeline_when_no_archived_logs(sdc_builder,
 
         oracle_cdc_client.set_attributes(buffer_changes_locally=buffer_locally,
                                          buffer_location=buffer_location,
-                                         db_time_zone='UTC',
-                                         dictionary_source='DICT_FROM_ONLINE_CATALOG',
-                                         initial_change='DATE',
-                                         logminer_session_window='${10 * MINUTES}',
+                                         db_time_zone="UTC",
+                                         dictionary_source="DICT_FROM_ONLINE_CATALOG",
+                                         initial_change="DATE",
+                                         logminer_session_window="${10 * MINUTES}",
                                          max_batch_size_in_records=BATCH_SIZE,
-                                         maximum_transaction_length='${1 * MINUTES}',
+                                         maximum_transaction_length="${1 * MINUTES}",
                                          start_date=start_date,
                                          tables=tables)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         trash = pipeline_builder.add_stage('Trash')
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -1353,6 +1372,7 @@ def test_oracle_cdc_client_string_null_values(sdc_builder, sdc_executor, databas
                                                           buffer_locally=buffer_locally,
                                                           buffer_location=buffer_location,
                                                           src_table_name=src_table_pattern)
+        set_session_wait_times(sdc_builder, oracle_cdc_client, LONG_WAIT_TIME)
         rows = [{'ID': 100, 'NAME': 'NULL'},
                 {'ID': None, 'NAME': 'Whose Name?'},
                 {'ID': 123, 'NAME': None},
@@ -2536,23 +2556,23 @@ def test_oracle_cdc_inclusion_pattern(sdc_builder, sdc_executor, database, buffe
         transaction.commit()
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
-        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
-                                         tables=[{'schema': schema_db,
-                                                  'table': check_table_name,
-                                                  'excludePattern': ''},
-                                                 {'schema': schema_db,
-                                                  'table': pattern,
-                                                  'excludePattern': ''}],
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
+                                         tables=[
+                                             {"schema": schema_db, "table": check_table_name, "excludePattern": ""},
+                                             {"schema": schema_db, "table": pattern, "excludePattern": ""},
+                                         ],
                                          case_sensitive_names=case_sensitive,
                                          buffer_changes_locally=True,
                                          buffer_location=buffer_location,
-                                         logminer_session_window='${2 * MINUTES}',
-                                         maximum_transaction_length='${1 * MINUTES}',
-                                         db_time_zone='UTC',
+                                         logminer_session_window="${2 * MINUTES}",
+                                         maximum_transaction_length="${1 * MINUTES}",
+                                         db_time_zone="UTC",
                                          max_batch_size_in_records=total_records,
-                                         initial_change='SCN',
+                                         initial_change="SCN",
                                          start_scn=start_scn)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
+
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Origin Offset Testing Pipeline').configure_for_environment(database)
@@ -2667,9 +2687,10 @@ def test_oracle_cdc_mining_new_table(sdc_builder, sdc_executor, database, buffer
                                                    buffer_locally=True,
                                                    buffer_location=buffer_location,
                                                    src_table_name=table_pattern,
-                                                   initial_change='SCN',
+                                                   initial_change="SCN",
                                                    start_scn=start_scn,
-                                                   dictionary_source='DICT_FROM_REDO_LOGS')
+                                                   dictionary_source="DICT_FROM_REDO_LOGS")
+        set_session_wait_times(sdc_builder, oracle_cdc, LONG_WAIT_TIME)
         wiretap = builder.add_wiretap()
         oracle_cdc >> wiretap.destination
         wiretap_evts = builder.add_wiretap()
@@ -3375,20 +3396,20 @@ def test_oracle_cdc_offset_chain(sdc_builder,
         database_last_scn = _get_last_scn(database_connection)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
-        oracle_cdc_client.set_attributes(dictionary_source='DICT_FROM_ONLINE_CATALOG',
-                                         tables=[{'schema': database.username.upper(),
-                                                  'table': target_table_name,
-                                                  'excludePattern': ''}],
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
+                                         tables=[{"schema": database.username.upper(), "table": target_table_name, "excludePattern": ""}],
                                          buffer_changes_locally=buffer_locally,
                                          buffer_location=buffer_location,
-                                         logminer_session_window='${5 * MINUTES}',
-                                         maximum_transaction_length='${0 * SECONDS}',
-                                         db_time_zone='UTC',
+                                         logminer_session_window="${5 * MINUTES}",
+                                         maximum_transaction_length="${0 * SECONDS}",
+                                         db_time_zone="UTC",
                                          max_batch_size_in_records=1,
-                                         initial_change='SCN',
+                                         initial_change="SCN",
                                          start_scn=database_last_scn,
                                          send_redo_query_in_headers=True)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
+
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build('Oracle CDC Origin Offset Testing Pipeline').configure_for_environment(database)
@@ -3543,12 +3564,12 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
         database_last_scn = _get_last_scn(database_connection_enclosing)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
-        oracle_cdc_client.set_attributes(initial_change='SCN',
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(initial_change="SCN",
                                          start_scn=database_last_scn,
-                                         maximum_transaction_length=f'${{{maximum_transaction_length} * SECONDS}}',
-                                         logminer_session_window=f'${{{logminer_session_window} * SECONDS}}',
-                                         dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                         maximum_transaction_length=f"${{{maximum_transaction_length} * SECONDS}}",
+                                         logminer_session_window=f"${{{logminer_session_window} * SECONDS}}",
+                                         dictionary_source="DICT_FROM_ONLINE_CATALOG",
                                          disable_continuous_mine=True,
                                          buffer_changes_locally=True,
                                          buffer_location=buffer_location,
@@ -3559,10 +3580,9 @@ def test_oracle_cdc_offset_and_nested_transactions(sdc_builder,
                                          pseudocolumns_in_header=True,
                                          send_redo_query_in_headers=True,
                                          max_batch_size_in_records=64,
-                                         tables=[{'schema': database.username.upper(),
-                                                  'table': target_table_name,
-                                                  'excludePattern': ''}],
-                                         db_time_zone='UTC')
+                                         tables=[{"schema": database.username.upper(), "table": target_table_name, "excludePattern": ""}],
+                                         db_time_zone="UTC")
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
@@ -3735,12 +3755,12 @@ def test_oracle_cdc_offset_commit_only(sdc_builder, sdc_executor, database):
         database_last_scn = _get_last_scn(database_connection_enclosing)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
-        oracle_cdc_client = pipeline_builder.add_stage('Oracle CDC Client')
-        oracle_cdc_client.set_attributes(initial_change='SCN',
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(initial_change="SCN",
                                          start_scn=database_last_scn,
-                                         maximum_transaction_length=f'${{{maximum_transaction_length} * SECONDS}}',
-                                         logminer_session_window=f'${{{logminer_session_window} * SECONDS}}',
-                                         dictionary_source='DICT_FROM_ONLINE_CATALOG',
+                                         maximum_transaction_length=f"${{{maximum_transaction_length} * SECONDS}}",
+                                         logminer_session_window=f"${{{logminer_session_window} * SECONDS}}",
+                                         dictionary_source="DICT_FROM_ONLINE_CATALOG",
                                          disable_continuous_mine=True,
                                          buffer_changes_locally=False,
                                          discard_old_uncommitted_transactions=False,
@@ -3750,10 +3770,9 @@ def test_oracle_cdc_offset_commit_only(sdc_builder, sdc_executor, database):
                                          pseudocolumns_in_header=True,
                                          send_redo_query_in_headers=True,
                                          max_batch_size_in_records=1,
-                                         tables=[{'schema': database.username.upper(),
-                                                  'table': target_table_name,
-                                                  'excludePattern': ''}],
-                                         db_time_zone='UTC')
+                                         tables=[{"schema": database.username.upper(), "table": target_table_name, "excludePattern": ""}],
+                                         db_time_zone="UTC")
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
@@ -3977,6 +3996,8 @@ def test_oracle_cdc_client_primary_keys_headers(sdc_builder,
                                          send_redo_query_in_headers=True,
                                          disable_continuous_mine=True,
                                          use_peg_parser=use_peg_parser)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
+
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
@@ -4195,9 +4216,7 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
         pipeline_builder = sdc_builder.get_pipeline_builder()
         oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
         oracle_cdc_client.set_attributes(dictionary_source="DICT_FROM_ONLINE_CATALOG",
-                                         tables=[{"schema": database.username.upper(),
-                                                  "table": table_name,
-                                                  "excludePattern": ""}],
+                                         tables=[{"schema": database.username.upper(), "table": table_name, "excludePattern": ""}],
                                          buffer_changes_locally=True,
                                          buffer_location=buffer_location,
                                          logminer_session_window="${5 * MINUTES}",
@@ -4207,8 +4226,10 @@ def test_oracle_cdc_client_primary_keys_metadata_headers(sdc_builder,
                                          initial_change="SCN",
                                          start_scn=database_last_scn,
                                          send_redo_query_in_headers=True,
-                                         unsupported_field_type='SEND_TO_PIPELINE',
+                                         unsupported_field_type="SEND_TO_PIPELINE",
                                          add_unsupported_fields_to_records=True)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
+
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
@@ -4446,6 +4467,7 @@ def test_oracle_cdc_client_sorted_columns(sdc_builder,
                                          add_unsupported_fields_to_records=add_unsupported_fields_to_records,
                                          pseudocolumns_in_header=pseudocolumns_in_header,
                                          send_redo_query_in_headers=True)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
 
         wiretap = pipeline_builder.add_wiretap()
@@ -4719,6 +4741,7 @@ def test_enabling_lobs_without_local_buffering(sdc_builder, sdc_executor, databa
             enable_blob_and_clob_columns_processing=True,
             buffer_changes_locally=False
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         trash = pipeline_builder.add_stage('Trash')
         oracle_cdc_client >> trash
@@ -4786,6 +4809,7 @@ def test_lob_insert(sdc_builder, sdc_executor, database, lob_type, buffer_locati
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -4864,6 +4888,7 @@ def test_lob_insert_multicolumn(sdc_builder, sdc_executor, database, lob_types, 
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -4957,6 +4982,7 @@ def test_lob_insert_mixed(sdc_builder, sdc_executor, database, lob_type, buffer_
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5044,6 +5070,7 @@ def test_lob_consecutive_writes(sdc_builder, sdc_executor, database, blob_file_s
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5131,6 +5158,7 @@ def test_blob_write(sdc_builder, sdc_executor, database, buffer_location, blob_f
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5221,6 +5249,7 @@ def test_blob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, 
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5352,6 +5381,7 @@ def test_blob_max_size(sdc_builder, sdc_executor, database, max_lob_size, blob_f
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5477,6 +5507,7 @@ def test_clob_write(sdc_builder, sdc_executor, database, method, clob_file_specs
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5578,6 +5609,7 @@ def test_clob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, 
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5678,6 +5710,7 @@ def test_clob_max_size(sdc_builder, sdc_executor, database, max_lob_size, buffer
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5791,6 +5824,7 @@ def test_lob_disabled_insert(
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5871,6 +5905,7 @@ def test_lob_disabled_blob_write(
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -5964,6 +5999,7 @@ def test_lob_disabled_clob_write(
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
@@ -6004,12 +6040,17 @@ def _get_oracle_cdc_client_origin(connection,
                                   src_table_name=None,
                                   batch_size=BATCH_SIZE,
                                   **kwargs):
-    kwargs.setdefault('dictionary_source', 'DICT_FROM_ONLINE_CATALOG')
-    kwargs.setdefault('logminer_session_window', '${10 * MINUTES}')
-    kwargs.setdefault('db_time_zone', 'UTC')
-    kwargs.setdefault('maximum_transaction_length', '${1 * MINUTES}')
-    kwargs.setdefault('initial_change', 'DATE')
-    if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.16.0'):
+    kwargs.setdefault("dictionary_source", "DICT_FROM_ONLINE_CATALOG")
+    kwargs.setdefault("logminer_session_window", "${10 * MINUTES}")
+    kwargs.setdefault("db_time_zone", "UTC")
+    kwargs.setdefault("maximum_transaction_length", "${1 * MINUTES}")
+    kwargs.setdefault("initial_change", "DATE")
+
+    if Version(sdc_builder.version) >= Version(SESSION_WAIT_TIME_MIN_VERSION):
+        kwargs.setdefault("time_after_session_window_start_in_ms", SHORT_WAIT_TIME)
+        kwargs.setdefault("time_between_session_windows_in_ms", SHORT_WAIT_TIME)
+
+    if Version("3.14.0") <= Version(sdc_builder.version) < Version("3.16.0"):
         # In versions < 3.16 the user has to define a maximum time to look back for a valid dictionary. From
         # 3.16 onward this is not required anymore. By default avoid to set an specific duration and use all
         # the redo logs instead.

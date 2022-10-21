@@ -23,6 +23,9 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string
 
+SHORT_WAIT_TIME = 0
+LONG_WAIT_TIME = 2000
+SESSION_WAIT_TIME_MIN_VERSION = "5.3.0"
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +208,6 @@ def test_object_names_tables(sdc_builder, sdc_executor, database, keep_data, buf
         if not keep_data:
             logger.info('Dropping table %s in %s database ...', table_name, database.type)
             connection.execute(f'DROP TABLE "{table_name}"')
-
 
 @database('oracle')
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
@@ -607,6 +609,11 @@ def _get_oracle_cdc_client_origin(connection,
     kwargs.setdefault('db_time_zone', 'UTC')
     kwargs.setdefault('maximum_transaction_length', '${1 * MINUTES}')
     kwargs.setdefault('initial_change', 'DATE')
+
+    if Version(sdc_builder.version) >= Version(SESSION_WAIT_TIME_MIN_VERSION):
+        kwargs.setdefault("time_after_session_window_start_in_ms", SHORT_WAIT_TIME)
+        kwargs.setdefault("time_between_session_windows_in_ms", SHORT_WAIT_TIME)
+
     if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.16.0'):
         # In versions < 3.16 the user has to define a maximum time to look back for a valid dictionary. From
         # 3.16 onward this is not required anymore. By default avoid to set an specific duration and use all
