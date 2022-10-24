@@ -98,7 +98,7 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
         builder = sdc_builder.get_pipeline_builder()
 
         origin = builder.add_stage('MySQL Multitable Consumer')
-        origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+        origin.tables = [{"tablePattern": f'%{table_name}%'}]
         origin.on_unknown_type = 'CONVERT_TO_STRING'
 
         wiretap = builder.add_wiretap()
@@ -151,7 +151,7 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+    origin.tables = [{"tablePattern": f'%{table_name}%'}]
     origin.max_batch_size_in_records = 10
 
     wiretap = builder.add_wiretap()
@@ -160,7 +160,7 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
 
     pipeline = builder.build().configure_for_environment(database)
     # Work-arounding STF behavior of upper-casing table name configuration
-    origin.table_configs[0]["tablePattern"] = f'%{table_name}%'
+    origin.tables[0]["tablePattern"] = f'%{table_name}%'
 
     metadata = sqlalchemy.MetaData()
     table = sqlalchemy.Table(
@@ -220,7 +220,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs=[{
+    origin.tables=[{
         "tablePattern": f'%{table_name}%',
         'partitioningMode': processing_mode,
         'partitionSize': str(2 * max_batch_size)
@@ -238,7 +238,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads
 
     pipeline = builder.build().configure_for_environment(database)
     # Work-arounding STF behavior of upper-casing table name configuration
-    origin.table_configs[0]["tablePattern"] = f'%{table_name}%'
+    origin.tables[0]["tablePattern"] = f'%{table_name}%'
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -279,7 +279,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
     builder = sdc_builder.get_pipeline_builder()
     source = builder.add_stage('MySQL Multitable Consumer')
     source.transaction_isolation = 'TRANSACTION_READ_COMMITTED'
-    source.table_configs = [{
+    source.tables = [{
         'tablePattern': f'{table_prefix}%',
         "enableNonIncremental": True,
     }]
@@ -293,7 +293,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
 
     pipeline = builder.build().configure_for_environment(database)
     # Work-arounding STF behavior of upper-casing table name configuration
-    source.table_configs[0]["tablePattern"] = f'{table_prefix}%'
+    source.tables[0]["tablePattern"] = f'{table_prefix}%'
     sdc_executor.add_pipeline(pipeline)
 
     #  We need three tables for this test
@@ -424,14 +424,14 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
 
     origin = builder.add_stage('MySQL Multitable Consumer')
     origin.transaction_isolation = 'TRANSACTION_READ_COMMITTED'
-    origin.table_configs = [{'tablePattern': f'{table_name}%'}]
+    origin.tables = [{'tablePattern': f'{table_name}%'}]
 
     wiretap = builder.add_wiretap()
 
     origin >> wiretap.destination
 
     pipeline = builder.build().configure_for_environment(database)
-    origin.table_configs[0]["tablePattern"] = f'%{table_name}%'
+    origin.tables[0]["tablePattern"] = f'%{table_name}%'
     sdc_executor.add_pipeline(pipeline)
 
     try:

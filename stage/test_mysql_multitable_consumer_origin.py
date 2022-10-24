@@ -57,7 +57,7 @@ def test_mysql_multitable_consumer_with_no_more_data_event_generation_delay(sdc_
     pipeline_builder = sdc_builder.get_pipeline_builder()
     mysql_multitable_consumer = pipeline_builder.add_stage('MySQL Multitable Consumer')
     mysql_multitable_consumer.no_more_data_event_generation_delay_in_seconds = 1
-    mysql_multitable_consumer.table_configs = [{"tablePattern": f'%{src_table}%'}]
+    mysql_multitable_consumer.tables = [{"tablePattern": f'%{src_table}%'}]
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -129,7 +129,7 @@ def test_mysql_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_ex
     builder = sdc_builder.get_pipeline_builder()
 
     mysql_multitable_consumer = builder.add_stage('MySQL Multitable Consumer')
-    mysql_multitable_consumer.table_configs = [{
+    mysql_multitable_consumer.tables = [{
         "tablePattern": table_name,
         "overrideDefaultOffsetColumns": True,
         "offsetColumns": ["id"],
@@ -187,7 +187,7 @@ def test_mysql_multitable_duplicate_offsets(sdc_builder, sdc_executor, database)
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     origin = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs = [{"tablePattern": table_name}]
+    origin.tables = [{"tablePattern": table_name}]
     origin.max_batch_size_in_records = 1
 
     trash = pipeline_builder.add_stage('Trash')
@@ -244,7 +244,7 @@ def test_mysql_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     origin = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs = [{"tablePattern": table_name, "enableNonIncremental": True}]
+    origin.tables = [{"tablePattern": table_name, "enableNonIncremental": True}]
     origin.max_batch_size_in_records = 1
 
     trash = pipeline_builder.add_stage('Trash')
@@ -328,7 +328,7 @@ def test_mysql_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_b
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     mysql_multitable_consumer = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    mysql_multitable_consumer.set_attributes(table_configs=[{'tablePattern': f'%{src_table_prefix}%',
+    mysql_multitable_consumer.set_attributes(tables=[{'tablePattern': f'%{src_table_prefix}%',
                                                             'overrideDefaultOffsetColumns': True,
                                                             'offsetColumns': ['added'],
                                                             'offsetColumnToInitialOffsetValue': [{
@@ -396,7 +396,7 @@ def test_mysql_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sd
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     mysql_multitable_consumer = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    mysql_multitable_consumer.set_attributes(table_configs=[{
+    mysql_multitable_consumer.set_attributes(tables=[{
         "tablePattern": f'{table_name}',
         "enableNonIncremental": False,
         "partitioningMode": "REQUIRED",
@@ -466,7 +466,7 @@ def test_mysql_multitable_consumer_duplicates_read_when_initial_offset_configure
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     mysql_multitable_consumer = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    mysql_multitable_consumer.set_attributes(table_configs=[{
+    mysql_multitable_consumer.set_attributes(tables=[{
         "tablePattern": f'{table_name}',
         "enableNonIncremental": False,
         "partitioningMode": "REQUIRED",
@@ -543,7 +543,7 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
     table_name = get_random_string(string.ascii_letters, 10)
 
     origin = builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs = [{"tablePattern": f'{table_name}'}]
+    origin.tables = [{"tablePattern": f'{table_name}'}]
     origin.max_batch_size_in_records = 10
 
     wiretap = builder.add_wiretap()
@@ -552,7 +552,7 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
 
     pipeline = builder.build().configure_for_environment(database)
     # Work-arounding STF behavior of upper-casing table name configuration
-    origin.table_configs[0]["tablePattern"] = f'{table_name}'
+    origin.tables[0]["tablePattern"] = f'{table_name}'
 
     # Creating table with primary key that is String
     metadata = sqlalchemy.MetaData()
@@ -606,7 +606,7 @@ def test_mysql_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, dat
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     mysql_multitable_consumer = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    mysql_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'{src_table_prefix}%'}],
+    mysql_multitable_consumer.set_attributes(tables=[{"tablePattern": f'{src_table_prefix}%'}],
                                             per_batch_strategy=batch_strategy,
                                             number_of_threads=no_of_threads,
                                             maximum_pool_size=no_of_threads)
@@ -745,7 +745,7 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
         attributes = {
-            'table_configs': [{
+            'tables': [{
                 "tablePattern": f'{table_prefix}%',
                 'partitioningMode': 'REQUIRED' if test_data['partition_size'] > 0 else 'DISABLED',
                 'partitionSize': str(test_data['partition_size'])
@@ -782,7 +782,7 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
         stream_selector.condition = conditions
 
         pipeline = pipeline_builder.build().configure_for_environment(database)
-        mysql_multitable_consumer.table_configs[0]["tablePattern"] = f'{table_prefix}%'
+        mysql_multitable_consumer.tables[0]["tablePattern"] = f'{table_prefix}%'
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
@@ -845,7 +845,7 @@ def test_mysql_primary_keys_headers(sdc_builder, sdc_executor, database):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     origin = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs = [{"tablePattern": table_name}]
+    origin.tables = [{"tablePattern": table_name}]
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -919,7 +919,7 @@ def test_mysql_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database
     offsetCol = "my_int"
 
     origin = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs = [{"tablePattern": table_name, "enableNonIncremental": True,
+    origin.tables = [{"tablePattern": table_name, "enableNonIncremental": True,
                              "overrideDefaultOffsetColumns": True,
                              "offsetColumns": [offsetCol]} ]
 
@@ -986,7 +986,7 @@ def test_mysql_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, data
     offsetCol = "my_date"
 
     origin = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs = [{"tablePattern": table_name, "enableNonIncremental": True,
+    origin.tables = [{"tablePattern": table_name, "enableNonIncremental": True,
                              "overrideDefaultOffsetColumns": True,
                              "offsetColumns": [offsetCol]}]
 
@@ -1057,7 +1057,7 @@ def test_mysql_vendor_header(sdc_builder, sdc_executor, database):
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     origin = pipeline_builder.add_stage('MySQL Multitable Consumer')
-    origin.table_configs = [{"tablePattern": table_name}]
+    origin.tables = [{"tablePattern": table_name}]
 
     wiretap = pipeline_builder.add_wiretap()
 
