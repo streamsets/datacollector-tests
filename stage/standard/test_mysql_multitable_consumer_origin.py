@@ -270,7 +270,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads
             table.drop(database.engine)
 
 
-@database
+@database('mysql')
+@sdc_min_version('5.3.0')
 def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
     table_prefix = get_random_string(string.ascii_lowercase, 20)
     table_a = '{}_a'.format(table_prefix)
@@ -401,12 +402,14 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
             b.drop(database.engine)
 
 
-@database
+@database('mysql')
+@sdc_min_version('5.3.0')
 def test_data_format(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("MySQL MultiTable Origin doesn't deal with data formats")
 
 
-@database
+@database('mysql')
+@sdc_min_version('5.3.0')
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     iterations = 3
     records_per_iteration = 10
