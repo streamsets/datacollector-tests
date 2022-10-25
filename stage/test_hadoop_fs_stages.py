@@ -395,7 +395,8 @@ def test_hadoop_fs_origin_standalone_subdirectories(sdc_builder, sdc_executor, c
 
     hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
     hadoop_fs.set_attributes(data_format='WHOLE_FILE', files_directory=hadoop_fs_root_folder,
-                             file_name_pattern='*', read_order='TIMESTAMP', process_subdirectories=True)
+                             file_name_pattern='*', read_order='TIMESTAMP', process_subdirectories=True,
+                             ignore_temporary_files=False)
 
     wiretap = builder.add_wiretap()
 
