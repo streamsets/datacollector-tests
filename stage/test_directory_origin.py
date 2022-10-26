@@ -2038,6 +2038,87 @@ def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
         sdc_executor.execute_shell(f'rm -rf {temp_dir}')
 
 
+@pytest.mark.parametrize('batch_size_in_recs', [1, 50, 100])
+@pytest.mark.parametrize('num_threads', [1, 2])
+def test_directory_origin_number_of_batches_generated(
+        sdc_builder,
+        sdc_executor,
+        shell_executor,
+        file_writer,
+        batch_size_in_recs,
+        num_threads
+):
+    """
+    Check that no empty batches are generated once all the data is read when using a single thread or multiple ones.
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    file_name_1 = 'temp_1.txt'
+    file_name_2 = 'temp_2.txt'
+    file_contents_1 = '\n'.join(['Doc 1 - Line {}'.format(i) for i in range(1, 51)])
+    file_contents_2 = '\n'.join(['Doc 2 - Line {}'.format(i) for i in range(1, 51)])
+
+    # Expected number of batches for each batch size
+    if batch_size_in_recs == 1:
+        # SDC should fill 50 batches of 1 record, realize the file is finished when generating the following batch and
+        # send there the finished-file event, same for file 2, and send a final batch with the no-more-data event
+        number_of_batches = 103
+    elif batch_size_in_recs == 50:
+        # SDC should fill 1 batch with 50 records, realize the file is finished when generating the following batch and
+        # send there the finished-file event, same for file 2, and send a final batch with the no-more-data event
+        number_of_batches = 5
+    elif batch_size_in_recs == 100:
+        # When working with 1 thread, SDC will fill 50 records from file 1, add the finished-file event, and read 50
+        # more lines from file 2 and send the batch. Up next, generating the following batch it will realise file 2 is
+        # also done, send the finished-file event there and then send a last batch with the no-more-data event
+        # When working with 2 threads, each thread will fill a batch with the 50 records and send there the finished
+        # file event. A last batch will be sent with the no-more-data when both threads fail to find new files
+        number_of_batches = 3
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        shell_executor(f'mkdir {files_directory}')
+        logger.debug('Creating file %s ...', files_directory)
+        file_writer(os.path.join(files_directory, file_name_1), file_contents_1)
+        logger.debug('Creating file %s ...', files_directory)
+        file_writer(os.path.join(files_directory, file_name_2), file_contents_2)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        directory = pipeline_builder.add_stage('Directory')
+        directory.set_attributes(
+            data_format='TEXT',
+            files_directory=files_directory,
+            file_name_pattern='*.txt',
+            batch_size_in_recs=batch_size_in_recs,
+            number_of_threads=num_threads
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        directory >> wiretap.destination
+        pipeline = pipeline_builder.build()
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 100)
+
+        # Wait for 60 seconds to give time for further batches to be generated
+        time.sleep(60)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Assert that we get the correct number of batches
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchCount.counter').count == number_of_batches
+
+        # Assert we have processed 100 records
+        assert len(wiretap.output_records) == 100
+    finally:
+        logger.info('Delete directory in %s...', files_directory)
+        shell_executor(f'rm -r {files_directory}')
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
 def assert_record_count(sdc_executor, pipeline, expected_count):
     history = sdc_executor.get_pipeline_history(pipeline)
     output_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count

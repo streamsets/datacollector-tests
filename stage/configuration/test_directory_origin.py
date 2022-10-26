@@ -1276,7 +1276,7 @@ def test_directory_origin_configuration_ignore_control_characters_delimited(sdc_
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 3)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
         assert 1 == len(wiretap.output_records)
