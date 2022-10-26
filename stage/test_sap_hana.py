@@ -16,6 +16,7 @@ import logging
 import math
 import string
 import time
+from operator import itemgetter
 
 import pytest
 import sqlalchemy
@@ -376,6 +377,7 @@ def test_consumer_incremental_mode(sdc_builder, sdc_executor, database, batch_si
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(input_data))
         sdc_executor.stop_pipeline(pipeline)
         sdc_records = [record.field for record in wiretap.output_records]
+        sdc_records = sorted(sdc_records, key=itemgetter('ID')) # sort record by ID, wiretap can alter original order
         assert input_data == sdc_records
 
         # Run a second time should output 0 new records
