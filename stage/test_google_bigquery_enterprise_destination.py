@@ -52,6 +52,30 @@ ROWS_IN_DATABASE = [
      "publisher": "McClelland & Stewart"}
 ]
 
+NESTED_MAP_TO_LOAD = [
+    {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future", "publishers":
+        {"publisher1": "HarperCollins", "publisher2": "JB"}}
+]
+
+EXPECTED_MAP_IN_DATABASE = [
+    {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future",
+     "publishers": [{'key': 'publisher1', 'value': 'HarperCollins'}, {'key': 'publisher2', 'value': 'JB'}]}
+]
+
+NESTED_LIST_TO_LOAD = [
+    {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future", "publishers": ["HarperCollins", "JB"]}
+]
+
+NESTED_DRIFT_TO_LOAD = [
+    {"title": "Europe, Through the Back Door", "publishers": ["Rick Steves"], "readers": ["JB", "no one else"]}
+]
+
+# we need to add the empty list in a previous non-existent field (we call X but could be whatever
+EXPECTED_NESTED_LIST_WITH_DRIFT = [
+    {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future", "publishers": ["HarperCollins", "JB"], "X": []},
+    {"title": "Europe, Through the Back Door", "publishers": ["Rick Steves"], "readers": ["JB", "no one else"]}
+]
+
 ROWS_IN_DATABASE_QUOTING = [
     {"title": "\"Elon Musk: Tesla, SpaceX, the Quest for a Fantastic Future\"",
      "author": "Alex",
@@ -157,7 +181,8 @@ ROWS_FOR_DRIFT_EXT_FULL_STRING = [
 ]
 
 
-def test_basic(sdc_builder, sdc_executor, gcp):
+@pytest.mark.parametrize('file_format', ['CSV', 'AVRO'])
+def test_basic(sdc_builder, sdc_executor, gcp, file_format):
     """Test for Google BigQuery with Google Cloud Storage staging.
 
     The pipeline looks like this:
@@ -182,6 +207,7 @@ def test_basic(sdc_builder, sdc_executor, gcp):
                             dataset=dataset_name,
                             table=table_name,
                             bucket=bucket_name,
+                            staging_file_format=file_format,
                             enable_data_drift=False,
                             create_table=False,
                             purge_stage_file_after_ingesting=True)
@@ -209,6 +235,90 @@ def test_basic(sdc_builder, sdc_executor, gcp):
         data_from_bigquery.sort()
 
         expected_data = [tuple(v for v in d.values()) for d in ROWS_IN_DATABASE]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@pytest.mark.parametrize('file_format', ['CSV', 'AVRO'])
+@pytest.mark.parametrize('bigquery_create_schema', [True, False])
+def test_basic_with_bigquery_schema_generator(sdc_builder, sdc_executor, gcp, file_format, bigquery_create_schema):
+    """Test for Google BigQuery with Google Cloud Storage staging.
+    Note that auto creating tables for this test is different, as BigQuery created tables on its own (BUT not datasets!)
+    But in this test we also try creating them beforehand, to see it works even if we don't let BigQuery that job.
+
+    When BigQuery is generating the schema, the names of the columns are string_field_x. So we should
+    either create the table like that, or leave the creation of the table to BigQuery.
+    (https://cloud.google.com/bigquery/docs/schema-detect#csv_header)
+
+    If using BigQuery schema generation, mixing uppercase and lowercase in field names in Avro format
+    will also fail, as we cannot format records using the schema that BigQuery generates later, and
+    Avro doesn't accept mixed case fields (they are different fields).
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec).lower() for rec in ROWS_IN_DATABASE)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            schema_generator='BIGQUERY',
+                            staging_file_format=file_format,
+                            enable_data_drift=False,
+                            create_table=False,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        logger.info('Creating dataset %s using Google BigQuery client ...', dataset_name)
+        bigquery_client.create_dataset(dataset_ref)
+        if not bigquery_create_schema:
+            if file_format == 'CSV':
+                schema = [SchemaField('string_field_0', 'STRING'),
+                          SchemaField('string_field_1', 'STRING'),
+                          SchemaField('string_field_2', 'STRING'),
+                          SchemaField('string_field_3', 'STRING')]
+            else:
+                schema = SCHEMA
+            logger.info('Creating table %s using Google BigQuery client ...', table_name)
+            bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=schema))
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(v.lower() for v in d.values()) for d in ROWS_IN_DATABASE]
 
         assert len(data_from_bigquery) == len(expected_data)
         assert data_from_bigquery == expected_data
@@ -352,7 +462,128 @@ def test_data_drift(sdc_builder, sdc_executor, gcp, auto_create_dataset, auto_cr
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-def test_cdc_merge(sdc_builder, sdc_executor, gcp):
+@pytest.mark.parametrize('auto_create_dataset', [True, False])
+@pytest.mark.parametrize('auto_create_table', [True, False])
+@pytest.mark.parametrize('new_columns_mode', ["REQUIRED", "NULLABLE"])
+def test_data_drift_avro(sdc_builder, sdc_executor, gcp, auto_create_dataset, auto_create_table, new_columns_mode):
+    """Test for Google BigQuery with Google Cloud Storage staging using datadrift and its options, which are auto
+    creating table, and setting new columns bigquery modes, but using AVRO as staging.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec) for rec in ROWS_FOR_DRIFT)
+    drift_data = '\n'.join(json.dumps(rec) for rec in ROWS_FOR_DRIFT_EXT)
+
+    # First, we create the initial pipeline, which will create datasets and tables as needed
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            enable_data_drift=True,
+                            staging_file_format='AVRO',
+                            create_table=auto_create_table,
+                            create_dataset=auto_create_dataset,
+                            new_columns_mode=new_columns_mode,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    # Then, we create the second pipeline, which will try to add new columns to the first table result
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=drift_data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            enable_data_drift=True,
+                            staging_file_format='AVRO',
+                            create_table=auto_create_table,
+                            create_dataset=auto_create_dataset,
+                            new_columns_mode=new_columns_mode,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline_2 = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        # auto_create_dataset needs to have auto_create_table, because you need to create tables inside the new dataset
+        # that is managed by the library itself (disabling auto_create_dataset when auto_create_table is disabled),
+        # but we need to create the dataset also if the auto_create_table is false
+        if not auto_create_dataset or not auto_create_table:
+            logger.info(f'Creating dataset {dataset_name} ...')
+            bigquery_client.create_dataset(dataset_ref)
+
+        if not auto_create_table:
+            logger.info(f'Creating table {table_name} ...')
+            bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=SCHEMA_FOR_DRIFT))
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        # We retrieve the table after the pipeline is run
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(v for v in d.values()) for d in ROWS_FOR_DRIFT]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+
+        # Then, we run the second pipeline
+        sdc_executor.add_pipeline(pipeline_2)
+        sdc_executor.start_pipeline(pipeline_2).wait_for_finished()
+
+        # And Verify again with the new data
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        # Else, the id values are integers
+        expected_data = [tuple(v for v in d.values()) for d in ROWS_FOR_DRIFT_NONE_COLUMN]
+        expected_data += [tuple(v for v in d.values()) for d in ROWS_FOR_DRIFT_EXT]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@pytest.mark.parametrize('file_format', ['CSV', 'AVRO'])
+def test_cdc_merge(sdc_builder, sdc_executor, gcp, file_format):
     """Test for Google BigQuery with Google Cloud Storage staging merge process.
 
     The pipeline looks like this:
@@ -387,6 +618,7 @@ def test_cdc_merge(sdc_builder, sdc_executor, gcp):
                             dataset=dataset_name,
                             table=table_name,
                             bucket=bucket_name,
+                            staging_file_format=file_format,
                             create_table=True,
                             create_dataset=True,
                             purge_stage_file_after_ingesting=True,
@@ -568,7 +800,9 @@ def test_cdc_merge_with_special_quoting(sdc_builder, sdc_executor, gcp):
 
 @pytest.mark.parametrize('null_value', ['', 'NULL', 'StreamSets'])
 def test_basic_values_as_null(sdc_builder, sdc_executor, gcp, null_value):
-    """Test for Google BigQuery with Google Cloud Storage staging.
+    """Test for Google BigQuery with Google Cloud Storage staging for null values.
+    This test makes no sense for Avro, as NULL values are described in the schema, not as a null marker (it
+    is not allowed in BigQuery).
 
     The pipeline looks like this:
         dev_raw_data_source >> bigquery
@@ -627,9 +861,9 @@ def test_basic_values_as_null(sdc_builder, sdc_executor, gcp, null_value):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-@sdc_min_version('4.1.0')
+@pytest.mark.parametrize('file_format', ['CSV', 'AVRO'])
 @pytest.mark.parametrize('partition_type', ['DATE', 'DATETIME', 'TIMESTAMP', 'INTEGER', 'INGESTION'])
-def test_partition_tables_types(sdc_builder, sdc_executor, gcp, partition_type):
+def test_partition_tables_types(sdc_builder, sdc_executor, gcp, partition_type, file_format):
     """Test for Google BigQuery with Google Cloud Storage staging with datadrift (as we need datadrift to create
      partitioned tables).
 
@@ -683,13 +917,13 @@ def test_partition_tables_types(sdc_builder, sdc_executor, gcp, partition_type):
                             dataset=dataset_name,
                             table=table_name,
                             bucket=bucket_name,
+                            staging_file_format=file_format,
                             enable_data_drift=True,
                             create_table=True,
                             create_dataset=True,
                             purge_stage_file_after_ingesting=True,
                             partition_table=True,
                             partition_configuration=[partition])
-
 
     dev_data_generator >> bigquery
 
@@ -807,7 +1041,6 @@ def test_eval_values(sdc_builder, sdc_executor, gcp, data_drift, eval_value):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-@sdc_min_version('4.1.0')
 def test_partition_tables_default_partition(sdc_builder, sdc_executor, gcp):
     """Test for Google BigQuery with Google Cloud Storage staging with datadrift (as we need datadrift to create
      partitioned tables) and eval values in table and dataset. We create 2 tables with datadrift, one getting
@@ -916,7 +1149,6 @@ def test_partition_tables_default_partition(sdc_builder, sdc_executor, gcp):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-@sdc_min_version('4.1.0')
 def test_partition_tables_no_partition(sdc_builder, sdc_executor, gcp):
     """Test for Google BigQuery with Google Cloud Storage staging with datadrift (as we need datadrift to create
      partitioned tables) and eval values in table and dataset. Might happen that a table does not get partitioned
@@ -999,7 +1231,6 @@ def test_partition_tables_no_partition(sdc_builder, sdc_executor, gcp):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-@sdc_min_version('4.1.0')
 @pytest.mark.parametrize('eval_value', [True, False])
 def test_multithreading(sdc_builder, sdc_executor, gcp, eval_value):
     """Test for Google BigQuery with Google Cloud Storage staging to test multithreading with and without eval values
@@ -1158,6 +1389,252 @@ def test_allow_quoted_newlines(sdc_builder, sdc_executor, gcp):
         data_from_bigquery.sort()
 
         expected_data = [tuple(v for v in d.values()) for d in ROWS_IN_DATABASE_QUOTED_NEWLINES]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@pytest.mark.parametrize('bigquery_create_schema', [True, False])
+def test_nested_fields_map(sdc_builder, sdc_executor, gcp, bigquery_create_schema):
+    """Test for Google BigQuery with Google Cloud Storage staging testing nested fields.
+
+    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro
+
+    IMPORTANT: Sadly, if using AVRO, BigQuery converts map fields to a repeated RECORD that contains two
+    fields: key and value, instead of the actual map. So we have to check the schema in the same way.
+    https://cloud.google.com/bigquery/docs/loading-data-cloud-storage-avro#complex_types
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec) for rec in NESTED_MAP_TO_LOAD)
+
+    # First, we create the initial pipeline, which will create datasets and tables as needed
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            schema_generator='BIGQUERY' if bigquery_create_schema else 'SDC',
+                            staging_file_format='AVRO',
+                            enable_data_drift=False,
+                            create_table=not bigquery_create_schema,
+                            create_dataset=False,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        logger.info('Creating dataset %s using Google BigQuery client ...', dataset_name)
+        bigquery_client.create_dataset(dataset_ref)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        # We retrieve the table after the pipeline is run
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(v for v in d.values()) for d in EXPECTED_MAP_IN_DATABASE]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@pytest.mark.parametrize('bigquery_create_schema', [True, False])
+def test_nested_fields_list(sdc_builder, sdc_executor, gcp, bigquery_create_schema):
+    """Test for Google BigQuery with Google Cloud Storage staging testing nested fields.
+
+    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec) for rec in NESTED_LIST_TO_LOAD)
+
+    # First, we create the initial pipeline, which will create datasets and tables as needed
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            schema_generator='BIGQUERY' if bigquery_create_schema else 'SDC',
+                            staging_file_format='AVRO',
+                            enable_data_drift=False,
+                            create_table=not bigquery_create_schema,
+                            create_dataset=False,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        logger.info('Creating dataset %s using Google BigQuery client ...', dataset_name)
+        bigquery_client.create_dataset(dataset_ref)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        # We retrieve the table after the pipeline is run
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(v for v in d.values()) for d in NESTED_LIST_TO_LOAD]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+def test_nested_fields_data_drift(sdc_builder, sdc_executor, gcp):
+    """Test for Google BigQuery with Google Cloud Storage staging testing nested fields when the schema drifts.
+    BigQuery does not allow drift in schema, so just testing for SDC schema generation.
+
+    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec) for rec in NESTED_LIST_TO_LOAD)
+    drift_data = '\n'.join(json.dumps(rec) for rec in NESTED_DRIFT_TO_LOAD)
+
+    # First, we create the initial pipeline, which will create datasets and tables as needed
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            schema_generator='SDC',
+                            staging_file_format='AVRO',
+                            enable_data_drift=True,
+                            create_table=True,
+                            create_dataset=True,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    # Then, we create the second pipeline, which will try to add new columns to the first table result
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=drift_data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            schema_generator='SDC',
+                            staging_file_format='AVRO',
+                            enable_data_drift=True,
+                            create_table=True,
+                            create_dataset=True,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline_2 = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        # We retrieve the table after the pipeline is run
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(v for v in d.values()) for d in NESTED_LIST_TO_LOAD]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+
+        # Then, we run the second pipeline
+        sdc_executor.add_pipeline(pipeline_2)
+        sdc_executor.start_pipeline(pipeline_2).wait_for_finished()
+
+        # And Verify again with the new data
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(v for v in d.values()) for d in EXPECTED_NESTED_LIST_WITH_DRIFT]
 
         assert len(data_from_bigquery) == len(expected_data)
         assert data_from_bigquery == expected_data
