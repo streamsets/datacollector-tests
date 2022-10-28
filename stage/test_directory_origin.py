@@ -442,7 +442,7 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
 
     # Wait until the pipeline reads all the expected files
     sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', msgs_sent_count + msgs_sent_count_2,
-                                          timeout_sec=240)
+                                          timeout_sec=360)
     sdc_executor.stop_pipeline(directory_pipeline)
 
     history = sdc_executor.get_pipeline_history(directory_pipeline)
