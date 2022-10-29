@@ -6044,6 +6044,231 @@ def test_lob_disabled_clob_write(
         assert clob_column_name not in wiretap.output_records[0].field, "Didn't expect to find LOB field"
 
 
+@sdc_min_version("5.3.0")
+@database("oracle")
+@pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_lob_trim(sdc_builder, sdc_executor, database, lob_type, buffer_location):
+    """WRITE and TRIM a LOB and verify the TRIM record headers contain the expected information.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap
+    """
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    id_column_name = "IDCOL"
+    lob_column_name = "LOBCOL"
+    test_values = {
+        "BLOB": {
+            "insert_value": "utl_raw.cast_to_raw('Did you ever hear the tragedy of Darth Plagueis The Wise?')",
+            "expected": b"Did you ever hear the tragedy of Darth Plagueis The Wise?",
+            "column_type": sqlalchemy.BLOB,
+        },
+        "CLOB": {
+            "insert_value": f"TO_CLOB('Did you ever hear the tragedy of Darth Plagueis The Wise?')",
+            "expected": "Did you ever hear the tragedy of Darth Plagueis The Wise?",
+            "column_type": sqlalchemy.CLOB,
+        },
+    }
+
+    trim_length = 10
+    test_value = test_values[lob_type]
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(lob_column_name, test_value["column_type"]),
+        )
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location,
+        )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"INSERT INTO {source_table_name} VALUES ({primary_key}, {test_value['insert_value']})")
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        try:
+            logger.info("Triming test values ...")
+            txn = connection.begin()
+            connection.execute(
+                f"""DECLARE
+                        loc_b {lob_type};
+                    BEGIN
+                        SELECT "{lob_column_name}" INTO loc_b FROM {source_table_name} WHERE {id_column_name} = {primary_key} FOR UPDATE;
+                        dbms_lob.trim(loc_b, {trim_length});
+                        COMMIT;
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 2, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 2, f"Expected 2 records, got {len(wiretap.output_records)}"
+        for record in wiretap.output_records:
+            logger.warning(record.header["values"])
+        trim_records = [
+            record for record in wiretap.output_records if "oracle.cdc.operation.lobLength" in record.header["values"]
+        ]
+        assert len(trim_records) == 1, f"Expected 1 trim record, got {len(trim_records)}"
+        headers = trim_records[0].header["values"]
+        assert headers["oracle.cdc.operation.lobColumnName"] == lob_column_name
+        assert headers["oracle.cdc.operation.lobLength"] == f"{trim_length}"
+        assert headers["oracle.cdc.operation.lobOperationName"] == "TRIM"
+
+
+@sdc_min_version("5.3.0")
+@database("oracle")
+@pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
+@pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
+def test_lob_erase(sdc_builder, sdc_executor, database, lob_type, buffer_location):
+    """WRITE and ERASE a LOB and verify the ERASE record headers contain the expected information.
+    The pipeline is the following:
+        oracle_cdc_client >> wiretap
+    """
+    source_table_name = get_random_string(string.ascii_uppercase, 16)
+    primary_key = randint(10000, 100000)
+    id_column_name = "IDCOL"
+    lob_column_name = "LOBCOL"
+    test_values = {
+        "BLOB": {
+            "insert_value": "utl_raw.cast_to_raw('Did you ever hear the tragedy of Darth Plagueis The Wise?')",
+            "expected": b"Did you ever hear the tragedy of Darth Plagueis The Wise?",
+            "column_type": sqlalchemy.BLOB,
+        },
+        "CLOB": {
+            "insert_value": f"TO_CLOB('Did you ever hear the tragedy of Darth Plagueis The Wise?')",
+            "expected": "Did you ever hear the tragedy of Darth Plagueis The Wise?",
+            "column_type": sqlalchemy.CLOB,
+        },
+    }
+
+    erase_offset = 1
+    erase_length = 10
+    test_value = test_values[lob_type]
+
+    with ExitStack() as on_exit:
+        logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
+        source_table = sqlalchemy.Table(
+            source_table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column(id_column_name, sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column(lob_column_name, test_value["column_type"]),
+        )
+        source_table.create(database.engine)
+        on_exit.callback(source_table.drop, database.engine)
+
+        connection = database.engine.connect()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(
+            dictionary_source="DICT_FROM_ONLINE_CATALOG",
+            tables=[{"schema": database.username.upper(), "table": source_table_name, "excludePattern": ""}],
+            logminer_session_window="${2 * MINUTES}",
+            maximum_transaction_length="${1 * MINUTES}",
+            db_time_zone="UTC",
+            max_batch_size_in_records=1,
+            initial_change="LATEST",
+            disable_continuous_mine=True,
+            enable_blob_and_clob_columns_processing=True,
+            buffer_changes_locally=True,
+            buffer_location=buffer_location,
+        )
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
+
+        _wait_until_time(_get_current_oracle_time(connection=connection))
+
+        wiretap = pipeline_builder.add_wiretap()
+        oracle_cdc_client >> wiretap.destination
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        on_exit.callback(sdc_executor.stop_pipeline, pipeline)
+
+        try:
+            logger.info("Inserting test values ...")
+            txn = connection.begin()
+            connection.execute(f"INSERT INTO {source_table_name} VALUES ({primary_key}, {test_value['insert_value']})")
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        try:
+            logger.info("Triming test values ...")
+            txn = connection.begin()
+            connection.execute(
+                f"""DECLARE
+                        loc_b {lob_type};
+                        e_len NUMBER := {erase_length};
+                    BEGIN
+                        SELECT "{lob_column_name}" INTO loc_b FROM {source_table_name} WHERE {id_column_name} = {primary_key} FOR UPDATE;
+                        dbms_lob.erase(loc_b, e_len, {erase_offset});
+                        COMMIT;
+                    END;"""
+            )
+            txn.commit()
+        except:
+            logger.error("Failed to insert values. Rolling back ...")
+            txn.rollback()
+            raise
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, "input_record_count", 2, timeout_sec=120)
+
+        assert len(wiretap.output_records) == 2, f"Expected 2 records, got {len(wiretap.output_records)}"
+        for record in wiretap.output_records:
+            logger.warning(record.header["values"])
+        erase_records = [
+            record for record in wiretap.output_records if "oracle.cdc.operation.lobLength" in record.header["values"]
+        ]
+        assert len(erase_records) == 1, f"Expected 1 erase record, got {len(erase_records)}"
+        headers = erase_records[0].header["values"]
+        assert headers["oracle.cdc.operation.lobColumnName"] == lob_column_name
+        assert headers["oracle.cdc.operation.lobLength"] == f"{erase_length}"
+        assert headers["oracle.cdc.operation.lobOffset"] == f"{erase_offset}"
+        assert headers["oracle.cdc.operation.lobOperationName"] == "ERASE"
+
+
 def _get_oracle_cdc_client_origin(connection,
                                   database,
                                   sdc_builder,
