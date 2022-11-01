@@ -2320,6 +2320,8 @@ def test_empty_redo_log_record_is_ignored(sdc_builder, sdc_executor, database, b
 
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records)
 
+        sleep(10)
+
         assert len(wiretap.output_records) == num_records
         sdc_executor.stop_pipeline(pipeline)
 
