@@ -1937,8 +1937,7 @@ def test_unsupported_types_send_to_pipeline(sdc_builder,
                                                    start_scn=start_scn,
                                                    src_table_name=table_name,
                                                    unsupported_field_type='SEND_TO_PIPELINE',
-                                                   add_unsupported_fields_to_records=True,
-                                                   enable_blob_and_clob_columns_processing=True)
+                                                   add_unsupported_fields_to_records=True)
         wiretap = builder.add_wiretap()
         oracle_cdc >> wiretap.destination
 
