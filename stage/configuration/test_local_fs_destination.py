@@ -470,8 +470,8 @@ def test_max_file_size_in_mb(sdc_builder, sdc_executor, max_file_size):
         sdc_executor.execute_shell(f'rm -R {tmp_directory}')
 
 
-@pytest.mark.parametrize('max_records_in_file, expected_num_files', [(10, 10), (100, 1)])
-def test_max_records_in_file(sdc_builder, sdc_executor, max_records_in_file, expected_num_files):
+@pytest.mark.parametrize('max_records_in_file', [10, 100])
+def test_max_records_in_file(sdc_builder, sdc_executor, max_records_in_file):
     """Test Max Records in File. The pipeline test how many files are created when we write 100 records if
     the Max Records in File are lower and higher than the number of records.
      Pipeline looks like:
@@ -497,12 +497,14 @@ def test_max_records_in_file(sdc_builder, sdc_executor, max_records_in_file, exp
 
     pipeline = pipeline_builder.build().configure_for_environment()
     sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+    sdc_executor.stop_pipeline(pipeline)
+    history = sdc_executor.get_pipeline_history(pipeline)
+    output_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
-        sdc_executor.stop_pipeline(pipeline)
-
         num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
+        expected_num_files = ceil(output_record_count / max_records_in_file)
         assert num_created_files == expected_num_files
 
     finally:
