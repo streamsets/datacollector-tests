@@ -166,6 +166,49 @@ def test_delimited_data(sdc_executor, sdc_builder):
     assert [record.field for record in wiretap.error_records] == [expected_error]
 
 
+@sdc_min_version('5.3.0')
+def test_field_attributes(sdc_executor, sdc_builder):
+    """Test Dev Data Generator with and without generation of field attributes
+
+    The pipeline looks like:
+    dev_raw_data_source >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    expected_fattrs_dict = {'fattr1': 'fvalue1', 'fattr2': 'fvalue2'}
+    expected_fattrs_list = [{'key': key, 'value': value} for key, value in expected_fattrs_dict.items()]
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Data Generator')
+    dev_raw_data_source.set_attributes(records_to_be_generated=1,
+                                       root_field_type='MAP',
+                                       fields_to_generate=[
+                                           {'field': 'f1', 'type': 'LONG'},
+                                           {'field': 'f2', 'type': 'LONG', 'fieldAttributes': expected_fattrs_list},
+                                           {'field': 'f3', 'type': 'LONG', 'fieldAttributes': []},
+                                           {'field': 'f4', 'type': 'STRING', 'fieldAttributes': expected_fattrs_list}])
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> wiretap.destination
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert len(wiretap.error_records) == 0
+    for record in wiretap.output_records:
+        assert record is not None
+        assert record.get_field_attributes('/f1') is None
+        assert record.get_field_attributes('/f2') == expected_fattrs_dict
+        assert record.get_field_attributes('/f3') is None
+        assert record.get_field_attributes('/f4') == expected_fattrs_dict
+        assert type(record.get_field_data('/f1').value) == int
+        assert type(record.get_field_data('/f2').value) == int
+        assert type(record.get_field_data('/f3').value) == int
+        assert type(record.get_field_data('/f4').value) == str
+
+
 @sdc_min_version('3.5.1')
 def test_validate(sdc_executor, pipeline_with_events):
     """Validate pipeline with events on origin side."""
