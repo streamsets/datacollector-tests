@@ -68,12 +68,13 @@ def test_error_records_to_error_on_required_field(random_expression_pipeline_bui
 
     sdc_executor.start_pipeline(pipeline)
     sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
-    metrics = sdc_executor.get_pipeline_metrics(pipeline)
     sdc_executor.stop_pipeline(pipeline)
+    history = sdc_executor.get_pipeline_history(pipeline)
+    input_record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
 
     # All records should go to error stream.
     assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
-    assert len(random_expression_pipeline_builder.wiretap.error_records) == metrics.pipeline.input_record_count
+    assert len(random_expression_pipeline_builder.wiretap.error_records) == input_record_count
 
 
 def test_error_records_to_error_on_record_precondition(random_expression_pipeline_builder, sdc_executor):
@@ -84,12 +85,13 @@ def test_error_records_to_error_on_record_precondition(random_expression_pipelin
 
     sdc_executor.start_pipeline(pipeline)
     sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
-    metrics = sdc_executor.get_pipeline_metrics(pipeline)
     sdc_executor.stop_pipeline(pipeline)
+    history = sdc_executor.get_pipeline_history(pipeline)
+    input_record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
 
     # All records should go to error stream.
     assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
-    assert len(random_expression_pipeline_builder.wiretap.error_records) == metrics.pipeline.input_record_count
+    assert len(random_expression_pipeline_builder.wiretap.error_records) == input_record_count
 
 
 def test_error_records_discard_on_required_field(random_expression_pipeline_builder, sdc_executor):
@@ -285,12 +287,13 @@ def test_error_records_with_job_info(random_expression_pipeline_builder, sdc_exe
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline)
     sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
-    metrics = sdc_executor.get_pipeline_metrics(pipeline)
     sdc_executor.stop_pipeline(pipeline)
+    history = sdc_executor.get_pipeline_history(pipeline)
+    input_record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
 
     # All records should go to error stream.
     assert len(random_expression_pipeline_builder.wiretap.output_records) == 0
-    assert len(random_expression_pipeline_builder.wiretap.error_records) == metrics.pipeline.input_record_count
+    assert len(random_expression_pipeline_builder.wiretap.error_records) == input_record_count
     for error_record in random_expression_pipeline_builder.wiretap.error_records:
         assert error_record.header['errorJobId'] == 'stfJobId'
         assert error_record.header['errorJobName'] == 'stfJobName'

@@ -259,19 +259,22 @@ def test_header_line(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@pytest.mark.parametrize('idle_timeout, expected_num_files', [('${1 * SECONDS}', 5), ('${3 * SECONDS}', 1)])
-def test_idle_timeout(sdc_builder, sdc_executor, idle_timeout, expected_num_files):
+@pytest.mark.parametrize('idle_timeout', ["1", "3"])
+def test_idle_timeout(sdc_builder, sdc_executor, idle_timeout):
     """Test Idle Timeout. The pipeline test how many files are created when we write 5 batches if the Idle Timeout
-    are lower and higher than the the delay between batches.
+    are lower and higher than the delay between batches.
     Pipeline looks like:
         dev_data_generator >> local_fs
     """
+    DELAY_BETWEEN_BATCHES = 2000
+    BATCH_SIZE = 100
+
     tmp_directory = '/tmp/out/{}'.format(get_random_string(string.ascii_letters, 10))
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
-    dev_data_generator.set_attributes(batch_size=100,
-                                      delay_between_batches=2000,
+    dev_data_generator.set_attributes(batch_size=BATCH_SIZE,
+                                      delay_between_batches=DELAY_BETWEEN_BATCHES,
                                       fields_to_generate=[{'field': 'a', 'type': 'STRING'},
                                                           {'field': 'b', 'type': 'STRING'},
                                                           {'field': 'c', 'type': 'STRING'}])
@@ -289,9 +292,11 @@ def test_idle_timeout(sdc_builder, sdc_executor, idle_timeout, expected_num_file
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(5)
         sdc_executor.stop_pipeline(pipeline)
+        history = sdc_executor.get_pipeline_history(pipeline)
+        output_record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
 
         num_created_files = int(sdc_executor.execute_shell(f'ls {tmp_directory} | wc -l').stdout)
-
+        expected_num_files = 1 if int(idle_timeout) > DELAY_BETWEEN_BATCHES/1000 else ceil(output_record_count / BATCH_SIZE)
         assert num_created_files == expected_num_files
     finally:
         logger.info('Deleting files created by Local FS in %s ...', tmp_directory)
