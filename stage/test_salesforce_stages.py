@@ -1931,8 +1931,10 @@ def test_salesforce_destination_null_datetime(
         record = result["records"][0]
         assert (
             record[custom_field_name] == expected_value
-        ), f"Actual value (record[custom_field_name]) doesn't match expected the value (expected_value)"
-        assert record["FirstName"] == contact_name, "Retrieved the incorrect record"
+        ), f"Expected record with {converter_type} value {expected_value}, got {record[custom_field_name]}"
+        assert (
+            record["FirstName"] == contact_name
+        ), f"Expected record with FirstName {contact_name}, got {record['FirstName']}"
 
 
 @salesforce
