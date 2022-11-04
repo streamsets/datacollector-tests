@@ -22,11 +22,9 @@ import time
 import json
 from urllib.parse import urljoin
 from collections import OrderedDict
-from datetime import datetime, timedelta
-from json.decoder import JSONDecodeError
+from contextlib import ExitStack
 from time import sleep
 from uuid import uuid4
-from xml.sax.saxutils import escape
 
 import pytest
 import requests
@@ -1818,6 +1816,123 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
         clean_up(sdc_executor, pipeline, client, contact_ids, hard_delete=True)
         # Delete the hard delete permission file to keep the test account clean
         revoke_hard_delete(client, permission_set_id)
+
+
+@salesforce
+@pytest.mark.parametrize("api", ["bulk", "soap"])
+@pytest.mark.parametrize(
+    "input_value, converter_type, salesforce_type, field_name, expected_value",
+    [
+        ("2020-01-01 10:00:00Z", "DATETIME", "DateTime", "DateTime_field", "2020-01-01T10:00:00.000+0000"),
+        ("", "DATETIME", "DateTime", "DateTime_field", None),
+        ("2020-01-01Z", "DATE", "Date", "Date_field", "2020-01-01"),
+        ("", "DATE", "Date", "Date_field", None),
+        ("10:00:00Z", "TIME", "Time", "Time_field", "10:00:00.000Z"),
+        ("", "TIME", "Time", "Time_field", None),
+    ],
+)
+def test_salesforce_destination_null_datetime(
+    sdc_builder, sdc_executor, salesforce, api, input_value, converter_type, salesforce_type, field_name, expected_value
+):
+
+    client = salesforce.client
+    contact_name = get_random_string(string.ascii_letters, 10)
+
+    # Define a custom field of the type determined by @salesforce_type
+    custom_field_name = "{}__c".format(get_random_string(string.ascii_letters, 10))
+    custom_field_label = field_name
+    custom_field_type = salesforce_type
+    parameters = "<defaultValue>NULL</defaultValue>"
+
+    # Define the field mapping from SDC to Salesforce
+    field_mapping = [
+        {"sdcField": "/FirstName", "salesforceField": "FirstName"},
+        {"sdcField": "/LastName", "salesforceField": "LastName"},
+        {"sdcField": "/Email", "salesforceField": f"Email"},
+        {"sdcField": f"/{custom_field_name}", "salesforceField": custom_field_name},
+    ]
+
+    with ExitStack() as on_exit:
+        # Add the custom field to "Contact" and ensure it will be deleted when the test ends
+        custom_field_name = add_custom_field_to_contact(
+            salesforce, custom_field_name, custom_field_label, custom_field_type, parameters
+        )
+        on_exit.callback(delete_custom_field_from_contact, client, custom_field_name)
+
+        # Add the stages
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        # Dev Raw Data Source
+        dev_raw_data_source = pipeline_builder.add_stage("Dev Raw Data Source")
+        dev_raw_data_source.data_format = "JSON"
+        dev_raw_data_source.stop_after_first_batch = True
+        dev_raw_data_source.raw_data = json.dumps(
+            {
+                "FirstName": contact_name,
+                "LastName": "O' Smith",
+                "Email": "matthewsmith@example.com",
+                custom_field_name: input_value,
+            }
+        )
+
+        # Field type converter
+        other_date_format = None
+        if converter_type == "DATE":
+            other_date_format = "yyyy-MM-ddX"
+        elif converter_type == "DATETIME":
+            other_date_format = "yyyy-MM-dd HH:mm:ssX"
+        elif converter_type == "TIME":
+            other_date_format = "HH:mm:ssX"
+
+        converter = pipeline_builder.add_stage("Field Type Converter")
+        converter.conversion_method = "BY_FIELD"
+        converter.field_type_converter_configs = [
+            {
+                "fields": [f"/{custom_field_name}"],
+                "targetType": converter_type,
+                "dataLocale": "en.US",
+                "dateFormat": "OTHER",
+                "otherDateFormat": other_date_format,
+                "scale": 2,
+                "inputFieldEmpty": "NULL",  # Convert empty strings to nulls to produce null datetime fields
+            }
+        ]
+
+        # Salesforce Destination
+        salesforce_destination = pipeline_builder.add_stage("Salesforce", type="destination")
+        salesforce_destination.set_attributes(
+            default_operation="INSERT",
+            field_mapping=field_mapping,
+            sobject_type="Contact",
+            use_bulk_api=(api == "bulk"),
+        )
+
+        # Build and add the pipeline
+        dev_raw_data_source >> converter >> salesforce_destination
+        pipeline = pipeline_builder.build().configure_for_environment(salesforce)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Run the pipeline
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Retrieve the results
+        query_str = (
+            f"SELECT Id, FirstName, {custom_field_name} FROM Contact WHERE FirstName = '{contact_name}' ORDER BY Id"
+        )
+        result = client.query(query_str)
+
+        read_ids = get_ids(result["records"], "Id")
+        if read_ids:
+            on_exit.callback(client.bulk.Event.delete, read_ids)
+
+        # Raw data source may sometimes produce multiple records even if we only want one
+        assert len(result["records"]) == 1
+
+        record = result["records"][0]
+        assert (
+            record[custom_field_name] == expected_value
+        ), f"Actual value (record[custom_field_name]) doesn't match expected the value (expected_value)"
+        assert record["FirstName"] == contact_name, "Retrieved the incorrect record"
 
 
 @salesforce
