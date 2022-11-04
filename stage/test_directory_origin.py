@@ -2038,6 +2038,7 @@ def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
         sdc_executor.execute_shell(f'rm -rf {temp_dir}')
 
 
+@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('batch_size_in_recs', [1, 50, 100])
 @pytest.mark.parametrize('num_threads', [1, 2])
 def test_directory_origin_number_of_batches_generated(
