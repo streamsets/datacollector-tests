@@ -278,7 +278,9 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
         # * Wiretap output records has one record
         # * The receiver pipeline is 'RUNNING' otherwise event generating pipeline will fail to start
         sdc_executor.start_pipeline(successful_receiver_pipeline.pipeline, wait=False)
-        sdc_executor.start_pipeline(stop_event_pipeline)
+        with pytest.raises(Exception) as error:
+            sdc_executor.start_pipeline(stop_event_pipeline)
+        assert "SCRIPTING_06" in error.value.message, f'Expected a SCRIPTING_06 error, got "{error.message}" instead'
 
         #Validate that the event arrived to the receiver pipeline
         sdc_executor.wait_for_pipeline_metric(successful_receiver_pipeline.pipeline, 'input_record_count', 1)
