@@ -248,7 +248,7 @@ def test_hadoop_fs_origin_simple(sdc_builder, sdc_executor, cluster):
         cluster.hdfs.client.delete(hadoop_fs_folder, recursive=True)
 
 
-@sdc_min_version('3.2.0.0')
+@sdc_min_version('5.3.0')
 @cluster('cdh', 'hdp')
 @pytest.mark.parametrize('filename', ['file.txt', '_tmp_file.txt', '.tmp_file.txt'])
 def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filename):
@@ -264,7 +264,8 @@ def test_hadoop_fs_origin_standalone(sdc_builder, sdc_executor, cluster, filenam
     builder.add_error_stage('Discard')
 
     hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
-    hadoop_fs.set_attributes(data_format='WHOLE_FILE', files_directory=hadoop_fs_folder, file_name_pattern='*')
+    hadoop_fs.set_attributes(data_format='WHOLE_FILE', files_directory=hadoop_fs_folder, file_name_pattern='*',
+                             ignore_temporary_files=False)
 
     wiretap = builder.add_wiretap()
 
