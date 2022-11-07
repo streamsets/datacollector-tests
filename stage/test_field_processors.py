@@ -146,7 +146,11 @@ def test_field_flattener_all(sdc_builder, sdc_executor):
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
     field_flattener = pipeline_builder.add_stage('Field Flattener')
-    field_flattener.set_attributes(flatten='ENTIRE_RECORD', name_separator=name_separator, output_type='MAP')
+    field_flattener.set_attributes(flatten='ENTIRE_RECORD', name_separator=name_separator)
+
+    if Version(sdc_builder.version) < Version('5.3.0'):
+        field_flattener.set_attributes(output_type='MAP')
+
     wiretap = pipeline_builder.add_wiretap()
 
     dev_raw_data_source >> field_flattener >> wiretap.destination
