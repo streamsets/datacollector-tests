@@ -17,7 +17,7 @@ import string
 
 import pytest
 from streamsets.testframework.markers import cluster, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,8 @@ def test_kafka_headers(sdc_builder, sdc_executor, cluster,
     The other reads from the same Kafka instance as an origin. We check headers are preserved through all the pipelines.
     """
     kafka_version = cluster.version
-    if kafka_version.startswith("0.") or kafka_version.startswith("1."):
-        pytest.skip(f'kafka version {kafka_version} not supported')
+    if Version(kafka_version) < Version("0.11.0"):
+        pytest.skip(f'kafka version {kafka_version} does not support headers')
 
     topic = get_random_string(string.ascii_letters, 10)
     key = get_random_string(string.ascii_letters, 10)
