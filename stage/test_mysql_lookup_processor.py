@@ -16,11 +16,13 @@ import copy
 import logging
 import string
 
+import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
 
 
 ROWS_IN_DATABASE = [
@@ -63,8 +65,6 @@ def _create_table(table_name, database, schema_name=None, quote=False):
     return table
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_lookup_processor(sdc_builder, sdc_executor, database, credential_store):
     """Simple MySQL Lookup processor test.
     Pipeline will enrich records with the 'name' by adding a field as 'FirstName'.
@@ -117,8 +117,6 @@ def test_mysql_lookup_processor(sdc_builder, sdc_executor, database, credential_
 
 
 # SDC-16138: JDBC Lookup Processor is not properly catching UncheckedExecutionException
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_jdbc_lookup_processor_incorrect_query_for_data(sdc_builder, sdc_executor, database, keep_data):
     table_name = get_random_string(string.ascii_uppercase, 20)
     metadata = sqlalchemy.MetaData()

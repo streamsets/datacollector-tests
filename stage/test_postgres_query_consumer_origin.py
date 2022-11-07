@@ -17,14 +17,13 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
+
 # SDC-14882: PostgreSQL Query Consumer closing the connection after each batch
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('batch_size', [1, 3, 10])
 def test_postgres_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batch_size):
     """Ensure that the Query consumer works properly in non-incremental mode.
@@ -83,8 +82,6 @@ def test_postgres_consumer_non_incremental_mode(sdc_builder, sdc_executor, datab
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_stored_procedure_postgresql(sdc_builder, sdc_executor, database, keep_data):
     table_name = get_random_string(string.ascii_lowercase, 20)
     procedure_name = get_random_string(string.ascii_lowercase, 20)
@@ -145,8 +142,6 @@ def test_stored_procedure_postgresql(sdc_builder, sdc_executor, database, keep_d
 
 
 # Test for COLLECTOR-962
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('limit', [4,5,6])
 def test_postgres_consumer_no_more_data_with_limit(sdc_builder, sdc_executor, database, limit):
     table_name = get_random_string(string.ascii_lowercase, 20)

@@ -16,12 +16,13 @@ import copy
 import logging
 import string
 
+import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
 
 ROWS_IN_DATABASE = [
     {'id': 1, 'name': 'Dima'},
@@ -59,8 +60,6 @@ def _create_table(table_name, database, schema_name=None, quote=False):
     return table
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_lookup_processor(sdc_builder, sdc_executor, database, credential_store):
     """Simple PostgreSQL Lookup processor test.
     Pipeline will enrich records with the 'name' by adding a field as 'FirstName'.
@@ -114,8 +113,6 @@ def test_postgres_lookup_processor(sdc_builder, sdc_executor, database, credenti
 
 
 # SDC-16138: PostgreSQL Lookup Processor is not properly catching UncheckedExecutionException
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_lookup_processor_incorrect_query_for_data(sdc_builder, sdc_executor, database, keep_data):
     table_name = get_random_string(string.ascii_uppercase, 20)
     metadata = sqlalchemy.MetaData()

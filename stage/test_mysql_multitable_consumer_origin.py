@@ -22,7 +22,6 @@ import time
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METADATA_MYSQL, \
@@ -33,6 +32,8 @@ from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METAD
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
+
 ROWS_IN_DATABASE = [
     {'id': 1, 'name': 'Ghastly'},
     {'id': 2, 'name': 'Haunter'},
@@ -42,8 +43,6 @@ RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
 
 
 # SDC-11009: Run away pipeline runners in MySQL Multithread origins when no-more-data generation delay is configured
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_multitable_consumer_with_no_more_data_event_generation_delay(sdc_builder, sdc_executor, database):
     """
     Make sure that when a delayed no-more-data is being processed, the pipeline properly waits on the processing to
@@ -118,8 +117,6 @@ def test_mysql_multitable_consumer_with_no_more_data_event_generation_delay(sdc_
 
 
 # SDC-10987: MySQL Multitable Consumer multiple offset columns with initial offset
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_executor, database):
     """
     Set initial offset at the end of the table and verify that no records were read.
@@ -178,8 +175,6 @@ def test_mysql_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_ex
 
 
 # SDC-11324: MySQL MultiTable origin can create duplicate offsets
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
     """Validate that we will not create duplicate offsets. """
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -235,8 +230,6 @@ def test_mysql_multitable_duplicate_offsets(sdc_builder, sdc_executor, database)
 
 
 # SDC-11326: MySQL MultiTable origin forgets offset of non-incremental table on consecutive execution
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, database):
     """Validate the origin does not loose non-incremental offset on various runs."""
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -310,8 +303,6 @@ def test_mysql_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, 
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_builder, sdc_executor, database):
     """
     Check if MySQL Multi-table Origin can retrieve any records from a table using as an offset a high resolution
@@ -379,8 +370,6 @@ def test_mysql_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_b
 
 
 # SDC-10053: MySQL Multitable does not handle large gap in primary keys
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc_executor, database):
     """
     Ensure that the multi-table MySQL origin can handle large gaps between offset columns in partitioned mode
@@ -444,8 +433,6 @@ def test_mysql_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sd
 
 
 # SDC-13624:  MySQL Multitable Consumer ingests duplicates when initial offset is set for a column in partitioned mode
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_multitable_consumer_duplicates_read_when_initial_offset_configured(sdc_builder, sdc_executor, database):
     """
     SDC-13625 Integration test for SDC-13624 - MT Consumer ingests duplicates when initial offset is specified
@@ -529,8 +516,6 @@ def test_mysql_multitable_consumer_duplicates_read_when_initial_offset_configure
 
 
 # SDC-14489: MySQL Multitable origin must escape string columns
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('input_string', [
     "::problematical::value::",
     "=another=problematical=value=",
@@ -585,8 +570,6 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('batch_strategy', ['SWITCH_TABLES', 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE'])
 @pytest.mark.parametrize('no_of_threads', [1, 2, 3])
 def test_mysql_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, database, batch_strategy, no_of_threads):
@@ -679,8 +662,6 @@ def test_mysql_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, dat
         table2.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('test_data', [
     {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 2, 'partition_size': 1000},
     {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 3, 'partition_size': 1000},
@@ -829,8 +810,6 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
             table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_primary_keys_headers(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -907,8 +886,6 @@ def test_mysql_primary_keys_headers(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -974,8 +951,6 @@ def test_mysql_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database
         connection.execute(f'drop table {table_name}')
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -1041,8 +1016,6 @@ def test_mysql_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, data
         connection.execute(f'drop table {table_name}')
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_vendor_header(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)

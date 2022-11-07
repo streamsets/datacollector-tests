@@ -20,7 +20,6 @@ import time
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METADATA_POSTGRESQL, \
@@ -29,6 +28,8 @@ from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METAD
     get_insert_query_numeric
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
 
 ROWS_IN_DATABASE = [
     {'id': 1, 'name': 'Ghastly'},
@@ -40,8 +41,6 @@ RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
 
 
 # SDC-11009: Run away pipeline runners in PostgreSQL Multithread origins when no-more-data generation delay is configured
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_multitable_consumer_with_no_more_data_event_generation_delay(sdc_builder, sdc_executor, database):
     """
     Make sure that when a delayed no-more-data is being processed, the pipeline properly waits on the processing to
@@ -117,8 +116,6 @@ def test_postgres_multitable_consumer_with_no_more_data_event_generation_delay(s
 
 
 # SDC-10987: PostgreSQL Multitable Consumer multiple offset columns with initial offset
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_executor, database):
     """
     Set initial offset at the end of the table and verify that no records were read.
@@ -178,8 +175,6 @@ def test_postgres_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc
 
 
 # SDC-10053: PostgreSQL Multitable does not handle large gap in primary keys
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc_executor, database):
     """
     Ensure that the multi-table PostgreSQL origin can handle large gaps between offset columns in partitioned mode
@@ -244,8 +239,6 @@ def test_postgres_multitable_consumer_partitioned_large_offset_gaps(sdc_builder,
 
 
 # SDC-13624:  PostgreSQL Multitable Consumer ingests duplicates when initial offset is set for a column in partitioned mode
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_multitable_consumer_duplicates_read_when_initial_offset_configured(sdc_builder, sdc_executor, database):
     """
     SDC-13625 Integration test for SDC-13624 - MT Consumer ingests duplicates when initial offset is specified
@@ -330,8 +323,6 @@ def test_postgres_multitable_consumer_duplicates_read_when_initial_offset_config
 
 
 # SDC-14489: PostgreSQL Multitable origin must escape string columns
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('input_string', [
     "::problematical::value::",
     "=another=problematical=value=",
@@ -387,8 +378,6 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('batch_strategy', ['SWITCH_TABLES', 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE'])
 @pytest.mark.parametrize('no_of_threads', [1, 2, 3])
 def test_postgres_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, database, batch_strategy, no_of_threads):
@@ -482,8 +471,6 @@ def test_postgres_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, 
         table2.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('test_data', [
     {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 2, 'partition_size': 1000},
     {'per_batch_strategy': 'SWITCH_TABLES', 'thread_count': 3, 'partition_size': 1000},
@@ -633,8 +620,6 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
             table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_primary_keys_headers(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -709,8 +694,6 @@ def test_postgres_primary_keys_headers(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -774,8 +757,6 @@ def test_postgres_numeric_primary_keys_metadata(sdc_builder, sdc_executor, datab
         connection.execute(f'drop table {table_name}')
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
@@ -839,8 +820,6 @@ def test_postgres_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, d
         connection.execute(f'drop table {table_name}')
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_vendor_header(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)

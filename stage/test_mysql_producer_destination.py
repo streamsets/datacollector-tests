@@ -19,10 +19,11 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
 
 # from CommonDatabaseHeader.java
 PRIMARY_KEY_COLUMN_OLD_VALUE = 'jdbc.primaryKey.before'
@@ -142,8 +143,6 @@ def _create_mysql_producer_pipeline(pipeline_builder, pipeline_title, raw_data, 
     return pipeline_builder.build(title=pipeline_title)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_producer_insert_type_err(sdc_builder, sdc_executor, database):
     """This test covers invalid type coersion - writing string into int column. This test checks we can properly
     catch and generate JDBC_23.
@@ -197,8 +196,6 @@ def test_mysql_producer_insert_type_err(sdc_builder, sdc_executor, database):
 
 
 # SDC-15039: Data loss when MySQL Producer doesn't match any columns
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('multi_row', [True, False])
 @pytest.mark.parametrize('field_mapping', [True, False])
 def test_mysql_producer_no_implicit_mapping(sdc_builder, sdc_executor, database, multi_row, field_mapping):
@@ -263,8 +260,6 @@ def test_mysql_producer_no_implicit_mapping(sdc_builder, sdc_executor, database,
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_producer_coerced_insert(sdc_builder, sdc_executor, database):
     """Extension of the Simple MySQL Producer test with INSERT operation.
     The pipeline inserts records into the database.
@@ -305,8 +300,6 @@ def test_mysql_producer_coerced_insert(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_producer_delete(sdc_builder, sdc_executor, database):
     """Simple MySQL Producer test with DELETE operation.
     The pipeline deletes records from the database and verify that correct data is in the database.
@@ -339,8 +332,6 @@ def test_mysql_producer_delete(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_producer_update(sdc_builder, sdc_executor, database):
     """Simple MySQL Producer test with UPDATE operation.
     The pipeline updates records from the database and verify that correct data is in the database.
@@ -374,8 +365,6 @@ def test_mysql_producer_update(sdc_builder, sdc_executor, database):
 
 
 # SDC-10562: Row-level stage errors not being caught at pipeline
-@sdc_min_version('5.3.0')
-@database('mysql')
 def test_mysql_producer_multirow_with_duplicates(sdc_builder, sdc_executor, database):
     """
     Make sure that when using Multi Row insert, data related errors are send to error stream.
@@ -431,8 +420,6 @@ def test_mysql_producer_multirow_with_duplicates(sdc_builder, sdc_executor, data
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_producer_multitable(sdc_builder, sdc_executor, database):
     """Test for MySQL Producer with multiple destination table. We create 3 tables in the default schema and use an EL
     expression to insert records according to the /table record field.
@@ -492,9 +479,7 @@ def test_mysql_producer_multitable(sdc_builder, sdc_executor, database):
 
 
 # SDC-11063: Do not reoder update statements in MySQL destination
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('multi_row', [True, False])
-@database('mysql')
 def test_mysql_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
     """Ensure that variously intertwined operations won't be executed out of order in harmful way."""
 
@@ -621,8 +606,6 @@ def _setup_delimited_file(sdc_executor, tmp_directory, csv_records):
     return csv_records
 
 
-@sdc_min_version('5.3.0')
-@database('mysql')
 @pytest.mark.parametrize('dyn_table', [False, True])
 @pytest.mark.parametrize('multi_row', [False, True])
 def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, database, dyn_table, multi_row):
@@ -747,8 +730,6 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
         connection.close()
 
 
-@sdc_min_version('5.3.0')
-@database('mysql')
 @pytest.mark.parametrize('rollback_enabled', [True, False])
 def test_mysql_producer_multirow_with_duplicates_error(sdc_builder, sdc_executor, database, rollback_enabled):
     """
@@ -815,8 +796,6 @@ def test_mysql_producer_multirow_with_duplicates_error(sdc_builder, sdc_executor
         table.drop(database.engine)
 
 
-@sdc_min_version('5.3.0')
-@database('mysql')
 @pytest.mark.parametrize('multi_row', [False, True])
 def test_mysql_producer_primary_key_header_update(sdc_builder, sdc_executor, database, multi_row):
     """

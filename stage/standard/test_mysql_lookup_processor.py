@@ -17,10 +17,11 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
 
 
 # https://dev.mysql.com/doc/refman/8.0/en/data-types.html
@@ -59,8 +60,6 @@ DATA_TYPES_MYSQL = [
     ("POLYGON", "Polygon(LineString(Point(0,0),Point(10,0),Point(10,10),Point(0,10),Point(0,0)),LineString(Point(5,5),Point(7,5),Point(7,7),Point(5,7),Point(5,5)))", 'BYTE_ARRAY', 'AAAAAAEDAAAAAgAAAAUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAJEAAAAAAAAAAAAAAAAAAACRAAAAAAAAAAAAAAAAAAAAAAAUAAAAAAAAAAAAUQAAAAAAAABRAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAHEAAAAAAAAAUQAAAAAAAABxAAAAAAAAAFEAAAAAAAAAUQA=='),
     ("JSON", "'{\"a\":\"b\"}'", 'STRING', '{\"a\": \"b\"}'),
 ]
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_MYSQL, ids=[i[0] for i in DATA_TYPES_MYSQL])
 def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
     """Test all feasible Mysql types."""
@@ -121,15 +120,11 @@ def test_data_types(sdc_builder, sdc_executor, database, sql_type, insert_fragme
             connection.execute(f"DROP TABLE {table_name}")
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_object_names(sdc_builder, sdc_executor, database):
     pytest.skip("The MySQL Lookup Processor doesn't generate queries - it only takes user input, thus user is responsible to"
                 "properly escape or enclose names and thefore there is not much for us to test here.")
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
 
     batch_size = 1000
@@ -213,13 +208,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
             table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_data_format(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("MySQL Lookup Processor doesn't deal with data formats")
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("MySQL Lookup processor does not support events today")

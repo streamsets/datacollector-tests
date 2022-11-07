@@ -18,9 +18,6 @@ import time
 
 import pytest
 import sqlalchemy
-from streamsets.sdk.utils import Version
-from streamsets.testframework.environments.databases import MemSqlDatabase
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 
@@ -32,6 +29,8 @@ def sdc_builder_hook():
 
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
 
 
 # https://www.postgresql.org/docs/11/datatype.html
@@ -90,9 +89,6 @@ DATA_TYPES_POSTGRESQL = [
      '["2010-01-01 19:30:00+00","2010-01-01 20:30:00+00")'),
     ("daterange", "'[2010-01-01, 2010-01-02)'", 'STRING', '[2010-01-01,2010-01-02)'),
 ]
-
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_POSTGRESQL, ids=[i[0] for i in DATA_TYPES_POSTGRESQL])
 def test_data_types_postgresql(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -191,8 +187,6 @@ OBJECT_NAMES_POSTGRESQL = [
 ]
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_POSTGRESQL, ids=[i[0] for i in OBJECT_NAMES_POSTGRESQL])
 def test_object_names_postgresql(sdc_builder, sdc_executor, database, test_name, table_name, offset_name):
     builder = sdc_builder.get_pipeline_builder()
@@ -249,8 +243,6 @@ def test_object_names_postgresql(sdc_builder, sdc_executor, database, test_name,
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('number_of_threads', [1, 10])
 @pytest.mark.parametrize('processing_mode', ['DISABLED', 'BEST_EFFORT', 'REQUIRED'])
 def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads, processing_mode, keep_data):
@@ -320,8 +312,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, number_of_threads
             table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
     table_prefix = get_random_string(string.ascii_lowercase, 20)
     table_a = '{}_a'.format(table_prefix)
@@ -453,14 +443,10 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
             b.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_data_format(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("PostgreSQL MultiTable Origin doesn't deal with data formats")
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     iterations = 3
     records_per_iteration = 10

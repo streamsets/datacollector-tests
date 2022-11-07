@@ -19,10 +19,11 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
 
 
 # from CommonDatabaseHeader.java
@@ -99,8 +100,6 @@ def _create_table(table_name, database, schema_name=None, quote=False):
     return table
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_tee_processor(sdc_builder, sdc_executor, database):
     """Simple PostgreSQL Tee processor test.
     Pipeline will insert records into database and then pass generated database column 'id' to fields.
@@ -153,8 +152,6 @@ def test_postgres_tee_processor(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('use_multi_row', [True, False])
 def test_postgres_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_multi_row):
     """PostgreSQL Tee processor with multiple operations
@@ -228,8 +225,6 @@ def test_postgres_tee_processor_multi_ops(sdc_builder, sdc_executor, database, u
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('multi_row', [False, True])
 def test_postgres_tee_processor_primary_key_header_update(sdc_builder, sdc_executor, database, multi_row):
     """

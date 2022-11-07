@@ -19,10 +19,11 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
 
 
 # from CommonDatabaseHeader.java
@@ -99,8 +100,6 @@ def _create_table(table_name, database, schema_name=None, quote=False):
     return table
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_mysql_tee_processor(sdc_builder, sdc_executor, database):
     """Simple MySQL Tee processor test.
     Pipeline will insert records into database and then pass generated database column 'id' to fields.
@@ -152,8 +151,6 @@ def test_mysql_tee_processor(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('use_multi_row', [True, False])
 def test_mysql_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_multi_row):
     """MySQL Tee processor with multiple operations
@@ -228,8 +225,6 @@ def test_mysql_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_
 
 
 # SDC-13556: Do not spin MySQL Destination and Tee Processor machinery for empty batches
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('use_multi_row', [True, False])
 def test_mysql_tee_commits_on_empty_batches(use_multi_row, sdc_builder, sdc_executor, database):
     """Ensure that the MySQL Tee processor won't generate commits on empty batches. Since it's generally difficult
@@ -298,8 +293,6 @@ for (step = 0; step < 1000; step++) {
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('multi_row', [False, True])
 def test_mysql_tee_processor_primary_key_header_update(sdc_builder, sdc_executor, database, multi_row):
     """

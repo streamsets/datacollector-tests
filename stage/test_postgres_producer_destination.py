@@ -19,10 +19,11 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
 
 # from CommonDatabaseHeader.java
 PRIMARY_KEY_COLUMN_OLD_VALUE = 'jdbc.primaryKey.before'
@@ -180,8 +181,6 @@ def _create_postgres_producer_pipeline(pipeline_builder, pipeline_title, raw_dat
     return pipeline_builder.build(title=pipeline_title)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_insert_type_err(sdc_builder, sdc_executor, database):
     """This test covers invalid type coersion - writing string into int column. This test verifies that we can properly
     catch and generate JDBC_23 in PostgreSQL.
@@ -236,8 +235,6 @@ def test_postgres_producer_insert_type_err(sdc_builder, sdc_executor, database):
 
 
 # SDC-15039: Data loss when PostgreSQL Producer doesn't match any columns
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('multi_row', [True, False])
 @pytest.mark.parametrize('field_mapping', [True, False])
 def test_postgres_producer_no_implicit_mapping(sdc_builder, sdc_executor, database, multi_row, field_mapping):
@@ -303,8 +300,6 @@ def test_postgres_producer_no_implicit_mapping(sdc_builder, sdc_executor, databa
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_coerced_insert(sdc_builder, sdc_executor, database):
     """Extension of the Simple PostgreSQL Producer test with INSERT operation.
     The pipeline inserts records into the database.
@@ -345,8 +340,6 @@ def test_postgres_producer_coerced_insert(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_delete(sdc_builder, sdc_executor, database):
     """Simple PostgreSQL Producer test with DELETE operation.
     The pipeline deletes records from the database and verify that correct data is in the database.
@@ -379,8 +372,6 @@ def test_postgres_producer_delete(sdc_builder, sdc_executor, database):
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_update(sdc_builder, sdc_executor, database):
     """Simple PostgreSQL Producer test with UPDATE operation.
     The pipeline updates records from the database and verify that correct data is in the database.
@@ -414,8 +405,6 @@ def test_postgres_producer_update(sdc_builder, sdc_executor, database):
 
 
 # SDC-10562: Row-level stage errors not being caught at pipeline
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_multirow_with_duplicates(sdc_builder, sdc_executor, database):
     """
     Make sure that when using Multi Row insert, data related errors are send to error stream.
@@ -472,8 +461,6 @@ def test_postgres_producer_multirow_with_duplicates(sdc_builder, sdc_executor, d
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_multitable(sdc_builder, sdc_executor, database):
     """Test for PostgreSQL Producer with multiple destination table. We create 3 tables in the default schema and use an EL
     expression to insert records according to the /table record field.
@@ -535,8 +522,6 @@ def test_postgres_producer_multitable(sdc_builder, sdc_executor, database):
 
 
 # Test SDC-10719
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_multischema(sdc_builder, sdc_executor, database):
     """Test for PostgreSQL Producer in a multischema scenario with a single destination table for each schema. We create 3
     schemas with one table for each, with the same name. Then we use an EL expression to insert records according to
@@ -609,8 +594,6 @@ def test_postgres_producer_multischema(sdc_builder, sdc_executor, database):
 
 
 # Test SDC-10719
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_multischema_multitable(sdc_builder, sdc_executor, database):
     """Test a PostgreSQL Producer in a multischema scenario with different destination tables for each schema. We create 3
     schemas with one table for each, with different names. Then we use an EL expressions to insert records according to
@@ -688,8 +671,6 @@ def test_postgres_producer_multischema_multitable(sdc_builder, sdc_executor, dat
 
 
 # SDC-11063: Do not reoder update statements in PostgreSQL destination
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('multi_row', [True, False])
 def test_postgres_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
     """Ensure that variously intertwined operations won't be executed out of order in harmful way."""
@@ -793,8 +774,6 @@ def test_postgres_producer_ordering(sdc_builder, sdc_executor, multi_row, databa
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('dyn_table', [False, True])
 @pytest.mark.parametrize('multi_row', [False, True])
 def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, database, dyn_table, multi_row):
@@ -920,8 +899,6 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
         connection.close()
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_postgres_producer_postgres_partitioned(sdc_builder, sdc_executor, database):
     """
     Make sure that PostgreSQL treats partitioned tables as expected.
@@ -983,8 +960,6 @@ def test_postgres_producer_postgres_partitioned(sdc_builder, sdc_executor, datab
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('rollback_enabled', [True, False])
 def test_postgres_producer_multirow_with_duplicates_error(sdc_builder, sdc_executor, database, rollback_enabled):
     """
@@ -1048,8 +1023,6 @@ def test_postgres_producer_multirow_with_duplicates_error(sdc_builder, sdc_execu
         table.drop(database.engine)
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('multi_row', [False, True])
 def test_postgres_producer_primary_key_header_update(sdc_builder, sdc_executor, database, multi_row):
     """

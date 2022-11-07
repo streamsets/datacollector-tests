@@ -17,10 +17,11 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
 
 ROWS_IN_DATABASE = [
     {'id': 1, 'name': 'Ghastly'},
@@ -31,8 +32,6 @@ RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
 
 
 # SDC-14882: MySQL Query Consumer closing the connection after each batch
-@database('mysql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('batch_size', [1, 3, 10])
 def test_mysql_consumer_non_incremental_mode(sdc_builder, sdc_executor, database, batch_size):
     """Ensure that the Query consumer works properly in non-incremental mode.
@@ -91,8 +90,6 @@ def test_mysql_consumer_non_incremental_mode(sdc_builder, sdc_executor, database
         table.drop(database.engine)
 
 
-@database('mysql')
-@sdc_min_version('5.3.0')
 def test_stored_procedure_mysql(sdc_builder, sdc_executor, database, keep_data):
     table_name = get_random_string(string.ascii_lowercase, 20)
     procedure_name = get_random_string(string.ascii_lowercase, 20)

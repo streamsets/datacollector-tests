@@ -18,10 +18,11 @@ import string
 import json
 
 import pytest
-from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
+
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
 
 
 DATA_TYPES_POSTGRESQL = [
@@ -139,8 +140,6 @@ DATA_TYPES_POSTGRESQL = [
     # Byte array
     ('string', 'BYTE_ARRAY', 'bytea', b'string'),
 ]
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_POSTGRESQL, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_POSTGRESQL])
 def test_data_types_postgresql(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -230,8 +229,6 @@ OBJECT_NAMES_POSTGRESQL = [
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
     ('special', get_random_string(string.ascii_letters, 5) + "$_", get_random_string(string.ascii_letters, 5) + "$_"),
 ]
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('use_multi_row_operation', [True, False])
 @pytest.mark.parametrize('test_name,table_name,column_name', OBJECT_NAMES_POSTGRESQL, ids=[i[0] for i in OBJECT_NAMES_POSTGRESQL])
 def test_object_names_postgresql(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data):
@@ -298,8 +295,6 @@ def test_object_names_postgresql(sdc_builder, sdc_executor, database, test_name,
             connection.execute(f'DROP TABLE "{table_name}"')
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 @pytest.mark.parametrize('use_multi_row_operation', [True, False])
 def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, database, keep_data):
     connection = database.engine.connect()
@@ -378,19 +373,13 @@ def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, da
             connection.execute(f'DROP TABLE "{table_name}"')
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_dataflow_events(sdc_builder, sdc_executor, database):
     pytest.skip("No events supported in PostgreSQL Tee processor this time.")
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_data_format(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("PostgreSQL Tee Processor doesn't deal with data formats")
 
 
-@database('postgresql')
-@sdc_min_version('5.3.0')
 def test_push_pull(sdc_builder, sdc_executor, database):
     pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is art of test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")
