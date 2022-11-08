@@ -2055,32 +2055,20 @@ def test_directory_origin_number_of_batches_generated(
     files_directory = os.path.join('/tmp', get_random_string())
     file_name_1 = 'temp_1.txt'
     file_name_2 = 'temp_2.txt'
-    file_contents_1 = '\n'.join(['Doc 1 - Line {}'.format(i) for i in range(1, 51)])
-    file_contents_2 = '\n'.join(['Doc 2 - Line {}'.format(i) for i in range(1, 51)])
 
-    # Expected number of batches for each batch size
-    if batch_size_in_recs == 1:
-        # SDC should fill 50 batches of 1 record, realize the file is finished when generating the following batch and
-        # send there the finished-file event, same for file 2, and send a final batch with the no-more-data event
-        number_of_batches = 103
-    elif batch_size_in_recs == 50:
-        # SDC should fill 1 batch with 50 records, realize the file is finished when generating the following batch and
-        # send there the finished-file event, same for file 2, and send a final batch with the no-more-data event
-        number_of_batches = 5
-    elif batch_size_in_recs == 100:
-        # When working with 1 thread, SDC will fill 50 records from file 1, add the finished-file event, and read 50
-        # more lines from file 2 and send the batch. Up next, generating the following batch it will realise file 2 is
-        # also done, send the finished-file event there and then send a last batch with the no-more-data event
-        # When working with 2 threads, each thread will fill a batch with the 50 records and send there the finished
-        # file event. A last batch will be sent with the no-more-data when both threads fail to find new files
-        number_of_batches = 3
+    records_per_file = 50
+    number_of_batches = 2 * (records_per_file // batch_size_in_recs + 1) + 1
+    file_contents_1 = '\n'.join(['Doc 1 - Line {}'.format(i) for i in range(0, records_per_file)])
+    file_contents_2 = '\n'.join(['Doc 2 - Line {}'.format(i) for i in range(0, records_per_file)])
+
+    pipeline = None
 
     try:
-        logger.debug('Creating files directory %s ...', files_directory)
+        logger.debug(f'Creating files directory {files_directory}...')
         shell_executor(f'mkdir {files_directory}')
-        logger.debug('Creating file %s ...', files_directory)
+        logger.debug(f'Creating file {files_directory}...')
         file_writer(os.path.join(files_directory, file_name_1), file_contents_1)
-        logger.debug('Creating file %s ...', files_directory)
+        logger.debug(f'Creating file {files_directory}...')
         file_writer(os.path.join(files_directory, file_name_2), file_contents_2)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -2113,7 +2101,7 @@ def test_directory_origin_number_of_batches_generated(
         # Assert we have processed 100 records
         assert len(wiretap.output_records) == 100
     finally:
-        logger.info('Delete directory in %s...', files_directory)
+        logger.info(f'Delete directory in {files_directory}...')
         shell_executor(f'rm -r {files_directory}')
 
         if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
