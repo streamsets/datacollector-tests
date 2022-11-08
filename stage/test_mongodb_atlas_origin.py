@@ -814,3 +814,66 @@ def test_mongodb_atlas_origin_multiple_documents(sdc_builder, sdc_executor, mong
     finally:
         logger.info('Dropping %s database...', mongodb_atlas_origin.database)
         mongodb.engine.drop_database(mongodb_atlas_origin.database)
+
+
+@pytest.mark.parametrize('database_value,collection_value', [
+    ('${PARAM}', get_random_string(ascii_letters, 5)),
+    (get_random_string(ascii_letters, 5), '${PARAM}')
+])
+def test_mongodb_atlas_origin_database_collection_parameters(sdc_builder, sdc_executor, mongodb,
+                                                             database_value, collection_value):
+    """
+    Create 1 simple document in MongoDB Atlas with pipeline parameters in the Database and Collection name.
+
+    The pipeline looks like:
+        mongodb_atlas_origin >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_atlas_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_ORIGIN)
+    mongodb_atlas_origin.set_attributes(database=database_value, collection=collection_value)
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_origin.tls_mode = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    mongodb_atlas_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    if database_value == '${PARAM}':
+        database_value = get_random_string(ascii_letters, 5)
+        pipeline.add_parameters(PARAM=database_value)
+    else:
+        collection_value = get_random_string(ascii_letters, 5)
+        pipeline.add_parameters(PARAM=collection_value)
+
+    try:
+        # Write data in a MongoDB Atlas database
+        # MongoDB Atlas and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(ORIG_DOCS)
+
+        # Create documents in MongoDB Atlas using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', collection_value)
+        mongodb_database = mongodb.engine[database_value]
+        mongodb_collection = mongodb_database[collection_value]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents using snapshot.
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(ORIG_DOCS))
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert ORIG_DOCS == [{'name': record.field['name'].value} for record in wiretap.output_records]
+    finally:
+        logger.info('Dropping %s database...', database_value)
+        mongodb.engine.drop_database(database_value)
