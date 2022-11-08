@@ -16,14 +16,16 @@ import json
 import pytest
 from streamsets.sdk.sdc_api import RunError
 
-@pytest.mark.parametrize('stage_attributes', [{'field_does_not_exist': 'CONTINUE'},
+@pytest.mark.parametrize('stage_attributes', [{'field_does_not_exist': 'ADD_FIELD'},
+                                              {'field_does_not_exist': 'CONTINUE'},
                                               {'field_does_not_exist': 'TO_ERROR'}])
 def test_field_does_not_exist(sdc_builder, sdc_executor, stage_attributes):
     """Validate behavior when the field that is being operated on does not exist within a record."""
 
     DATA = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.'}
 
-    EXPECTED_OUTPUT_IF_CONTINUE = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.', 'age': '60'}
+    EXPECTED_OUTPUT_IF_ADD_FIELD = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.', 'age': '60'}
+    EXPECTED_OUTPUT_IF_CONTINUE = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.'}
     EXPECTED_OUTPUT_IF_TO_ERROR = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.'}
 
     field_does_not_exist = stage_attributes['field_does_not_exist']
@@ -48,7 +50,10 @@ def test_field_does_not_exist(sdc_builder, sdc_executor, stage_attributes):
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    if field_does_not_exist == 'CONTINUE':
+    if field_does_not_exist == 'ADD_FIELD':
+        record = wiretap.output_records[0]
+        assert record.field == EXPECTED_OUTPUT_IF_ADD_FIELD and not wiretap.error_records
+    elif field_does_not_exist == 'CONTINUE':
         record = wiretap.output_records[0]
         assert record.field == EXPECTED_OUTPUT_IF_CONTINUE and not wiretap.error_records
     elif field_does_not_exist == 'TO_ERROR':
