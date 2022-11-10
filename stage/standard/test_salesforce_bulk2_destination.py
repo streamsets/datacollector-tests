@@ -221,6 +221,7 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     sdc_executor.add_pipeline(pipeline)
 
     read_ids = []
+    permission_set_id = None
     try:
         # Create a hard delete permission file for this client
         permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_data_types')
@@ -237,7 +238,8 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True, object_name=custom_object_name)
         # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
+        if permission_set_id:
+            revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
