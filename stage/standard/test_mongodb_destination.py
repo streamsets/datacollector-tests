@@ -292,7 +292,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
     mongodb_dest.set_attributes(database=database,
                                 collection=collection)
 
-    dev_raw_data_source >> expression_evaluator >> mongodb_dest
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> [expression_evaluator, wiretap.destination]
+    expression_evaluator >> mongodb_dest
 
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
     sdc_executor.add_pipeline(pipeline)
@@ -302,16 +304,13 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(20)
         sdc_executor.stop_pipeline(pipeline)
 
-        history = sdc_executor.get_pipeline_history(pipeline)
-        num_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        logger.info(f"Wrote {num_records} records")
+        # Assert data in Mongodb is equal to data from Dev data generator
+        data_from_mongodb = [doc['text'] for doc in
+                             mongodb.engine[mongodb_dest.database][mongodb_dest.collection].find()]
+        data_from_wiretap = [record.field['text'] for record in wiretap.output_records]
 
-        mongodb_documents = [doc for doc in mongodb.engine[mongodb_dest.database][mongodb_dest.collection].find()]
-        assert len(mongodb_documents) == num_records
+        assert data_from_mongodb == data_from_wiretap
 
-        assert mongodb_documents[0]['text'] == DATA[0]
-        assert mongodb_documents[1]['text'] == DATA[1]
-        assert mongodb_documents[2]['text'] == DATA[2]
     finally:
         logger.info('Dropping %s database...', mongodb_dest.database)
         mongodb.engine.drop_database(mongodb_dest.database)
