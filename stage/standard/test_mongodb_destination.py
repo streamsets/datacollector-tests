@@ -353,7 +353,9 @@ def test_push_pull(sdc_builder, sdc_executor, mongodb):
     mongodb_dest.set_attributes(database=database,
                                 collection=collection)
 
-    dev_data_generator >> expression_evaluator >> mongodb_dest
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_data_generator >> expression_evaluator >> [mongodb_dest, wiretap.destination]
 
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
     sdc_executor.add_pipeline(pipeline)
@@ -362,12 +364,11 @@ def test_push_pull(sdc_builder, sdc_executor, mongodb):
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(25)
         sdc_executor.stop_pipeline(pipeline)
 
-        history = sdc_executor.get_pipeline_history(pipeline)
-        num_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-
-        # assert record count to MongoDB the size of the objects put
-        mongodb_documents = [doc for doc in mongodb.engine[mongodb_dest.database][mongodb_dest.collection].find()]
-        assert len(mongodb_documents) == num_records
+        # Assert data in Mongodb is equal to data from Dev data generator
+        data_from_mongodb = [doc['stringField'] for doc in
+                             mongodb.engine[mongodb_dest.database][mongodb_dest.collection].find()]
+        data_from_wiretap = [record.field['stringField'] for record in wiretap.output_records]
+        assert data_from_mongodb == data_from_wiretap
 
     finally:
         logger.info('Dropping %s database...', mongodb_dest.database)
