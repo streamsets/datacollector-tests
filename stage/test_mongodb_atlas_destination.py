@@ -13,6 +13,7 @@
 # limitations under the License.
 import logging
 import json
+from bson import json_util
 from string import ascii_letters
 
 import pytest
@@ -228,7 +229,10 @@ def test_mongodb_atlas_destination_unique_keys(sdc_builder, sdc_executor, mongod
         mongodb.engine.drop_database(mongodb_atlas_destination.database)
 
 
-@pytest.mark.parametrize('object', ['COLLECTION', 'DATABASE'])
+@pytest.mark.parametrize('object', [
+    'COLLECTION',
+    'DATABASE'
+])
 def test_mongodb_atlas_destination_collection_database_expression(sdc_builder, sdc_executor, mongodb, object):
     """
     Insert 1 simple document in MongoDB Atlas with database and collection as expression and confirm it works in
@@ -347,3 +351,129 @@ def test_mongodb_atlas_destination_reserved_field_names(sdc_builder, sdc_executo
     finally:
         logger.info('Dropping %s database...', mongodb_atlas_destination.database)
         mongodb.engine.drop_database(mongodb_atlas_destination.database)
+
+
+@sdc_min_version('5.3.0')
+@pytest.mark.parametrize('upsert', [True, False])
+def test_mongodb_atlas_destination_update_upsert_nested_documents(sdc_builder, sdc_executor, mongodb, upsert):
+    """
+    Ensure that an update and upsert a nested documents is correctly executed.
+     - UPDATE: if the value exist, it will replace the value of the specific record for the new one. If it didn't
+     exists, it will do nothing.
+     - UPSERT: if the value exist, it will replace the value of the specific record for the new one. If it didn't
+     exists, it will insert it in the document.
+
+    The pipeline looks like:
+        dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    database_name = get_random_string(ascii_letters, 5)
+    collection_name = get_random_string(ascii_letters, 10)
+
+    record = {
+        "_id": 123,
+        "order": {
+            "order_id": 5678,
+            "item_num": 3,
+            "item_value": "product 3"
+        }
+    }
+    unique_keys = [{'collectionPath': '_id', 'recordPath': '/_id'},
+                   {'collectionPath': 'order.order_id', 'recordPath': '/order/order_id'}]
+
+
+    if upsert:
+        operation = '4'     # UPSERT
+        origin_record = {
+            "_id": 123,
+            "custom_id": 456,
+            "name": "Kaidan",
+            "order": [
+                {
+                    "order_id": 1234,
+                    "item_num": 1,
+                    "item_value": "product 1"
+                }
+            ]
+        }
+    else:
+        operation = '3'     # UPDATE
+        origin_record = {
+            "_id": 123,
+            "custom_id": 456,
+            "name": "Kaidan",
+            "order": [
+                {
+                    "order_id": 1234,
+                    "item_num": 1,
+                    "item_value": "product 1"
+                },
+                {
+                    "order_id": 5678,
+                    "item_num": 2,
+                    "item_value": "product 2"
+                }
+            ]
+        }
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json_util.dumps(record),
+                                       stop_after_first_batch=True)
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
+                                                          'headerAttributeExpression': operation}]
+
+    mongodb_atlas_destination = pipeline_builder.add_stage(name=MONGODB_ATLAS_DESTINATION)
+    mongodb_atlas_destination.set_attributes(database=database_name,
+                                             collection=collection_name,
+                                             unique_keys=unique_keys,
+                                             upsert=upsert)
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_destination.tls_mode = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
+
+    dev_raw_data_source >> expression_evaluator >> mongodb_atlas_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        mongodb_database = mongodb.engine[database_name]
+        mongodb_collection = mongodb_database[collection_name]
+        inserted_doc = mongodb_collection.insert_one(origin_record)
+        assert inserted_doc is not None
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        logger.info('Verifying docs updated with PyMongo...')
+        mongodb_documents = [doc for doc in mongodb.engine[mongodb_atlas_destination.database][mongodb_atlas_destination.collection].find()]
+
+        expected_record = {
+            "_id": 123,
+            "custom_id": 456,
+            "name": "Kaidan",
+            "order": [
+                {
+                    "order_id": 1234,
+                    "item_num": 1,
+                    "item_value": "product 1"
+                },
+                {
+                    "order_id": 5678,
+                    "item_num": 3,
+                    "item_value": "product 3"
+                }
+            ]
+        }
+        assert len(mongodb_documents) == 1
+        assert mongodb_documents[0] == expected_record
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_destination.database)
+        mongodb.engine.drop_database(database_name)
