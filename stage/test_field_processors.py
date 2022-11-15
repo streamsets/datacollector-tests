@@ -148,7 +148,7 @@ def test_field_flattener_all(sdc_builder, sdc_executor):
     field_flattener = pipeline_builder.add_stage('Field Flattener')
     field_flattener.set_attributes(flatten='ENTIRE_RECORD', name_separator=name_separator)
 
-    if Version(sdc_builder.version) < Version('5.3.0'):
+    if Version(sdc_builder.version) >= Version('5.3.0'):
         field_flattener.set_attributes(output_type='MAP')
 
     wiretap = pipeline_builder.add_wiretap()
