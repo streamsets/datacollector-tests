@@ -309,11 +309,6 @@ def _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, sse_kms):
                                task='CHANGE_EXISTING_OBJECT',
                                object='${record:value("/key")}',
                                tags=Configuration(property_key='key', company='${record:value("/company")}'))
-    if sse_kms:
-        # Use SSE with KMS
-        s3_executor.set_attributes(use_server_side_encryption=True,
-                                   server_side_encryption_option='KMS',
-                                   aws_kms_key_arn=aws.kms_key_arn)
 
     wiretap = builder.add_wiretap()
 
@@ -326,7 +321,12 @@ def _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, sse_kms):
     client = aws.s3
     try:
         # Pre-create the object so that it exists.
-        client.put_object(Body='Secret Data', Bucket=s3_bucket, Key=s3_key)
+        if sse_kms:
+            # Use SSE with KMS (tagging should not alter encryption, just maintain whatever it was)
+            client.put_object(Body='Secret Data', Bucket=s3_bucket, Key=s3_key,
+                              ServerSideEncryption='aws:kms', SSEKMSKeyId=aws.kms_key_arn)
+        else:
+            client.put_object(Body='Secret Data', Bucket=s3_bucket, Key=s3_key)
 
         sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_finished()
 
