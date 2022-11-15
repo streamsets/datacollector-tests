@@ -159,6 +159,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     builder = sdc_builder.get_pipeline_builder()
     origin = builder.add_stage('Dev Data Generator')
     origin.batch_size = batch_size
+    origin.records_to_be_generated = batch_size * batches
     origin.fields_to_generate = [{
         "type": "LONG_SEQUENCE",
         "field": "seq"
@@ -193,11 +194,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
         records = [{'FirstName': str(n), 'LastName': str(n * 10), 'Department': test_name} for n in range(1, 4)]
         record_ids = check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
 
-        # Wiretap generates one extra record per batch
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count((batches + 1) * batch_size, timeout_sec=600)
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=600)
 
-        # Now the pipeline will write some amount of records that will be larger, so we get precise count from metrics
+        # Wiretap generates one extra record per batch meaning the pipeline will write an amount of records that will
+        # be larger, so we get the precise count from metrics
         history = sdc_executor.get_pipeline_history(pipeline)
         record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
         logger.info(f"Detected {record_count} output records")
