@@ -22,7 +22,7 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql'), pytest.mark.skip]
 
 
 ROWS_IN_DATABASE = [

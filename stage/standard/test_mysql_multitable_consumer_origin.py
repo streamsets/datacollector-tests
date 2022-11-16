@@ -20,7 +20,7 @@ import pytest
 import sqlalchemy
 from streamsets.testframework.utils import get_random_string
 
-pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql'), pytest.mark.skip]
 
 
 @pytest.fixture(scope='module')

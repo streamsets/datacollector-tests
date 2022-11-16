@@ -32,7 +32,7 @@ from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METAD
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql')]
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('mysql'), pytest.mark.skip]
 
 ROWS_IN_DATABASE = [
     {'id': 1, 'name': 'Ghastly'},

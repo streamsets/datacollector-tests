@@ -30,7 +30,7 @@ def sdc_builder_hook():
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql'), pytest.mark.skip]
 
 
 # https://www.postgresql.org/docs/11/datatype.html

@@ -21,7 +21,7 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql')]
+pytestmark = [pytest.mark.sdc_min_version('5.4.0'), pytest.mark.database('postgresql'), pytest.mark.skip]
 
 # SDC-14882: PostgreSQL Query Consumer closing the connection after each batch
 @pytest.mark.parametrize('batch_size', [1, 3, 10])
