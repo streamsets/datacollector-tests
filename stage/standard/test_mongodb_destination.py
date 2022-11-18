@@ -278,67 +278,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source').set_attributes(data_format='TEXT',
-                                                                                           raw_data='\n'.join(DATA),
-                                                                                           stop_after_first_batch=False)
-
-    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
-    # MongoDB destination uses the CRUD operation in the sdc.operation.type record header attribute when writing
-    # to MongoDB. Value 4 specified below is for UPSERT.
-    expression_evaluator.header_attribute_expressions = [{'attributeToSet': 'sdc.operation.type',
-                                                          'headerAttributeExpression': '1'}]
-
-    mongodb_dest = pipeline_builder.add_stage('MongoDB', type='destination')
-    mongodb_dest.set_attributes(database=database,
-                                collection=collection)
-
-    wiretap = pipeline_builder.add_wiretap()
-    dev_raw_data_source >> [expression_evaluator, wiretap.destination]
-    expression_evaluator >> mongodb_dest
-
-    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
-    sdc_executor.add_pipeline(pipeline)
-
-    try:
-        # Data is generated in dev_raw_data_source and sent to MongoDB using pipeline.
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(20)
-        sdc_executor.stop_pipeline(pipeline)
-
-        # Assert data in Mongodb is equal to data from Dev data generator
-        data_from_mongodb = [doc['text'] for doc in
-                             mongodb.engine[mongodb_dest.database][mongodb_dest.collection].find()]
-        data_from_wiretap = [record.field['text'] for record in wiretap.output_records]
-
-        assert data_from_mongodb == data_from_wiretap
-
-    finally:
-        logger.info('Dropping %s database...', mongodb_dest.database)
-        mongodb.engine.drop_database(mongodb_dest.database)
-
-
-@mongodb
-def test_data_format(sdc_builder, sdc_executor, mongodb, keep_data):
-    pytest.skip("MongoDB Destination doesn't deal with data formats")
-
-
-@mongodb
-def test_push_pull(sdc_builder, sdc_executor, mongodb):
-    """
-    We plan to verify that the connector works fine with Dev Raw Data Source and Dev Data Generator, an example of pull
-    and push strategies, so as we already verified Dev Raw Data Source, we will use Dev Data Generator here to complete
-    the coverage.
-    """
-    if mongodb.atlas:
-        pytest.skip("MongoDB stages don't support connect to MongoDB Atlas")
-
-    database = get_random_string(string.ascii_letters, 5)
-    collection = get_random_string(string.ascii_letters, 10)
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-
     dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
 
     dev_data_generator.set_attributes(batch_size=1,
+                                      records_to_be_generated=2,
                                       fields_to_generate=[
                                           {'field': 'stringField', 'type': 'STRING', 'precision': 10, 'scale': 2}])
 
@@ -360,8 +303,7 @@ def test_push_pull(sdc_builder, sdc_executor, mongodb):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(25)
-        sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Assert data in Mongodb is equal to data from Dev data generator
         data_from_mongodb = [doc['stringField'] for doc in
@@ -372,3 +314,14 @@ def test_push_pull(sdc_builder, sdc_executor, mongodb):
     finally:
         logger.info('Dropping %s database...', mongodb_dest.database)
         mongodb.engine.drop_database(mongodb_dest.database)
+
+
+@mongodb
+def test_data_format(sdc_builder, sdc_executor, mongodb, keep_data):
+    pytest.skip("MongoDB Destination doesn't deal with data formats")
+
+
+@mongodb
+def test_push_pull(sdc_builder, sdc_executor, mongodb):
+    pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is part of "
+                "test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")
