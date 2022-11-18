@@ -127,28 +127,39 @@ def test_machine_category(sdc_executor, entry_name, severity, details):
         assert check['details'] is None
 
 
-@pytest.mark.parametrize('entry_name', [
-    'Ping',
-    'Traceroute',
+@pytest.mark.parametrize('entry_name,description', [
+    ('Ping', 'Ping to www.streamsets.com'),
+    ('Traceroute', 'Traceroute to www.streamsets.com'),
+    ('Ping', 'Ping to Control Hub'),
+    ('Traceroute', 'Traceroute to Control Hub'),
 ])
-def test_network_inspector(sdc_executor, entry_name):
+def test_network_inspector(sdc_executor, entry_name, description):
     report = sdc_executor.api_client.get_health_report('NetworkHealthCategory').response.json()
     assert len(report['categories']) == 1
 
     result = report['categories'][0]
     assert result is not None
 
-    check = _find_health_check(result, entry_name)
+    check = _find_health_check_by_desc(result, description)
     assert check is not None
+    assert check['name'] is not None
+    if entry_name:
+            assert check['name'] == entry_name
     assert check['severity'] is not None
     assert check['value'] is None
-    assert check['description'] is not None
     assert check['details'] is not None
 
 
 def _find_health_check(result, name):
     for check in result['healthChecks']:
         if check['name'] == name:
+            return check
+
+    return None
+
+def _find_health_check_by_desc(result, description):
+    for check in result['healthChecks']:
+        if check['description'] == description:
             return check
 
     return None
