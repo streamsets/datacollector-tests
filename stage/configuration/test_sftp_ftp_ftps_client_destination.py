@@ -174,11 +174,78 @@ def test_escape_character(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@ftp
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE', 'file_exists': 'OVERWRITE'},
                                               {'data_format': 'WHOLE_FILE', 'file_exists': 'TO_ERROR'}])
-def test_file_exists(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_file_exists(sdc_builder, sdc_executor, ftp, stage_attributes):
+    """Test FTP/FTPS destination. We first create a file in the SFTP/FTP/FTPS server. Then create a local file with the
+        same name but different content using shell and upload that file with SFTP/FTP/FTPS destination stage to see the
+        response when the file already exists.
+        The pipelines look like:
+            directory >> sftp_ftp_client
+    """
+    # Our destination SFTP/FTP/FTPS file name
+    sftp_ftp_file_name = get_random_string(string.ascii_letters, 10)
+    # Local temporary directory where we will create a source file to be uploaded to SFTP/FTP/FTPS server
+    local_tmp_directory = os.path.join('~', tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    local_file_name = f'sdc-{get_random_string(string.ascii_letters, 5)}'
+    raw_data = {'source_text': 'Hello World!',
+                'replaced_text': 'Hi There!'}
+
+    # Create source file in FTP server
+    ftp.client.cwd('/')
+    ftp.put_string(sftp_ftp_file_name, raw_data['source_text'])
+
+    # Create replacing file in a subdirectory
+    sdc_executor.execute_shell(f'mkdir {local_tmp_directory}/; ' +
+                               f'echo {raw_data["replaced_text"]} >> {local_tmp_directory}/{local_file_name}')
+
+    # Build source file pipeline logic
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(data_format=stage_attributes['data_format'],
+                             file_name_pattern='sdc*',
+                             files_directory=local_tmp_directory)
+
+    # Build SFTP/FTP/FTPS destination logic
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget')
+    sftp_ftp_client.set_attributes(protocol='FTPS',
+                                   file_name_expression=sftp_ftp_file_name,
+                                   data_format=stage_attributes['data_format'],
+                                   file_exists=stage_attributes['file_exists'])
+
+    directory >> sftp_ftp_client
+
+    sftp_ftp_client_pipeline = builder.build().configure_for_environment(ftp)
+
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    try:
+        # Start SFTP/FTP/FTPS upload (destination) file pipeline and assert pipeline has processed expected number of files
+        sdc_executor.start_pipeline(sftp_ftp_client_pipeline).wait_for_pipeline_batch_count(1, timeout_sec=60)
+        sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+        history = sdc_executor.get_pipeline_history(sftp_ftp_client_pipeline)
+
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+
+        if stage_attributes['file_exists'] == 'OVERWRITE':
+            assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+            assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 0
+            # Read FTP destination file and compare our source data to assert
+            assert ftp.get_string(os.path.join(ftp.path, sftp_ftp_file_name)).strip() == raw_data['replaced_text']
+
+        elif stage_attributes['file_exists'] == 'TO_ERROR':
+            assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 0
+            assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 1
+            # Read FTP destination file and compare our source data to assert
+            assert ftp.get_string(os.path.join(ftp.path, sftp_ftp_file_name)).strip() == raw_data['source_text']
+
+    finally:
+        # Delete the test FTP destination file we created
+        client = ftp.client
+        client.delete(sftp_ftp_file_name)
+        client.quit()
+        sdc_executor.execute_shell(f'rm -R {local_tmp_directory}')
 
 
 @stub
