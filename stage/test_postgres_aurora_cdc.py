@@ -224,7 +224,7 @@ def test_stop_start(sdc_builder,
 
     sample_data = [dict(id=i, name=f'Takemiya{i}') for i in range(40)]
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
     table = sqlalchemy.Table(table_name,
                              sqlalchemy.MetaData(),
                              sqlalchemy.Column('id',
@@ -240,7 +240,10 @@ def test_stop_start(sdc_builder,
         aurora_postgresql_cdc_client.set_attributes(batch_wait_time_in_ms=300000,
                                                     max_batch_size_in_records=1,
                                                     poll_interval=poll_interval,
-                                                    replication_slot=replication_slot)
+                                                    replication_slot=replication_slot,
+                                                    tables=[{'schema': 'public',
+                                                             'table': table_name,
+                                                             'excludePattern': ''}])
         if Version(sdc_builder.version) >= Version('4.2.0'):
             aurora_postgresql_cdc_client.set_attributes(ssl_mode='DISABLED')
         if Version(sdc_builder.version) >= Version('5.1.0'):
@@ -359,7 +362,7 @@ def test_start_not_from_latest(sdc_builder,
     sample_data_3 = [dict(id=f'3{i}', name=f'Ishida_{i}') for i in range(20)]
     sample_data_4 = [dict(id=f'4{i}', name=f'Otake_{i}') for i in range(20)]
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
     table = sqlalchemy.Table(table_name,
                              sqlalchemy.MetaData(),
                              sqlalchemy.Column('id',
@@ -396,7 +399,10 @@ def test_start_not_from_latest(sdc_builder,
                                                     max_batch_size_in_records=1,
                                                     replication_slot=replication_slot,
                                                     initial_change=start_from,
-                                                    poll_interval=1)
+                                                    poll_interval=1,
+                                                    tables=[{'schema': 'public',
+                                                             'table': table_name,
+                                                             'excludePattern': ''}])
         if start_from is 'DATE':
             aurora_postgresql_cdc_client.set_attributes(start_date=date.strftime('%m-%d-%Y %H:%M:%S'),
                                                         database_time_zone=timezone)
@@ -481,7 +487,7 @@ def test_aurora_postgres_cdc_client_basic(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -490,7 +496,10 @@ def test_aurora_postgres_cdc_client_basic(sdc_builder,
                                               max_batch_size_in_records=1,
                                               remove_replication_slot_on_close=True,
                                               poll_interval=1,
-                                              replication_slot=replication_slot_name)
+                                              replication_slot=replication_slot_name,
+                                              tables=[{'schema': 'public',
+                                                       'table': table_name,
+                                                       'excludePattern': ''}])
     if Version(sdc_builder.version) >= Version('4.2.0'):
         aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
     if Version(sdc_builder.version) >= Version('5.1.0'):
@@ -591,7 +600,7 @@ def test_aurora_postgres_cdc_max_poll_attempts(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -600,7 +609,10 @@ def test_aurora_postgres_cdc_max_poll_attempts(sdc_builder,
                                               max_batch_size_in_records=33,
                                               remove_replication_slot_on_close=True,
                                               poll_interval=1,
-                                              replication_slot=replication_slot_name)
+                                              replication_slot=replication_slot_name,
+                                              tables=[{'schema': 'public',
+                                                       'table': table_name,
+                                                       'excludePattern': ''}])
     if Version(sdc_builder.version) >= Version('4.2.0'):
         aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
     if Version(sdc_builder.version) >= Version('5.1.0'):
@@ -696,8 +708,8 @@ def test_aurora_postgres_cdc_client_filtering_table(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_name_allow = get_random_string(string.ascii_lowercase, 20)
-    table_name_deny = get_random_string(string.ascii_lowercase, 20)
+    table_name_allow = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
+    table_name_deny = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -822,7 +834,7 @@ def test_aurora_postgres_cdc_client_remove_replication_slot(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
     replication_slot_name = get_random_string(string.ascii_lowercase, 10)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -831,7 +843,11 @@ def test_aurora_postgres_cdc_client_remove_replication_slot(sdc_builder,
                                               max_batch_size_in_records=1,
                                               remove_replication_slot_on_close=True,
                                               poll_interval=1,
-                                              replication_slot=replication_slot_name)
+                                              replication_slot=replication_slot_name,
+                                              tables=[{'schema': 'public',
+                                                       'table': table_name,
+                                                       'excludePattern': ''}]
+                                              )
     if Version(sdc_builder.version) >= Version('4.2.0'):
         aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
     if Version(sdc_builder.version) >= Version('5.1.0'):
@@ -889,7 +905,7 @@ def test_aurora_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -906,7 +922,10 @@ def test_aurora_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
                                               max_batch_size_in_records=max_batch_size_in_records,
                                               remove_replication_slot_on_close=False,
                                               poll_interval=1,
-                                              replication_slot=replication_slot_name)
+                                              replication_slot=replication_slot_name,
+                                              tables=[{'schema': 'public',
+                                                       'table': table_name,
+                                                       'excludePattern': ''}])
     if Version(sdc_builder.version) >= Version('4.2.0'):
         aurora_postgres_cdc_client.set_attributes(ssl_mode='DISABLED')
     if Version(sdc_builder.version) >= Version('5.1.0'):
@@ -1041,7 +1060,7 @@ def test_aurora_postgres_cdc_client_filtering_multiple_tables(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_name = [get_random_string(string.ascii_lowercase, 20) for _ in range(4)]
+    table_name = [f'stf_{get_random_string(string.ascii_lowercase, 20)}' for _ in range(4)]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -1166,7 +1185,7 @@ def test_aurora_postgres_cdc_wal_sender_status_metrics(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -1237,7 +1256,7 @@ def test_aurora_postgres_cdc_queue_buffering_metrics(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_names = [get_random_string(string.ascii_lowercase, 20) for _ in range(9)]
+    table_names = [f'stf_{get_random_string(string.ascii_lowercase, 20)}' for _ in range(9)]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -1331,7 +1350,7 @@ def test_aurora_postgres_cdc_ssl_enabled(sdc_builder,
             (wal2json_format == 'OPERATION' or record_contents == 'OPERATION'):
         pytest.skip('Record contents OPERATION is only supported in SDC versions >= 5.1.0')
 
-    table_name = get_random_string(string.ascii_lowercase, 20)
+    table_name = f'stf_{get_random_string(string.ascii_lowercase, 20)}'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -1341,7 +1360,10 @@ def test_aurora_postgres_cdc_ssl_enabled(sdc_builder,
                                               remove_replication_slot_on_close=True,
                                               replication_slot=replication_slot_name,
                                               poll_interval=1,
-                                              ssl_mode=ssl_mode)
+                                              ssl_mode=ssl_mode,
+                                              tables=[{'schema': 'public',
+                                                       'table': table_name,
+                                                       'excludePattern': ''}])
     if ssl_mode != 'REQUIRED':
         aurora_postgres_cdc_client.set_attributes(ca_certificate_pem=database.ca_certificate_file_contents,
                                                   server_certificate_pem=database.server_certificate_file_contents)
@@ -1448,7 +1470,7 @@ def test_aurora_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
 
         replication_slot_name = get_random_string(string.ascii_lowercase, 10)
 
-        table_name = get_random_string(string.ascii_uppercase, 16)
+        table_name = f'stf_{get_random_string(string.ascii_lowercase, 16)}'
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         aurora_postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -1460,7 +1482,10 @@ def test_aurora_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
                                                   ssl_mode='DISABLED',
                                                   record_contents=record_contents,
                                                   wal2json_format=wal2json_format,
-                                                  parse_datetimes=parse_datetimes)
+                                                  parse_datetimes=parse_datetimes,
+                                                  tables=[{'schema': 'public',
+                                                           'table': table_name,
+                                                           'excludePattern': ''}])
         wiretap = pipeline_builder.add_wiretap()
         aurora_postgres_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build().configure_for_environment(database)
@@ -1611,7 +1636,7 @@ def test_aurora_postgres_cdc_client_primary_keys_headers(sdc_builder,
 
         replication_slot_name = get_random_string(string.ascii_lowercase, 10)
 
-        table_name = get_random_string(string.ascii_uppercase, 16)
+        table_name = f'stf_{get_random_string(string.ascii_lowercase, 16)}'
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         postgres_cdc_client = pipeline_builder.add_stage('Aurora PostgreSQL CDC Client')
@@ -1622,7 +1647,10 @@ def test_aurora_postgres_cdc_client_primary_keys_headers(sdc_builder,
                                            replication_slot=replication_slot_name,
                                            ssl_mode='DISABLED',
                                            record_contents=record_contents,
-                                           wal2json_format=wal2json_format)
+                                           wal2json_format=wal2json_format,
+                                           tables=[{'schema': 'public',
+                                                    'table': table_name,
+                                                    'excludePattern': ''}])
         wiretap = pipeline_builder.add_wiretap()
         postgres_cdc_client >> wiretap.destination
         pipeline = pipeline_builder.build().configure_for_environment(database)
