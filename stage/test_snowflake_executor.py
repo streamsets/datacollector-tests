@@ -91,9 +91,6 @@ def test_snowflake_executor_basic(sdc_builder, sdc_executor, snowflake, with_el,
 @pytest.mark.parametrize('with_stage', [True, False])
 @pytest.mark.parametrize('with_valid_query', [True, False])
 def test_snowflake_executor_with_file_uploader(sdc_builder, sdc_executor, snowflake, with_table, with_stage, with_valid_query):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is not 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -178,9 +175,6 @@ def test_snowflake_executor_with_file_uploader(sdc_builder, sdc_executor, snowfl
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.9.0'})
 def test_snowflake_executor_multiple_queries(sdc_builder, sdc_executor, snowflake):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is not 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -235,6 +229,7 @@ def test_snowflake_executor_multiple_queries(sdc_builder, sdc_executor, snowflak
         snowflake.drop_entities(stage_name=stage_name)
         engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
         engine.dispose()
+
 
 def _prepare_work_dir(sdc_executor, data, data2=None, file_extension='csv'):
     """Create work directory, insert test data, return the work directory."""

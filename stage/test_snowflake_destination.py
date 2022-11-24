@@ -109,23 +109,24 @@ STORAGE_BUCKET_CONTAINER = 'snowflake'
 
 @snowflake
 @sdc_min_version('3.7.0')
-def test_basic(sdc_builder, sdc_executor, snowflake):
+@pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "AZURE", "GCS"])
+def test_basic(sdc_builder, sdc_executor, snowflake, stage_location):
     """Test for Snowflake destination target stage. Data is inserted into Snowflake using the pipeline.
     After pipeline is run, data is read from Snowflake using Snowflake sqlalchemy client.
     We assert the data from the client to what has been ingested by the Snowflake pipeline.
+    We test for the different staging areas available.
 
     The pipeline looks like:
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    _run_test_basic(sdc_builder, sdc_executor, snowflake, None, False)
+    _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location)
 
 
-# ESC-358, Test for SSE-KMS added (SNOWFLAKE-109)
 @snowflake
 @aws('s3', 'kms')
 @sdc_min_version('3.7.0')
-def test_basic_sse_kms(sdc_builder, sdc_executor, snowflake, aws):
+def test_basic_aws_sse_kms(sdc_builder, sdc_executor, snowflake):
     """Test for Snowflake destination target stage using AWS SSE-KMS. Data is inserted into Snowflake using the
     pipeline. After pipeline is run, data is read from Snowflake using Snowflake sqlalchemy client.
     We assert the data from the client to what has been ingested by the Snowflake pipeline.
@@ -134,10 +135,24 @@ def test_basic_sse_kms(sdc_builder, sdc_executor, snowflake, aws):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    _run_test_basic(sdc_builder, sdc_executor, snowflake, aws, True)
+    _run_test_basic(sdc_builder, sdc_executor, snowflake, 'AWS_S3', sse_kms=True)
 
 
-def _run_test_basic(sdc_builder, sdc_executor, snowflake, aws, sse_kms):
+@snowflake
+@sdc_min_version('3.7.0')
+def test_basic_azure_sas_token(sdc_builder, sdc_executor, snowflake):
+    """Test for Snowflake destination target stage using Azure SAS Token. Data is inserted into Snowflake using the
+    pipeline. After pipeline is run, data is read from Snowflake using Snowflake sqlalchemy client.
+    We assert the data from the client to what has been ingested by the Snowflake pipeline.
+
+    The pipeline looks like:
+    Snowflake pipeline:
+        dev_raw_data_source  >> snowflake_destination
+    """
+    _run_test_basic(sdc_builder, sdc_executor, snowflake, 'AZURE', sas_token=True)
+
+
+def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_kms=False, sas_token=False):
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -146,7 +161,7 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, aws, sse_kms):
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
-    snowflake.create_stage(stage_name, storage_path)
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
 
     # Build the pipeline with created Snowflake entities.
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -158,12 +173,16 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, aws, sse_kms):
                                        stop_after_first_batch=True)
 
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
-    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+    snowflake_destination.set_attributes(stage_location=stage_location,
+                                         purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name)
     if sse_kms:
         # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
         snowflake_destination.set_attributes(s3_encryption='KMS')
+    if sas_token:
+        # Use Azure SAS Token to authenticate
+        snowflake_destination.set_attributes(azure_authentication='SAS_TOKEN')
 
     dev_raw_data_source >> snowflake_destination
 
@@ -202,9 +221,6 @@ def test_basic_snowpipe(sdc_builder, sdc_executor, snowflake, data_drift_enabled
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is 'GCS':
-        pytest.skip('Snowpipe and GCS staging tests are skipped due to Snowflake limitations')
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
     pipe_name = f'STF_PIPE_{get_random_string(string.ascii_uppercase, 5)}'
@@ -282,10 +298,6 @@ def test_basic_snowpipe_multithread(sdc_builder, sdc_executor, snowflake, number
     Snowflake pipeline:
         dev_data_generator  >> snowflake_destination
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is 'GCS':
-        pytest.skip('Snowpipe and GCS staging tests are skipped due to Snowflake limitations')
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
     pipe_name = f'STF_PIPE_{get_random_string(string.ascii_uppercase, 5)}'
@@ -440,7 +452,8 @@ def test_CDC_Snowflake(sdc_builder, sdc_executor, snowflake, pk):
 @snowflake
 @sdc_min_version('3.7.0')
 @sdc_enterprise_lib_min_version({'snowflake': '1.2.0'})
-def test_cdc_snowflake_multiple_ops(sdc_builder, sdc_executor, snowflake):
+@pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "AZURE", "GCS"])
+def test_cdc_snowflake_multiple_ops(sdc_builder, sdc_executor, snowflake, stage_location):
     """Test for Snowflake destination target stage. Data is inserted into Snowflake using the pipeline.
     After pipeline is run, data is read from Snowflake using Snowflake sqlalchemy client.
     The first table has the rows id=1 and id=3. The second table just has row id=2.
@@ -453,6 +466,8 @@ def test_cdc_snowflake_multiple_ops(sdc_builder, sdc_executor, snowflake):
 
     Two tables are created by Pipeline
     The table names are included in each row
+
+    We test for the different staging areas available.
 
     The pipeline looks like:
     Snowflake pipeline:
@@ -489,7 +504,7 @@ def test_cdc_snowflake_multiple_ops(sdc_builder, sdc_executor, snowflake):
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
-    snowflake.create_stage(stage_name, storage_path)
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
 
     # Build the pipeline with created entities in Snowflake stage configurations.
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -512,7 +527,8 @@ def test_cdc_snowflake_multiple_ops(sdc_builder, sdc_executor, snowflake):
 
     # Build Snowflake
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
-    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+    snowflake_destination.set_attributes(stage_location=stage_location,
+                                         purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table="${record:value('/TABLE')}",
                                          row_field='/', column_fields_to_ignore='TABLE',
@@ -1367,10 +1383,6 @@ def test_snowflake_multitable_auto_create_pipe(sdc_builder, sdc_executor, snowfl
     capabilities: https://docs.snowflake.com/en/user-guide/data-load-snowpipe-ts.html#loads-from-google-cloud-storage-delayed-or-files-missed
     So we just skip them. But if there is the need of trying Snowpipe+gcs, they can eventually pass.
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is 'GCS':
-        pytest.skip('Snowpipe and GCS staging tests are skipped due to Snowflake limitations')
-
     table_name_1 = f'C_STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     table_name_2 = f'B_STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -1475,10 +1487,6 @@ def test_snowpipe_invalid_user_stage(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is not 'INTERNAL':
-        pytest.skip('This test is specific to Snowflake internal staging')
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # Build the pipeline with created Snowflake entities.
@@ -1923,10 +1931,6 @@ def test_internal_snowflake_user_stage(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is not 'INTERNAL':
-        pytest.skip('This test is specific to Snowflake internal staging')
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # Create a table and stage in Snowflake.
@@ -1983,10 +1987,6 @@ def test_CDC_snowflake_user_stage(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> snowflake_destination
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is not 'INTERNAL':
-        pytest.skip('This test is specific to Snowflake Internal staging')
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
 
     engine = snowflake.engine
@@ -2656,10 +2656,6 @@ def test_internal_snowflake_tmp_files(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is not 'INTERNAL':
-        pytest.skip('This test is specific to Snowflake internal staging')
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     local_tmp_directory = tempfile.gettempdir()
     file_prefix = f'sdc_{get_random_string(string.ascii_lowercase, 5)}'
@@ -2723,10 +2719,6 @@ def test_snowflake_use_custom_role(sdc_builder, sdc_executor, snowflake, role):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is not 'INTERNAL':
-        pytest.skip('This test is specific to Snowflake internal staging')
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     file_prefix = f'sdc_{get_random_string(string.ascii_lowercase, 5)}'
 
@@ -2967,10 +2959,6 @@ def test_on_error_config_snowpipe(sdc_builder, sdc_executor, snowflake, data_row
     capabilities: https://docs.snowflake.com/en/user-guide/data-load-snowpipe-ts.html#loads-from-google-cloud-storage-delayed-or-files-missed
     So we just skip them. But if there is the need of trying Snowpipe+gcs, they can eventually pass.
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is 'GCS':
-        pytest.skip('Snowpipe and GCS staging tests are skipped due to Snowflake limitations')
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
     pipe_name = f'STF_PIPE_{get_random_string(string.ascii_uppercase, 5)}'
@@ -3127,9 +3115,6 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] is not 'AWS_S3':
-        pytest.skip('This test is specific to Snowflake AWS staging')
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -3138,7 +3123,7 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
-    snowflake.create_stage(stage_name, storage_path)
+    snowflake.create_stage(stage_name, storage_path, stage_location='AWS_S3')
 
     # Build the pipeline with created Snowflake entities.
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -3150,7 +3135,8 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
                                        stop_after_first_batch=True)
 
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
-    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+    snowflake_destination.set_attributes(stage_location='AWS_S3',
+                                         purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
                                          s3_connection_timeout=600,

@@ -35,9 +35,6 @@ DATA = ("1,Roger Federer\n"
 @pytest.mark.parametrize('use_temporary_directory_path', [True, False])
 @sdc_enterprise_lib_min_version({'snowflake': '1.8.0'})
 def test_basic(sdc_builder, sdc_executor, snowflake, use_temporary_directory_path):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] != 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # The following is path inside a bucket in case of AWS S3 or
@@ -88,9 +85,6 @@ def test_basic(sdc_builder, sdc_executor, snowflake, use_temporary_directory_pat
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.8.0'})
 def test_basic_with_el(sdc_builder, sdc_executor, snowflake):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] != 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # The following is path inside a bucket in case of AWS S3 or
@@ -138,9 +132,6 @@ def test_basic_with_el(sdc_builder, sdc_executor, snowflake):
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.8.0'})
 def test_multiple_files_semicolon(sdc_builder, sdc_executor, snowflake):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] != 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
     stage = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # The following is path inside a bucket in case of AWS S3 or
@@ -194,9 +185,6 @@ def test_multiple_files_semicolon(sdc_builder, sdc_executor, snowflake):
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.8.0'})
 def test_produce_events(sdc_builder, sdc_executor, snowflake):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] != 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # The following is path inside a bucket in case of AWS S3 or
@@ -249,9 +237,6 @@ def test_produce_events(sdc_builder, sdc_executor, snowflake):
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.8.0'})
 def test_stop_and_resume(sdc_builder, sdc_executor, snowflake):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] != 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # The following is path inside a bucket in case of AWS S3 or
@@ -308,10 +293,6 @@ def test_stop_and_resume(sdc_builder, sdc_executor, snowflake):
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.8.0'})
 def test_format_json(sdc_builder, sdc_executor, snowflake):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] != 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
-
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # The following is path inside a bucket in case of AWS S3 or
@@ -367,10 +348,6 @@ def test_format_json(sdc_builder, sdc_executor, snowflake):
 @snowflake
 @sdc_enterprise_lib_min_version({'snowflake': '1.12.0'})
 def test_purge_temporary_files(sdc_builder, sdc_executor, snowflake):
-    if snowflake.sdc_stage_configurations['com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'][
-        'config.stageLocation'] != 'INTERNAL':
-        pytest.skip('Snowflake File Uploader is only intended to run against Snowflake Internal Stages')
-
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
     # The following is path inside a bucket in case of AWS S3 or
