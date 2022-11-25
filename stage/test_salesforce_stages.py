@@ -1819,6 +1819,7 @@ def test_salesforce_origin_no_more_data(sdc_builder, sdc_executor, salesforce, a
 
 
 @salesforce
+@sdc_min_version("5.3.0")
 @pytest.mark.parametrize("api", ["bulk", "soap"])
 @pytest.mark.parametrize(
     "input_value, converter_type, salesforce_type, field_name, expected_value",
