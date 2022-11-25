@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import copy
+import datetime
 import logging
 import string
+from bson.decimal128 import Decimal128
 
 import pytest
 from streamsets.testframework.markers import mongodb, sdc_min_version
@@ -25,9 +27,76 @@ MONGODB_ATLAS_ORIGIN = 'com_streamsets_pipeline_stage_origin_mongodb_atlas_Mongo
 pytestmark = [mongodb, sdc_min_version('5.2.0')]
 
 
+# BSON types: https://www.mongodb.com/docs/manual/reference/bson-types/
+DATA_TYPES = [
+    ('true', 'bool', True),
+    ('a', 'string', 'a'),
+    # ('a', 'byte, 'a'),  # Not supported today
+    (120, 'int', 120),
+    (120, 'long', 120),
+    (20.1, 'double', 20.100000381469727),
+    (20.1, 'double', 20.1),
+    (20.1, 'decimal', Decimal128('20.10')),
+    ('2020-01-01 10:00:00', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
+    ("2020-01-01T10:00:00+00:00", 'date', datetime.datetime(2020, 1, 1, 10, 0)),
+    ('string', 'array', b'string'),
+    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'uuid', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'.encode('ascii'))
+]
+
+
 @mongodb
-def test_data_types(sdc_builder, sdc_executor, mongodb):
-    pytest.skip("""MongoDB Atlas Origin don't talk to a structured system, so we don't need to test each data type.""")
+@pytest.mark.parametrize('input,bson_type,expected', DATA_TYPES,
+                         ids=[f'{i[1]}_{i[0]}' for i in DATA_TYPES])
+def test_data_types(sdc_builder, sdc_executor, mongodb, input, bson_type, expected):
+    """
+    Test all feasible data types MongoDB Atlas can read
+    """
+    database = get_random_string(string.ascii_letters, 10)
+    collection = get_random_string(string.ascii_letters, 10)
+
+    data = [{'value': input}]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_atlas_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_ORIGIN)
+    mongodb_atlas_origin.set_attributes(database=database,
+                                        collection=collection)
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_origin.tls_mode = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_atlas_origin >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB Atlas and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(data)
+
+        # Create documents in MongoDB Atlas using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_atlas_origin.collection)
+        mongodb_database = mongodb.engine[mongodb_atlas_origin.database]
+        mongodb_collection = mongodb_database[mongodb_atlas_origin.collection]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents using wiretap.
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert data == [{'value': record.field['value'].value} for record in wiretap.output_records]
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_origin.database)
+        mongodb.engine.drop_database(mongodb_atlas_origin.database)
 
 
 ORIG_DOCS = [

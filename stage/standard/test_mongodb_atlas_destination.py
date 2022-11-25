@@ -43,13 +43,14 @@ DATA_TYPES = [
     ('2020-01-01 10:00:00', 'DATETIME', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
     ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'date', datetime.datetime(2020, 1, 1, 10, 0)),
     ('hello', 'STRING', 'string', 'hello'),
-    ('string', 'BYTE_ARRAY', 'array', b'string')
+    ('string', 'BYTE_ARRAY', 'array', b'string'),
+    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'BYTE_ARRAY', 'uuid', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'.encode('ascii'))
 ]
 
 
 @mongodb
 @pytest.mark.parametrize('input,converter_type,bson_type,expected', DATA_TYPES,
-                         ids=[f'{i[2]}_{i[1]}' for i in DATA_TYPES])
+                         ids=[f'{i[1]}_{i[0]}' for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, bson_type, expected):
     """
     Test all feasible data types MongoDB Atlas can write

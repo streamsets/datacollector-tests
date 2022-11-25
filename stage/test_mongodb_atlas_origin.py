@@ -14,6 +14,7 @@
 import copy
 import logging
 import time
+import uuid
 from string import ascii_letters
 
 import pytest
@@ -26,6 +27,7 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 
 MONGODB_ATLAS_ORIGIN = 'com_streamsets_pipeline_stage_origin_mongodb_atlas_MongoDBAtlasDSource'
+MONGODB_ATLAS_DESTINATION = 'com_streamsets_pipeline_stage_destination_mongodb_atlas_MongoDBAtlasDTarget'
 pytestmark = [mongodb, sdc_min_version('5.2.0')]
 
 ORIG_DOCS = [
@@ -877,3 +879,136 @@ def test_mongodb_atlas_origin_database_collection_parameters(sdc_builder, sdc_ex
     finally:
         logger.info('Dropping %s database...', database_value)
         mongodb.engine.drop_database(database_value)
+
+
+@mongodb
+@sdc_min_version('5.4.0')
+@pytest.mark.parametrize('uuid_mode', [
+    'STANDARD',
+    'C_SHARP_LEGACY',
+    'JAVA_LEGACY',
+    'PYTHON_LEGACY',
+    'UNSPECIFIED'
+])
+def test_mongodb_atlas_origin_uuid_modes(sdc_builder, sdc_executor, mongodb, uuid_mode):
+    """
+    Test MongoDB Atlas Origin is able to read UUIDs in older formats using different UUID modes.
+    """
+    database = get_random_string(ascii_letters, 5)
+    collection = get_random_string(ascii_letters, 5)
+
+    data = [{'_id': str(uuid.uuid1()), 'uuid': str(uuid.uuid4())}]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_atlas_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_ORIGIN)
+    mongodb_atlas_origin.set_attributes(database=database,
+                                        collection=collection,
+                                        uuid_interpretation_mode=uuid_mode)
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_origin.tls_mode = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_atlas_origin >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB Atlas and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(data)
+
+        # Create documents in MongoDB Atlas using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_atlas_origin.collection)
+        mongodb_database = mongodb.engine[mongodb_atlas_origin.database]
+        mongodb_collection = mongodb_database[mongodb_atlas_origin.collection]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents using wiretap.
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert data == [{'_id': record.field['_id'].value, 'uuid': record.field['uuid'].value}
+                        for record in wiretap.output_records]
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_origin.database)
+        mongodb.engine.drop_database(mongodb_atlas_origin.database)
+
+
+@mongodb
+@sdc_min_version('5.4.0')
+@pytest.mark.parametrize('origin_uuid_mode, destination_uuid_mode', [
+    ('STANDARD', 'JAVA_LEGACY'),
+    ('JAVA_LEGACY', 'STANDARD')
+])
+def test_mongodb_atlas_origin_read_write_uuid(sdc_builder, sdc_executor, mongodb,
+                                              origin_uuid_mode, destination_uuid_mode):
+    """
+    Test MongoDB Atlas Origin is able to write/read UUIDs between STANDARD and JAVA_LEGACY UUID mode.
+    """
+    database = get_random_string(ascii_letters, 5)
+    collection = get_random_string(ascii_letters, 5)
+
+    data = [{'_id': str(uuid.uuid1()), 'uuid': str(uuid.uuid4())}]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_atlas_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_ORIGIN)
+    mongodb_atlas_origin.set_attributes(database=database,
+                                        collection=collection,
+                                        uuid_interpretation_mode=origin_uuid_mode)
+
+    mongodb_atlas_destination = pipeline_builder.add_stage(name=MONGODB_ATLAS_DESTINATION)
+    mongodb_atlas_destination.set_attributes(database=database,
+                                             collection=collection,
+                                             uuid_interpretation_mode=destination_uuid_mode)
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_origin.tls_mode = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+    mongodb_atlas_origin >> mongodb_atlas_destination
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # MongoDB Atlas and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+        # when used for inserting in collection. Hence the deep copy.
+        docs_in_database = copy.deepcopy(data)
+
+        # Create documents in MongoDB Atlas using PyMongo.
+        # First a database is created. Then a collection is created inside that database.
+        # Then documents are created in that collection.
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_atlas_origin.collection)
+        mongodb_database = mongodb.engine[mongodb_atlas_origin.database]
+        mongodb_collection = mongodb_database[mongodb_atlas_origin.collection]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        # Start pipeline and verify the documents using wiretap.
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Read from MongoDB Atlas to assert
+        mongodb_documents = [doc for doc in mongodb.engine[mongodb_atlas_destination.database][
+            mongodb_atlas_destination.collection].find()]
+        assert len(mongodb_documents) == 1
+        assert mongodb_documents[0]['_id'] == data[0]['_id']
+        assert mongodb_documents[0]['uuid'] == data[0]['uuid']
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_origin.database)
+        mongodb.engine.drop_database(mongodb_atlas_origin.database)
