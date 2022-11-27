@@ -175,6 +175,7 @@ def test_escape_character(sdc_builder, sdc_executor, stage_attributes):
 
 
 @ftp
+@sdc_min_version('3.22.3')
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE', 'file_exists': 'OVERWRITE'},
                                               {'data_format': 'WHOLE_FILE', 'file_exists': 'TO_ERROR'}])
 def test_file_exists(sdc_builder, sdc_executor, ftp, stage_attributes):
