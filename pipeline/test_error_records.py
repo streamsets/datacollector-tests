@@ -39,7 +39,7 @@ def test_error_records_stop_pipeline_on_required_field(random_expression_pipelin
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.dump_log_on_error = False
-    with pytest.raises(sdc_api.RunError) as exception_info:
+    with pytest.raises((sdc_api.RunError, sdc_api.RunningError)) as exception_info:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.dump_log_on_error = True
 
