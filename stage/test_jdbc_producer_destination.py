@@ -398,7 +398,10 @@ def test_mssql_producer_bigdecimal(sdc_builder, sdc_executor, database):
         data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
         result.close()
 
-        assert len(data_from_database) == 1
+        history = sdc_executor.get_pipeline_history(pipeline)
+        output_record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+
+        assert len(data_from_database) == output_record_count
 
         assert math.isclose(float(str(records[0]['a_value'])), data_from_database[0][0], rel_tol=0.02)
         assert math.isclose(float(str(records[0]['b_value'])), data_from_database[0][1], rel_tol=0.02)
