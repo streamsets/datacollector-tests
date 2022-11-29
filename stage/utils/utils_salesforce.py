@@ -892,6 +892,15 @@ def assign_hard_delete(client, test_name):
     # Get Id of current user
     user_id = get_current_user_id(client)
 
+    # Before creating a Hard Delete permission set, check if one already exists
+    existent_ids = client.query('SELECT PermissionSetId FROM PermissionSetAssignment '
+                                'WHERE PermissionSet.Name LIKE \'Hard_Delete%\'')
+
+    if len(existent_ids['records']) > 0:
+        # User already has a leftover Hard Delete permission, so there is no need to create a new one.
+        # This permission should be deleted as usual at the end of the test, so using it helps clean up the account.
+        return existent_ids['records'][0]['PermissionSetId']
+
     # Create a permission set to allow hard delete
     result = client.PermissionSet.create({
         'Label': f'Hard Delete {test_name} {TEST_DATA["STR_15_RANDOM"]}',
