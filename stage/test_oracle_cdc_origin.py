@@ -5479,6 +5479,19 @@ def test_clob_write(sdc_builder, sdc_executor, database, method, clob_file_specs
     # Single quotation marks will be duplicated by the QL
     expected_value = "A" * n + "B" * n if method == "RAW" else content.replace("'", "''")
 
+    # FROM_FILE method test will temporarily be run for Oracle versions <12
+    connection = None
+    try:
+        connection = database.engine.connect()
+        db_version = _get_oracle_db_version(connection)[0]
+        if db_version < 12 and method == "FROM_FILE":
+            pytest.skip("Required CLOB is not available in the containers of Oracle versions <12")
+    except Exception as exception:
+        pytest.fail(f"Failed to check DB version: {exception}")
+    finally:
+        if connection is not None:
+            connection.close()
+
     with ExitStack() as on_exit:
         logger.info("Creating source table %s in %s database ...", source_table_name, database.type)
         source_table = sqlalchemy.Table(
