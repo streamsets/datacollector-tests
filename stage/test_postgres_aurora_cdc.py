@@ -267,8 +267,8 @@ def test_stop_start(sdc_builder,
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline for the first time ...')
-        sdc_executor.start_pipeline(pipeline)
         table.create(database.engine)
+        sdc_executor.start_pipeline(pipeline)
         with database.engine.connect().execution_options(autocommit=True) as connection:
             for row in sample_data[:30]:
                 connection.execute(table.insert(), row)
@@ -510,10 +510,9 @@ def test_aurora_postgres_cdc_client_basic(sdc_builder,
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
-    table = None
+    table = _create_table_in_database(table_name, database)
     try:
         sdc_executor.start_pipeline(pipeline)
-        table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
         expected_operations_data = {'insert': _insert(connection=connection, table=table),
                                     'update': _update(connection=connection, table=table),
@@ -623,10 +622,9 @@ def test_aurora_postgres_cdc_max_poll_attempts(sdc_builder,
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
-    table = None
+    table = _create_table_in_database(table_name, database)
     try:
         sdc_executor.start_pipeline(pipeline)
-        table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
         expected_operations_data = {'insert': _insert(connection=connection, table=table)}
         sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1, timeout_sec=300)
@@ -858,10 +856,9 @@ def test_aurora_postgres_cdc_client_remove_replication_slot(sdc_builder,
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
-    table = None
+    table = _create_table_in_database(table_name, database)
     try:
         sdc_executor.start_pipeline(pipeline)
-        table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
         expected_operations_data = {'insert': _insert(connection=connection, table=table),
                                     'update': _update(connection=connection, table=table),
@@ -942,10 +939,9 @@ def test_aurora_postgres_cdc_client_multiple_concurrent_operations(sdc_builder,
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
-    table = None
+    table = _create_table_in_database(table_name, database)
     try:
         pipeline_cmd = sdc_executor.start_pipeline(pipeline)
-        table = _create_table_in_database(table_name, database)
         connections = [database.engine.connect() for _ in range(threads_count)]
         expected = []
 
@@ -1209,7 +1205,7 @@ def test_aurora_postgres_cdc_wal_sender_status_metrics(sdc_builder,
     sdc_executor.add_pipeline(pipeline)
     table = _create_table_in_database(table_name, database)
     try:
-        start_command = sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
         expected_operations_data = {'insert': _insert(connection=connection, table=table)}
         time.sleep(1)
@@ -1285,7 +1281,7 @@ def test_aurora_postgres_cdc_queue_buffering_metrics(sdc_builder,
 
     tables = [_create_table_in_database(table_name, database) for table_name in table_names]
     try:
-        start_command = sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
         connection = database.engine.connect()
         expected_operations_data = []
         for i in range(9):
@@ -1375,10 +1371,9 @@ def test_aurora_postgres_cdc_ssl_enabled(sdc_builder,
     pipeline = pipeline_builder.build().configure_for_environment(database)
     sdc_executor.add_pipeline(pipeline)
 
-    table = None
+    table = _create_table_in_database(table_name, database)
     try:
         sdc_executor.start_pipeline(pipeline)
-        table = _create_table_in_database(table_name, database)
         connection = database.engine.connect()
         expected_operations_data = {'insert': _insert(connection=connection, table=table),
                                     'update': _update(connection=connection, table=table),
@@ -1491,9 +1486,6 @@ def test_aurora_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline)
-
-        transaction = database_connection.begin()
         database_connection.execute(f"""create table {table_name}
                                                      (my_bigint                   bigint,
                                                       my_bigserial                bigserial,
@@ -1533,6 +1525,10 @@ def test_aurora_postgres_cdc_client_primary_keys_metadata_headers(sdc_builder,
                                                       my_time_with_time_zone,
                                                       my_timestamp,
                                                       my_timestamp_with_time_zone))""")
+
+        sdc_executor.start_pipeline(pipeline)
+
+        transaction = database_connection.begin()
         database_connection.execute(f"""insert into {table_name}
                                                     (my_bigint,
                                                      my_bigserial,                                                                                                          
@@ -1656,8 +1652,6 @@ def test_aurora_postgres_cdc_client_primary_keys_headers(sdc_builder,
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline)
-
         database_transaction = database_connection.begin()
         logger.info('Creating source table %s in %s database ...', table_name, database.type)
         table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
@@ -1668,6 +1662,9 @@ def test_aurora_postgres_cdc_client_primary_keys_headers(sdc_builder,
                                  sqlalchemy.Column('ADDRESS', sqlalchemy.String(64), quote=False),
                                  quote=False)
         table.create(database.engine)
+
+        sdc_executor.start_pipeline(pipeline)
+
         database_transaction.commit()
 
         column_type = "'" + "Hobbit" + "'"
