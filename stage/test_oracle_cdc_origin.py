@@ -5335,7 +5335,7 @@ def test_blob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, 
 
 @sdc_min_version("5.2.0")
 @database("oracle")
-@pytest.mark.parametrize("max_lob_size", [0, 64, 128, 4096])
+@pytest.mark.parametrize("max_lob_size", [0, 128, 4096])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 def test_blob_max_size(sdc_builder, sdc_executor, database, max_lob_size, blob_file_specs, buffer_location):
     """Set different maximum lob sizes and verify that BLOBs are split into the appropriate records.
