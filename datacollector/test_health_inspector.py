@@ -127,6 +127,7 @@ def test_machine_category(sdc_executor, entry_name, severity, details):
         assert check['details'] is None
 
 
+@sdc_min_version('5.4.0')
 @pytest.mark.parametrize('entry_name,description', [
     ('Ping', 'Ping to www.streamsets.com'),
     ('Traceroute', 'Traceroute to www.streamsets.com'),
