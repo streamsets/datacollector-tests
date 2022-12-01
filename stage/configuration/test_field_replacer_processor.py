@@ -15,6 +15,8 @@ import json
 
 import pytest
 from streamsets.sdk.sdc_api import RunError
+from streamsets.testframework.utils import Version
+
 
 @pytest.mark.parametrize('stage_attributes', [{'field_does_not_exist': 'ADD_FIELD'},
                                               {'field_does_not_exist': 'CONTINUE'},
@@ -24,11 +26,33 @@ def test_field_does_not_exist(sdc_builder, sdc_executor, stage_attributes):
 
     DATA = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.'}
 
-    EXPECTED_OUTPUT_IF_ADD_FIELD = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.', 'age': '60'}
-    EXPECTED_OUTPUT_IF_CONTINUE = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.'}
-    EXPECTED_OUTPUT_IF_TO_ERROR = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.'}
+    EXPECTED_OUTPUT_WITH_FIELD_ADDED = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.', 'age': '60'}
+    EXPECTED_OUTPUT_WITH_FIELD_SKIPPED = {'name': 'Al Gore', 'birthplace': 'Washington, D.C.'}
+    TO_ERROR = False
+    EXPECTED_OUTPUT = {}
 
     field_does_not_exist = stage_attributes['field_does_not_exist']
+
+    # Updates in SDC 5.3.0 - ADD_FIELD option added, Change in CONTINUE option's results
+    if Version(sdc_executor.version) < Version('5.3.0'):
+        if field_does_not_exist == 'ADD_FIELD':
+            pytest.skip("ADD_FIELD option added in SDC 5.3.0.")
+        elif field_does_not_exist == 'CONTINUE':
+            # Expected Behaviour - Add Non-Existent Field
+            EXPECTED_OUTPUT = EXPECTED_OUTPUT_WITH_FIELD_ADDED
+        elif field_does_not_exist == 'TO_ERROR':
+            EXPECTED_OUTPUT = EXPECTED_OUTPUT_WITH_FIELD_SKIPPED
+            TO_ERROR = True
+    else:
+        if field_does_not_exist == 'ADD_FIELD':
+            # Expected Behaviour - Add Non-Existent Field
+            EXPECTED_OUTPUT = EXPECTED_OUTPUT_WITH_FIELD_ADDED
+        elif field_does_not_exist == 'CONTINUE':
+            # Expected Behaviour - Skip Non-Existent Field
+            EXPECTED_OUTPUT = EXPECTED_OUTPUT_WITH_FIELD_SKIPPED
+        elif field_does_not_exist == 'TO_ERROR':
+            EXPECTED_OUTPUT = EXPECTED_OUTPUT_WITH_FIELD_SKIPPED
+            TO_ERROR = True
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -50,15 +74,14 @@ def test_field_does_not_exist(sdc_builder, sdc_executor, stage_attributes):
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    if field_does_not_exist == 'ADD_FIELD':
-        record = wiretap.output_records[0]
-        assert record.field == EXPECTED_OUTPUT_IF_ADD_FIELD and not wiretap.error_records
-    elif field_does_not_exist == 'CONTINUE':
-        record = wiretap.output_records[0]
-        assert record.field == EXPECTED_OUTPUT_IF_CONTINUE and not wiretap.error_records
-    elif field_does_not_exist == 'TO_ERROR':
+    if TO_ERROR:
         record = wiretap.error_records[0]
-        assert record.field == EXPECTED_OUTPUT_IF_TO_ERROR and not wiretap.output_records
+        assert record.field == EXPECTED_OUTPUT and not wiretap.output_records, "Error record should be exactly " \
+                                                                               "the same as input data."
+    else:
+        record = wiretap.output_records[0]
+        assert record.field == EXPECTED_OUTPUT and not wiretap.error_records, "Output record should match the " \
+                                                                              "expected output."
 
 
 @pytest.mark.parametrize('stage_attributes', [{'on_record_error': 'DISCARD'},
