@@ -31,6 +31,21 @@ def _set_up_random(salesforce):
     set_up_random(salesforce)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _set_up_hard_delete_permission(salesforce):
+    # Having each test create and delete their own permissions file has various concurrency problems which make several
+    # tests fail each execution. Additionally, if the cleanup is not properly done the account fills up with leftovers
+    # and tests also start failing. Creating a single permissions file for the whole test file should alleviate both
+    # problems.
+    client = salesforce.client
+    permission_set_id = assign_hard_delete(client, 'test_salesforce_bulk2_lookup')
+
+    yield
+
+    # Delete the hard delete permission file to keep the test account clean
+    revoke_hard_delete(client, permission_set_id)
+
+
 @salesforce
 @sdc_min_version('5.0.0')
 @pytest.mark.parametrize('data_with_from_email', [False, True])  # Testing of SDC-7548
@@ -130,9 +145,6 @@ def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, sale
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_lookup_max_columns')
-
         logger.info('Adding a Contact into Salesforce ...')
 
         result = client.Contact.create({
@@ -165,8 +177,6 @@ def test_salesforce_lookup_processor_max_columns(sdc_builder, sdc_executor, sale
 
     finally:
         clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -212,9 +222,6 @@ def test_salesforce_lookup_processor_timeout(sdc_builder, sdc_executor, salesfor
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_lookup_timeout')
-
         logger.info('Adding a Contact into Salesforce ...')
 
         result = client.Contact.create({
@@ -247,5 +254,3 @@ def test_salesforce_lookup_processor_timeout(sdc_builder, sdc_executor, salesfor
 
     finally:
         clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)

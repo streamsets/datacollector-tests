@@ -894,7 +894,7 @@ def assign_hard_delete(client, test_name):
 
     # Before creating a Hard Delete permission set, check if one already exists
     existent_ids = client.query('SELECT PermissionSetId FROM PermissionSetAssignment '
-                                'WHERE PermissionSet.Name LIKE \'Hard_Delete%\'')
+                                f'WHERE PermissionSet.Name LIKE \'Hard_Delete_{test_name}%\'')
 
     if len(existent_ids['records']) > 0:
         # User already has a leftover Hard Delete permission, so there is no need to create a new one.
@@ -903,8 +903,8 @@ def assign_hard_delete(client, test_name):
 
     # Create a permission set to allow hard delete
     result = client.PermissionSet.create({
-        'Label': f'Hard Delete {test_name} {TEST_DATA["STR_15_RANDOM"]}',
-        'Name': f'Hard_Delete_{test_name}_{TEST_DATA["STR_15_RANDOM"]}',
+        'Label': f'Hard Delete {test_name} {get_random_string(string.ascii_lowercase, 15)}',
+        'Name': f'Hard_Delete_{test_name}_{get_random_string(string.ascii_lowercase, 15)}',
         'PermissionsBulkApiHardDelete': True
     })
     assert result['success']

@@ -39,6 +39,21 @@ def _set_up_random(salesforce):
     set_up_random(salesforce)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _set_up_hard_delete_permission(salesforce):
+    # Having each test create and delete their own permissions file has various concurrency problems which make several
+    # tests fail each execution. Additionally, if the cleanup is not properly done the account fills up with leftovers
+    # and tests also start failing. Creating a single permissions file for the whole test file should alleviate both
+    # problems.
+    client = salesforce.client
+    permission_set_id = assign_hard_delete(client, 'test_salesforce_bulk2_destination')
+
+    yield
+
+    # Delete the hard delete permission file to keep the test account clean
+    revoke_hard_delete(client, permission_set_id)
+
+
 @salesforce
 @sdc_min_version('5.0.0')
 def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
@@ -73,9 +88,6 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
 
     client = salesforce.client
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
-
         # Produce Salesforce records using pipeline.
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -96,8 +108,6 @@ def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):
 
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -138,9 +148,6 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
 
     client = salesforce.client
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination_default_mapping')
-
         # Produce Salesforce records using pipeline.
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -162,8 +169,6 @@ def test_salesforce_destination_default_mapping(sdc_builder, sdc_executor, sales
 
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -287,9 +292,6 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination_relationship')
-
         # Now the pipeline will make the contacts report to each other
         logger.info('Starting Salesforce destination pipeline and waiting for it to produce records ...')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -306,8 +308,6 @@ def test_salesforce_destination_relationship(sdc_builder, sdc_executor, salesfor
 
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -426,9 +426,6 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, de
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
-        if set_permission:
-            permission_set_id = assign_hard_delete(client, 'test_salesforce_destination_delete')
-
         logger.info('Starting Salesforce destination pipeline and waiting for it to delete records ...')
         if set_permission or delete_type == 'soft':
             # Start the pipeline as normal
@@ -479,7 +476,6 @@ def test_salesforce_destination_delete(sdc_builder, sdc_executor, salesforce, de
     finally:
         if set_permission:
             clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
-            revoke_hard_delete(client, permission_set_id)
         else:
             clean_up(sdc_executor, pipeline, client, inserted_ids)
 
@@ -522,9 +518,6 @@ def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, t
     read_ids = []
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination_timeout')
-
         sdc_executor.add_pipeline(pipeline)
 
         execution = sdc_executor.start_pipeline(pipeline)
@@ -549,8 +542,6 @@ def test_salesforce_destination_timeout(sdc_builder, sdc_executor, salesforce, t
             assert 'FORCE_63' in status.get('message')
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 @salesforce
 @sdc_min_version('5.2.0')
@@ -629,7 +620,6 @@ def test_salesforce_destination_error_records(sdc_builder, sdc_executor, salesfo
 
     client = salesforce.client
     try:
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         output_records = wiretap.output_records
@@ -648,7 +638,6 @@ def test_salesforce_destination_error_records(sdc_builder, sdc_executor, salesfo
         result = client.query(query)
         ids = get_ids(result['records'], 'Id')
         clean_up(sdc_executor, pipeline, client, ids, hard_delete=True)
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -766,7 +755,6 @@ def test_salesforce_destination_header_operation(sdc_builder,
 
     client = salesforce.client
     try:
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         output_records = wiretap.output_records
@@ -785,7 +773,6 @@ def test_salesforce_destination_header_operation(sdc_builder,
         result = client.query(query)
         ids = get_ids(result['records'], 'Id')
         clean_up(sdc_executor, pipeline, client, ids, hard_delete=True)
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -831,7 +818,6 @@ def test_salesforce_destination_special_characters(sdc_builder, sdc_executor, sa
 
     client = salesforce.client
     try:
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         output_records = wiretap.output_records
@@ -850,7 +836,6 @@ def test_salesforce_destination_special_characters(sdc_builder, sdc_executor, sa
         result = client.query(query)
         ids = get_ids(result['records'], 'Id')
         clean_up(sdc_executor, pipeline, client, ids, hard_delete=True)
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -897,7 +882,6 @@ def test_salesforce_destination_double_quotes(sdc_builder, sdc_executor, salesfo
 
     client = salesforce.client
     try:
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_destination')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         output_records = wiretap.output_records
@@ -916,4 +900,3 @@ def test_salesforce_destination_double_quotes(sdc_builder, sdc_executor, salesfo
         result = client.query(query)
         ids = get_ids(result['records'], 'Id')
         clean_up(sdc_executor, pipeline, client, ids, hard_delete=True)
-        revoke_hard_delete(client, permission_set_id)

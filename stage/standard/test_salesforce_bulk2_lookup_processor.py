@@ -31,9 +31,18 @@ def _set_up_environment(salesforce):
     client = salesforce.client
     create_custom_object(client)
 
+    # Having each test create and delete their own permissions file has various concurrency problems which make several
+    # tests fail each execution. Additionally, if the cleanup is not properly done the account fills up with leftovers
+    # and tests also start failing. Creating a single permissions file for the whole test file should alleviate both
+    # problems.
+    permission_set_id = assign_hard_delete(client, 'test_standard_salesforce_bulk2_lookup')
+
     yield
 
     delete_custom_object(client)
+
+    # Delete the hard delete permission file to keep the test account clean
+    revoke_hard_delete(client, permission_set_id)
 
 
 @pytest.fixture(autouse=True)
@@ -60,9 +69,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     record_ids = []
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_proc_data_types')
-
         logger.info('Adding two records into Salesforce ...')
         record = {
             'Name': '1',
@@ -135,8 +141,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
                                   type_data['type'])
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True, object_name=custom_object_name)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -187,9 +191,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
 
     record_ids = []
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_proc_multiple_batches')
-
         logger.info(f'Inserting data into Contacts ...')
         records = [{'FirstName': str(n), 'LastName': str(n * 10), 'Department': test_name} for n in range(1, 4)]
         record_ids = check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
@@ -222,8 +223,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
 
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce

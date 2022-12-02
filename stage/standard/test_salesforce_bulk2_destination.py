@@ -32,9 +32,18 @@ def _set_up_environment(salesforce):
     client = salesforce.client
     create_custom_object(client)
 
+    # Having each test create and delete their own permissions file has various concurrency problems which make several
+    # tests fail each execution. Additionally, if the cleanup is not properly done the account fills up with leftovers
+    # and tests also start failing. Creating a single permissions file for the whole test file should alleviate both
+    # problems.
+    permission_set_id = assign_hard_delete(client, 'test_standard_salesforce_bulk2_destination')
+
     yield
 
     delete_custom_object(client)
+
+    # Delete the hard delete permission file to keep the test account clean
+    revoke_hard_delete(client, permission_set_id)
 
 
 @pytest.fixture(autouse=True)
@@ -223,9 +232,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
     read_ids = []
     permission_set_id = None
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_data_types')
-
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
 
         query_str = f"SELECT Id, {custom_field_name} FROM {custom_object_name} WHERE TestName__c = '{test_name}'"
@@ -237,9 +243,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, input, converter_type
         assert compare_values(expected, result['records'][0][custom_field_name], database_type)
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True, object_name=custom_object_name)
-        # Delete the hard delete permission file to keep the test account clean
-        if permission_set_id:
-            revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -276,9 +279,6 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, field_na
     read_ids = []
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_dest_object_names')
-
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
 
@@ -290,8 +290,6 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, field_na
         assert result['records'][0][f'{custom_field_name}'] == 1
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True, object_name=custom_object_name)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -330,9 +328,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
     read_ids = []
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_dest_multiple_batches')
-
         # Wiretap generates one extra record per batch
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count((batches + 1) * batch_size,
                                                                                      timeout_sec=BULK_PIPELINE_TIMEOUT_SECONDS)
@@ -353,8 +348,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce):
         assert data == expected
     finally:
         clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce

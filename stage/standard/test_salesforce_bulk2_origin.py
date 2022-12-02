@@ -31,9 +31,18 @@ def _set_up_environment(salesforce):
     client = salesforce.client
     create_custom_object(client)
 
+    # Having each test create and delete their own permissions file has various concurrency problems which make several
+    # tests fail each execution. Additionally, if the cleanup is not properly done the account fills up with leftovers
+    # and tests also start failing. Creating a single permissions file for the whole test file should alleviate both
+    # problems.
+    permission_set_id = assign_hard_delete(client, 'test_standard_salesforce_bulk2_origin')
+
     yield
 
     delete_custom_object(client)
+
+    # Delete the hard delete permission file to keep the test account clean
+    revoke_hard_delete(client, permission_set_id)
 
 @pytest.fixture(autouse=True)
 def _set_up_random(salesforce):
@@ -75,9 +84,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
     record_ids = []
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_data_types')
-
         logger.info('Adding two records into Salesforce ...')
         record = {
             'Name': 1,
@@ -133,8 +139,6 @@ def test_data_types(sdc_builder, sdc_executor, salesforce, type_data):
 
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True, object_name=custom_object_name)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -167,9 +171,6 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, field_na
     record_id = None
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_object_names')
-
         logger.info('Adding a TestObject into Salesforce ...')
 
         object_type = getattr(client, custom_object_name)
@@ -200,8 +201,6 @@ def test_object_names(sdc_builder, sdc_executor, salesforce, test_name, field_na
 
     finally:
         clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True, object_name=custom_object_name)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -241,9 +240,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
     record_ids = []
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_multiple_batches')
-
         logger.info('Inserting data into Contacts...')
         records = [{'FirstName': str(n), 'LastName': test_name} for n in range(1, max_batch_size * batches + 1)]
         record_ids = check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
@@ -266,8 +262,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, salesforce, number_of_threa
 
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -300,9 +294,6 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
     record_ids = []
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_dataflow_events')
-
         logger.info('Adding a record into Salesforce ...')
         result = client.Contact.create({
             'FirstName': '1',
@@ -351,8 +342,6 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
         assert wiretap.output_records[0].header.values['sdc.event.type'] == 'no-more-data'
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce
@@ -391,9 +380,6 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
     record_ids = []
 
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'sale_bulk2_origin_resume_offset')
-
         for iteration in range(0, iterations):
             logger.info(f"Iteration: {iteration}")
             wiretap.reset()
@@ -418,5 +404,3 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
 
     finally:
         clean_up(sdc_executor, pipeline, client, record_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
