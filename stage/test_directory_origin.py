@@ -22,6 +22,7 @@ import tempfile
 import time
 import csv
 import textwrap
+from uuid import uuid4
 import re
 
 from streamsets.testframework.markers import sdc_min_version
@@ -342,39 +343,29 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
     This test has been written to avoid regression, especially of issues raised in ESC-371
     The pipelines look like:
 
-        Pipeline 1 (Local FS Target 1 in SDC UI): dev_data_generator >> local_fs_3 (in files_pipeline in the test)
-        Pipeline 2 (Local FS Target 2 in SDC UI): dev_data_generator_2 >> local_fs_4 (in files_pipeline_2 in the test)
+        Execute_shell 1 writes 100 files in tmp_directory
+        Execute_shell 2 writes 100 files in tmp_directory_2
         Pipeline 3 (Directory Origin in SDC UI): directory >> local_fs
         Pipeline 4 (tmp_directory to tmp_directory_2 in SDC UI): directory_2 >> local_fs_2
 
         The test works as follows:
-            1) Pipeline 1 writes files with prefix SDC1 to directory tmp_directory and then it is stopped
+            1) Execute_shell 1 writes files with prefix SDC1 to directory tmp_directory
             2) Pipeline 3 is started and directory origin read files from directory tmp_directory. Pipeline is NOT
                 stopped
-            3) Pipeline 2 writes files with prefix SDC2 to directory tmp_directory_2 and then it is stopped
+            3) Execute_shell 2 writes files with prefix SDC2 to directory tmp_directory_2
             4) Pipeline 4 reads files from directory tmp_directory_2 and writes them to directory tmp_directory, then
                 it is stopped
             5) Pipeline 3 will read files Pipeline 4 writes to directory tmp_directory
             6) Test checks that all the corresponding files from directory tmp_directory are read and then test ends
-
     """
+
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
     tmp_directory_2 = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
-    number_of_records = 50
-    max_records_in_file = 1
 
-    # run the 1st pipeline to create the directory and starting files
-    files_pipeline = get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, 1,
-                                                 batch_size=5)
-    sdc_executor.add_pipeline(files_pipeline)
-    sdc_executor.start_pipeline(files_pipeline)
-    sdc_executor.wait_for_pipeline_metric(files_pipeline, 'input_record_count', number_of_records, timeout_sec=120)
-    sdc_executor.stop_pipeline(files_pipeline)
-
-    # get how many records are sent
-    history = sdc_executor.get_pipeline_history(files_pipeline)
-    msgs_sent_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-    logger.info(f'First pipeline uploaded {msgs_sent_count} records')
+    sdc_executor.execute_shell(f'mkdir {tmp_directory}')
+    msgs_sent_count = 100
+    sdc_executor.execute_shell(
+        '\n'.join([f'echo {str(uuid4())} > {tmp_directory}/sdc1-{str(uuid4())}.txt' for _ in range(msgs_sent_count)]))
 
     # 2nd pipeline which reads the files using Directory Origin stage in whole data format
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -401,17 +392,11 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
     sdc_executor.start_pipeline(directory_pipeline)
     sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', msgs_sent_count, timeout_sec=120)
 
-    # Send another round of records while the reading pipeline is running
-    files_pipeline_2 = get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory_2, max_records_in_file, 2,
-                                                   batch_size=5)
-    sdc_executor.add_pipeline(files_pipeline_2)
-    sdc_executor.start_pipeline(files_pipeline_2)
-    sdc_executor.wait_for_pipeline_metric(files_pipeline_2, 'input_record_count', number_of_records, timeout_sec=120)
-    sdc_executor.stop_pipeline(files_pipeline_2)
-
-    history = sdc_executor.get_pipeline_history(files_pipeline_2)
-    msgs_sent_count_2 = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-    logger.info(f'Second pipeline uploaded {msgs_sent_count_2} records')
+    sdc_executor.execute_shell(f'mkdir {tmp_directory_2}')
+    msgs_sent_count_2 = 100
+    sdc_executor.execute_shell(
+        '\n'.join(
+            [f'echo {str(uuid4())} > {tmp_directory_2}/sdc2-{str(uuid4())}.txt' for _ in range(msgs_sent_count_2)]))
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory_2 = pipeline_builder.add_stage('Directory', type='origin')
