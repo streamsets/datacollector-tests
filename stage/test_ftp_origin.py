@@ -242,7 +242,7 @@ def test_ftp_origin_avro(sdc_builder, sdc_executor, ftp):
 
     # Create a data file using DataFileWriter
     with open(f'{TMP}{ftp_file_name}', "wb") as data_file:
-        writer = DataFileWriter(data_file, DatumWriter(), avro.schema.Parse(json.dumps(SCHEMA)))
+        writer = DataFileWriter(data_file, DatumWriter(), avro.schema.parse(json.dumps(SCHEMA)))
 
         # Write data using DatumWriter
         writer.append(msg)

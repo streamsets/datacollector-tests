@@ -305,9 +305,9 @@ def test_data_format_avro(sdc_builder, sdc_executor, gcp):
         blob = created_bucket.blob('gcs-test/sdc-test.avro')
 
         binary_stream = io.BytesIO()
-        datum_writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
+        datum_writer = avro.io.DatumWriter(avro.schema.parse(json.dumps(SCHEMA)))
         with avro.datafile.DataFileWriter(writer=binary_stream, datum_writer=datum_writer,
-                                          writer_schema=avro.schema.Parse(json.dumps(SCHEMA))) as data_file_writer:
+                                          writers_schema=avro.schema.parse(json.dumps(SCHEMA))) as data_file_writer:
             data_file_writer.append(DATA)
             data_file_writer.flush()
             raw_bytes = binary_stream.getvalue()

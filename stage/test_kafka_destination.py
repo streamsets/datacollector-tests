@@ -425,12 +425,12 @@ def validate_schema_was_registered(name, confluent):
 
     schema = registered[1]
     assert schema is not None
-    assert schema.avro_name == avro.schema.Name('Brno')
+    assert schema.fullname == avro.schema.Name('Brno').fullname
     assert len(schema.fields) == 2
     assert schema.fields[0].name == 'a'
-    assert schema.fields[0].type.name == 'int'
+    assert schema.fields[0].type.fullname == 'int'
     assert schema.fields[1].name == 'b'
-    assert schema.fields[1].type.name == 'string'
+    assert schema.fields[1].type.fullname == 'string'
 
 
 @cluster('cdh', 'kafka')
@@ -553,16 +553,10 @@ def test_kafka_destination_expression_partitioner_avro(sdc_builder, sdc_executor
     sdc_executor.add_pipeline(pipeline)
 
     # Create the avro schema and register it to confluent
-    field = avro.schema.Field(
-        type=avro.schema.PrimitiveSchema(avro.schema.STRING),
-        name='myLongField1',
-        index=0,
-        has_default=False
-    )
     schema = avro.schema.RecordSchema(
         name=f'value_{topic}',
         namespace=None,
-        fields=[field],
+        fields=[{"name": "myLongField1", "type": "string"}],
         names=avro.schema.Names()
     )
     confluent.schema_registry.register(f'{topic}-value', schema)

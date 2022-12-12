@@ -76,6 +76,6 @@ def enable_auto_update_schema(pulsar_admin_client):
 
 def json_to_avro(json_data, avro_schema):
     bytes_writer = io.BytesIO()
-    writer = avro.io.DatumWriter(avro.schema.Parse(avro_schema))
+    writer = avro.io.DatumWriter(avro.schema.parse(avro_schema))
     writer.write(json_data, avro.io.BinaryEncoder(bytes_writer))
     return bytes_writer.getvalue()

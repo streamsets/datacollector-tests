@@ -850,7 +850,7 @@ def produce_kafka_messages(topic, cluster, message, data_format):
         producer.send(topic, message, key=get_random_string(string.ascii_letters, 10).encode())
 
     elif data_format == 'AVRO':
-        writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
+        writer = avro.io.DatumWriter(avro.schema.parse(json.dumps(SCHEMA)))
         bytes_writer = io.BytesIO()
         encoder = avro.io.BinaryEncoder(bytes_writer)
         writer.write(message, encoder)
@@ -859,9 +859,9 @@ def produce_kafka_messages(topic, cluster, message, data_format):
 
     elif data_format == 'AVRO_WITHOUT_SCHEMA':
         bytes_writer = io.BytesIO()
-        datum_writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
+        datum_writer = avro.io.DatumWriter(avro.schema.parse(json.dumps(SCHEMA)))
         data_file_writer = DataFileWriter(writer=bytes_writer, datum_writer=datum_writer,
-                                          writer_schema=avro.schema.Parse(json.dumps(SCHEMA)))
+                                          writers_schema=avro.schema.parse(json.dumps(SCHEMA)))
         data_file_writer.append(message)
         data_file_writer.flush()
         raw_bytes = bytes_writer.getvalue()

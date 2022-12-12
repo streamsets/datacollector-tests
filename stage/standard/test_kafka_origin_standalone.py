@@ -265,7 +265,7 @@ def test_data_format_avro_with_schema(sdc_builder, sdc_executor, cluster):
 
     binary_stream = io.BytesIO()
     binary_encoder = avro.io.BinaryEncoder(binary_stream)
-    datum_writer = avro.io.DatumWriter(avro.schema.Parse(kafka_consumer.avro_schema))
+    datum_writer = avro.io.DatumWriter(avro.schema.parse(kafka_consumer.avro_schema))
     datum_writer.write(DATA, binary_encoder)
     producer = cluster.kafka.producer()
     producer.send(topic, binary_stream.getvalue())
@@ -300,9 +300,9 @@ def test_data_format_avro_without_schema(sdc_builder, sdc_executor, cluster):
     pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
     binary_stream = io.BytesIO()
-    datum_writer = avro.io.DatumWriter(avro.schema.Parse(json.dumps(SCHEMA)))
+    datum_writer = avro.io.DatumWriter(avro.schema.parse(json.dumps(SCHEMA)))
     with avro.datafile.DataFileWriter(writer=binary_stream, datum_writer=datum_writer,
-                                      writer_schema=avro.schema.Parse(json.dumps(SCHEMA))) as data_file_writer:
+                                      writers_schema=avro.schema.parse(json.dumps(SCHEMA))) as data_file_writer:
         data_file_writer.append(DATA)
         data_file_writer.flush()
         raw_bytes = binary_stream.getvalue()

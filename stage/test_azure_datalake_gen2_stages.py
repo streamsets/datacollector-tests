@@ -325,7 +325,7 @@ def test_datalake_origin_with_avro(sdc_builder, sdc_executor, azure):
     try:
         # Create Avro file (with temporary location)
         with open(f'{TMP}{file_name}', "wb") as data_file:
-            writer = DataFileWriter(data_file, DatumWriter(), avro.schema.Parse(json.dumps(SCHEMA)))
+            writer = DataFileWriter(data_file, DatumWriter(), avro.schema.parse(json.dumps(SCHEMA)))
 
             # Write data using DatumWriter
             writer.append(data)

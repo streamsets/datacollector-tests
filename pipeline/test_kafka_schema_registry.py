@@ -212,7 +212,7 @@ def test_multi_inline(sdc_builder, sdc_executor, topic, cluster, confluent):
 @sdc_min_version('3.1.0.0')
 def test_single_registry(sdc_builder, sdc_executor, topic, cluster, confluent):
     # We need to register the schema before running the pipelines
-    schema = avro.schema.Parse(AVRO_SCHEMA)
+    schema = avro.schema.parse(AVRO_SCHEMA)
     confluent.schema_registry.register(topic, schema)
 
     producer = producer_registry(sdc_builder, topic, cluster, confluent)
@@ -226,7 +226,7 @@ def test_single_registry(sdc_builder, sdc_executor, topic, cluster, confluent):
 @sdc_min_version('3.1.0.0')
 def test_multi_registry(sdc_builder, sdc_executor, topic, cluster, confluent):
     # We need to register the schema before running the pipelines
-    schema = avro.schema.Parse(AVRO_SCHEMA)
+    schema = avro.schema.parse(AVRO_SCHEMA)
     confluent.schema_registry.register(topic, schema)
 
     producer = producer_registry(sdc_builder, topic, cluster, confluent)
