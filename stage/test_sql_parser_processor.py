@@ -20,6 +20,7 @@ import pytest
 import sqlalchemy
 from sqlalchemy import text
 from streamsets.sdk import sdc_api
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 # SQL Parser processor was renamed in SDC-10697, so we need to reference it by name.
 SQL_PARSER_STAGE_NAME = 'com_streamsets_pipeline_stage_processor_parser_sql_SqlParserDProcessor'
+
+# Support for multithreading was added in COLLECTOR-1357, scheduled for version 5.4.0.
+MULTITHREADING_SUPPORT_VERSION = '5.4.0'
+THREAD_COUNT_PARAMETER = 'parsing_thread_pool_size'
 
 
 @pytest.fixture(scope='module')
@@ -38,11 +43,19 @@ def sdc_common_hook():
     return hook
 
 
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
 @pytest.mark.parametrize('case_sensitive', [True, False])
-def test_sql_parser_case_sensitive(sdc_builder, sdc_executor, case_sensitive):
+def test_sql_parser_case_sensitive(sdc_builder, sdc_executor, case_sensitive, multithreading, thread_count):
     """
     Check that SQL Parser Processor treats properly case-sensitiveness.
     """
+
+    multithreading_parameters = {}
+    if multithreading:
+        if Version(sdc_builder.version) < Version(MULTITHREADING_SUPPORT_VERSION):
+            pytest.skip(f"Multithreading is not supported for version {sdc_builder.version}")
+        else:
+            multithreading_parameters = {THREAD_COUNT_PARAMETER: thread_count}
 
     statement_sql = 'update "schema"."table" set a = 1, b = 2, A = 11, B = 21 where c = 3 and C = 31'
     statement_data = dict(statement=statement_sql)
@@ -61,7 +74,8 @@ def test_sql_parser_case_sensitive(sdc_builder, sdc_executor, case_sensitive):
                                         target_field='/columns',
                                         resolve_schema_from_db=False,
                                         case_sensitive_names=case_sensitive,
-                                        db_time_zone='UTC')
+                                        db_time_zone='UTC',
+                                        **multithreading_parameters)
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -94,10 +108,18 @@ def test_sql_parser_case_sensitive(sdc_builder, sdc_executor, case_sensitive):
             assert record.field['columns']['C'] == '3'
 
 
-def test_sql_parser_parse_exception(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
+def test_sql_parser_parse_exception(sdc_builder, sdc_executor, multithreading, thread_count):
     """
     Check that SQL Parser Processor treats wrong statements.
     """
+
+    multithreading_parameters = {}
+    if multithreading:
+        if Version(sdc_builder.version) < Version(MULTITHREADING_SUPPORT_VERSION):
+            pytest.skip(f"Multithreading is not supported for version {sdc_builder.version}")
+        else:
+            multithreading_parameters = {THREAD_COUNT_PARAMETER: thread_count}
 
     statement_sql = 'update "schema"."table" set a = 1, b = 2, A = 11, B ='
     statement_data = dict(statement=statement_sql)
@@ -116,7 +138,8 @@ def test_sql_parser_parse_exception(sdc_builder, sdc_executor):
                                         target_field='/columns',
                                         resolve_schema_from_db=False,
                                         case_sensitive_names=True,
-                                        db_time_zone='UTC')
+                                        db_time_zone='UTC',
+                                        **multithreading_parameters)
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -135,12 +158,26 @@ def test_sql_parser_parse_exception(sdc_builder, sdc_executor):
 
 
 @sdc_min_version('4.0.0')
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('pseudocolumns_in_header', [True, False])
-def test_sql_parser_pseudocolumns(sdc_builder, sdc_executor, case_sensitive, pseudocolumns_in_header):
+def test_sql_parser_pseudocolumns(sdc_builder,
+                                  sdc_executor,
+                                  case_sensitive,
+                                  pseudocolumns_in_header,
+                                  multithreading,
+                                  thread_count):
     """
     Check pseudocolumns processing.
     """
+
+    multithreading_parameters = {}
+    if multithreading:
+        if Version(sdc_builder.version) < Version(MULTITHREADING_SUPPORT_VERSION):
+            pytest.skip(f"Multithreading is not supported for version {sdc_builder.version}")
+        else:
+            multithreading_parameters = {THREAD_COUNT_PARAMETER: thread_count}
+
     statement_sql = 'update "schema"."table" set ' \
                     'A = 11, B = 12, C  = 13, ' \
                     'NEXTVAL = 1, nextval = 2, NeXtVaL = 3, ' \
@@ -165,7 +202,8 @@ def test_sql_parser_pseudocolumns(sdc_builder, sdc_executor, case_sensitive, pse
                                         resolve_schema_from_db=False,
                                         case_sensitive_names=case_sensitive,
                                         pseudocolumns_in_header=pseudocolumns_in_header,
-                                        db_time_zone='UTC')
+                                        db_time_zone='UTC',
+                                        **multithreading_parameters)
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -300,6 +338,7 @@ def test_sql_parser_pseudocolumns(sdc_builder, sdc_executor, case_sensitive, pse
 
 @sdc_min_version('4.1.0')
 @database('oracle')
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
 @pytest.mark.parametrize('add_unsupported_fields_to_records', [True, False])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('use_peg_parser', [True, False])
@@ -314,10 +353,19 @@ def test_sql_parser_dual_parser(sdc_builder,
                                 use_peg_parser,
                                 pseudocolumns_in_header,
                                 resolve_schema_from_db,
-                                include_nulls):
+                                include_nulls,
+                                multithreading,
+                                thread_count):
     """
     Check SQL Parser from CDC with several options and both SQL parsers available.
     """
+
+    multithreading_parameters = {}
+    if multithreading:
+        if Version(sdc_builder.version) < Version(MULTITHREADING_SUPPORT_VERSION):
+            pytest.skip(f"Multithreading is not supported for version {sdc_builder.version}")
+        else:
+            multithreading_parameters = {THREAD_COUNT_PARAMETER: thread_count}
 
     try:
 
@@ -433,7 +481,8 @@ def test_sql_parser_dual_parser(sdc_builder,
                                             resolve_schema_from_db=resolve_schema_from_db,
                                             include_nulls=include_nulls,
                                             case_sensitive_names=case_sensitive,
-                                            db_time_zone='UTC')
+                                            db_time_zone='UTC',
+                                            **multithreading_parameters)
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -650,22 +699,32 @@ def test_sql_parser_dual_parser(sdc_builder,
 
 @sdc_min_version('5.1.0')
 @database('oracle')
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
 @pytest.mark.parametrize('add_unsupported_fields_to_records', [True, False])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('use_peg_parser', [True, False])
 @pytest.mark.parametrize('pseudocolumns_in_header', [True, False])
 @pytest.mark.parametrize('include_nulls', [True, False])
 def test_sql_parser_processor_sorted_columns(sdc_builder,
-                                            sdc_executor,
-                                            database,
-                                            add_unsupported_fields_to_records,
-                                            case_sensitive,
-                                            use_peg_parser,
-                                            pseudocolumns_in_header,
-                                            include_nulls):
+                                             sdc_executor,
+                                             database,
+                                             add_unsupported_fields_to_records,
+                                             case_sensitive,
+                                             use_peg_parser,
+                                             pseudocolumns_in_header,
+                                             include_nulls,
+                                             multithreading,
+                                             thread_count):
     """
     Check that SQL Parser Processor from Oracle CDC produces columns in the database order.
     """
+
+    multithreading_parameters = {}
+    if multithreading:
+        if Version(sdc_builder.version) < Version(MULTITHREADING_SUPPORT_VERSION):
+            pytest.skip(f"Multithreading is not supported for version {sdc_builder.version}")
+        else:
+            multithreading_parameters = {THREAD_COUNT_PARAMETER: thread_count}
 
     try:
 
@@ -800,7 +859,8 @@ def test_sql_parser_processor_sorted_columns(sdc_builder,
                                             resolve_schema_from_db=True,
                                             include_nulls=include_nulls,
                                             case_sensitive_names=case_sensitive,
-                                            db_time_zone='UTC')
+                                            db_time_zone='UTC',
+                                            **multithreading_parameters)
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -842,15 +902,29 @@ def test_sql_parser_processor_sorted_columns(sdc_builder,
 
 @sdc_min_version('5.1.0')
 @database('oracle')
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
 @pytest.mark.parametrize('use_peg_parser', [True, False])
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
-def test_decimal_attributes(sdc_builder, sdc_executor, database, use_peg_parser, buffer_location):
+def test_decimal_attributes(sdc_builder,
+                            sdc_executor,
+                            database,
+                            use_peg_parser,
+                            buffer_location,
+                            multithreading,
+                            thread_count):
     """Validates that Field attributes for decimal types will get properly generated
     """
 
     db_engine = database.engine
     pipeline = None
     table = None
+
+    multithreading_parameters = {}
+    if multithreading:
+        if Version(sdc_builder.version) < Version(MULTITHREADING_SUPPORT_VERSION):
+            pytest.skip(f"Multithreading is not supported for version {sdc_builder.version}")
+        else:
+            multithreading_parameters = {THREAD_COUNT_PARAMETER: thread_count}
 
     try:
         table_name = get_random_string(string.ascii_uppercase, 9)
@@ -896,7 +970,8 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database, use_peg_parser,
                                             add_unsupported_fields_to_records=True,
                                             pseudocolumns_in_header=True,
                                             include_nulls=True,
-                                            case_sensitive_names=False)
+                                            case_sensitive_names=False,
+                                            **multithreading_parameters)
 
         wiretap = pipeline_builder.add_wiretap()
 
