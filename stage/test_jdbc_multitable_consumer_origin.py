@@ -1094,6 +1094,70 @@ def test_jdbc_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, data
         table1.drop(database.engine)
         table2.drop(database.engine)
 
+@sdc_min_version('5.4.0')
+@database
+@pytest.mark.parametrize('batch_strategy', ['SWITCH_TABLES', 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE'])
+@pytest.mark.parametrize('max_tables', [1, 2])
+def test_jdbc_multitable_consumer_max_tables(sdc_builder, sdc_executor, database, batch_strategy, max_tables):
+    """
+    Check if Jdbc Multi-table Origin validates properly when 'switch_tables' is set and there are more table to read from
+    than 'max_tables'.
+
+    jdbc_multitable_consumer >> trash
+    """
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_name1 = f'{src_table_prefix}_{get_random_string(string.ascii_lowercase, 20)}'
+    table_name2 = f'{src_table_prefix}_{get_random_string(string.ascii_lowercase, 20)}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'{src_table_prefix}%'}],
+                                            per_batch_strategy=batch_strategy,
+                                            maximum_number_of_tables=max_tables)
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    def get_table_schema(table_name):
+        return sqlalchemy.Table(
+            table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('field1', sqlalchemy.String(32))
+        )
+
+    table1 = get_table_schema(table_name1)
+    table2 = get_table_schema(table_name2)
+
+    try:
+        logger.info('Creating table %s in %s database ...', table_name1, database.type)
+        logger.info('Creating table %s in %s database ...', table_name2, database.type)
+        table1.create(database.engine)
+        table2.create(database.engine)
+
+        logger.info('Validating pipeline configuration...')
+        if batch_strategy == 'SWITCH_TABLES' and max_tables == 1:
+            with pytest.raises(ValidationError) as e:
+                sdc_executor.validate_pipeline(pipeline)
+            assert e is not None
+            assert e.value.issues is not None
+            assert e.value.issues['issueCount'] == 1
+            assert 'JDBC_205' in e.value.issues['stageIssues']['JDBCMultitableConsumer_01'][0]['message']
+            logger.info('Validation correctly failed for max tables == 1')
+        else:
+            sdc_executor.validate_pipeline(pipeline)
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name1, database.type)
+        logger.info('Dropping table %s in %s database...', table_name2, database.type)
+        table1.drop(database.engine)
+        table2.drop(database.engine)
+
 
 @database
 @pytest.mark.parametrize('test_data', [
