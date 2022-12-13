@@ -436,28 +436,6 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
     assert msgs_result_count == (msgs_sent_count + msgs_sent_count_2)
 
 
-def get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, index,
-                                delay_between_batches=10, batch_size = 100):
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
-    dev_data_generator.set_attributes(batch_size=batch_size,
-                                      delay_between_batches=delay_between_batches,
-                                      number_of_threads=no_of_threads)
-    dev_data_generator.fields_to_generate = [{'field': 'text', 'precision': 10, 'scale': 2, 'type': 'STRING'}]
-
-    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
-    local_fs.set_attributes(data_format='TEXT',
-                            directory_template=os.path.join(tmp_directory),
-                            files_prefix=f'sdc{index}-${{sdc:id()}}',
-                            files_suffix='txt',
-                            max_records_in_file=max_records_in_file)
-
-    dev_data_generator >> local_fs
-
-    files_pipeline = pipeline_builder.build(title=f'Local FS Target {index}')
-    return files_pipeline
-
-
 def test_directory_timestamp_ordering(sdc_builder, sdc_executor):
     """This test is mainly for SDC-10019.  The bug that was fixed there involves a race condition.  It only manifests if
     the files are ordered in increasing timestamp order and reverse alphabetical order AND the processing time required
@@ -1255,20 +1233,17 @@ def test_directory_origin_multiple_threads_timestamp_ordering(sdc_builder, sdc_e
 
     Pipeline looks like:
 
-    Dev Data Generator >> Local FS (files_pipeline in the test)
+    Shell executor that creates the files.
     Directory Origin >> Trash
 
     """
 
     tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
-    number_of_batches = 100
-    max_records_in_file = 10
 
-    # Start files_pipeline
-    files_pipeline = get_localfs_writer_pipeline(sdc_builder, no_of_threads, tmp_directory, max_records_in_file, 1,
-                                                 2000)
-    sdc_executor.add_pipeline(files_pipeline)
-    start_pipeline_command = sdc_executor.start_pipeline(files_pipeline)
+    sdc_executor.execute_shell(f'mkdir {tmp_directory}')
+    msgs_sent_count = 400
+    sdc_executor.execute_shell(
+        '\n'.join([f'echo {str(uuid4())} > {tmp_directory}/sdc1-{str(uuid4())}.txt' for _ in range(msgs_sent_count)]))
 
     # 2nd pipeline which reads the files using Directory Origin stage in whole data format
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -1288,30 +1263,21 @@ def test_directory_origin_multiple_threads_timestamp_ordering(sdc_builder, sdc_e
 
     directory >> trash
 
+    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
+    finisher.preconditions = ['${record:eventType() == \'no-more-data\'}']
+
+    directory >= finisher
+
     directory_pipeline = pipeline_builder.build(title='Directory Origin')
     sdc_executor.add_pipeline(directory_pipeline)
-    pipeline_start_command = sdc_executor.start_pipeline(directory_pipeline)
-
-    # Stop files_pipeline after number_of_batches or more
-    start_pipeline_command.wait_for_pipeline_batch_count(number_of_batches)
-    sdc_executor.stop_pipeline(files_pipeline)
-
-    # Get how many records are sent
-    file_pipeline_history = sdc_executor.get_pipeline_history(files_pipeline)
-    msgs_sent_count = file_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
-    # Compute the expected number of batches to process all files
-    no_of_input_files = (msgs_sent_count / max_records_in_file)
-
-    pipeline_start_command.wait_for_pipeline_batch_count(no_of_input_files)
+    sdc_executor.start_pipeline(directory_pipeline).wait_for_finished()
 
     assert 0 == len(sdc_executor.get_stage_errors(directory_pipeline, directory))
 
-    sdc_executor.stop_pipeline(directory_pipeline)
     directory_pipeline_history = sdc_executor.get_pipeline_history(directory_pipeline)
-    msgs_result_count = directory_pipeline_history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+    msgs_result_count = directory_pipeline_history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
 
-    assert msgs_result_count == no_of_input_files
+    assert msgs_result_count == msgs_sent_count
 
 
 # Test for SDC-13486
