@@ -179,15 +179,15 @@ def test_escape_character(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'data_format': 'WHOLE_FILE', 'file_exists': 'OVERWRITE'},
                                               {'data_format': 'WHOLE_FILE', 'file_exists': 'TO_ERROR'}])
 def test_file_exists(sdc_builder, sdc_executor, ftp, stage_attributes):
-    """Test FTP/FTPS destination. We first create a file in the SFTP/FTP/FTPS server. Then create a local file with the
-        same name but different content using shell and upload that file with SFTP/FTP/FTPS destination stage to see the
+    """Test FTP/FTPS destination. We first create a file in the FTP/FTPS server. Then create a local file with the
+        same name but different content using shell and upload that file with FTP/FTPS destination stage to see the
         response when the file already exists.
         The pipelines look like:
             directory >> sftp_ftp_client
     """
-    # Our destination SFTP/FTP/FTPS file name
+    # Our destination FTP/FTPS file name
     sftp_ftp_file_name = get_random_string(string.ascii_letters, 10)
-    # Local temporary directory where we will create a source file to be uploaded to SFTP/FTP/FTPS server
+    # Local temporary directory where we will create a source file to be uploaded to FTP/FTPS server
     local_tmp_directory = os.path.join('~', tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
     local_file_name = f'sdc-{get_random_string(string.ascii_letters, 5)}'
     raw_data = {'source_text': 'Hello World!',
@@ -208,9 +208,9 @@ def test_file_exists(sdc_builder, sdc_executor, ftp, stage_attributes):
                              file_name_pattern='sdc*',
                              files_directory=local_tmp_directory)
 
-    # Build SFTP/FTP/FTPS destination logic
+    # Build FTP/FTPS destination logic
     sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_destination_remote_RemoteUploadDTarget')
-    sftp_ftp_client.set_attributes(protocol='FTPS',
+    sftp_ftp_client.set_attributes(protocol=ftp.ftp_type,
                                    file_name_expression=sftp_ftp_file_name,
                                    data_format=stage_attributes['data_format'],
                                    file_exists=stage_attributes['file_exists'])
@@ -222,7 +222,7 @@ def test_file_exists(sdc_builder, sdc_executor, ftp, stage_attributes):
     sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
 
     try:
-        # Start SFTP/FTP/FTPS upload (destination) file pipeline and assert pipeline has processed expected number of files
+        # Start FTP/FTPS upload (destination) file pipeline and assert pipeline has processed expected number of files
         sdc_executor.start_pipeline(sftp_ftp_client_pipeline).wait_for_pipeline_batch_count(1, timeout_sec=60)
         sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
         history = sdc_executor.get_pipeline_history(sftp_ftp_client_pipeline)
@@ -233,13 +233,15 @@ def test_file_exists(sdc_builder, sdc_executor, ftp, stage_attributes):
             assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
             assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 0
             # Read FTP destination file and compare our source data to assert
-            assert ftp.get_string(os.path.join(ftp.path, sftp_ftp_file_name)).strip() == raw_data['replaced_text']
+            assert ftp.get_string(os.path.join(ftp.path, sftp_ftp_file_name)).strip() == raw_data['replaced_text'], \
+                "The file content in the FTP/FTPS server must be equal to the replaced text (changed)"
 
         elif stage_attributes['file_exists'] == 'TO_ERROR':
             assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 0
             assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 1
             # Read FTP destination file and compare our source data to assert
-            assert ftp.get_string(os.path.join(ftp.path, sftp_ftp_file_name)).strip() == raw_data['source_text']
+            assert ftp.get_string(os.path.join(ftp.path, sftp_ftp_file_name)).strip() == raw_data['source_text'], \
+                "The file content in the FTP/FTPS server must be equal to the source text (unchanged)"
 
     finally:
         # Delete the test FTP destination file we created
