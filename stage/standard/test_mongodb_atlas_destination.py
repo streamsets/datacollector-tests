@@ -25,7 +25,7 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 
 MONGODB_ATLAS_DESTINATION = 'com_streamsets_pipeline_stage_destination_mongodb_atlas_MongoDBAtlasDTarget'
-pytestmark = [mongodb, sdc_min_version('5.2.0')]
+pytestmark = [mongodb('atlas'), sdc_min_version('5.2.0')]
 
 # BSON types: https://www.mongodb.com/docs/manual/reference/bson-types/
 DATA_TYPES = [
