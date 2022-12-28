@@ -156,6 +156,11 @@ def test_jdbc_multitable_consumer_to_jdbc(sdc_builder, sdc_executor, database,
                                             minimum_idle_connections=threads,
                                             table_configs=table_configs)
 
+    if per_batch_strategy == 'SWITCH_TABLES' and Version(sdc_builder.version) >= Version('5.4.0'):
+        # set number of tables to -1 for unlimited no. of tables to read from if Per Batch Strategy is set to
+        # Switch Tables to avoid getting the error 'JDBC_205 - Reached maximum number of tables to read from'
+        jdbc_multitable_consumer.maximum_number_of_tables = -1
+
     if partitioning_mode == 'BEST_EFFORT' and Version(sdc_builder.version) < Version('3.0.0.0'):
         # pipeline upgraded across 3.0 boundary with partitioning; default resulting queriesPerSecond will be
         # unacceptably slow for partitioning, so set query interval to 0 instead
