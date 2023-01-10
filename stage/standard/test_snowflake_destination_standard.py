@@ -144,6 +144,38 @@ DATA_TYPES_SNOWFLAKE = [
     ('string', 'BYTE_ARRAY', 'NVARCHAR2(15)', '737472696e67'),
 ]
 
+AUTO_CREATED_DATA_TYPES_SNOWFLAKE = [
+    # Boolean
+    ('true', 'BOOLEAN', 'BOOLEAN', True),
+    # Byte
+    ('65', 'BYTE', 'NUMBER(38,0)', 65),
+    # Short
+    (120, 'SHORT', 'NUMBER(38,0)', 120),
+    # Integer
+    (120, 'INTEGER', 'NUMBER(38,0)', 120),
+    # Long
+    (120, 'LONG', 'NUMBER(38,0)', 120),
+    # Float
+    (120.0, 'FLOAT', 'FLOAT', 120.0),
+    # Double
+    (120.0, 'DOUBLE', 'FLOAT', 120.0),
+    # Decimal
+    (120.0, 'DECIMAL', 'NUMBER(38,0)', 120.0),
+    # Date
+    ('2020-01-01 10:00:00', 'DATE', 'DATE', datetime.date(2020, 1, 1)),
+    # Time
+    ('10:00:00', 'TIME', 'TIME(9)', datetime.time(10, 0, 0)),
+    # DateTime
+    ('2020-01-01 10:00:00', 'DATETIME', 'TIMESTAMP_NTZ(9)', datetime.datetime(2020, 1, 1, 10, 0)),
+    # Zoned DateTime
+    ("2020-01-01T10:00:00+00:00", 'ZONED_DATETIME', 'TIMESTAMP_TZ(9)',
+     datetime.datetime(2020, 1, 1, 10, 0, tzinfo=datetime.timezone.utc)),
+    # String
+    ('string', 'STRING', 'VARCHAR(16777216)', 'string'),
+    # Byte array
+    ('byte_array', 'BYTE_ARRAY', 'BINARY(8388608)', bytearray(b'byte_array'))
+]
+
 DATA_MAP_SNOWFLAKE = [
     ({"VALUE": {"fullDocument": {"uno": "dos"}}}, {'fullDocument': {'uno': 'dos'}}),
     ({"VALUE": {"fullDocument": ["uno", "dos"]}}, {'fullDocument': ['uno', 'dos']}),
@@ -177,7 +209,8 @@ def test_push_pull(sdc_builder, sdc_executor, snowflake):
 
 
 @snowflake
-@pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_SNOWFLAKE, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_SNOWFLAKE])
+@pytest.mark.parametrize('input, converter_type, database_type, expected', DATA_TYPES_SNOWFLAKE,
+                         ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_SNOWFLAKE])
 def test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, snowflake, keep_data):
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
     engine = snowflake.engine
@@ -187,7 +220,7 @@ def test_data_types(sdc_builder, sdc_executor, input, converter_type, database_t
     origin = builder.add_stage('Dev Raw Data Source')
     origin.data_format = 'JSON'
     origin.stop_after_first_batch = True
-    origin.raw_data = json.dumps({"VALUE": input })
+    origin.raw_data = json.dumps({"VALUE": input})
 
     converter = builder.add_stage('Field Type Converter')
     converter.conversion_method = 'BY_FIELD'
@@ -222,7 +255,7 @@ def test_data_types(sdc_builder, sdc_executor, input, converter_type, database_t
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
-                                         on_record_error = 'STOP_PIPELINE')
+                                         on_record_error='STOP_PIPELINE')
 
     origin >> converter >> snowflake_destination
     pipeline = builder.build().configure_for_environment(snowflake)
@@ -230,7 +263,7 @@ def test_data_types(sdc_builder, sdc_executor, input, converter_type, database_t
 
     try:
         # Create table
-        rs=engine.execute(f"""
+        rs = engine.execute(f"""
             CREATE TABLE {table_name} (
                 "VALUE" {database_type} NULL
             )
@@ -238,7 +271,7 @@ def test_data_types(sdc_builder, sdc_executor, input, converter_type, database_t
         logger.info("Create Table Result")
         logger.info(rs.fetchall())
 
-        # Run pipeline and read from Elasticsearch to assert
+        # Run pipeline and read from Snowflake to assert
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         if database_type == 'xmltype':
@@ -249,6 +282,87 @@ def test_data_types(sdc_builder, sdc_executor, input, converter_type, database_t
         rows = [row for row in rs]
         assert len(rows) == 1
         assert rows[0][0] == expected
+    finally:
+        if not keep_data:
+            try:
+                _delete_table(snowflake, table_name, stage_name)
+                _stop_pipeline(sdc_executor, pipeline)
+            except Exception as ex:
+                logger.error(ex)
+
+
+@snowflake
+@pytest.mark.parametrize('input, converter_type, database_type, expected', AUTO_CREATED_DATA_TYPES_SNOWFLAKE,
+                         ids=[f"{i[1]}-{i[2]}" for i in AUTO_CREATED_DATA_TYPES_SNOWFLAKE])
+def test_auto_create_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, snowflake,
+                                keep_data):
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
+    engine = snowflake.engine
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.stop_after_first_batch = True
+    origin.raw_data = json.dumps({"VALUE": input})
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.conversion_method = 'BY_FIELD'
+    converter.field_type_converter_configs = [{
+        'fields': ['/VALUE'],
+        'targetType': converter_type,
+        'dataLocale': 'en,US',
+        'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
+        'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
+        'scale': 2
+    }]
+    if converter_type == 'TIME':
+        converter.field_type_converter_configs = [{
+            'fields': ['/VALUE'],
+            'targetType': converter_type,
+            'dataLocale': 'en,US',
+            'dateFormat': 'OTHER',
+            'otherDateFormat': 'HH:MM:SS',
+            'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
+            'scale': 2
+        }]
+
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    snowflake_destination = builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         table_auto_create=True,
+                                         on_record_error='STOP_PIPELINE')
+
+    origin >> converter >> snowflake_destination
+    pipeline = builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Run pipeline and read from Snowflake to assert
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        if database_type == 'xmltype':
+            rs = engine.execute(f'select XMLTYPE.GETCLOBVAL("VALUE") from "{table_name}"')
+        else:
+            rs = engine.execute(f'select VALUE from "{table_name}"')
+
+        rows = [row for row in rs]
+        assert len(rows) == 1
+        assert rows[0][0] == expected
+
+        table_def = engine.execute(f'describe table "{table_name}"')
+        assert table_def.fetchall() == [
+            ('VALUE', database_type, 'COLUMN', 'Y', None, 'N', 'N', None, None, None, None)
+        ]
     finally:
         if not keep_data:
             try:
@@ -299,7 +413,7 @@ def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, e
         logger.info("Create Table Result")
         logger.info(rs.fetchall())
 
-        # Run pipeline and read from Elasticsearch to assert
+        # Run pipeline and read from Snowflake to assert
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         rs = engine.execute(f'select VALUE from "{table_name}"')
