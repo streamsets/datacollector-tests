@@ -1,12 +1,25 @@
-# Copyright (c) 2021 StreamSets Inc.
+# Copyright 2022 StreamSets Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import json
 import logging
 import os
 import pytest
 import string
 import tempfile
-from streamsets.testframework.markers import snowflake, sdc_enterprise_lib_min_version
+
+from streamsets.sdk.sdc_api import StartError
+from streamsets.testframework.markers import snowflake, sdc_enterprise_lib_min_version, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
@@ -227,6 +240,51 @@ def test_snowflake_executor_multiple_queries(sdc_builder, sdc_executor, snowflak
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
         snowflake.drop_entities(stage_name=stage_name)
+        engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
+        engine.dispose()
+
+
+@snowflake
+@sdc_min_version('5.4.0')
+@pytest.mark.parametrize('warehouse', ["", "STF_WH", "NOT_A_WH"])
+def test_snowflake_executor_warehouse(sdc_builder, sdc_executor, snowflake, warehouse):
+    """Verify that the Snowflake Executor uses the configured warehouse if available.
+    Similar to test_snowflake_executor_basic."""
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data='{"value": 42}')
+    dev_raw_data_source.stop_after_first_batch = True
+
+    snowflake_executor = pipeline_builder.add_stage('Snowflake', type='executor')
+
+    query_str = f"insert into STF_DB.STF_SCHEMA.{table_name} values ('test', 42)"
+    snowflake_executor.set_attributes(warehouse=warehouse, sql_queries=[query_str])
+
+    trash = pipeline_builder.add_stage('Trash')
+
+    dev_raw_data_source >> snowflake_executor
+    snowflake_executor >= trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    engine.execute(f"create or replace table STF_DB.STF_SCHEMA.{table_name} (id string, value int)")
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        result = engine.execute(f"Select $1, cast($2 as integer) from STF_DB.STF_SCHEMA.{table_name}")
+        data_from_database = result.fetchall()
+        result.close()
+        assert data_from_database == [('test', 42)]
+    except StartError as e:
+        if warehouse == "NOT_A_WH":
+            assert "SNOWFLAKE_16 - describe warehouse \"NOT_A_WH\" failed" in e.message
+            assert "Warehouse 'NOT_A_WH' does not exist or not authorized." in e.message
+    finally:
         engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
         engine.dispose()
 
