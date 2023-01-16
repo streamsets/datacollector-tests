@@ -386,6 +386,118 @@ def test_jdbc_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_m
         table.drop(database.engine)
 
 
+DATA_TYPES_MYSQL_ZONED_DATETIME = [
+    # Zoned Datetime
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(50)', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(50)', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'binary(20)', b'2020-01-01T10:00Z\x00\x00\x00',
+     b'2020-01-01T10:00Z\x00\x00\x00'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varbinary(50)', b'2020-01-01T10:00Z', b'2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'blob', b'2020-01-01T10:00Z', b'2020-01-01T10:00Z'),
+]
+@database('mysql')
+@pytest.mark.parametrize('input,converter_type,database_type,expected_legacy_format,expected_default_format',
+                         DATA_TYPES_MYSQL_ZONED_DATETIME, ids=[f"{i[1]}-{i[2]}" for i in
+                                                               DATA_TYPES_MYSQL_ZONED_DATETIME])
+@pytest.mark.parametrize('use_legacy_zoned_datetime_format', [True, False, 'randomString'])
+def test_jdbc_tee_processor_mysql_use_legacy_zoned_datetime_format_property(sdc_builder, sdc_executor, input,
+                                                                            converter_type, database_type,
+                                                                            expected_legacy_format,
+                                                                            expected_default_format, database,
+                                                                            keep_data,
+                                                                            use_legacy_zoned_datetime_format):
+    """JDBC Tee processor MySQL
+        In the pipeline add a new custom property on the JDBC Tee processor ("useLegacyZonedDatetime") to show the legacy
+        zoned DateTime format. The pipeline looks like this:
+            origin >> converter >> tee >> wiretap
+    """
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    connection.execute("SET sql_mode=ANSI_QUOTES")
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.stop_after_first_batch = True
+    origin.raw_data = json.dumps({"value": input})
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.conversion_method = 'BY_FIELD'
+    converter.field_type_converter_configs = [{
+        'fields': ['/value'],
+        'targetType': converter_type,
+        'dataLocale': 'en,US',
+        'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
+        'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
+        'scale': 2
+    }]
+
+    tee = builder.add_stage('JDBC Tee')
+    tee.table_name = table_name
+    tee.default_operation = 'INSERT'
+    tee.field_to_column_mapping = []
+    tee.on_record_error = 'STOP_PIPELINE'
+    tee.generated_column_mappings = [{
+        'dataType': 'USE_COLUMN_TYPE',
+        'columnName': 'id',
+        'field': '/id'
+    }]
+    wiretap = builder.add_wiretap()
+
+    properties = [{'key': 'useLegacyZonedDatetime', 'value': str(use_legacy_zoned_datetime_format)}]
+    attributes = {'additional_jdbc_configuration_properties': properties}
+    tee.set_attributes(**attributes)
+
+    origin >> converter >> tee >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(database)
+    # Workarounds for STE,STF specific stuff
+
+    tee.init_query = "SET sql_mode=ANSI_QUOTES"
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create table
+        connection.execute(f"""
+                CREATE TABLE "{table_name}"(
+                    "id" int primary key auto_increment,
+                    "value" {database_type} NULL
+                )
+            """)
+
+        # Run pipeline and read from Elasticsearch to assert
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify returned records
+        records = wiretap.output_records
+        assert len(records) == 1
+        assert records[0].field['id'] == 1
+
+        rs = connection.execute(f'select "id", "value" from "{table_name}"')
+        rows = [row for row in rs]
+        assert len(rows) == 1
+
+        # Generated key is "1"
+        assert rows[0][0] == 1
+
+        # And assert actual value - few corrections for "problematical" types
+        actual = rows[0][1]
+        if type(actual) == memoryview:
+            actual = actual.tobytes()
+
+        expected = expected_legacy_format if use_legacy_zoned_datetime_format is True else expected_default_format
+        assert actual == expected
+
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
+            connection.execute(f'DROP TABLE "{table_name}"')
+
+
 @database
 def test_jdbc_query_executor(sdc_builder, sdc_executor, database):
     """Simple JDBC Query Executor test.

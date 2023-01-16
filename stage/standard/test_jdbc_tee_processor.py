@@ -24,7 +24,6 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-
 DATA_TYPES_MARIADB = [
     # Boolean
     ('true', 'BOOLEAN', 'char(1)', '1'),
@@ -179,7 +178,6 @@ def test_data_types_mariadb(sdc_builder, sdc_executor, input, converter_type, da
     _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
 
 
-
 DATA_TYPES_MYSQL = [
     # Boolean
     ('true', 'BOOLEAN', 'char(1)', 't'),
@@ -314,12 +312,12 @@ DATA_TYPES_MYSQL = [
     ('2020-01-01 10:00:00', 'DATETIME', 'varbinary(50)', b'Wed Jan 01 10:00:00 GMT 2020'),
     ('2020-01-01 10:00:00', 'DATETIME', 'text', 'Wed Jan 01 10:00:00 GMT 2020'),
     ('2020-01-01 10:00:00', 'DATETIME', 'blob', b'Wed Jan 01 10:00:00 GMT 2020'),
-    # Zoned DateTime
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(50)', '2020-01-01T10:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(50)', '2020-01-01T10:00Z'),
+    # Zoned Datetime
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(50)', '2020-01-01 10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(50)', '2020-01-01 10:00:00Z'),
     ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'binary(20)', b'2020-01-01T10:00Z\x00\x00\x00'),
     ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varbinary(50)', b'2020-01-01T10:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01 10:00:00Z'),
     ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'blob', b'2020-01-01T10:00Z'),
     # String
     ('120', 'STRING', 'tinyint', 120),
@@ -356,7 +354,6 @@ DATA_TYPES_MYSQL = [
 def test_data_types_mysql(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     if isinstance(database, MemSqlDatabase):
         pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
-
     _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
 
 
@@ -492,7 +489,7 @@ def _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_
     origin = builder.add_stage('Dev Raw Data Source')
     origin.data_format = 'JSON'
     origin.stop_after_first_batch = True
-    origin.raw_data = json.dumps({"value": input })
+    origin.raw_data = json.dumps({"value": input})
 
     converter = builder.add_stage('Field Type Converter')
     converter.conversion_method = 'BY_FIELD'
@@ -514,8 +511,7 @@ def _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_
         'dataType': 'USE_COLUMN_TYPE',
         'columnName': 'id',
         'field': '/id'
-      }]
-
+    }]
     wiretap = builder.add_wiretap()
 
     origin >> converter >> tee >> wiretap.destination
@@ -650,7 +646,7 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, column_n
         'dataType': 'USE_COLUMN_TYPE',
         'columnName': 'id',
         'field': '/id'
-      }]
+    }]
 
     wiretap = builder.add_wiretap()
 
@@ -736,7 +732,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, da
         'dataType': 'USE_COLUMN_TYPE',
         'columnName': 'id',
         'field': '/id'
-      }]
+    }]
 
     wiretap = builder.add_wiretap()
 
@@ -782,7 +778,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, da
         result = connection.execute(f'select "id", "seq" from "{table_name}"')
         data = sorted([(row[0], row[1]) for row in result.fetchall()])
         result.close()
-        assert data == [(i+1, i) for i in range(0, record_count)]
+        assert data == [(i + 1, i) for i in range(0, record_count)]
 
         records = wiretap.output_records
         assert len(records) == record_count
@@ -791,7 +787,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, da
             return r.field['id'].value
         records.sort(key=sortFunc)
 
-        assert [(r.field['id'], r.field['seq']) for r in records] == [(i+1, i) for i in range(0, record_count)]
+        assert [(r.field['id'], r.field['seq']) for r in records] == [(i + 1, i) for i in range(0, record_count)]
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)

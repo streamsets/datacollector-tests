@@ -1474,3 +1474,101 @@ def test_jdbc_producer_primary_key_header_update(sdc_builder, sdc_executor, data
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         table.drop(database.engine)
+
+
+DATA_TYPES_MYSQL_ZONED_DATETIME = [
+    # Zoned Datetime
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(50)', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(50)', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'binary(20)', b'2020-01-01T10:00Z\x00\x00\x00',
+     b'2020-01-01T10:00Z\x00\x00\x00'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varbinary(50)', b'2020-01-01T10:00Z', b'2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'blob', b'2020-01-01T10:00Z', b'2020-01-01T10:00Z'),
+]
+@database('mysql')
+@pytest.mark.parametrize('input,converter_type,database_type,expected_legacy_format, expected_default_format',
+                         DATA_TYPES_MYSQL_ZONED_DATETIME, ids=[f"{i[1]}-{i[2]}" for i in
+                                                               DATA_TYPES_MYSQL_ZONED_DATETIME])
+@pytest.mark.parametrize('use_legacy_zoned_datetime_format', [True, False, 'randomString'])
+def test_jdbc_producer_mysql_use_legacy_zoned_datetime_format_property(sdc_builder, sdc_executor, input,
+                                                                       converter_type, database_type,
+                                                                       expected_legacy_format,
+                                                                       expected_default_format, database, keep_data,
+                                                                       use_legacy_zoned_datetime_format):
+
+    """JDBC producer MySQL
+        In the pipeline add a new custom property on the JDBC producer ("useLegacyZonedDatetime") to show the legacy
+        zoned DateTime format. The pipeline looks like this:
+            origin >> converter >> target
+    """
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    connection = database.engine.connect()
+    connection.execute("SET sql_mode=ANSI_QUOTES")
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.stop_after_first_batch = True
+    origin.raw_data = json.dumps({"value": input })
+
+    converter = builder.add_stage('Field Type Converter')
+    converter.conversion_method = 'BY_FIELD'
+    converter.field_type_converter_configs = [{
+        'fields': ['/value'],
+        'targetType': converter_type,
+        'dataLocale': 'en,US',
+        'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
+        'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
+        'scale': 2
+    }]
+
+    target = builder.add_stage('JDBC Producer')
+    target.table_name = table_name
+    target.enclose_object_names = True
+    target.field_to_column_mapping = []
+    target.on_record_error = 'STOP_PIPELINE'
+
+    properties = [{'key': 'useLegacyZonedDatetime', 'value': str(use_legacy_zoned_datetime_format)}]
+    attributes = {'additional_jdbc_configuration_properties': properties}
+    target.set_attributes(**attributes)
+
+    origin >> converter >> target
+
+    pipeline = builder.build().configure_for_environment(database)
+    # Workarounds for STE,STF specific stuff
+    target.table_name = table_name
+    target.init_query = "SET sql_mode=ANSI_QUOTES"
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create table
+        connection.execute(f"""
+                CREATE TABLE "{table_name}"(
+                    "value" {database_type} NULL
+                )
+            """)
+
+        # Run pipeline and read from Elasticsearch to assert
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        rs = connection.execute(f'select "value" from "{table_name}"')
+
+        rows = [row for row in rs]
+        assert len(rows) == 1
+        actual = rows[0][0]
+
+        # Coercions that can't be directly asserted
+        if type(actual) == memoryview:
+            actual = actual.tobytes()
+
+        expected = expected_legacy_format if use_legacy_zoned_datetime_format is True else expected_default_format
+        assert actual == expected
+
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
+            connection.execute(f'DROP TABLE "{table_name}"')
