@@ -153,7 +153,7 @@ def _delete(connection, table, delete_rows=rows_to_delete):
 def _get_wal_sender_status(connection):
     results = connection.execute('select * from pg_stat_replication')
     wal_sender_statuses = [{c: v for c, v in r.items()} for r in results]
-    return wal_sender_statuses[0] if len(wal_sender_statuses) > 0 else None
+    return wal_sender_statuses if len(wal_sender_statuses) > 0 else None
 
 
 def transaction_data_to_operation_data(transaction_data, wal2json_format, record_contents):
@@ -1216,14 +1216,16 @@ def test_aurora_postgres_cdc_wal_sender_status_metrics(sdc_builder,
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=300)
         else:
             sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, timeout_sec=300)
-        wal_sender_status_from_db = _get_wal_sender_status(connection)
-        assert wal_sender_status_from_db is not None
+        all_wal_sender_status_from_db = _get_wal_sender_status(connection)
+        assert all_wal_sender_status_from_db is not None
         sdc_executor.stop_pipeline(pipeline)
 
         history = sdc_executor.get_pipeline_history(pipeline)
         wal_sender_status_from_metrics = \
             history.latest.metrics.gauge('custom.AuroraPostgreSQLCDCClient_01.Wal Sender Status.0.gauge').value
         assert all([k not in wal_sender_status_from_metrics for k in wal_sender_columns_blacklist])
+        wal_sender_status_from_db = [status for status in all_wal_sender_status_from_db
+                                     if str(status.get('pid')) == wal_sender_status_from_metrics.get('pid')][0]
         assert ({k: str(v) for k, v in wal_sender_status_from_metrics.items() if k in wal_sender_columns_whitelist} ==
                 {k: str(v) for k, v in wal_sender_status_from_db.items() if k in wal_sender_columns_whitelist})
     finally:
