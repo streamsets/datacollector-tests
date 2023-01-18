@@ -3174,6 +3174,77 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
         table.drop(engine)
         engine.dispose()
 
+def start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
+    with pytest.raises(Exception):
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.stop_pipeline()
+    response = sdc_executor.get_pipeline_status(pipeline).response.json()
+    status = response.get('status')
+    logger.info('Pipeline status %s ...', status)
+    assert 'RUNNING_ERROR' == status, response
+
+def start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert 2 == len(wiretap.error_records)
+
+@snowflake
+@sdc_min_version('3.7.0')
+@sdc_enterprise_lib_min_version({'snowflake': '1.13.0'})
+@pytest.mark.parametrize("on_error_record, start_and_check",
+                         [("STOP_PIPELINE", start_pipeline_and_check_stopped),
+                          ("TO_ERROR"     , start_pipeline_and_check_to_error)])
+def test_snowflake_write_records_on_error(sdc_builder, sdc_executor, snowflake,
+                                          on_error_record, start_and_check):
+    """
+    Write DB with malformed records and check pipeline behaves as set in 'on_record_error'
+    dev_raw_data_source >> Snowflake
+    """
+
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_location = "INTERNAL"
+
+    # Create a table and stage in Snowflake.
+    table = snowflake.create_table(table_name.lower())
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    raw_data = '\n'.join(json.dumps(row) for row in ROWS_IN_DATABASE_WITH_ERROR)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(stage_location=stage_location,
+                                         purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         on_record_error=on_error_record,
+                                         table=table_name)
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    # Build pipeline.
+    dev_raw_data_source >> [snowflake_destination, wiretap.destination]
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        start_and_check(sdc_executor, pipeline, wiretap)
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        engine = snowflake.engine
+        table.drop(engine)
+        engine.dispose()
+
 
 def wait_for_snowpipe_data_ingestion(query_function, max_attempts=5):
     attempts = 0
