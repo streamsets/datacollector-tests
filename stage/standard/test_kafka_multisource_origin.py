@@ -20,9 +20,11 @@ import os
 import json
 import string
 import textwrap
+import time
 
 import avro, avro.datafile
 import pytest
+from streamsets.sdk.sdc_api import RunError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments import cloudera
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster
@@ -663,6 +665,39 @@ def test_data_format_xml(sdc_builder, sdc_executor, cluster):
                                                                               'preserve_root_element',
                                                                               False)
                                                                    else [EXPECTED_OUTPUT_ROOT_ELEMENT_DISCARDED])
+
+@sdc_min_version('5.4.0')
+@cluster('cdh', 'kafka')
+def test_data_format_mismatch(sdc_builder, sdc_executor, cluster):
+    """Kafka Consumer parses TEXT message expecting JSON data in a single record and does not fail (ESC-1957)."""
+
+    message = "This is not a JSON message"
+    topic = get_random_string()
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = _get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, [topic])
+    kafka_consumer.data_format = 'JSON'
+    kafka_consumer.produce_single_record = True
+
+    wiretap = pipeline_builder.add_wiretap()
+    kafka_consumer >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
+
+    producer = cluster.kafka.producer()
+    producer.send(topic, message.encode())
+    producer.flush()
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+    except RunError as e:
+        assert False, f'Error when producing single record from an invalid message: {e}'
+
+    sdc_executor.stop_pipeline(pipeline)
+    assert 1 == len(wiretap.error_records)
+    error_message = wiretap.error_records[0].header['errorMessage']
+    assert "KAFKA_37" in error_message, f'Expected error not found in {error_message}'
 
 
 def _get_kafka_multitopic_consumer_stage(pipeline_builder, cluster, topic_list):
