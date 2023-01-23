@@ -52,6 +52,19 @@ ROWS_IN_DATABASE = [
      "publisher": "McClelland & Stewart"}
 ]
 
+ROWS_IN_DATABASE_WITH_ERROR = [
+    {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future",
+     "author": "Ashlee Vance",
+     "genre": "Biography",
+     "publisher": "HarperCollins Publishers"},
+    {"foo": "bar"},
+    {"foo": "bar"},
+    {"title": "The Spy and the Traitor: The Greatest Espionage Story of the Cold War",
+     "author": "Ben Macintyre",
+     "genre": "Biography True crime",
+     "publisher": "McClelland & Stewart"}
+]
+
 NESTED_MAP_TO_LOAD = [
     {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future", "publishers":
         {"publisher1": "HarperCollins", "publisher2": "JB"}}
@@ -1638,6 +1651,78 @@ def test_nested_fields_data_drift(sdc_builder, sdc_executor, gcp):
 
         assert len(data_from_bigquery) == len(expected_data)
         assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+def start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
+    with pytest.raises(Exception):
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.stop_pipeline()
+    response = sdc_executor.get_pipeline_status(pipeline).response.json()
+    status = response.get('status')
+    logger.info('Pipeline status %s ...', status)
+    assert 'RUN_ERROR' == status, response
+
+def start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert 2 == len(wiretap.error_records)
+
+@sdc_min_version('5.4.0')
+@pytest.mark.parametrize("on_error_record, start_and_check",
+                         [("STOP_PIPELINE", start_pipeline_and_check_stopped),
+                          ("TO_ERROR"     , start_pipeline_and_check_to_error)])
+def test_gcp_write_records_on_error(sdc_builder, sdc_executor, gcp,
+                                    on_error_record, start_and_check):
+    """
+    Write DB with malformed records and check pipeline behaves as set in 'on_record_error'
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE_WITH_ERROR)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            staging_file_format='CSV',
+                            enable_data_drift=False,
+                            create_table=False,
+                            on_record_error=on_error_record,
+                            purge_stage_file_after_ingesting=True)
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> [bigquery, wiretap.destination]
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+        logger.info('Creating dataset %s and table %s using Google BigQuery client ...', dataset_name, table_name)
+        bigquery_client.create_dataset(dataset_ref)
+        bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=SCHEMA))
+
+        start_and_check(sdc_executor, pipeline, wiretap)
     finally:
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
