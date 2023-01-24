@@ -48,7 +48,7 @@ DATA_TYPES = [
 ]
 
 
-@mongodb
+@mongodb('atlas')
 @pytest.mark.parametrize('input,converter_type,bson_type,expected', DATA_TYPES,
                          ids=[f'{i[1]}_{i[0]}' for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, bson_type, expected):
@@ -128,7 +128,7 @@ INDEX_DATABASE = [
 ]
 
 
-@mongodb
+@mongodb('atlas')
 @pytest.mark.parametrize('database_name_category,index', INDEX_DATABASE, ids=[i[0] for i in INDEX_DATABASE])
 def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name_category, index):
     """
@@ -192,7 +192,7 @@ INDEX_COLLECTION = [
 ]
 
 
-@mongodb
+@mongodb('atlas')
 @pytest.mark.parametrize('collection_name_category,index', INDEX_COLLECTION, ids=[i[0] for i in INDEX_COLLECTION])
 def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_name_category, index):
     """
@@ -245,12 +245,12 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
         mongodb.engine.drop_database(mongodb_atlas_destination.database)
 
 
-@mongodb
+@mongodb('atlas')
 def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
     pytest.skip("No events supported in MongoDB Atlas Destination at this time.")
 
 
-@mongodb
+@mongodb('atlas')
 def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
     """
     Test for MongoDB Atlas target stage. We verify that the destination work fine with more than one batch.
@@ -302,12 +302,12 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(mongodb_atlas_destination.database)
 
 
-@mongodb
+@mongodb('atlas')
 def test_data_format(sdc_builder, sdc_executor, mongodb, keep_data):
     pytest.skip("MongoDB Atlas Destination doesn't deal with data formats")
 
 
-@mongodb
+@mongodb('atlas')
 def test_push_pull(sdc_builder, sdc_executor, mongodb):
     pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is part of "
                 "test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")

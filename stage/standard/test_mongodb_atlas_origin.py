@@ -44,7 +44,7 @@ DATA_TYPES = [
 ]
 
 
-@mongodb
+@mongodb('atlas')
 @pytest.mark.parametrize('input,bson_type,expected', DATA_TYPES,
                          ids=[f'{i[1]}_{i[0]}' for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, mongodb, input, bson_type, expected):
@@ -118,7 +118,7 @@ INDEX_DATABASE = [
 ]
 
 
-@mongodb
+@mongodb('atlas')
 @pytest.mark.parametrize('database_name_category,index', INDEX_DATABASE, ids=[i[0] for i in INDEX_DATABASE])
 def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name_category, index):
     """
@@ -184,7 +184,7 @@ INDEX_COLLECTION = [
 ]
 
 
-@mongodb
+@mongodb('atlas')
 @pytest.mark.parametrize('collection_name_category,index', INDEX_COLLECTION, ids=[i[0] for i in INDEX_COLLECTION])
 def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_name_category, index):
     """
@@ -240,7 +240,7 @@ NO_EVENTS_DOCS = [
 ]
 
 
-@mongodb
+@mongodb('atlas')
 def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
     """
     Test that an empty origin linked to a Pipeline Finisher Executor which ends the pipeline when
@@ -316,7 +316,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
             raise AssertionError('Pipeline was still running after 60s')
 
 
-@mongodb
+@mongodb('atlas')
 @pytest.mark.parametrize('batch_size', [50, 5, 3])
 def test_multiple_batches(sdc_builder, sdc_executor, mongodb, batch_size):
     """
@@ -378,12 +378,12 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb, batch_size):
         mongodb.engine.drop_database(mongodb_atlas_origin.database)
 
 
-@mongodb
+@mongodb('atlas')
 def test_data_format(sdc_builder, sdc_executor, mongodb, keep_data):
     pytest.skip("MongoDB Atlas Origin doesn't deal with data formats")
 
 
-@mongodb
+@mongodb('atlas')
 def test_resume_offset(sdc_builder, sdc_executor, mongodb):
     """
     Test that we can start our pipeline multiple times without reading any duplicated record neither missing them.

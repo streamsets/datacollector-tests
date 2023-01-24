@@ -58,7 +58,7 @@ DATA_TYPES = [
 ]
 
 
-@mongodb
+@mongodb('legacy')
 @pytest.mark.parametrize('input,converter_type,improve_types,expected', DATA_TYPES,
                          ids=[f'{i[2]}_{i[1]}' for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, mongodb, input, converter_type, improve_types, expected):
@@ -145,7 +145,7 @@ INDEX_DATABASE = [
 ]
 
 
-@mongodb
+@mongodb('legacy')
 @pytest.mark.parametrize('database_name_category,index', INDEX_DATABASE, ids=[i[0] for i in INDEX_DATABASE])
 def test_object_names_database(sdc_builder, sdc_executor, mongodb, database_name_category, index):
     """
@@ -208,7 +208,7 @@ INDEX_COLLECTION = [
 ]
 
 
-@mongodb
+@mongodb('legacy')
 @pytest.mark.parametrize('collection_name_category,index', INDEX_COLLECTION, ids=[i[0] for i in INDEX_COLLECTION])
 def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_name_category, index):
     """
@@ -260,12 +260,12 @@ def test_object_names_collection(sdc_builder, sdc_executor, mongodb, collection_
         mongodb.engine.drop_database(mongodb_dest.database)
 
 
-@mongodb
+@mongodb('legacy')
 def test_dataflow_events(sdc_builder, sdc_executor, mongodb):
     pytest.skip("No events supported in MongoDB destination at this time.")
 
 
-@mongodb
+@mongodb('legacy')
 def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
     """
     Test for MongoDB target stage. We verify that the destination work fine with more than one batch.
@@ -316,12 +316,12 @@ def test_multiple_batches(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(mongodb_dest.database)
 
 
-@mongodb
+@mongodb('legacy')
 def test_data_format(sdc_builder, sdc_executor, mongodb, keep_data):
     pytest.skip("MongoDB Destination doesn't deal with data formats")
 
 
-@mongodb
+@mongodb('legacy')
 def test_push_pull(sdc_builder, sdc_executor, mongodb):
     pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is part of "
                 "test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")

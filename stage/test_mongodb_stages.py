@@ -71,7 +71,7 @@ DATA = ['To be or not to be.',
         'No pains, no gains.']
 
 
-@mongodb
+@mongodb('legacy')
 def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
     """
     Insert data in MongoDB and then check if MongoDB Oplog origin captures changes in data from MongoDB correctly.
@@ -136,7 +136,7 @@ def test_mongodb_oplog_origin(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(database_name)
 
 
-@mongodb
+@mongodb('legacy')
 def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
     """
     Create 3 simple documents in MongoDB and confirm that MongoDB origin reads them.
@@ -185,7 +185,7 @@ def test_mongodb_origin_simple(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(mongodb_origin.database)
 
 
-@mongodb
+@mongodb('legacy')
 @sdc_min_version('3.5.1')
 def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
     """
@@ -250,7 +250,7 @@ def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(mongodb_origin.database)
 
 
-@mongodb
+@mongodb('legacy')
 @sdc_min_version('3.0.1.0')
 def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongodb):
     """
@@ -307,7 +307,7 @@ def test_mongodb_origin_simple_with_BSONBinary(sdc_builder, sdc_executor, mongod
         mongodb.engine.drop_database(mongodb_origin.database)
 
 
-@mongodb
+@mongodb('legacy')
 @sdc_min_version('3.8.3')
 def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
     """
@@ -364,7 +364,7 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(mongodb_origin.database)
 
 
-@mongodb
+@mongodb('legacy')
 def test_mongodb_origin_nested_field_offset(sdc_builder, sdc_executor, mongodb):
     """
     Create 1 simple document with nested fields in MongoDB and confirm that MongoDB origin reads it using as offset the
@@ -434,7 +434,7 @@ def mongodbLookupMappingName(sdc_builder):
         return 'sdc_field_to_document_field_mapping'
 
 
-@mongodb
+@mongodb('legacy')
 @sdc_min_version('3.5.0')
 def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
     """
@@ -495,7 +495,7 @@ def test_mongodb_lookup_processor_simple(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(mongodb_lookup.database)
 
 
-@mongodb
+@mongodb('legacy')
 # SDC-11418
 @sdc_min_version('3.5.0')
 def test_mongodb_lookup_processor_implicit_port(sdc_builder, sdc_executor, mongodb):
@@ -549,7 +549,7 @@ def test_mongodb_lookup_processor_implicit_port(sdc_builder, sdc_executor, mongo
         mongodb.engine.drop_database(mongodb_lookup.database)
 
 
-@mongodb
+@mongodb('legacy')
 # SDC-11416
 @sdc_min_version('3.5.0')
 def test_mongodb_lookup_processor_invalid_url(sdc_builder, sdc_executor, mongodb):
@@ -600,7 +600,7 @@ def test_mongodb_lookup_processor_invalid_url(sdc_builder, sdc_executor, mongodb
         mongodb.engine.drop_database(mongodb_lookup.database)
 
 
-@mongodb
+@mongodb('legacy')
 @sdc_min_version('3.5.0')
 def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongodb):
     """
@@ -663,7 +663,7 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
         mongodb.engine.drop_database(mongodb_lookup.database)
 
 
-@mongodb
+@mongodb('legacy')
 def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
     """
     Send simple text into MongoDB destination from Dev Raw Data Source and
@@ -720,7 +720,7 @@ def test_mongodb_destination(sdc_builder, sdc_executor, mongodb):
         mongodb.engine.drop_database(mongodb_dest.database)
 
 
-@mongodb
+@mongodb('legacy')
 def test_mongodb_destination_update_on_nested_key(sdc_builder, sdc_executor, mongodb):
     """Ensure that an update on a document with a nested unique field is correctly executed"""
     if mongodb.atlas:
