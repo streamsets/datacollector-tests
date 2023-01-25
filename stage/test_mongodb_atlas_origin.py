@@ -881,6 +881,89 @@ def test_mongodb_atlas_origin_database_collection_parameters(sdc_builder, sdc_ex
         mongodb.engine.drop_database(database_value)
 
 
+@sdc_min_version('5.4.0')
+@pytest.mark.parametrize('use_capped_collection', [True, False])
+def test_mongodb_atlas_origin_with_validator_schema(sdc_builder, sdc_executor, mongodb, use_capped_collection):
+    """
+    Create a document in MongoDB Atlas with a validator schema and confirm that MongoDB Atlas can correctly read it when
+    using capped and uncapped collections.
+
+    The pipeline looks like:
+        mongodb_atlas_origin >> wiretap
+    """
+    database = get_random_string(ascii_letters, 5)
+    collection = get_random_string(ascii_letters, 10)
+
+    data = [{'name': 'Shepard'},
+            {'name': 'Kaidan'},
+            {'name': 'Garrus'}]
+
+    validator = {
+        '$jsonSchema': {
+            'bsonType': 'object',
+            "properties": {
+                "name": {"bsonType": "string"}
+            },
+        }
+    }
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_atlas_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_ORIGIN)
+    mongodb_atlas_origin.set_attributes(
+        database=database,
+        collection=collection,
+        batch_size_in_records=100
+    )
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_origin.tls_mode = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    mongodb_atlas_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    try:
+        # Write data in a MongoDB Atlas database
+        logger.info('Adding documents into %s collection using PyMongo...', mongodb_atlas_origin.collection)
+        mongodb_database = mongodb.engine[database]
+        if use_capped_collection:
+            mongodb_collection = mongodb_database.create_collection(
+                collection,
+                capped=True,
+                size=1000,
+                max=3,
+                validator=validator
+            )
+        else:
+            mongodb_collection = mongodb_database.create_collection(
+                collection,
+                capped=False,
+                validator=validator
+            )
+
+        for document in data:
+            document_to_insert = copy.deepcopy(document)
+            mongodb_collection.insert_one(document_to_insert)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(data), timeout_sec=120)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = wiretap.output_records
+        assert [data == {'name': record.field['name'].value} for record in records]
+
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_origin.database)
+        mongodb.engine.drop_database(mongodb_atlas_origin.database)
+
+
 @mongodb
 @sdc_min_version('5.4.0')
 @pytest.mark.parametrize('uuid_mode', [
