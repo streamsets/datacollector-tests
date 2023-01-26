@@ -28,7 +28,7 @@ from avro.datafile import DataFileWriter, DataFileReader
 from avro.io import DatumWriter, DatumReader
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -264,10 +264,10 @@ def test_datalake_destination_max_records_events(sdc_builder, sdc_executor, azur
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
         dl_fs.rmdir(directory_name, recursive=True)
 
-
 @azure('datalake')
 @sdc_min_version('3.9.0')
-def test_datalake_origin(sdc_builder, sdc_executor, azure):
+@pytest.mark.parametrize('endpoint_type', ["ID", "URL"])
+def test_datalake_origin(sdc_builder, sdc_executor, azure, endpoint_type):
     """ Test for Data Lake Store origin stage. We do so by creating a file in Azure Data Lake Storage using the
     STF client, then reading the file using the ALDS Gen2 Origin Stage, to assert data ingested by the pipeline
     is the expected data from the file.
@@ -275,6 +275,9 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
 
     azure_data_lake_store_origin >> wiretap
     """
+    if endpoint_type == "URL" and Version(sdc_executor.version) < Version('5.4.0'):
+        pytest.skip('ADLS Gen2 URL Endpoint Type parameter only supported in SDC versions 5.4.0 and above.')
+
     directory_name = get_random_string(string.ascii_letters, 10)
     file_name = 'test-data.txt'
     messages = [f'message{i}' for i in range(1, 10)]
@@ -297,6 +300,12 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure):
         azure_data_lake_store_origin >> wiretap.destination
 
         datalake_origin_pipeline = builder.build().configure_for_environment(azure)
+        if endpoint_type == "URL":
+            # change configuration to use URL instead of tenant_id
+            tenant_id = azure.tenant_id
+            url = f'https://login.microsoftonline.com/{tenant_id}/oauth2/token'
+            datalake_origin_pipeline.stages[0].set_attributes(enpoint_type='URL',
+                                                              endpoint_url=url)
         sdc_executor.add_pipeline(datalake_origin_pipeline)
 
         # start pipeline and read file in ADLS
