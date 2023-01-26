@@ -33,7 +33,7 @@ from stage.utils.utils_oracle import (
 
 
 RELEASE_VERSION = "5.4.0"
-ORACLE_CDC_ORIGIN = "Oracle CDC Origin"
+ORACLE_CDC_ORIGIN = "Oracle CDC"
 DEFAULT_TIMEOUT_IN_SEC = 120
 
 # These variables need to be loaded only once and will not change from test to test

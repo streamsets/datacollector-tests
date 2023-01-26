@@ -36,7 +36,7 @@ from stage.utils.utils_oracle import (
 
 
 RELEASE_VERSION = "5.4.0"
-ORACLE_CDC_ORIGIN = "Oracle CDC Origin"
+ORACLE_CDC_ORIGIN = "Oracle CDC"
 TRASH = "Trash"
 DEFAULT_TIMEOUT_IN_SEC = 120
 
