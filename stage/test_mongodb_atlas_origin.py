@@ -1060,8 +1060,9 @@ def test_mongodb_atlas_origin_read_write_uuid(sdc_builder, sdc_executor, mongodb
     if not mongodb.atlas:
         mongodb_atlas_origin.tls_mode = 'NONE'
         mongodb_atlas_origin.authentication_method = 'NONE'
+        mongodb_atlas_destination.tls_mode = 'NONE'
+        mongodb_atlas_destination.authentication_method = 'NONE'
 
-    wiretap = pipeline_builder.add_wiretap()
     mongodb_atlas_origin >> mongodb_atlas_destination
     pipeline = pipeline_builder.build().configure_for_environment(mongodb)
 
