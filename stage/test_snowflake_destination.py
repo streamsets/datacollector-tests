@@ -3281,7 +3281,7 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
         table.drop(engine)
         engine.dispose()
 
-def start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
+def _start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
     with pytest.raises(Exception):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         sdc_executor.stop_pipeline()
@@ -3290,16 +3290,21 @@ def start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
     logger.info('Pipeline status %s ...', status)
     assert 'RUNNING_ERROR' == status, response
 
-def start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
+def _start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert 2 == len(wiretap.error_records)
+
+def _start_pipeline_and_check_discard(sdc_executor, pipeline, wiretap):
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert 0 == len(wiretap.error_records)
 
 @snowflake
 @sdc_min_version('3.7.0')
 @sdc_enterprise_lib_min_version({'snowflake': '1.13.0'})
 @pytest.mark.parametrize("on_error_record, start_and_check",
-                         [("STOP_PIPELINE", start_pipeline_and_check_stopped),
-                          ("TO_ERROR"     , start_pipeline_and_check_to_error)])
+                         [("STOP_PIPELINE", _start_pipeline_and_check_stopped),
+                          ("DISCARD"      , _start_pipeline_and_check_discard),
+                          ("TO_ERROR"     , _start_pipeline_and_check_to_error)])
 def test_snowflake_write_records_on_error(sdc_builder, sdc_executor, snowflake,
                                           on_error_record, start_and_check):
     """
