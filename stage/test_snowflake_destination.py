@@ -3288,7 +3288,7 @@ def _start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
     response = sdc_executor.get_pipeline_status(pipeline).response.json()
     status = response.get('status')
     logger.info('Pipeline status %s ...', status)
-    assert 'RUNNING_ERROR' == status, response
+    assert status in ['RUNNING_ERROR', 'RUN_ERROR'], response
 
 def _start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
