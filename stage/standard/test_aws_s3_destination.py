@@ -27,7 +27,7 @@ S3_SANDBOX_PREFIX = 'sandbox'
 
 # Reference https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html
 S3_BUCKET_NAMES = [
-    ('minsize', lambda: get_random_string(string.ascii_lowercase, 3)),
+    ('minsize', lambda: 'b-b'), # minsize uses a existent bucket named 'b-b'
     ('maxsize', lambda: get_random_string(string.ascii_lowercase, 63)),
     ('lowercase', lambda: get_random_string(string.ascii_lowercase)),
     ('hypen', lambda: get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
@@ -93,19 +93,28 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
     s3_bucket = None
 
     try:
-        # Since S3 buckets are globally unique, doing our usual randomization doesn't work well - we always have a chance
-        # to create bucket that already exists. That is why we have a retry logic - we try to generate several bucket names
-        # and see which one we manage to "claim".
-        while s3_bucket is None and retry < 10:
-            retry = retry + 1
+        if test_name == 'minsize':
+            # For minsize test we use an already existent bucket
             s3_bucket = bucket_generator()
-            logger.info(f"Retry {retry} with bucket name '{s3_bucket}'")
-
             try:
-                client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+                client.list_objects_v2(Bucket=s3_bucket)
             except Exception as e:
-                s3_bucket = None
-                logger.error(f"Can't use bucket name '{s3_bucket}': {e}")
+                logger.error(f'Bucket not found {s3_bucket}: {e}')
+                pytest.skip(f"Minsize bucket name test needs an existent bucket named {s3_bucket}")
+        else:
+            # Since S3 buckets are globally unique, doing our usual randomization doesn't work well - we always have a chance
+            # to create bucket that already exists. That is why we have a retry logic - we try to generate several bucket names
+            # and see which one we manage to "claim".
+            while s3_bucket is None and retry < 10:
+                retry = retry + 1
+                s3_bucket = bucket_generator()
+                logger.info(f"Retry {retry} with bucket name '{s3_bucket}'")
+
+                try:
+                    client.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+                except Exception as e:
+                    logger.error(f"Can't use bucket name '{s3_bucket}': {e}")
+                    s3_bucket = None
 
         # We might not be able to find suitable bucket in max retries in which case we will simply die
         assert s3_bucket is not None
@@ -159,10 +168,11 @@ def test_object_names_bucket(sdc_builder, sdc_executor, aws, test_name, bucket_g
         except Exception as e:
             logger.error(f"Can't remove files from bucket {s3_bucket}: {e}")
         finally:
-            try:
-                client.delete_bucket(Bucket=s3_bucket)
-            except Exception as e:
-                logger.error(f"Can't delete buckeet: {e}")
+            if test_name != 'minsize':
+                try:
+                    client.delete_bucket(Bucket=s3_bucket)
+                except Exception as e:
+                    logger.error(f"Can't delete bucket: {e}")
 
 
 @aws('s3')
