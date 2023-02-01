@@ -388,13 +388,12 @@ def test_jdbc_tee_processor_multi_ops(sdc_builder, sdc_executor, database, use_m
 
 DATA_TYPES_MYSQL_ZONED_DATETIME = [
     # Zoned Datetime
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(50)', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(50)', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'binary(20)', b'2020-01-01T10:00Z\x00\x00\x00',
-     b'2020-01-01T10:00Z\x00\x00\x00'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varbinary(50)', b'2020-01-01T10:00Z', b'2020-01-01T10:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01T10:00Z', '2020-01-01 10:00:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'blob', b'2020-01-01T10:00Z', b'2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(50)', '2020-01-01T10:00:00Z', '2020-01-01T10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(50)', '2020-01-01T10:00:00Z', '2020-01-01T10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'binary(20)', b'2020-01-01T10:00:00Z', b'2020-01-01T10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varbinary(50)', b'2020-01-01T10:00:00Z', b'2020-01-01T10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01T10:00:00Z', '2020-01-01T10:00:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'blob', b'2020-01-01T10:00:00Z', b'2020-01-01T10:00:00Z'),
 ]
 @database('mysql')
 @pytest.mark.parametrize('input,converter_type,database_type,expected_legacy_format,expected_default_format',
