@@ -30,6 +30,8 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+pytestmark = [snowflake, sdc_min_version('5.4.0')]
+
 # from CommonDatabaseHeader.java
 PRIMARY_KEY_COLUMN_OLD_VALUE = 'jdbc.primaryKey.before'
 PRIMARY_KEY_COLUMN_NEW_VALUE = 'jdbc.primaryKey.after'
@@ -86,38 +88,6 @@ INSERT_UPDATE_DELETE_CDC_ROWS_IN_DATABASE = [
     {'OP': 1, 'ID': 1, 'NAME': 'Rogelio Federer'},
     {'OP': 3, 'ID': 1, 'NAME': 'Rafa Nadal'},
     {'OP': 2, 'ID': 1}
-]
-
-CDC_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY = [
-    {'TYPE': 'Hobbit', 'ID': 1, 'NAME': 'Bilbo', 'SURNAME': 'Baggins', 'ADDRESS': 'Bag End 0'},
-    {'TYPE': 'Fallohide', 'ID': 1, 'NAME': 'Bilbo', 'SURNAME': 'Baggins', 'ADDRESS': 'Bag End 1'},
-    {'TYPE': 'Fallohide', 'ID': 2, 'NAME': 'Bilbo', 'SURNAME': 'Baggins', 'ADDRESS': 'Bag End 2'},
-    {'TYPE': 'Hobbit - Fallohide', 'ID': 3, 'NAME': 'Bilbo', 'SURNAME': 'Baggins', 'ADDRESS': 'Bag End 3'},
-    {'TYPE': 'Hobbit, Fallohide', 'ID': 3, 'NAME': 'Bilbo', 'SURNAME': 'Baggins', 'ADDRESS': 'Bag End 4'},
-    {'TYPE': 'Hobbit, Fallohide', 'ID': 4, 'NAME': 'Bilbo', 'SURNAME': 'Baggins', 'ADDRESS': 'Bag End 5'},
-    {'TYPE': 'Hobbit, Fallohide', 'ID': 4, 'NAME': 'Bilbo', 'SURNAME': 'Baggins', 'ADDRESS': 'Bag End 6'},
-]
-CDC_PK_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY_HEADER = [
-    {'sdc.operation.type': 1, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 1,
-     f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit'},
-
-    {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 1,
-     f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Fallohide'},
-
-    {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 2,
-     f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Fallohide'},
-
-    {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 2, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 3,
-     f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit - Fallohide'},
-
-    {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 3, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 3,
-     f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit - Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'},
-
-    {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 3, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 4,
-     f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit, Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'},
-
-    {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 4, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 4,
-     f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit, Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'},
 ]
 
 # AWS S3 bucket in case of AWS or Azure blob storage container in case of Azure.
@@ -831,15 +801,21 @@ def test_cdc_snowflake_multiple_ops_two_batches(sdc_builder, sdc_executor, snowf
 
 
 @snowflake
-@pytest.mark.parametrize('primary_key_columns', [
-    ['ID'],
-    ['NAME'],
-    ['ID', 'NAME']
-])
-@sdc_enterprise_lib_min_version({'snowflake': '1.12.0'})
-def test_cdc_snowflake_create_primary_key(sdc_builder, sdc_executor, snowflake, primary_key_columns):
-    """Very similar to test_CDC_Snowflake. Table is auto created, and we will also assert
-    that the key columns are created as primary keys.
+@pytest.mark.parametrize('primary_key_columns, column_names, upper_case_schema_and_field_names',
+                         [(['ID'], ['ID', 'NAME'], True),
+                          (['Id'], ['Id', 'Name'], True),
+                          (['Id'], ['Id', 'Name'], False),
+                          (['ID'], ['Id', 'Name'], True),
+                          (['Id'], ['ID', 'Name'], True),
+                          (['Id', 'Name'], ['Id', 'Name'], True),
+                          (['Id', 'Name'], ['Id', 'Name'], False),
+                          (['id', 'name'], ['ID', 'NAME'], True),
+                          (['ID', 'NAMe'], ['id', 'name'], True)])
+@pytest.mark.parametrize('primary_key_location', ['HEADER', 'TABLE'])
+def test_cdc_snowflake_create_primary_key(sdc_builder, sdc_executor, snowflake, primary_key_columns,
+                                          column_names, upper_case_schema_and_field_names, primary_key_location):
+    """Very similar to test_cdc_snowflake_create_primary_key. Table is auto created, and we will also assert
+    that the key columns are created as primary keys. Mixing cases in PKs and columns.
 
     The pipeline looks like:
     Snowflake pipeline:
@@ -848,10 +824,13 @@ def test_cdc_snowflake_create_primary_key(sdc_builder, sdc_executor, snowflake, 
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
-    engine = snowflake.engine
+    CDC_ROWS_IN_DATABASE_MIXED_CASE = [
+        {'OP': 1, column_names[0]: 1, column_names[1]: 'Rogelio Federer'},
+        {'OP': 1, column_names[0]: 2, column_names[1]: 'Rafa Nadal'},
+        {'OP': 1, column_names[0]: 3, column_names[1]: 'Domi Thiem'}
+    ]
 
-    # Table is created by the pipeline
-    table = snowflake.describe_table(table_name)
+    engine = snowflake.engine
 
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
@@ -863,15 +842,21 @@ def test_cdc_snowflake_create_primary_key(sdc_builder, sdc_executor, snowflake, 
 
     # Build Dev Raw Data Source
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    raw_data = ('\n').join((json.dumps(row) for row in CDC_ROWS_IN_DATABASE))
+    raw_data = ('\n').join((json.dumps(row) for row in CDC_ROWS_IN_DATABASE_MIXED_CASE))
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        raw_data=raw_data,
                                        stop_after_first_batch=True)
     # Build Expression Evaluator
+    primary_key_header = {}
+    for key in primary_key_columns:
+        primary_key_header[key] = {}
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     expression_evaluator.set_attributes(header_attribute_expressions=[
         {'attributeToSet': 'sdc.operation.type',
-         'headerAttributeExpression': "${record:value('/OP')}"}])
+         'headerAttributeExpression': "${record:value('/OP')}"},
+        {'attributeToSet': PRIMARY_KEY_SPECIFICATION,
+         'headerAttributeExpression': json.dumps(primary_key_header)}
+    ])
 
     # Build Field Remover
     field_remover = pipeline_builder.add_stage('Field Remover')
@@ -880,7 +865,7 @@ def test_cdc_snowflake_create_primary_key(sdc_builder, sdc_executor, snowflake, 
     # Build Snowflake
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
 
-    snowflake_destination.set_attributes(primary_key_location="TABLE",
+    snowflake_destination.set_attributes(primary_key_location=primary_key_location,
                                          table_key_columns=[{
                                              "keyColumns": primary_key_columns,
                                              "table": table_name
@@ -889,27 +874,29 @@ def test_cdc_snowflake_create_primary_key(sdc_builder, sdc_executor, snowflake, 
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
                                          processing_cdc_data=True,
-                                         table_auto_create=True)
+                                         table_auto_create=True,
+                                         upper_case_schema_and_field_names=upper_case_schema_and_field_names)
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> snowflake_destination
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     sdc_executor.add_pipeline(pipeline)
     try:
         sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-        result = engine.execute(table.select())
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])
+        result = engine.execute(f'SELECT * FROM "{table_name}";')
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])
         result.close()
-        assert data_from_database == [(row['NAME'], row['ID']) for row in CDC_ROWS_IN_DATABASE]
+        assert data_from_database == [(row[column_names[0]], row[column_names[1]])
+                                      for row in CDC_ROWS_IN_DATABASE_MIXED_CASE]
 
         # and we also assert that the pk columns created are PK and NOT NULL
-        result = engine.execute(f'DESC TABLE {table_name};')
+        result = engine.execute(f'DESC TABLE "{table_name}";')
         metadata_from_database = sorted(result.fetchall(), key=lambda row: row[1])
         assert len(metadata_from_database) == 2
         for column in metadata_from_database:
             name = column[0]
             nullable = column[3]
             primary_key = column[5]
-            if name in primary_key_columns:
+            if name.upper() in map(str.upper, primary_key_columns):
                 assert nullable == 'N'
                 assert primary_key == 'Y'
             else:
@@ -920,18 +907,24 @@ def test_cdc_snowflake_create_primary_key(sdc_builder, sdc_executor, snowflake, 
         snowflake.delete_staged_files(storage_path)
         logger.debug('Dropping Snowflake stage %s ...', stage_name)
         snowflake.drop_entities(stage_name=stage_name)
-        table.drop(engine)
+        engine.execute(f'drop table {table_name}')
         engine.dispose()
 
 
 @snowflake
-@pytest.mark.parametrize('primary_key_columns', [
-    ['ID'],
-    ['NAME'],
-    ['ID', 'NAME']
-])
-@sdc_enterprise_lib_min_version({'snowflake': '1.12.0'})
-def test_cdc_snowflake_update_primary_key(sdc_builder, sdc_executor, snowflake, primary_key_columns):
+@pytest.mark.parametrize('primary_key_columns, column_names, upper_case_schema_and_field_names',
+                         [(['ID'], ['ID', 'NAME'], True),
+                          (['Id'], ['Id', 'Name'], True),
+                          (['Id'], ['Id', 'Name'], False),
+                          (['ID'], ['Id', 'Name'], True),
+                          (['Id'], ['ID', 'Name'], True),
+                          (['Id', 'Name'], ['Id', 'Name'], True),
+                          (['Id', 'Name'], ['Id', 'Name'], False),
+                          (['id', 'name'], ['ID', 'NAME'], True),
+                          (['ID', 'NAMe'], ['id', 'name'], True)])
+@pytest.mark.parametrize('primary_key_location', ['HEADER', 'TABLE'])
+def test_cdc_snowflake_update_primary_key(sdc_builder, sdc_executor, snowflake, primary_key_columns, column_names,
+                                          upper_case_schema_and_field_names, primary_key_location):
     """Very similar to test_cdc_snowflake_create_primary_key, but we will create the
     table beforehand with ID as the primary key column, and then use NAME as the key column,
     so the primary key of the table gets updated. Note that columns added to the pk cannot be
@@ -944,10 +937,22 @@ def test_cdc_snowflake_update_primary_key(sdc_builder, sdc_executor, snowflake, 
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
-    engine = snowflake.engine
+    # we just use these to create the table beforehand, after that the destination handles case differences
+    # we expect the column names in the db to be consistent if the table already exists
+    id_column_name = column_names[0].upper() if upper_case_schema_and_field_names else column_names[0]
+    name_column_name = column_names[1].upper() if upper_case_schema_and_field_names else column_names[1]
+    id_pk_name = primary_key_columns[0].upper() if upper_case_schema_and_field_names else primary_key_columns[0]
 
+    CDC_ROWS_IN_DATABASE_MIXED_CASE = [
+        {'OP': 1, column_names[0]: 1, column_names[1]: 'Rogelio Federer'},
+        {'OP': 1, column_names[0]: 2, column_names[1]: 'Rafa Nadal'},
+        {'OP': 1, column_names[0]: 3, column_names[1]: 'Domi Thiem'}
+    ]
+
+    engine = snowflake.engine
     # Create a table and stage in Snowflake.
-    table = snowflake.create_table(table_name.lower())
+    engine.execute(
+        f'create table {table_name} ("{id_column_name}" NUMBER, "{name_column_name}" VARCHAR, PRIMARY KEY("{id_pk_name}"))')
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
@@ -958,15 +963,21 @@ def test_cdc_snowflake_update_primary_key(sdc_builder, sdc_executor, snowflake, 
 
     # Build Dev Raw Data Source
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    raw_data = ('\n').join((json.dumps(row) for row in CDC_ROWS_IN_DATABASE))
+    raw_data = ('\n').join((json.dumps(row) for row in CDC_ROWS_IN_DATABASE_MIXED_CASE))
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        raw_data=raw_data,
                                        stop_after_first_batch=True)
     # Build Expression Evaluator
+    primary_key_header = {}
+    for key in primary_key_columns:
+        primary_key_header[key] = {}
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     expression_evaluator.set_attributes(header_attribute_expressions=[
         {'attributeToSet': 'sdc.operation.type',
-         'headerAttributeExpression': "${record:value('/OP')}"}])
+         'headerAttributeExpression': "${record:value('/OP')}"},
+        {'attributeToSet': PRIMARY_KEY_SPECIFICATION,
+         'headerAttributeExpression': json.dumps(primary_key_header)}
+    ])
 
     # Build Field Remover
     field_remover = pipeline_builder.add_stage('Field Remover')
@@ -975,7 +986,7 @@ def test_cdc_snowflake_update_primary_key(sdc_builder, sdc_executor, snowflake, 
     # Build Snowflake
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
 
-    snowflake_destination.set_attributes(primary_key_location="TABLE",
+    snowflake_destination.set_attributes(primary_key_location=primary_key_location,
                                          table_key_columns=[{
                                              "keyColumns": primary_key_columns,
                                              "table": table_name
@@ -984,17 +995,19 @@ def test_cdc_snowflake_update_primary_key(sdc_builder, sdc_executor, snowflake, 
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
                                          processing_cdc_data=True,
-                                         table_auto_create=True)
+                                         table_auto_create=False,
+                                         upper_case_schema_and_field_names=upper_case_schema_and_field_names)
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> snowflake_destination
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     sdc_executor.add_pipeline(pipeline)
     try:
         sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-        result = engine.execute(table.select())
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])
+        result = engine.execute(f'SELECT * FROM "{table_name}";')
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])
         result.close()
-        assert data_from_database == [(row['NAME'], row['ID']) for row in CDC_ROWS_IN_DATABASE]
+        assert data_from_database == [(row[column_names[0]], row[column_names[1]])
+                                      for row in CDC_ROWS_IN_DATABASE_MIXED_CASE]
 
         # and we also assert that the pk columns created are PK and NOT NULL
         result = engine.execute(f'DESC TABLE {table_name};')
@@ -1004,9 +1017,9 @@ def test_cdc_snowflake_update_primary_key(sdc_builder, sdc_executor, snowflake, 
             name = column[0]
             nullable = column[3]
             primary_key = column[5]
-            if name in primary_key_columns:
+            if name.upper() in map(str.upper, primary_key_columns):
                 # ID is the default pk column created by STF as NOT NULL
-                if name == 'ID':
+                if name == id_pk_name:
                     assert nullable == 'N'
                 else:
                     # if we update the pk, it has to remain nullable to maintain consistency
@@ -1020,13 +1033,23 @@ def test_cdc_snowflake_update_primary_key(sdc_builder, sdc_executor, snowflake, 
         snowflake.delete_staged_files(storage_path)
         logger.debug('Dropping Snowflake stage %s ...', stage_name)
         snowflake.drop_entities(stage_name=stage_name)
-        table.drop(engine)
+        engine.execute(f'drop table {table_name}')
         engine.dispose()
 
 
 @snowflake
+@pytest.mark.parametrize('primary_key_columns, column_names, upper_case_schema_and_field_names',
+                         [(['TYPE', 'ID'], ['TYPE', 'ID', 'NAME', 'SURNAME', 'ADDRESS'], True),
+                          # these second and third cases is important, it checks headers upper casing
+                          (['type', 'id'], ['TYPE', 'ID', 'NAME', 'SURNAME', 'ADDRESS'], True),
+                          (['tYpe', 'ID'], ['TYPE', 'ID', 'NAME', 'SURNAME', 'ADDRESS'], True),
+                          (['TYPE', 'ID'], ['TYPE', 'ID', 'NAME', 'SURNAME', 'ADDRESS'], False),
+                          (['type', 'id'], ['type', 'id', 'name', 'surname', 'address'], False),
+                          (['type', 'id'], ['TYPE', 'ID', 'name', 'surname', 'address'], True),
+                          (['Type', 'iD'], ['TYPE', 'ID', 'name', 'surname', 'address'], True)])
 @sdc_enterprise_lib_min_version({'snowflake': '1.12.0'})
-def test_cdc_snowflake_jdbc_header(sdc_builder, sdc_executor, snowflake):
+def test_cdc_snowflake_jdbc_header(sdc_builder, sdc_executor, snowflake, primary_key_columns, column_names,
+                                   upper_case_schema_and_field_names):
     """We will set up the headers the same way JDBC origins do. We will have the primary keys and
     pk values updates as well.
 
@@ -1034,7 +1057,40 @@ def test_cdc_snowflake_jdbc_header(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> snowflake_destination
     """
-    primary_key_columns = ['TYPE', 'ID']
+    type = column_names[0]
+    id = column_names[1]
+    name = column_names[2]
+    surname = column_names[3]
+    address = column_names[4]
+    pk_type = primary_key_columns[0]
+    pk_id = primary_key_columns[1]
+
+    CDC_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY = [
+        {f'{type}': 'Hobbit', f'{id}': 1, f'{name}': 'Bilbo', f'{surname}': 'Baggins', f'{address}': 'Bag End 0'},
+        {f'{type}': 'Fallohide', f'{id}': 1, f'{name}': 'Bilbo', f'{surname}': 'Baggins', f'{address}': 'Bag End 1'},
+        {f'{type}': 'Fallohide', f'{id}': 2, f'{name}': 'Bilbo', f'{surname}': 'Baggins', f'{address}': 'Bag End 2'},
+        {f'{type}': 'Hobbit - Fallohide', f'{id}': 3, f'{name}': 'Bilbo', f'{surname}': 'Baggins', f'{address}': 'Bag End 3'},
+        {f'{type}': 'Hobbit, Fallohide', f'{id}': 3, f'{name}': 'Bilbo', f'{surname}': 'Baggins', f'{address}': 'Bag End 4'},
+        {f'{type}': 'Hobbit, Fallohide', f'{id}': 4, f'{name}': 'Bilbo', f'{surname}': 'Baggins', f'{address}': 'Bag End 5'},
+        {f'{type}': 'Hobbit, Fallohide', f'{id}': 4, f'{name}': 'Bilbo', f'{surname}': 'Baggins', f'{address}': 'Bag End 6'},
+    ]
+
+    CDC_PK_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY_HEADER = [
+        {'sdc.operation.type': 1, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_id}': 1, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_id}': 1,
+         f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_type}': 'Hobbit', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_type}': 'Hobbit'},
+        {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_id}': 1, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_id}': 1,
+         f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_type}': 'Hobbit', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_type}': 'Fallohide'},
+        {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_id}': 1, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_id}': 2,
+         f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_type}': 'Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_type}': 'Fallohide'},
+        {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_id}': 2, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_id}': 3,
+         f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_type}': 'Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_type}': 'Hobbit - Fallohide'},
+        {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_id}': 3, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_id}': 3,
+         f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_type}': 'Hobbit - Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_type}': 'Hobbit, Fallohide'},
+        {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_id}': 3, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_id}': 4,
+         f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_type}': 'Hobbit, Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_type}': 'Hobbit, Fallohide'},
+        {'sdc.operation.type': 3, f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_id}': 4, f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_id}': 4,
+         f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_type}': 'Hobbit, Fallohide', f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_type}': 'Hobbit, Fallohide'},
+    ]
 
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
@@ -1062,19 +1118,22 @@ def test_cdc_snowflake_jdbc_header(sdc_builder, sdc_executor, snowflake):
                                        raw_data=raw_data,
                                        stop_after_first_batch=True)
     # Build Expression Evaluator
+    primary_key_header = {}
+    for key in primary_key_columns:
+        primary_key_header[key] = {}
     expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
     expression_evaluator.set_attributes(header_attribute_expressions=[
         {'attributeToSet': 'sdc.operation.type',
          'headerAttributeExpression': "${record:value('/HEADER/sdc.operation.type')}"},
-        {'attributeToSet': f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID',
-         'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_OLD_VALUE + ".ID')}"},
-        {'attributeToSet': f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID',
-         'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_NEW_VALUE + ".ID')}"},
-        {'attributeToSet': f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE',
-         'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_OLD_VALUE + ".TYPE')}"},
-        {'attributeToSet': f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE',
-         'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_NEW_VALUE + ".TYPE')}"},
-        {'attributeToSet': f'{PRIMARY_KEY_SPECIFICATION}', 'headerAttributeExpression': '{\"ID\":{}, \"TYPE\":{}}'}
+        {'attributeToSet': f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_id}',
+         'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_OLD_VALUE + f".{pk_id}')}}"},
+        {'attributeToSet': f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_id}',
+         'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_NEW_VALUE + f".{pk_id}')}}"},
+        {'attributeToSet': f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.{pk_type}',
+         'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_OLD_VALUE + f".{pk_type}')}}"},
+        {'attributeToSet': f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.{pk_type}',
+         'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_NEW_VALUE + f".{pk_type}')}}"},
+        {'attributeToSet': f'{PRIMARY_KEY_SPECIFICATION}', 'headerAttributeExpression': json.dumps(primary_key_header)}
     ])
 
     # Build Field Remover
@@ -1089,7 +1148,8 @@ def test_cdc_snowflake_jdbc_header(sdc_builder, sdc_executor, snowflake):
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
                                          processing_cdc_data=True,
-                                         table_auto_create=True)
+                                         table_auto_create=True,
+                                         upper_case_schema_and_field_names=upper_case_schema_and_field_names)
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> snowflake_destination
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
@@ -1101,8 +1161,8 @@ def test_cdc_snowflake_jdbc_header(sdc_builder, sdc_executor, snowflake):
         result.close()
         # we are chain updating, it has to equal last record sent
         expected_data = rows[6]
-        assert data_from_database == [(expected_data['TYPE'], expected_data['ID'],
-                                       expected_data['NAME'], expected_data['SURNAME'], expected_data['ADDRESS'])]
+        assert data_from_database == [(expected_data[type], expected_data[id],
+                                       expected_data[name], expected_data[surname], expected_data[address])]
 
         # and we also assert that the pk columns created are PK and NOT NULL
         result = engine.execute(f'desc table {table_name}')
@@ -1112,7 +1172,7 @@ def test_cdc_snowflake_jdbc_header(sdc_builder, sdc_executor, snowflake):
             name = column[0]
             nullable = column[3]
             primary_key = column[5]
-            if name in primary_key_columns:
+            if name.upper() in map(str.upper, primary_key_columns):
                 assert nullable == 'N'
                 assert primary_key == 'Y'
             else:
@@ -3297,6 +3357,7 @@ def _start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
 def _start_pipeline_and_check_discard(sdc_executor, pipeline, wiretap):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert 0 == len(wiretap.error_records)
+
 
 @snowflake
 @sdc_min_version('3.7.0')
