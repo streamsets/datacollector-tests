@@ -23,28 +23,6 @@ logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.connx, sdc_min_version('5.4.0')]
 
-class Connx:
-    cfg = {
-            "gateway": "daecnxstream01.eur.ad.sag",
-            "database_name": "VSAM",
-            "port": 7500,
-            "username": "username",
-            "password": "password",
-            "use_ssl": True
-    }
-    connection_string = f"jdbc:connx:DD={cfg['database_name']};Gateway={cfg['gateway']};Port={cfg['port']};ssl={'True' if cfg['use_ssl'] else 'False'}"
-    driver_path = os.path.dirname(os.path.realpath(__file__)) + "/connxjdbc.jar"
-    driver_class = "com.Connx.jdbc.TCJdbc.TCJdbcDriver" 
-
-    def get_connection(self):
-        import jaydebeapi  # Moving the import here temporary
-        return jaydebeapi.connect(self.driver_class, self.connection_string, [self.cfg['username'], self.cfg['password']], self.driver_path)
-
-
-@pytest.fixture
-def connx():
-    return Connx()
-
 
 def test_connx_origin_event(sdc_builder, sdc_executor, connx):
     num_records = 10
@@ -58,8 +36,7 @@ def test_connx_origin_event(sdc_builder, sdc_executor, connx):
     origin.set_attributes(incremental_mode=False,
                           sql_query=sql_query,
                           max_batch_size_in_records=num_records,
-                          use_credentials=True,
-                          **connx.cfg)
+                          use_credentials=True)
 
     wiretap = pipeline_builder.add_wiretap()
     trash = pipeline_builder.add_stage('Trash')
@@ -67,7 +44,7 @@ def test_connx_origin_event(sdc_builder, sdc_executor, connx):
     origin >> trash
     origin >= wiretap.destination
 
-    pipeline = pipeline_builder.build()
+    pipeline = pipeline_builder.build().configure_for_environment(connx)
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -106,13 +83,6 @@ def test_connx_single_read_use_connection_string(sdc_builder, sdc_executor, conn
                           max_batch_size_in_records=num_records,
                           use_credentials=True,
                           use_connection_string=use_connection_string)
-    if use_connection_string:
-        origin.set_attributes(connx_jdbc_connection_string=connx.connection_string,
-                              username=connx.cfg["username"],
-                              password=connx.cfg["password"],
-                              use_ssl=connx.cfg["use_ssl"])
-    else:
-        origin.set_attributes(**connx.cfg)
 
     wiretap = pipeline_builder.add_wiretap()
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
@@ -120,7 +90,7 @@ def test_connx_single_read_use_connection_string(sdc_builder, sdc_executor, conn
     origin >> wiretap.destination
     origin >= finisher
 
-    pipeline = pipeline_builder.build()
+    pipeline = pipeline_builder.build().configure_for_environment(connx)
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -151,8 +121,7 @@ def test_connx_origin_full_mode(sdc_builder, sdc_executor, connx):
     origin.set_attributes(incremental_mode=False,
                           sql_query=sql_query,
                           max_batch_size_in_records=num_records,
-                          use_credentials=True,
-                          **connx.cfg)
+                          use_credentials=True)
 
     wiretap = pipeline_builder.add_wiretap()
     finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
@@ -160,7 +129,7 @@ def test_connx_origin_full_mode(sdc_builder, sdc_executor, connx):
     origin >> wiretap.destination
     origin >= finisher
 
-    pipeline = pipeline_builder.build()
+    pipeline = pipeline_builder.build().configure_for_environment(connx)
     sdc_executor.add_pipeline(pipeline)
 
     try:
@@ -197,8 +166,7 @@ def test_connx_origin_incremental_mode(sdc_builder, sdc_executor, connx):
                           offset_column="id",
                           sql_query=sql_query,
                           max_batch_size_in_records=2,
-                          use_credentials=True,
-                          **connx.cfg)
+                          use_credentials=True)
 
     wiretap = pipeline_builder.add_wiretap()
     wiretap_events = pipeline_builder.add_wiretap()
@@ -206,7 +174,7 @@ def test_connx_origin_incremental_mode(sdc_builder, sdc_executor, connx):
     origin >> wiretap.destination
     origin >= wiretap_events.destination
 
-    pipeline = pipeline_builder.build()
+    pipeline = pipeline_builder.build().configure_for_environment(connx)
     sdc_executor.add_pipeline(pipeline)
 
     try:
