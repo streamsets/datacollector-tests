@@ -15,10 +15,13 @@ r"""Tools used for the revamped Oracle CDC Origin"""
 
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
+from datetime import datetime, timedelta
 import logging
 import pytest
+import string
 
 from streamsets.testframework.markers import database
+from streamsets.testframework.utils import get_random_string
 
 
 logger = logging.getLogger(__name__)
@@ -29,21 +32,27 @@ SYSTEM_IDENTIFIER = ""  # The value will be assigned during setup
 RECORD_FORMATS = ["BASIC", "RICH"]
 
 
+class NoError(Exception):
+    """An exception that will never be raised as it is not implemented in SDC."""
+
+    pass
+
+
 def _get_single_context_parameter(database, parameter):
     """Retrieve the value of a context parameter from the database,
     e.g. SERVICE_NAME or INSTANCE_NAME. The parameter must have one single value."""
     with ExitStack() as exit_stack:
-        logger.info("Connect to DB")
+        logger.debug("Connect to DB")
         connection = database.engine.connect()
         exit_stack.callback(connection.close)
 
         query = f"SELECT SYS_CONTEXT('USERENV', '{parameter}') FROM DUAL"
-        logger.info(f"Retrieve '{parameter}' with query: {query}")
+        logger.debug(f"Retrieve '{parameter}' with query: {query}")
         result = connection.execute(query)
         exit_stack.callback(result.close)
 
         result_values = result.fetchall()
-        logger.info(f"Retrieved: {result_values}")
+        logger.debug(f"Retrieved: {result_values}")
 
         assert len(result_values) == 1, f"Expected 1 {parameter} result, got '{result_values}'"
         assert len(result_values[0]) == 1, f"Expected 1 {parameter}, got '{result_values[0]}'"
@@ -70,17 +79,15 @@ def cleanup(request):
 
 
 @pytest.fixture()
+def table_name():
+    """Returns a random table name"""
+    return get_random_string(string.ascii_uppercase, 10)
+
+
+@pytest.fixture()
 def test_name(request):
     """Returns the parametrized name of the test requesting the fixture."""
     return f"{request.node.name}"
-
-
-def current_scn(db):
-    try:
-        connection = db.engine.connect()
-        return int(str(connection.execute("SELECT CURRENT_SCN FROM V$DATABASE").first()[0]))
-    except Exception:
-        raise Exception("Error retrieving last SCN from Oracle database.")
 
 
 @database("oracle")
@@ -102,6 +109,50 @@ def service_name(util_setup):
 def system_identifier(util_setup):
     """Requires importing util_setup."""
     return SYSTEM_IDENTIFIER
+
+
+class StartMode:
+    """Class grouping together static methods that calculate start modes."""
+
+    @staticmethod
+    def current_scn(db, cleanup):
+        connection = db.engine.connect()
+        cleanup.callback(connection.close)
+        try:
+            scn = int(connection.execute("SELECT CURRENT_SCN FROM V$DATABASE").first()[0])
+        except Exception as ex:
+            pytest.fail(f"Could not retrieve last SCN: {ex}")
+        return scn
+
+    @staticmethod
+    def future_scn(db, cleanup):
+        # Use a considerably greater SCN to ensure the database SCN doesn't catch up while
+        # the test is running
+        future_scn = StartMode.current_scn(db, cleanup) + 100
+        return future_scn
+
+    @staticmethod
+    def current_instant(db, cleanup):
+        oracle_date_format = "YYYY-MM-DD HH24:MM:SS"
+
+        connection = db.engine.connect()
+        cleanup.callback(connection.close)
+        try:
+            instant = connection.execute(f"SELECT TO_CHAR(SYSDATE, '{oracle_date_format}') FROM DUAL").first()[0]
+            logger.error(instant)
+        except Exception as ex:
+            pytest.fail(f"Could not retrieve current database instant: {ex}")
+        return instant
+
+    @staticmethod
+    def future_instant(db, cleanup):
+        python_date_format = "%Y-%m-%d %H:%M:%S"
+
+        current_instant = StartMode.current_instant(db, cleanup)
+        # Increase the instant by an hour
+        instant = datetime.strptime(current_instant, python_date_format) + timedelta(hours=1)
+        future_instant = instant.strftime(python_date_format)
+        return future_instant
 
 
 class Parameters(ABC):
@@ -181,4 +232,38 @@ class DefaultStartParameters(Parameters):
         self.database = db
 
     def as_dict(self):
-        return {"start_mode": "CHANGE", "initial_system_change_number": current_scn(self.database)}
+        return {
+            "start_mode": "CHANGE",
+            "initial_system_change_number": StartMode.current_scn(self.database, ExitStack()),
+        }
+
+
+class DefaultWaitParameters(Parameters):
+    """Session wait times"""
+
+    def __init__(self, wait_time):
+        try:
+            wait_time = int(wait_time)
+            if wait_time < 0:
+                raise ValueError()
+        except ValueError:
+            raise ValueError("Wait time must be an integer greater or equal to 0")
+
+        self.wait_time = wait_time
+
+    def as_dict(self):
+        return {
+            "wait_time_before_session_start_in_ms": self.wait_time,
+            "wait_time_after_session_start_in_ms": self.wait_time,
+            "wait_time_after_session_end_in_ms": self.wait_time,
+        }
+
+
+class DefaultThreadingParameters(Parameters):
+    """Run with all available cores"""
+
+    def __int__(self):
+        pass
+
+    def as_dict(self):
+        return {"sql_parser_threads": 0}

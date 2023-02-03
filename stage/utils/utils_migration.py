@@ -66,25 +66,26 @@ class LegacyHandler(PipelineHandler):
         return pipeline
 
     def execute_shell(self, *args, **kwargs):
-        self.sdc_executor.execute_shell(*args, **kwargs)
+        return self.sdc_executor.execute_shell(*args, **kwargs)
 
     def get_pipeline_builder(self):
         return self.sdc_builder.get_pipeline_builder()
 
     def start_work(self, work):
         self.sdc_executor.start_pipeline(work)
+        return self
 
     def stop_work(self, work):
-        self.sdc_executor.stop_pipeline(work)
+        return self.sdc_executor.stop_pipeline(work)
 
     def validate_pipeline(self, pipeline):
-        self.sdc_executor.validate_pipeline(pipeline)
+        return self.sdc_executor.validate_pipeline(pipeline)
 
     def wait_for_metric(self, *args, **kwargs):
-        self.sdc_executor.wait_for_pipeline_metric(*args, **kwargs)
+        return self.sdc_executor.wait_for_pipeline_metric(*args, **kwargs)
 
     def wait_for_status(self, *args, **kwargs):
-        self.sdc_executor.wait_for_pipeline_status(*args, **kwargs)
+        return self.sdc_executor.wait_for_pipeline_status(*args, **kwargs)
 
 
 class NextHandler(PipelineHandler):
