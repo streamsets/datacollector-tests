@@ -11,19 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
-import string
 from collections import namedtuple
-
+from datetime import datetime, date, time
+import logging
 import pytest
+import pytz
 import sqlalchemy
 from sqlalchemy import DateTime, Time, Date
-from datetime import datetime, date, time
-import pytz
+import string
 from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import database, category, sdc_min_version
-
+from time import sleep
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +37,13 @@ TEST_TIME = 'test_time'
 OperationsData = namedtuple('OperationsData', ['kind', 'table', 'columnnames', 'columnvalues', 'oldkeys'])
 Oldkeys = namedtuple('Oldkeys', ['keynames', 'keyvalues'])
 
-
 INSERT_ROWS = [
-    {PRIMARY_KEY: 0, NAME_COLUMN: 'Mbappe', TEST_DATETIME_TZ: '09-10-2017 10:10:10', TEST_DATETIME: '09-09-2017 10:10:10', TEST_TIME_TZ: '10:10:10', TEST_TIME: '10:10:10', TEST_DATE: '09-11-2017'},
-    {PRIMARY_KEY: 1, NAME_COLUMN: 'Kane', TEST_DATETIME_TZ: '09-30-2017 10:10:10', TEST_DATETIME: '09-30-2017 10:20:20', TEST_TIME_TZ: '10:20:10', TEST_TIME: '10:20:10', TEST_DATE: '09-30-2017'},
-    {PRIMARY_KEY: 2, NAME_COLUMN: 'Griezmann', TEST_DATETIME_TZ: '09-10-2017 10:30:10', TEST_DATETIME: '09-09-2017 10:30:10', TEST_TIME_TZ: '10:30:10', TEST_TIME: '10:30:10', TEST_DATE: '09-11-2017'},
+    {PRIMARY_KEY: 0, NAME_COLUMN: 'Mbappe', TEST_DATETIME_TZ: '09-10-2017 10:10:10',
+     TEST_DATETIME: '09-09-2017 10:10:10', TEST_TIME_TZ: '10:10:10', TEST_TIME: '10:10:10', TEST_DATE: '09-11-2017'},
+    {PRIMARY_KEY: 1, NAME_COLUMN: 'Kane', TEST_DATETIME_TZ: '09-30-2017 10:10:10',
+     TEST_DATETIME: '09-30-2017 10:20:20', TEST_TIME_TZ: '10:20:10', TEST_TIME: '10:20:10', TEST_DATE: '09-30-2017'},
+    {PRIMARY_KEY: 2, NAME_COLUMN: 'Griezmann', TEST_DATETIME_TZ: '09-10-2017 10:30:10',
+     TEST_DATETIME: '09-09-2017 10:30:10', TEST_TIME_TZ: '10:30:10', TEST_TIME: '10:30:10', TEST_DATE: '09-11-2017'},
 ]
 
 KIND_FOR_INSERT = 'insert'
@@ -52,6 +53,7 @@ CHECK_REP_SLOT_QUERY = 'select slot_name from pg_replication_slots;'
 POLL_INTERVAL = "${1 * SECONDS}"
 
 pytestmark = [pytest.mark.sdc_min_version('3.16.0'), pytest.mark.database('postgresql')]
+
 
 @stub
 @category('basic')
@@ -120,7 +122,8 @@ def test_parse_datetimes(sdc_builder, sdc_executor, database, stage_attributes):
 
         connection = database.engine.connect()
 
-        postgres_cdc_client, pipeline, wiretap = get_postgres_cdc_client_to_wiretap_pipeline(sdc_builder, database, stage_attributes)
+        postgres_cdc_client, pipeline, wiretap = _get_postgres_cdc_client_to_wiretap_pipeline(sdc_builder, database,
+                                                                                              stage_attributes)
 
         sdc_executor.add_pipeline(pipeline)
 
@@ -191,6 +194,106 @@ def test_parse_datetimes(sdc_builder, sdc_executor, database, stage_attributes):
         database.deactivate_and_drop_replication_slot(replication_slot)
         sdc_executor.remove_pipeline(pipeline)
 
+
+@database('postgresql')
+@sdc_min_version('5.4.0')
+@category('basic')
+def test_parse_null_values(sdc_builder, sdc_executor, database):
+    """
+    Test the ability to parse null/None values (special emphasis on numeric fields,
+    that previously threw a NullPointerException).
+
+    - Create a table into the database
+    - Create a simple pipeline: postgres_cdc_client >> wiretap.destination
+    - Insert data, some values are null/None
+    - Compare if the captured data is the same as the input data
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
+
+    # Column description
+    columns = [
+        {
+            "name": "ColInteger",
+            "type": sqlalchemy.Integer
+        },
+        {
+            "name": "ColLong",
+            "type": sqlalchemy.BigInteger
+        },
+        {
+            "name": "ColString",
+            "type": sqlalchemy.String(20)
+        }
+    ]
+    # Data to be inserted into the database to then be captured by the stage
+    data = [
+        {
+            columns[0]["name"]: 0,
+            columns[1]["name"]: 111222333444555,
+            columns[2]["name"]: "Just some text"
+        },
+        {
+            columns[0]["name"]: None,
+            columns[1]["name"]: None,
+            columns[2]["name"]: None
+        },
+    ]
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        # Create table
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        metadata = sqlalchemy.MetaData()
+        table = sqlalchemy.Table(
+            table_name,
+            metadata
+        )
+        # Adding the columns
+        for col in columns:
+            table.append_column(sqlalchemy.Column(col["name"], col["type"]))
+        table.create(database.engine)
+
+        connection = database.engine.connect()
+
+        # Create and start pipeline
+        postgres_cdc_client, pipeline, wiretap = _get_postgres_cdc_client_to_wiretap_pipeline(sdc_builder, database)
+        sdc_executor.add_pipeline(pipeline)
+        logger.info('Starting pipeline %s ...', pipeline.id)
+        sdc_executor.start_pipeline(pipeline).wait_for_status(status='RUNNING')
+
+        # Insert data
+        logger.info('Inserting data into table %s ...', table_name)
+        for record in data:
+            connection.execute(table.insert(), record)
+
+        logger.info('Waiting to ensure the data has been captured ...')
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(data), timeout_sec=60)
+
+        # Evaluation
+        actual_tables = set()
+        actual_data = []
+        for record in wiretap.output_records:
+            record_change_data = record.get_field_data('change')
+            for change in record_change_data:
+                column_names = change.get('columnnames')
+                if column_names is not None:
+                    actual_tables.add(change['table'])
+                    actual_data.append(dict(zip(column_names, change.get('columnvalues'))))
+
+        assert (data, set([table_name])) == (actual_data, actual_tables),\
+            f"\nTable {actual_tables}\nhas values\n{actual_data}\n\nbut table's name is {set([table_name])}\n" \
+            f"and was expected to have values\n{data}\n\nSee more details of the diff below:\n\n"
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            logger.info('Stopping pipeline %s ...', pipeline.id)
+            sdc_executor.stop_pipeline(pipeline).wait_for_stopped(timeout_sec=60)
+        if table is not None:
+            table.drop(database.engine)
+            logger.info('Table: %s dropped.', table_name)
+        sdc_executor.remove_pipeline(pipeline)
 
 @stub
 @category('basic')
@@ -383,6 +486,7 @@ def _create_table_in_database(table_name, database):
     table.create(database.engine)
     return table
 
+
 def _insert(connection, table):
     connection.execute(table.insert(), INSERT_ROWS)
 
@@ -396,11 +500,13 @@ def _insert(connection, table):
                                               None))  # No oldkeys expected.
     return operations_data
 
-def get_postgres_cdc_client_to_wiretap_pipeline(sdc_builder, database, stage_attributes,
-                                              configure_for_environment_flag=True):
+
+def _get_postgres_cdc_client_to_wiretap_pipeline(sdc_builder, database, stage_attributes=None,
+                                                 configure_for_environment_flag=True):
     pipeline_builder = sdc_builder.get_pipeline_builder()
     postgres_cdc_client = pipeline_builder.add_stage('PostgreSQL CDC Client')
-    postgres_cdc_client.set_attributes(**stage_attributes)
+    if stage_attributes is not None:
+        postgres_cdc_client.set_attributes(**stage_attributes)
     wiretap = pipeline_builder.add_wiretap()
     postgres_cdc_client >> wiretap.destination
     if configure_for_environment_flag:
