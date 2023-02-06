@@ -20,6 +20,8 @@ import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
+from azure.core.exceptions import ResourceExistsError
+
 logger = logging.getLogger(__name__)
 
 HDP_LIBRARY_NAME = 'streamsets-datacollector-hdp_2_6-lib'
@@ -72,17 +74,23 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
 
     sdc_executor.add_pipeline(hadoop_fs_pipeline)
 
+    container_name = azure.storage.wasb_container
     try:
-        blob_service = azure.storage.account.create_block_blob_service()
-        container_name = azure.storage.wasb_container
+        azure.storage.create_blob_container(container_name)
+    except ResourceExistsError:
+        logger.debug(f'A container with name "{container_name}" already exists')
 
+    try:
         logger.info('Creating blob data under %s container with path as %s', container_name, files_dir_path)
         data = [f'{{message: hello {i}}}' for i in range(no_of_records)]
         blob_paths = [f'{files_dir_name}/{get_random_string()}' for _ in range(no_of_records)]
 
+        blob_clients = []
         for idx, blob_path in enumerate(blob_paths):
             logger.debug('Creating blob data at %s', blob_path)
-            blob_service.create_blob_from_text(container_name, blob_path, data[idx])
+            blob_client = azure.storage.get_blob_client(container=container_name, blob=blob_path)
+            blob_client.upload_blob(data[idx])
+            blob_clients.append(blob_client)
 
         logger.debug('Starting Hadoop FS Standalone pipeline and waiting for it to finish ...')
         sdc_executor.start_pipeline(hadoop_fs_pipeline).wait_for_finished()
@@ -91,6 +99,6 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
         assert sorted(data) == sorted([str(record.field['text']) for record in wiretap.output_records])
     finally:
         logger.info('Deleting blob data under %s container with path as %s', container_name, files_dir_path)
-        for blob_path in blob_paths:
+        for blob_path, blob_client in zip(blob_paths, blob_clients):
             logger.debug('Deleting blob data at %s', blob_path)
-            blob_service.delete_blob(container_name, blob_path)
+            blob_client.delete_blob()
