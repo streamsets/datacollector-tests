@@ -304,7 +304,7 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure, endpoint_type):
             # change configuration to use URL instead of tenant_id
             tenant_id = azure.tenant_id
             url = f'https://login.microsoftonline.com/{tenant_id}/oauth2/token'
-            datalake_origin_pipeline.stages[0].set_attributes(enpoint_type='URL',
+            datalake_origin_pipeline.stages[0].set_attributes(endpoint_type='URL',
                                                               endpoint_url=url)
         sdc_executor.add_pipeline(datalake_origin_pipeline)
 
