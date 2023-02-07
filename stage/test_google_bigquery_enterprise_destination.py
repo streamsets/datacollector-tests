@@ -1445,7 +1445,7 @@ def test_nested_fields_map(sdc_builder, sdc_executor, gcp, bigquery_create_schem
                             bucket=bucket_name,
                             schema_generator='BIGQUERY' if bigquery_create_schema else 'SDC',
                             staging_file_format='AVRO',
-                            enable_data_drift=False,
+                            enable_data_drift=not bigquery_create_schema,
                             create_table=not bigquery_create_schema,
                             create_dataset=False,
                             purge_stage_file_after_ingesting=True)
@@ -1513,7 +1513,7 @@ def test_nested_fields_list(sdc_builder, sdc_executor, gcp, bigquery_create_sche
                             bucket=bucket_name,
                             schema_generator='BIGQUERY' if bigquery_create_schema else 'SDC',
                             staging_file_format='AVRO',
-                            enable_data_drift=False,
+                            enable_data_drift=not bigquery_create_schema,
                             create_table=not bigquery_create_schema,
                             create_dataset=False,
                             purge_stage_file_after_ingesting=True)
