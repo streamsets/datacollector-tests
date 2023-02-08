@@ -855,8 +855,8 @@ def test_directory_origin_configuration_file_name_pattern(sdc_builder, sdc_execu
         sdc_executor.stop_pipeline(pipeline)
 
         records = [record.field for record in wiretap.output_records]
-        raw_data = '\n'.join(files_content)
-        processed_data = '\n'.join(str(r['text']) for r in records)
+        raw_data = '\n'.join(sorted(files_content))
+        processed_data = '\n'.join(sorted(str(r['text']) for r in records))
         if file_name_pattern == 'pattern_check_processing_1.txt':
             assert files_content[0] == processed_data
         else:
