@@ -200,3 +200,54 @@ def test_connx_origin_incremental_mode(sdc_builder, sdc_executor, connx):
         with connx.get_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(f"drop table {table_name}")
+
+
+def test_connx_origin_nulls(sdc_builder, sdc_executor, connx):
+    """Test that empties and NULLs are properly distinguished."""
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    try:
+        with connx.get_connection() as conn:
+            with conn.cursor() as cursor:
+                # Create table
+                cursor.execute(f"""
+                    CREATE TABLE {table_name}(
+                        id int primary key,
+                        empty_int int,
+                        null_int int,
+                        empty_char CHAR(5),
+                        null_char CHAR(5)
+                    )
+                """)
+
+                cursor.execute(f"INSERT INTO {table_name} VALUES(1, 0, NULL, \'\', NULL)")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('ConnX')
+        origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
+        origin.incremental_mode = False
+        origin.on_unknown_type = 'CONVERT_TO_STRING'
+
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(connx)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(wiretap.output_records) == 1
+        record = wiretap.output_records[0]
+
+        assert record.field['empty_int']._data['value'] == '0'
+        assert record.field['null_int']._data['value'] == None
+        assert record.field['empty_char']._data['value'] == "     "
+        assert record.field['null_char']._data['value'] == None
+    finally:
+        logger.info('Dropping table %s ...', table_name)
+        with connx.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(f"drop table {table_name}")
