@@ -275,7 +275,7 @@ def test_datalake_origin(sdc_builder, sdc_executor, azure, endpoint_type):
 
     azure_data_lake_store_origin >> wiretap
     """
-    if endpoint_type == "URL" and Version(sdc_executor.version) < Version('5.4.0'):
+    if endpoint_type == "URL" and Version(sdc_builder.version) < Version('5.4.0'):
         pytest.skip('ADLS Gen2 URL Endpoint Type parameter only supported in SDC versions 5.4.0 and above.')
 
     directory_name = get_random_string(string.ascii_letters, 10)
