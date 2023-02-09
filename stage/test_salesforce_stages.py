@@ -439,7 +439,7 @@ def test_salesforce_origin_platform_events(sdc_builder, sdc_executor, salesforce
             salesforce.client._call_salesforce('POST', salesforce_push_event_url, data=json.dumps({"test_text__c": f"Example {i}"}))
 
         sleep(10)
-        pipeline_cmd.wait_for_pipeline_output_records_count(4)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 4, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
 
         assert len(wiretap.output_records) == 4
@@ -1456,9 +1456,7 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline ...')
-        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
-        pipeline_cmd.wait_for_status('RUNNING')
-        time.sleep(10) # Give the pipeline time to connect to the Streaming API
+        sdc_executor.start_pipeline(pipeline)
 
         # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
         # updates could flood a channel."
@@ -1467,7 +1465,7 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         client.Contact.update(contact_id, test_data)
         logger.info('Updated a Contact using Salesforce client with id as %s', contact_id)
 
-        pipeline_cmd.wait_for_pipeline_output_records_count(1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=300)
         if subscription_type == PUSH_TOPIC:
             change_records = [record for record in wiretap.output_records if record.field['Id'] == contact_id]
             assert change_records
@@ -1541,9 +1539,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline ...')
-        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
-        pipeline_cmd.wait_for_status('RUNNING')
-        time.sleep(10) # Give the pipeline time to connect to the Streaming API
+        sdc_executor.start_pipeline(pipeline)
 
         # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
         # updates could flood a channel."
@@ -1553,7 +1549,7 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         contact_id = contact['id']
         logger.info('Created first record of Contact using Salesforce client with id as %s', contact_id)
 
-        pipeline_cmd.wait_for_pipeline_output_records_count(1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=300)
         change_records = get_cdc_wiretap_records(wiretap, [contact_id])
         assert change_records
         change_record = change_records[0]
@@ -1578,11 +1574,9 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
 
         logger.info('Restarting pipeline ...')
         wiretap.reset()
-        pipeline_cmd_2 = sdc_executor.start_pipeline(pipeline)
-        pipeline_cmd_2.wait_for_status('RUNNING')
-        time.sleep(10) # Give the pipeline time to connect to the Streaming API
+        sdc_executor.start_pipeline(pipeline)
 
-        pipeline_cmd_2.wait_for_pipeline_output_records_count(1)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=300)
         change_records_2 = get_cdc_wiretap_records(wiretap, [contact_id_2])
         assert change_records_2
         change_record_2 = change_records_2[0]
@@ -2355,18 +2349,14 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         pipeline = pipeline_builder.build().configure_for_environment(salesforce)
         sdc_executor.add_pipeline(pipeline)
 
-        sdc_executor.start_pipeline(pipeline).wait_for_status('RUNNING')
-        time.sleep(10) # Give the pipeline time to connect to the Streaming API
+        sdc_executor.start_pipeline(pipeline)
         timeout_sec = BULK_PIPELINE_TIMEOUT_SECONDS if api == 'bulk' else SOAP_PIPELINE_TIMEOUT_SECONDS
-        sdc_executor.wait_for_pipeline_metric(pipeline,
-                                              'input_record_count',
-                                              len(test_data),
-                                              timeout_sec=timeout_sec)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(test_data), timeout_sec=timeout_sec)
 
         if subscription_type == PUSH_TOPIC:
             verify_wiretap_data(wiretap, test_data)
         else:
-            # cannot verify CDC at this point as we not replaying all events prior to pipeline start
+            # cannot verify CDC at this point as we are not replaying all events prior to pipeline start
             pass
 
         # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
@@ -2436,13 +2426,10 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline ...')
-        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
-        pipeline_cmd.wait_for_status('RUNNING')
-        time.sleep(10) # Give the pipeline time to connect to the Streaming API
+        sdc_executor.start_pipeline(pipeline)
 
         # create change data
         test_data = {'Name': 'Test1', 'Fax': 'testFax'}
-
 
         account = client.Account.create(test_data)
         account_id = account['id']
@@ -2452,7 +2439,7 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
             raise TimeoutError('Timed out after {} seconds waiting to get CDC record(s) for Account id {}'.format(
                                timeout, account_id))
 
-        pipeline_cmd.wait_for_pipeline_output_records_count(1) # do an initial wait before metrics counter is available
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=300)
         current_count = None
         change_records = []
 
