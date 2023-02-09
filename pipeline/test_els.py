@@ -11,8 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import logging
+from datetime import datetime
 
 import pytest
 from streamsets.testframework.markers import sdc_min_version
@@ -141,3 +141,35 @@ def test_runtime_resources_dir_path_el(random_expression_pipeline_builder, sdc_e
     assert record.header['values']['resourcesDirPath'] is not None
     assert len(record.header['values']['resourcesDirPath']) > 0
 
+
+@pytest.mark.parametrize('expression', ['${job:id()}', '${job:name()}', '${job:user()}', '${job:startTime()}'])
+def test_job_els(sdc_executor, sdc_builder, expression):
+    """Test job EL with pipeline configurations
+
+    The pipeline looks like:
+    dev_raw_data_source >> trash
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=expression,
+                                       stop_after_first_batch=True)
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> wiretap.destination
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert len(wiretap.output_records) == 1
+    assert len(wiretap.error_records) == 0
+
+    # We can only validate the startTime since others will be UNDEFINED for SDC
+    if expression == '${job:startTime()}':
+        try:
+            datetime.strptime(str(wiretap.output_records[0].field['text']), "%a %b %d %H:%M:%S %Z %Y")
+        except ValueError:
+            pytest.fail("Invalid start time job")
