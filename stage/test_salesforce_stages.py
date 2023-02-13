@@ -898,7 +898,10 @@ def test_salesforce_origin_aggregate(sdc_builder, sdc_executor, salesforce):
             sdc_executor.stop_pipeline(pipeline)
         if account_ids:
             logger.info('Deleting records ...')
-            client.bulk.Account.delete(account_ids)
+            try:
+                client.bulk.Account.delete(account_ids)
+            except Exception as e:
+                logger.warning(f'Unable to delete records: {e}')
 
 
 @salesforce
