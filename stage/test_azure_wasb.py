@@ -24,7 +24,7 @@ from azure.core.exceptions import ResourceExistsError
 
 logger = logging.getLogger(__name__)
 
-HDP_LIBRARY_NAME = 'streamsets-datacollector-hdp_2_6-lib'
+HDP_LIBRARY_NAME = 'streamsets-datacollector-hdp_3_1-lib'
 
 
 @pytest.fixture(scope='module')
