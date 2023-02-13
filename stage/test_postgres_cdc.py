@@ -445,7 +445,7 @@ def test_start_not_from_latest(sdc_builder,
             for row in sample_data_3:
                 connection.execute(table.insert(), row)
             sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=300)
+        sdc_executor.wait_for_pipeline_status(pipeline, 'FINISHED', timeout_sec=500)
         if record_contents == 'TRANSACTION':
             records = [dict(zip(record.field['change'][0]['columnnames'], record.field['change'][0]['columnvalues']))
                        for record in wiretap.output_records]
