@@ -21,7 +21,7 @@ import pytest
 import sqlalchemy
 from streamsets.testframework.environments.databases import MySqlDatabase, MariaDBDatabase, OracleDatabase, MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -436,13 +436,6 @@ DATA_TYPES_MYSQL = [
     ('2020-01-01 10:00:00', 'DATETIME', 'varbinary(50)', b'Wed Jan 01 10:00:00 GMT 2020'),
     ('2020-01-01 10:00:00', 'DATETIME', 'text', 'Wed Jan 01 10:00:00 GMT 2020'),
     ('2020-01-01 10:00:00', 'DATETIME', 'blob', b'Wed Jan 01 10:00:00 GMT 2020'),
-    #Zoned Datetime
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(50)', '2020-01-01 10:00:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(50)', '2020-01-01 10:00:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'binary(20)', b'2020-01-01T10:00Z\x00\x00\x00'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varbinary(50)', b'2020-01-01T10:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01 10:00:00Z'),
-    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'blob', b'2020-01-01T10:00Z'),
     # String
     ('120', 'STRING', 'tinyint', 120),
     ('120', 'STRING', 'tinyint unsigned', 120),
@@ -477,7 +470,38 @@ DATA_TYPES_MYSQL = [
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_MYSQL, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_MYSQL])
 def test_data_types_mysql(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
     if isinstance(database, MemSqlDatabase):
-        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both "
+                    "DBs the same way)")
+    _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
+
+
+DATA_TYPES_ZONED_DATETIME_MYSQL = [
+    #Zoned Datetime
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'char(50)', '2020-01-01 10:00:00Z', '2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varchar(50)', '2020-01-01 10:00:00Z', '2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'binary(20)', b'2020-01-01T10:00Z\x00\x00\x00',
+     b'2020-01-01T10:00Z\x00\x00\x00'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'varbinary(50)', b'2020-01-01T10:00Z', b'2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'text', '2020-01-01 10:00:00Z', '2020-01-01T10:00Z'),
+    ('2020-01-01T10:00:00+00:00', 'ZONED_DATETIME', 'blob', b'2020-01-01T10:00Z', b'2020-01-01T10:00Z'),
+]
+@database('mysql')
+@pytest.mark.parametrize('input,converter_type,database_type,expected_new_database_version,'
+                         'expected_old_database_version', DATA_TYPES_ZONED_DATETIME_MYSQL,
+                         ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_ZONED_DATETIME_MYSQL])
+def test_data_types_zoned_data_time_mysql(sdc_builder, sdc_executor, input, converter_type, database_type,
+                                          expected_new_database_version, expected_old_database_version, database,
+                                          keep_data):
+
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs"
+                    " the same way)")
+
+    # In MySQL 8.0 the value of zoned data time is different than in mySQL 5.7 we need to return the correct
+    # value for the database version.
+    expected = expected_old_database_version if Version(database.version) < Version('8.0.0') \
+        else expected_new_database_version
+
     _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
 
 

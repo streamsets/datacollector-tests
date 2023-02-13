@@ -407,11 +407,15 @@ def test_jdbc_tee_processor_mysql_use_legacy_zoned_datetime_format_property(sdc_
                                                                             expected_default_format, database,
                                                                             keep_data,
                                                                             use_legacy_zoned_datetime_format):
-    """JDBC Tee processor MySQL
+    """
+    JDBC Tee processor MySQL
         In the pipeline add a new custom property on the JDBC Tee processor ("useLegacyZonedDatetime") to show the legacy
         zoned DateTime format. The pipeline looks like this:
             origin >> converter >> tee >> wiretap
     """
+
+    if Version(database.version) < Version('8.0.0'):
+        pytest.skip(f"Test is skipped because MySQL database version is {database.version} < 8.0.0")
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()

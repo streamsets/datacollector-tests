@@ -1496,12 +1496,15 @@ def test_jdbc_producer_mysql_use_legacy_zoned_datetime_format_property(sdc_build
                                                                        expected_legacy_format,
                                                                        expected_default_format, database, keep_data,
                                                                        use_legacy_zoned_datetime_format):
-
-    """JDBC producer MySQL
+    """
+    JDBC producer MySQL
         In the pipeline add a new custom property on the JDBC producer ("useLegacyZonedDatetime") to show the legacy
         zoned DateTime format. The pipeline looks like this:
             origin >> converter >> target
     """
+
+    if Version(database.version) < Version('8.0.0'):
+        pytest.skip(f"Test is skipped because MySQL database version is {database.version} < 8.0.0")
 
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
