@@ -25,8 +25,8 @@ pytestmark = [pytest.mark.connx, sdc_min_version('5.4.0')]
 
 
 # https://www.connx.com/products/connx/CONNX%2013.5%20UserGuide/default.htm#connxcdd32c/ole_db_data_types.htm
-# Omitting BIGINT and TIME for the time being since ConnX when used in the underlying MySQL table ConnX maps both of
-# these types to VARCHAR instead, as according to the documentation ConnX decides the mapping of types to the SQL Type it
+# Omitting BIGINT and TIME for the time being since CONNX when used in the underlying MySQL table CONNX maps both of
+# these types to VARCHAR instead, as according to the documentation CONNX decides the mapping of types to the SQL Type it
 # deems most appropiate.
 DATA_TYPES_CONNX = [
     ('TINYINT', '-128', 'SHORT', -128),
@@ -53,7 +53,7 @@ DATA_TYPES_CONNX = [
 
 @pytest.mark.parametrize('connx_type,insert_fragment,expected_type,expected_value', DATA_TYPES_CONNX, ids=[i[0] for i in DATA_TYPES_CONNX])
 def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragment, expected_type, expected_value, keep_data):
-    """Test all feasible ConnX types."""
+    """Test all feasible CONNX types."""
     table_name = get_random_string(string.ascii_lowercase, 20)
     try:
         with connx.get_connection() as conn:
@@ -73,7 +73,7 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
 
         builder = sdc_builder.get_pipeline_builder()
 
-        origin = builder.add_stage('ConnX')
+        origin = builder.add_stage('CONNX')
         origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
         origin.incremental_mode = False
         origin.on_unknown_type = 'CONVERT_TO_STRING'
@@ -107,7 +107,7 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
 
 
 def test_object_names(sdc_builder, sdc_executor, connx):
-    pytest.skip("The ConnX origin doesn't generate queries - it only takes user input, thus user is responsible to"
+    pytest.skip("The CONNX origin doesn't generate queries - it only takes user input, thus user is responsible to"
                 "properly escape or enclose names and thefore there is not much for us to test here.")
 
 
@@ -128,7 +128,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, connx, incremental, keep_da
 
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('ConnX')
+    origin = builder.add_stage('CONNX')
     origin.incremental_mode = incremental
     origin.sql_query = 'SELECT * FROM {0} WHERE '.format(table_name) + 'id > ${OFFSET} ORDER BY id'
     origin.initial_offset = '0'
@@ -190,7 +190,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx, incremental, keep_dat
 
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('ConnX')
+    origin = builder.add_stage('CONNX')
     origin.incremental_mode = incremental
     origin.sql_query = 'SELECT * FROM {0} WHERE '.format(table_name) + 'id > ${OFFSET} ORDER BY id'
     origin.initial_offset = '0'
@@ -257,7 +257,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx, incremental, keep_dat
 
 
 def test_data_format(sdc_builder, sdc_executor, connx, keep_data):
-    pytest.skip("ConnX Origin doesn't deal with data formats")
+    pytest.skip("CONNX Origin doesn't deal with data formats")
 
 
 def test_resume_offset(sdc_builder, sdc_executor, connx, keep_data):
@@ -276,7 +276,7 @@ def test_resume_offset(sdc_builder, sdc_executor, connx, keep_data):
 
     builder = sdc_builder.get_pipeline_builder()
 
-    origin = builder.add_stage('ConnX')
+    origin = builder.add_stage('CONNX')
     origin.incremental_mode = True
     origin.sql_query = 'SELECT * FROM {0} WHERE '.format(table_name) + 'id > ${OFFSET} ORDER BY id'
     origin.initial_offset = '0'

@@ -78,7 +78,7 @@ def _set_up_CDC(connx):
 def test_connx_cdc_insert(sdc_builder, sdc_executor, connx):
     # Create pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    origin = pipeline_builder.add_stage('ConnX CDC')
+    origin = pipeline_builder.add_stage('CONNX CDC')
     origin.set_attributes(datasync_transform=f'{TRANSFORM_NAME}',
                           use_credentials=True)
     wiretap = pipeline_builder.add_wiretap()
@@ -111,7 +111,7 @@ def test_connx_cdc_insert(sdc_builder, sdc_executor, connx):
 def test_connx_cdc_update(sdc_builder, sdc_executor, connx):
     # Create pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    origin = pipeline_builder.add_stage('ConnX CDC')
+    origin = pipeline_builder.add_stage('CONNX CDC')
     origin.set_attributes(datasync_transform=f'{TRANSFORM_NAME}',
                           use_credentials=True)
     wiretap = pipeline_builder.add_wiretap()
@@ -145,7 +145,7 @@ def test_connx_cdc_update(sdc_builder, sdc_executor, connx):
 def test_connx_cdc_delete(sdc_builder, sdc_executor, connx):
     # Create pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    origin = pipeline_builder.add_stage('ConnX CDC')
+    origin = pipeline_builder.add_stage('CONNX CDC')
     origin.set_attributes(datasync_transform=f'{TRANSFORM_NAME}',
                           use_credentials=True)
     wiretap = pipeline_builder.add_wiretap()

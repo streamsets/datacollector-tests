@@ -32,7 +32,7 @@ def test_connx_origin_event(sdc_builder, sdc_executor, connx):
 
     # Create pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    origin = pipeline_builder.add_stage('ConnX')
+    origin = pipeline_builder.add_stage('CONNX')
     origin.set_attributes(incremental_mode=False,
                           sql_query=sql_query,
                           max_batch_size_in_records=num_records,
@@ -77,7 +77,7 @@ def test_connx_single_read_use_connection_string(sdc_builder, sdc_executor, conn
 
     # Create pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    origin = pipeline_builder.add_stage('ConnX')
+    origin = pipeline_builder.add_stage('CONNX')
     origin.set_attributes(incremental_mode=False,
                           sql_query=sql_query,
                           max_batch_size_in_records=num_records,
@@ -117,7 +117,7 @@ def test_connx_origin_full_mode(sdc_builder, sdc_executor, connx):
 
     # Create pipeline
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    origin = pipeline_builder.add_stage('ConnX')
+    origin = pipeline_builder.add_stage('CONNX')
     origin.set_attributes(incremental_mode=False,
                           sql_query=sql_query,
                           max_batch_size_in_records=num_records,
@@ -160,7 +160,7 @@ def test_connx_origin_incremental_mode(sdc_builder, sdc_executor, connx):
     sql_query = f'SELECT * FROM {table_name} WHERE id > ${{OFFSET}} ORDER BY id ASC LIMIT 5'
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
-    origin = pipeline_builder.add_stage('ConnX')
+    origin = pipeline_builder.add_stage('CONNX')
     origin.set_attributes(incremental_mode=True,
                           initial_offset="0",
                           offset_column="id",
@@ -223,7 +223,7 @@ def test_connx_origin_nulls(sdc_builder, sdc_executor, connx):
 
         builder = sdc_builder.get_pipeline_builder()
 
-        origin = builder.add_stage('ConnX')
+        origin = builder.add_stage('CONNX')
         origin.sql_query = 'SELECT * FROM {0}'.format(table_name)
         origin.incremental_mode = False
         origin.on_unknown_type = 'CONVERT_TO_STRING'
