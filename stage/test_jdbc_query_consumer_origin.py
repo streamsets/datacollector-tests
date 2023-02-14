@@ -15,11 +15,14 @@
 import logging
 import math
 import string
+import time
 
 import pytest
 import sqlalchemy
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.environments.databases import (MySqlDatabase, OracleDatabase,
+                                                             PostgreSqlDatabase, SQLServerDatabase, MariaDBDatabase)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,42 @@ LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
 RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
 
 DEFAULT_DB2_SCHEMA = 'DB2INST1'
+
+# Copied from **next-tests** test_jdbc_stages.py
+def _create_table(table_name, database, schema_name=None, quote=False):
+    """Helper function to create a table with two columns: id (int, PK) and name (str).
+
+    Args:
+        table_name: (:obj:`str`) the name for the new table.
+        database: a :obj:`streamsets.testframework.environment.Database` object.
+        schema_name: (:obj:`str`, optional) when provided, create the new table in a specific schema; otherwise,
+            the default schema for the engine’s database connection is used.
+
+    Return:
+        The new table as a sqlalchemy.Table object.
+
+    """
+    metadata = sqlalchemy.MetaData()
+
+    if type(database) == SQLServerDatabase:
+        table = sqlalchemy.Table(table_name,
+                                 metadata,
+                                 sqlalchemy.Column('name', sqlalchemy.String(32), quote=quote),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True,
+                                                   autoincrement=False, quote=quote),
+                                 schema=schema_name,
+                                 quote=quote)
+    else:
+        table = sqlalchemy.Table(table_name,
+                                 metadata,
+                                 sqlalchemy.Column('name', sqlalchemy.String(32), quote=quote),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=quote),
+                                 schema=schema_name,
+                                 quote=quote)
+
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
 
 
 # SDC-14882: JDBC Query Consumer closing the connection after each batch
@@ -267,7 +306,6 @@ def test_stored_procedure_sqlserver(sdc_builder, sdc_executor, database, keep_da
             connection.execute(f"DROP TABLE IF EXISTS {table_name}")
             connection.execute(f"DROP PROCEDURE IF EXISTS {procedure_name}")
 
-
 @sdc_min_version('5.0.0')
 @database('oracle')
 def test_jdbc_consumer_read_timestamp_with_local_timezone(sdc_builder, sdc_executor, database):
@@ -315,6 +353,93 @@ def test_jdbc_consumer_read_timestamp_with_local_timezone(sdc_builder, sdc_execu
     finally:
         logger.info('Dropping table %s in %s database ...', table_name, database.type)
         connection.execute(f"DROP TABLE {table_name}")
+
+
+@sdc_min_version('5.5.0')
+@database('mysql','oracle', 'postgresql', 'sqlserver', 'mariadb')
+def test_jdbc_tables_header(sdc_builder, sdc_executor, database):
+    """Tests that 'JDBC Query Consumer' populates the jdbc.tables in header.values correctly - COLLECTOR-1503.
+    The case of multiple tables is covered by creating two identical tables and joining them on id.
+    The jdbc.tables string format and content varies between JDBC drivers, and test assertions deal with each case.
+
+    The pipeline looks like:
+        jdbc_query_consumer >> wiretap
+    """
+
+    table_name1 = get_random_string(string.ascii_lowercase, 20)
+    table_name2 = get_random_string(string.ascii_lowercase, 20)
+    if database.type == 'Oracle':
+        # When not quoted, Oracle automatically converts names to upper case. Quoting is inconsistent between
+        # databases, so it is preferable to avoid it in SQL below. And to get a compatible result during creation,
+        # we omit quotes here also.
+        create_quotes_names = False
+    else:
+        create_quotes_names = True
+
+    logger.info('Creating two identical tables in %s database...', database.type)
+    table1 = _create_table(table_name1, database, quote=create_quotes_names)
+    table2 = _create_table(table_name2, database, quote=create_quotes_names)
+
+    connection = database.engine.connect()
+    try:
+        logger.info('Adding %s rows into each table...', len(ROWS_IN_DATABASE))
+        connection.execute(table1.insert(), ROWS_IN_DATABASE)
+        connection.execute(table2.insert(), ROWS_IN_DATABASE)
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        sql_query = "SELECT t1.id, t2.name " \
+                    f"FROM {table_name1} t1 " \
+                    f"    JOIN {table_name2} t2 " \
+                    "     ON t1.name = t2.name " \
+                    "WHERE t1.id > ${OFFSET} " \
+                    "ORDER BY t1.id"
+        origin = builder.add_stage('JDBC Query Consumer')
+        origin.sql_query = sql_query
+        origin.offset_column = 'id'
+        origin.incremental_mode = True
+        origin.on_unknown_type = 'STOP_PIPELINE'
+
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Check jdbc.tables header.
+        tables_header = wiretap.output_records[0].header['values']['jdbc.tables']
+        logger.debug('%s="%s"', "header['values']['jdbc.tables']", tables_header)
+        logger.debug('%s="%s"', "database.type", database.type)
+        # According to documentation some JDBC drivers may not provide this information:
+        # https://docs.streamsets.com/platform-datacollector/latest/datacollector/UserGuide/Origins/JDBCConsumer.html
+        if database.type == 'Oracle':
+            # Oracle does not seem to populate this field
+            assert tables_header == ""
+        elif database.type == 'SQLServer':
+            # SQLServer does not seem to populate this field
+            assert tables_header == ""
+        else:
+            # MySQL, PostgreSQL and MiriaDB all return source table names as a coma-delimited list.
+            # Ordering of the list is not known for PostgreSQL and MiriaDB, but For MySQL it is predictably random.
+            # The logic below asserts that both names are reported in any order (and case is ignored, though this
+            # should not be necessary):
+            tables_list = tables_header.split(',')
+            tables_normalized_map = map(lambda x:x.lower(), tables_list)
+            assert set(tables_normalized_map) == {table_name1, table_name2}
+
+    finally:
+        try:
+            logger.info('Dropping table %s in %s database ...', table_name1, database.type)
+            connection.execute(f"DROP TABLE {table_name1}")
+            logger.info('Dropping table %s in %s database ...', table_name2, database.type)
+            connection.execute(f"DROP TABLE {table_name2}")
+        except Exception as ex:
+            logger.warning('Error during cleanup', exc_info=ex)
 
 
 # Test for COLLECTOR-962
