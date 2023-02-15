@@ -137,9 +137,17 @@ def test_connection_types(
             handler.validate_pipeline(pipeline)
 
 
-# ToDo Mikel unify configuration tests and parametrize correct/incorrect inputs
-@pytest.mark.parametrize("ring_buffer_size, correct", ((0, False), (1, True), (4096, True), (4097, False)))
-def test_ring_buffer_size(sdc_builder, sdc_executor, database, cleanup, test_name, ring_buffer_size, correct):
+@pytest.mark.parametrize(
+    # fmt: off
+    "buffer_size, correct", [
+        [0, False],
+        [1, True],
+        [4096, True],
+        [4097, False],
+    ]
+    # fmt: on
+)
+def test_buffer_size(sdc_builder, sdc_executor, database, cleanup, test_name, buffer_size, correct):
     """Check that the ring size is a multiple of 2."""
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -147,7 +155,7 @@ def test_ring_buffer_size(sdc_builder, sdc_executor, database, cleanup, test_nam
     oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
     # fmt: off
     oracle_cdc_origin.set_attributes(
-        ring_buffer_size=ring_buffer_size,
+        buffer_size=buffer_size,
         **DefaultConnectionParameters(database)
     )
     # fmt:on
