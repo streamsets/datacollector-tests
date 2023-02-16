@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
+import time
 import logging
 import string
 
@@ -38,8 +40,8 @@ DATA_TYPES_CONNX = [
     ('DOUBLE', '5.2', 'DOUBLE', '5.2'),
     ('REAL', '5.2', 'FLOAT', '5.2'),
     ('BIT',"'0'", 'BOOLEAN', False),
-    ('DATE', "'2019-01-01'", 'DATE', 1546297200000),
-    ('TIMESTAMP', "'2019-01-01 5:00:00'", 'DATETIME', 1546315200000),
+    ('DATE', "'2019-01-01'", 'DATE', datetime.datetime(2019, 1, 1)),
+    ('TIMESTAMP', "'2019-01-01 5:00:00'", 'DATETIME', datetime.datetime(2019, 1, 1, 5, 0, 0)),
     #('TIME', "'5:00:00'", 'TIME', 18000000),
     ('CHAR(5)', "'Hello'", 'STRING', 'Hello'),
     ('VARCHAR(5)', "'Hello'", 'STRING', 'Hello'),
@@ -95,6 +97,10 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
 
         assert record.field['data_column'].type == expected_type
         assert null_record.field['data_column'].type == expected_type
+
+        if (expected_type == 'DATE' or expected_type == 'DATETIME'):
+            # Convert expected date to UNIX timestamp and convert to milliseconds
+            expected_value = time.mktime(expected_value.timetuple())*1000
 
         assert record.field['data_column']._data['value'] == expected_value
         assert null_record.field['data_column'] == None
