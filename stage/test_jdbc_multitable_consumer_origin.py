@@ -1344,7 +1344,7 @@ def test_jdbc_schema_settings(sdc_builder, sdc_executor, database, schema_value)
     # Set the schema config
     if schema_value == '{database}':
         # here, we assume that the schema name is exactly the same as the database name
-        origin.table_configs = [{'schema': database.database}]
+        origin.table_configs = [{'schema': database.database, 'tablePattern':f'{table_name}'}]
     else:
         origin.table_configs = [{'schema': schema_value, 'tablePattern':f'{table_name}'}]
 
