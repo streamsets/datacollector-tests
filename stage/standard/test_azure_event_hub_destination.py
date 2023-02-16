@@ -22,6 +22,8 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure
 from streamsets.testframework.utils import get_random_string
 
+from ..utils.utils_azure import create_blob_container
+
 logger = logging.getLogger(__name__)
 
 AZURE_IOT_EVENT_HUB_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_eventhubs_EventHubConsumerDSource'
@@ -96,11 +98,10 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -195,11 +196,10 @@ def test_object_names_container(sdc_builder, sdc_executor, azure, container_name
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -296,11 +296,10 @@ def test_object_names_blob(sdc_builder, sdc_executor, azure, blob_name_category,
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -390,11 +389,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, batch_size):
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -482,11 +480,10 @@ def test_data_format_json(sdc_builder, sdc_executor, azure):
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -573,11 +570,10 @@ def test_data_format_text(sdc_builder, sdc_executor, azure):
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -663,11 +659,10 @@ def test_data_format_xml(sdc_builder, sdc_executor, azure):
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -752,11 +747,10 @@ def test_multithreading(sdc_builder, sdc_executor, azure, no_of_threads):
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -838,11 +832,10 @@ def test_push_pull(sdc_builder, sdc_executor, azure):
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)

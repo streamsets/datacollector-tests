@@ -23,6 +23,8 @@ from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
+from .utils.utils_azure import create_blob_container
+
 logger = logging.getLogger(__name__)
 
 # To workaround the stage label tweak introduced in 3.0.1.0 (SDC-8077), we use the
@@ -94,11 +96,10 @@ def test_azure_event_hub_consumer(sdc_builder, sdc_executor, azure, use_websocke
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
@@ -166,11 +167,10 @@ def test_azure_event_hub_consumer_resume_offset(sdc_builder, sdc_executor, azure
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)

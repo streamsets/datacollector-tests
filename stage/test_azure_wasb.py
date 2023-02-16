@@ -20,7 +20,7 @@ import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-from azure.core.exceptions import ResourceExistsError
+from .utils.utils_azure import create_blob_container
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +75,7 @@ def test_hadoop_fs_standalone_origin_simple(sdc_builder, sdc_executor, azure):
     sdc_executor.add_pipeline(hadoop_fs_pipeline)
 
     container_name = azure.storage.wasb_container
-    try:
-        azure.storage.create_blob_container(container_name)
-    except ResourceExistsError:
-        logger.debug(f'A container with name "{container_name}" already exists')
+    create_blob_container(azure, container_name)
 
     try:
         logger.info('Creating blob data under %s container with path as %s', container_name, files_dir_path)

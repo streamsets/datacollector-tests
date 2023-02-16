@@ -22,6 +22,8 @@ from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
+from .utils.utils_azure import create_blob_container
+
 logger = logging.getLogger(__name__)
 
 AZURE_IOT_EVENT_HUB_STAGE_NAME = 'com_streamsets_pipeline_stage_origin_eventhubs_EventHubConsumerDSource'
@@ -131,11 +133,10 @@ def test_azure_event_hub_producer(sdc_builder, sdc_executor, azure, destination_
     consumer_origin_pipeline = builder.build(title='Azure Event Hub Consumer pipeline').configure_for_environment(azure)
     sdc_executor.add_pipeline(consumer_origin_pipeline)
 
+    create_blob_container(azure, container_name)
+
     try:
         eh_service_bus = azure.event_hubs.service_bus
-
-        logger.info('Creating container %s on storage account %s', container_name, azure.storage.account_name)
-        assert azure.storage.create_blob_container(container_name)
 
         logger.info('Creating event hub %s under event hub namespace %s', event_hub_name, azure.event_hubs.namespace)
         assert eh_service_bus.create_event_hub(event_hub_name)
