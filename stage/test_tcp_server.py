@@ -311,6 +311,8 @@ def test_tcp_epoll_enabled(sdc_builder, sdc_executor):
 
     TCP Server >> wiretap
     """
+
+    max_records = 500
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     tcp_server_stage = pipeline_builder.add_stage('TCP Server').set_attributes(port=[str(TCP_PORT)],
@@ -323,14 +325,18 @@ def test_tcp_epoll_enabled(sdc_builder, sdc_executor):
                                                                                data_format='TEXT',
                                                                                max_line_length=10240)
     wiretap = pipeline_builder.add_wiretap()
+    
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    precondition = f"${{record:value('/text') == '{max_records-1}_hello_world'}}"
+    pipeline_finisher.set_attributes(preconditions=[precondition])
 
-    tcp_server_stage >> wiretap.destination
+    tcp_server_stage >> [wiretap.destination, pipeline_finisher]
 
     tcp_server_pipeline = pipeline_builder.build(title='TCP Server Origin 5 threads 1 port Epoll Enabled')
     sdc_executor.add_pipeline(tcp_server_pipeline)
 
     # Run pipeline.
-    sdc_executor.start_pipeline(tcp_server_pipeline)
+    status = sdc_executor.start_pipeline(tcp_server_pipeline)
 
     expected_message = 'hello_world'
     total_num_messages = 0
@@ -341,7 +347,7 @@ def test_tcp_epoll_enabled(sdc_builder, sdc_executor):
     tcp_client_socket.connect((sdc_executor.server_host, TCP_PORT))
 
     # Send messages for this tcp client.
-    for _ in range(0, 500):
+    for _ in range(0, max_records):
         message = f'{total_num_messages}_{expected_message}'
         tcp_client_socket.sendall(bytes(message + '\n', 'utf-8'))
         expected_messages_list.append(message)
@@ -349,8 +355,7 @@ def test_tcp_epoll_enabled(sdc_builder, sdc_executor):
 
     tcp_client_socket.close()
 
-    sdc_executor.wait_for_pipeline_metric(tcp_server_pipeline, 'input_record_count', 500)
-    sdc_executor.stop_pipeline(tcp_server_pipeline)
+    status.wait_for_finished()
 
     output_records_values = [str(record.field['text']) for record in wiretap.output_records]
     assert len(output_records_values) == total_num_messages
