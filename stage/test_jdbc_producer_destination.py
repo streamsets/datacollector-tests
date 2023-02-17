@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import string
+from operator import itemgetter
 
 import pytest
 import sqlalchemy
@@ -259,7 +260,7 @@ def test_jdbc_producer_insert_type_err(sdc_builder, sdc_executor, database):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         result = database.engine.execute(table.select())
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        data_from_database = sorted(result.fetchall(), key=itemgetter(1))  # order by id
         result.close()
 
         assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE
@@ -334,7 +335,7 @@ def test_jdbc_producer_no_implicit_mapping(sdc_builder, sdc_executor, database, 
         assert 'JDBC_90' == wiretap.error_records[1].header['errorCode']
 
         result = database.engine.execute(table.select())
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        data_from_database = sorted(result.fetchall(), key=itemgetter(1))  # order by id
         result.close()
 
         assert data_from_database == [(record['name'], record['id']) for record in INSERT_DATA if 'id' in record]
@@ -392,10 +393,9 @@ def test_mssql_producer_bigdecimal(sdc_builder, sdc_executor, database):
 
         sdc_executor.stop_pipeline(pipeline)
 
-        records = [record.field for record in wiretap.output_records]
-
+        records = sorted([record.field for record in wiretap.output_records], key=itemgetter('id'))
         result = database.engine.execute(table.select())
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
+        data_from_database = sorted(result.fetchall(), key=itemgetter(3))  # order by id
         result.close()
 
         history = sdc_executor.get_pipeline_history(pipeline)
@@ -445,7 +445,7 @@ def test_jdbc_producer_coerced_insert(sdc_builder, sdc_executor, database):
         sdc_executor.stop_pipeline(pipeline)
 
         result = database.engine.execute(table.select())
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        data_from_database = sorted(result.fetchall(), key=itemgetter(1))  # order by id
         result.close()
         assert data_from_database == [(record['name'], record['id']) for record in ROWS_IN_DATABASE]
     finally:
@@ -509,7 +509,7 @@ def test_jdbc_producer_update(sdc_builder, sdc_executor, database):
         sdc_executor.stop_pipeline(pipeline)
 
         result = database.engine.execute(table.select())
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])  # order by id
+        data_from_database = sorted(result.fetchall(), key=itemgetter(1))  # order by id
         result.close()
         updated_names = {record['id']: record['name'] for record in ROWS_IN_DATABASE}
         updated_names.update({record['id']: record['name'] for record in ROWS_TO_UPDATE})
@@ -904,7 +904,7 @@ def test_jdbc_producer_ordering(sdc_builder, sdc_executor, multi_row, database):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         result = database.engine.execute(table.select())
-        db = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
+        db = sorted(result.fetchall(), key=itemgetter(0))  # order by id
         result.close()
 
         assert len(db) == 2
@@ -963,7 +963,7 @@ def test_jdbc_producer_oracle_data_errors(sdc_builder, sdc_executor, database):
 
         # The table in database needs to be empty
         result = database.engine.execute(table.select())
-        db = sorted(result.fetchall(), key=lambda row: row[0])  # order by id
+        db = sorted(result.fetchall(), key=itemgetter(0))  # order by id
         result.close()
         assert len(db) == 0
 
@@ -1230,7 +1230,7 @@ def test_mssql_producer_decimal_precision(sdc_builder, sdc_executor, database):
 
         query = f'SELECT data FROM {table_name_dest}'
         result = database.engine.execute(query)
-        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])  # order by value
+        data_from_database = sorted(result.fetchall(), key=itemgetter(0))  # order by value
         result.close()
 
         expected_data = [(row['data']) for row in rows_in_table]
