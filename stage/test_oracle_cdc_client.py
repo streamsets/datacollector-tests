@@ -132,16 +132,16 @@ def _test_template(sdc_builder, sdc_executor, database, cleanup, test_name, tabl
 @pytest.mark.parametrize(
     "connection_type",
     [
-        # "SERVICE_NAME",
-        # "SYSTEM_IDENTIFIER",
-        # "TNS_CONNECTION",
+        "SERVICE_NAME",
+        "SYSTEM_IDENTIFIER",
+        "TNS_CONNECTION",
         "TNS_ALIAS",
-        # "CONNECTION_URL",
+        "CONNECTION_URL",
     ],
 )
 @pytest.mark.parametrize("correct", [
     True,
-    # False
+    False
 ])
 def test_connection_types(
     sdc_builder, sdc_executor, database, cleanup, test_name, service_name, system_identifier, connection_type, correct
@@ -451,6 +451,7 @@ def test_basic_operations(
     work = handler.add_pipeline(pipeline)
 
     def populate_table():
+        # TODO mikel split into multiple transactions of lesser size
         txn = connection.begin()
         connection.execute(insert_stmt, insert_records)
         connection.execute(update_stmt, update_records)
