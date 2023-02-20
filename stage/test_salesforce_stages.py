@@ -1459,7 +1459,10 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         sdc_executor.add_pipeline(pipeline)
 
         logger.info('Starting pipeline ...')
-        sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline)
+        pipeline_cmd.wait_for_status('RUNNING')
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
 
         # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
         # updates could flood a channel."
