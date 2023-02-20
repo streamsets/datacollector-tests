@@ -1600,6 +1600,8 @@ def test_postgres_cdc_client_primary_keys_headers(sdc_builder,
     """
     Test to check all headers for primary keys are present in the output records.
     """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against PostgreSQL with CDC enabled.')
 
     try:
 
