@@ -173,3 +173,54 @@ def test_connx_cdc_delete(sdc_builder, sdc_executor, connx):
         with connx.get_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(f"delete from localhost.dbo.{TABLE_NAME} where Name = 'Name';")
+
+
+def test_connx_cdc_operation_type(sdc_builder, sdc_executor, connx):
+    # Create pipeline
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    origin = pipeline_builder.add_stage('CONNX CDC')
+    origin.set_attributes(datasync_transform=f'{TRANSFORM_NAME}',
+                          use_credentials=True)
+    wiretap = pipeline_builder.add_wiretap()
+
+    origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(connx)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Finalize and create CDC data
+        with connx.get_connection() as conn:
+            with conn.cursor() as cursor:
+                logger.info(f'Creating some CDC data')
+                # Create a new baseline for the test to clean up anything that happened previously
+                cursor.execute(f'SELECT create_crc_savepoint(\'{TRANSFORM_NAME}\');')
+                cursor.execute(f'select create_crc_finalize(\'{TRANSFORM_NAME}\');')
+                # Add a couple of rows and turn that into the new baseline
+                cursor.execute(f"insert into localhost.dbo.{TABLE_NAME} values (3, 'Name');")
+                cursor.execute(f"insert into localhost.dbo.{TABLE_NAME} values (2, 'Name');")
+                cursor.execute(f'SELECT create_crc_savepoint(\'{TRANSFORM_NAME}\');')
+                cursor.execute(f'select create_crc_finalize(\'{TRANSFORM_NAME}\');')
+                # Remove one of the existing rows, update the other and insert a third one
+                cursor.execute(f"delete from localhost.dbo.{TABLE_NAME} where ID = 3;")
+                cursor.execute(f"update localhost.dbo.{TABLE_NAME} set Name = 'Changed' where ID = 2;")
+                cursor.execute(f"insert into localhost.dbo.{TABLE_NAME} values (1, 'Name');")
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(3)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # CONNX CDC always reads from the INSERTS table, then UPDATES, then DELETES, so regardless of the order that data
+        # was inserted we will always see all operations in this order
+        assert len(wiretap.output_records) == 3
+        assert wiretap.output_records[0].field['ID'] == 1
+        assert wiretap.output_records[0].header.values['sdc.operation.type'] == '4' # UPSERT code
+        assert wiretap.output_records[1].field['ID'] == 2
+        assert wiretap.output_records[1].header.values['sdc.operation.type'] == '3' # UPDATE code
+        assert wiretap.output_records[2].field['ID'] == 3
+        assert wiretap.output_records[2].header.values['sdc.operation.type'] == '2' # DELETE code
+    finally:
+        logger.info('Removing created data (in case the pipeline failed)')
+        with connx.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(f"delete from localhost.dbo.{TABLE_NAME} where Name = 'Name';")
+                cursor.execute(f"delete from localhost.dbo.{TABLE_NAME} where Name = 'Changed';")
