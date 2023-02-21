@@ -65,7 +65,11 @@ def tear_down_CDC(connx, table_name, table_id, transform_name):
             cursor.execute(f'delete from CONNXDataSync.datasync.TableMapper where TableID = {table_id};')
             cursor.execute(f'delete from CONNXDataSync.datasync.TargetTableIndex where TableID = {table_id};')
             cursor.execute(f'delete from CONNXDataSync.datasync.TargetTableIndexColumns where TableID = {table_id};')
-            cursor.execute(f'drop table localhost.dbo.{table_name};')
+            try:
+                cursor.execute(f'drop table localhost.dbo.{table_name};')
+            except:
+                logger.info(f'Table {table_name} already deleted')
+                pass
 
 # https://www.connx.com/products/connx/CONNX%2013.5%20UserGuide/default.htm#connxcdd32c/ole_db_data_types.htm
 # Omitting BIGINT and TIME for the time being since CONNX when used in the underlying MySQL table CONNX maps both of
@@ -95,7 +99,7 @@ DATA_TYPES_CONNX = [
 
 
 @pytest.mark.parametrize('connx_type,insert_fragment,expected_type,expected_value', DATA_TYPES_CONNX, ids=[i[0] for i in DATA_TYPES_CONNX])
-def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragment, expected_type, expected_value, keep_data):
+def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragment, expected_type, expected_value):
     """Test all feasible CONNX types."""
     table_name = get_random_string(string.ascii_letters, 15)
     transform_name = get_random_string(string.ascii_letters, 15)
@@ -141,12 +145,7 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
         assert record.field[connx_type]._data['value'] == expected_value
         assert null_record.field[connx_type] == None
     finally:
-        if not keep_data:
-            logger.info('Deleting test data')
-            with connx.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(f"DELETE FROM {table_name}")
-            tear_down_CDC(connx, table_name, table_id, transform_name)
+        tear_down_CDC(connx, table_name, table_id, transform_name)
 
 
 def test_object_names(sdc_builder, sdc_executor, connx):
@@ -154,7 +153,7 @@ def test_object_names(sdc_builder, sdc_executor, connx):
                 "properly escape or enclose names and thefore there is not much for us to test here.")
 
 
-def test_multiple_batches(sdc_builder, sdc_executor, connx, keep_data):
+def test_multiple_batches(sdc_builder, sdc_executor, connx):
     table_name = get_random_string(string.ascii_letters, 15)
     transform_name = get_random_string(string.ascii_letters, 15)
     table_id = random.randint(100, 100000)
@@ -205,15 +204,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, connx, keep_data):
             assert record.field['id'] == expected_number
             expected_number = expected_number + 1
     finally:
-        if not keep_data:
-            logger.info('Deleting test data')
-            with connx.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(f"DELETE FROM {table_name}")
-            tear_down_CDC(connx, table_name, table_id, transform_name)
+        tear_down_CDC(connx, table_name, table_id, transform_name)
 
 
-def test_dataflow_events(sdc_builder, sdc_executor, connx, keep_data):
+def test_dataflow_events(sdc_builder, sdc_executor, connx):
     table_name = get_random_string(string.ascii_letters, 15)
     transform_name = get_random_string(string.ascii_letters, 15)
     table_id = random.randint(100, 100000)
@@ -280,13 +274,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx, keep_data):
         assert 'timestamp' in records[4].field
         assert 'query' in records[4].field
     finally:
-        if not keep_data:
-            logger.info('Deleting test data')
-            with connx.get_connection() as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(f"DELETE FROM {table_name}")
-
-            tear_down_CDC(connx, table_name, table_id, transform_name)
+        tear_down_CDC(connx, table_name, table_id, transform_name)
 
 
 def test_data_format(sdc_builder, sdc_executor, connx, keep_data):
