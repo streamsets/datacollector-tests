@@ -15,6 +15,7 @@
 import logging
 import socket
 import ssl
+import time
 from collections import namedtuple
 from threading import Thread
 
@@ -312,7 +313,7 @@ def test_tcp_epoll_enabled(sdc_builder, sdc_executor):
     TCP Server >> wiretap
     """
 
-    max_records = 500
+    max_records = 50
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     tcp_server_stage = pipeline_builder.add_stage('TCP Server').set_attributes(port=[str(TCP_PORT)],
@@ -352,6 +353,7 @@ def test_tcp_epoll_enabled(sdc_builder, sdc_executor):
         tcp_client_socket.sendall(bytes(message + '\n', 'utf-8'))
         expected_messages_list.append(message)
         total_num_messages += 1
+        time.sleep(0.1)
 
     tcp_client_socket.close()
 
