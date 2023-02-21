@@ -150,6 +150,28 @@ def test_network_inspector(sdc_executor, entry_name, description):
     assert check['value'] is None
     assert check['details'] is not None
 
+@sdc_min_version('5.5.0')
+def test_health_host_information(sdc_executor):
+    report = sdc_executor.api_client.get_health_report('HealthHostInformation').response.json()
+
+    host_information = report['hostInformation']
+    assert host_information is not None
+
+    assert 'operativeSystemDistribution' in host_information, 'operativeSystemDistribution not in hostInformation'
+    assert host_information['operativeSystemDistribution'] is not None
+
+    assert 'operativeSystemVersion' in host_information, 'operativeSystemVersion not in hostInformation'
+    assert host_information['operativeSystemVersion'] is not None
+
+    assert 'jdkVersion' in host_information, 'jdkVersion not in hostInformation'
+    assert host_information['jdkVersion'] is not None
+
+    assert 'timeZone' in host_information, 'jdkVersion not in hostInformation'
+    assert host_information['timeZone'] is not None
+
+    assert 'offset' in host_information, 'offset not in hostInformation'
+    assert host_information['offset'] is not None
+
 
 def _find_health_check(result, name):
     for check in result['healthChecks']:
