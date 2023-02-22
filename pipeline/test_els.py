@@ -142,6 +142,7 @@ def test_runtime_resources_dir_path_el(random_expression_pipeline_builder, sdc_e
     assert len(record.header['values']['resourcesDirPath']) > 0
 
 
+@sdc_min_version('5.4.0')
 @pytest.mark.parametrize('expression', ['${job:id()}', '${job:name()}', '${job:user()}', '${job:startTime()}'])
 def test_job_els(sdc_executor, sdc_builder, expression):
     """Test job EL with pipeline configurations
