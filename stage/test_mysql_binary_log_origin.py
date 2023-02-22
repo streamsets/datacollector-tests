@@ -779,8 +779,9 @@ def test_mysql_binary_log_ignore_tables(sdc_builder, sdc_executor, database):
                         ' unnecessary executions given the fact this variable is irrelevant to the test.')
 
     pipeline = None
-    included_table_name = get_random_string(string.ascii_lowercase, 20)
-    excluded_table_name = get_random_string(string.ascii_lowercase, 20)
+    tables_prefix = "test_mysql_binary_log_ignore_tables_" + get_random_string(string.ascii_lowercase, 5)
+    included_table_name = tables_prefix + get_random_string(string.ascii_lowercase, 5)
+    excluded_table_name = tables_prefix + get_random_string(string.ascii_lowercase, 5)
 
     try:
         # Create the table
@@ -808,6 +809,7 @@ def test_mysql_binary_log_ignore_tables(sdc_builder, sdc_executor, database):
         mysql_binary_log.set_attributes(
             initial_offset=_get_initial_offset(database),
             server_id=_get_server_id(),
+            include_tables=database.database + '.' + tables_prefix + "%",
             ignore_tables=database.database + '.' + excluded_table_name
         )
 
