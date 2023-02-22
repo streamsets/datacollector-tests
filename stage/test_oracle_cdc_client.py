@@ -39,6 +39,7 @@ from stage.utils.utils_oracle import (
     NoError,
     StartMode,
     cleanup,
+    database_version,
     service_name,
     system_identifier,
     table_name,
@@ -48,6 +49,7 @@ from stage.utils.utils_oracle import (
 
 
 RELEASE_VERSION = "5.4.0"
+MIN_ORACLE_VERSION = 18
 ORACLE_CDC_ORIGIN = "Oracle CDC"
 TRASH = "Trash"
 DEFAULT_TIMEOUT_IN_SEC = 120
@@ -64,11 +66,14 @@ pytestmark = [database("oracle"), sdc_min_version(RELEASE_VERSION)]
 
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
-def _test_template(sdc_builder, sdc_executor, database, cleanup, test_name, table_name, precedence):
+def _test_template(sdc_builder, sdc_executor, database, database_version, cleanup, test_name, table_name, precedence):
     """This test provides a template to follow for tests. Following it is not compulsory, as some
     specific cases may have caveats that make it impractical to do so. It is however very useful
     to understand tests at a glance as well as keeping them simple.
     """
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     # Stage 1. Setup: prepare variables, create tables...
     table = sqlalchemy.Table(
@@ -144,10 +149,22 @@ def _test_template(sdc_builder, sdc_executor, database, cleanup, test_name, tabl
     False
 ])
 def test_connection_types(
-    sdc_builder, sdc_executor, database, cleanup, test_name, service_name, system_identifier, connection_type, correct
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    cleanup,
+    test_name,
+    service_name,
+    system_identifier,
+    connection_type,
+    correct,
 ):
     """Test every supported connection type. The pipeline must validate when
     @correct is True and fail the validation when @correct is false."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     username = database.username if correct else "wrong_username"
     password = database.password if correct else "wrong_password"
@@ -241,8 +258,13 @@ def test_connection_types(
     ]
     # fmt: on
 )
-def test_buffer_size(sdc_builder, sdc_executor, database, cleanup, test_name, buffer_size, expected_error):
+def test_buffer_size(
+    sdc_builder, sdc_executor, database, database_version, cleanup, test_name, buffer_size, expected_error
+):
     """Check that the ring size is a multiple of 2."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -286,6 +308,7 @@ def test_start_mode(
     sdc_builder,
     sdc_executor,
     database,
+    database_version,
     cleanup,
     test_name,
     table_name,
@@ -296,6 +319,9 @@ def test_start_mode(
 ):
     """Ensure that the stage starts from the specified point in the specified mode.
     The point can be an instant or a System Change Number (SCN)."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     table = sqlalchemy.Table(
         table_name, sqlalchemy.MetaData(), sqlalchemy.Column("ID", sqlalchemy.Integer, primary_key=True)
@@ -335,9 +361,12 @@ def test_start_mode(
         pass
 
 
-def test_start_events(sdc_builder, sdc_executor, database, cleanup, test_name):
+def test_start_events(sdc_builder, sdc_executor, database, database_version, cleanup, test_name):
     """Check that incarnation, instant and SCN values are sent in events when a pipeline with the
     Oracle CDC Origin stage is started."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     expected_event_type = "initial-database-state"
     expected_fields = ["incarnation", "instant", "system-change-number"]
@@ -390,10 +419,23 @@ def test_start_events(sdc_builder, sdc_executor, database, cleanup, test_name):
     # fmt: on
 )
 def test_basic_operations(
-    sdc_builder, sdc_executor, database, cleanup, table_name, test_name, precedence, rows, columns, session_wait_time
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    cleanup,
+    table_name,
+    test_name,
+    precedence,
+    rows,
+    columns,
+    session_wait_time,
 ):
     """Insert, update and delete n=@rows rows into a table and verify that each operation produces
     a record with the correct values."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     assert columns > 0, "number of columns must be greater than 0"
 
@@ -484,8 +526,13 @@ def test_basic_operations(
     ]
     # fmt: on
 )
-def test_rollback(sdc_builder, sdc_executor, database, cleanup, table_name, test_name, precedence, rows, columns):
-    """Ensure no records are produced from transactions that were rolled back. """
+def test_rollback(
+    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence, rows, columns
+):
+    """Ensure no records are produced from transactions that were rolled back."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     assert columns > 0, "number of columns must be greater than 0"
     assert rows % 2 == 0, "number of rows must be even"
@@ -573,8 +620,13 @@ def test_rollback(sdc_builder, sdc_executor, database, cleanup, table_name, test
 
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
-def test_long_sql_statements(sdc_builder, sdc_executor, database, cleanup, table_name, test_name, precedence):
+def test_long_sql_statements(
+    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence
+):
     """Test SQL statements that contain a large amount of characters."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     primary_column = "ID_COLUMN"
     varchar_column = "VARCHAR_COLUMN"
@@ -631,12 +683,20 @@ def test_long_sql_statements(sdc_builder, sdc_executor, database, cleanup, table
 
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
-def test_mixed_workload(sdc_builder, sdc_executor, database, cleanup, table_name, test_name, precedence):
+def test_mixed_workload(
+    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence
+):
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
     pass
 
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
-def test_overlapping_transactions(sdc_builder, sdc_executor, database, cleanup, table_name, test_name, precedence):
+def test_overlapping_transactions(
+    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence
+):
     """Test the stage produces a correct output when transactions overlap. This test will:
     1. Start the pipeline
     2. Create a transaction (T1) but don't commit it
@@ -647,6 +707,9 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, cleanup, 
     7. Commit T1
     8. Verify T1 produces output records
     """
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     primary_column = "ID_COLUMN"
     record_count = 10
@@ -733,13 +796,17 @@ def test_overlapping_transactions(sdc_builder, sdc_executor, database, cleanup, 
     # fmt: on
 )
 def test_oracle_cdc_inclusion_and_exclusion_pattern(
-    sdc_builder, sdc_executor, database, cleanup, test_name, pattern, action
+    sdc_builder, sdc_executor, database, database_version, cleanup, test_name, pattern, action
 ):
     """Test patterns are included and excluded as expected.
 
     Create @table_count tables with different names that are matched by a different number of patterns.
     Test that they are included/excluded accordingly.
     """
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
     primary_column = "ID_COLUMN"
 
     # Add a randomized prefix to avoid collisions if multiple tests are run simultaneously
@@ -822,8 +889,13 @@ def test_oracle_cdc_inclusion_and_exclusion_pattern(
 
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
-def test_decimal_attributes(sdc_builder, sdc_executor, database, cleanup, table_name, test_name, precedence):
+def test_decimal_attributes(
+    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence
+):
     """Test the precision and scale attributes of the decimal type."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     primary_column = "ID_COLUMN"
     decimal_column = "DECIMAL_COLUMN"
@@ -894,9 +966,21 @@ def test_decimal_attributes(sdc_builder, sdc_executor, database, cleanup, table_
     # fmt: on
 )
 def test_batch_size(
-    sdc_builder, sdc_executor, database, cleanup, table_name, test_name, precedence, batches, max_batch_size
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    cleanup,
+    table_name,
+    test_name,
+    precedence,
+    batches,
+    max_batch_size,
 ):
     """Verify that the stage procudes batches with at most the specified max batch size"""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     total_records = batches * max_batch_size
     id_column = "ID_COLUMN"

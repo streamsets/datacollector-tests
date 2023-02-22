@@ -29,7 +29,10 @@ logger = logging.getLogger(__name__)
 # These variables need to be loaded only once and will not change from test to test
 SERVICE_NAME = ""  # The value will be assigned during setup
 SYSTEM_IDENTIFIER = ""  # The value will be assigned during setup
+DB_VERSION = 0  # The value will be assigned during setup
 RECORD_FORMATS = ["BASIC", "RICH"]
+MIN_ORACLE_VERSION = 18
+
 
 
 class NoError(Exception):
@@ -67,6 +70,15 @@ def _get_service_name(db):
 def _get_system_identifier(db):
     return _get_single_context_parameter(db, "INSTANCE_NAME")
 
+def _get_database_version(db):
+    with ExitStack() as exit_stack:
+        connection = db.engine.connect()
+        exit_stack.callback(connection.close)
+        db_version = connection.execute("SELECT version FROM product_component_version").fetchall()[0][0]
+        str_version_list = db_version.split(".")
+        version_list = [int(i) for i in str_version_list]
+        return version_list[0]  # return mayor version
+
 
 @pytest.fixture()
 def cleanup(request):
@@ -94,7 +106,14 @@ def test_name(request):
 @pytest.fixture(scope="module", autouse=True)
 def util_setup(database):
     """Must be imported in order to use fixtures that are dependent on this one."""
-    global SERVICE_NAME, SYSTEM_IDENTIFIER
+    global SERVICE_NAME, SYSTEM_IDENTIFIER, DB_VERSION
+
+    DB_VERSION = _get_database_version(database)
+
+    # Stop setop if the current Oracle version is not supported
+    if DB_VERSION < MIN_ORACLE_VERSION:
+        return
+
     SERVICE_NAME = _get_service_name(database)
     SYSTEM_IDENTIFIER = _get_system_identifier(database)
 
@@ -109,6 +128,12 @@ def service_name(util_setup):
 def system_identifier(util_setup):
     """Requires importing util_setup."""
     return SYSTEM_IDENTIFIER
+
+
+@pytest.fixture()
+def database_version(util_setup):
+    """Requires importing util_setup."""
+    return DB_VERSION
 
 
 class StartMode:

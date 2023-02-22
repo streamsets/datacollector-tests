@@ -31,13 +31,16 @@ from stage.utils.utils_oracle import (
     DefaultStartParameters,
     DefaultTableParameters,
     cleanup,
+    database_version,
     table_name,
     test_name,
+    util_setup,
     RECORD_FORMATS,
 )
 
 
 RELEASE_VERSION = "5.4.0"
+MIN_ORACLE_VERSION = 18
 ORACLE_CDC_ORIGIN = "Oracle CDC"
 DEFAULT_TIMEOUT_IN_SEC = 120
 
@@ -123,6 +126,7 @@ def test_data_types(
     sdc_builder,
     sdc_executor,
     database,
+    database_version,
     cleanup,
     table_name,
     test_name,
@@ -134,6 +138,9 @@ def test_data_types(
     streamsets_value,
 ):
     """Test datatypes supported by the Oracle CDC Origin."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     id_column = "ID"
     id_value = 1
@@ -200,9 +207,15 @@ def test_data_types(
         "EVEN THIS & THAT!",  # allowed identifier when quoted
     ],
 )
-def test_object_named_tables(sdc_builder, sdc_executor, database, cleanup, table_name, test_name, object_name):
+def test_object_named_tables(
+    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, object_name
+):
     """Test the stage treats table names correctly even if they contain reserved keywords or
     characters that could otherwise break queries. """
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
     id_column = "ID"
     id_value = 1
     other_column = "VALUE"
@@ -253,8 +266,13 @@ def test_object_named_tables(sdc_builder, sdc_executor, database, cleanup, table
 
 @pytest.mark.parametrize("batches", [1, 10])
 @pytest.mark.parametrize("max_batch_size", [1, 10, 1000])
-def test_multiple_batches(sdc_builder, sdc_executor, database, cleanup, table_name, test_name, batches, max_batch_size):
+def test_multiple_batches(
+    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, batches, max_batch_size
+):
     """Test the stage produces the expected number of batches with the expected size."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     id_column = "ID"
     other_column = "VALUE"
@@ -315,8 +333,14 @@ def test_data_format(sdc_builder, sdc_executor, database):
 
 
 @pytest.mark.parametrize("iterations", [5])
-def test_resume_offset(sdc_builder, sdc_executor, database, cleanup, table_name, test_name, iterations):
-    """Test the stage resumes from the expected offset so it does """
+def test_resume_offset(
+    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, iterations
+):
+    """Test the stage resumes from the expected offset so it does"""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
+
     records_per_iteration = 5
     id_column = "ID"
     other_column = "VALUE"
@@ -377,8 +401,11 @@ def test_resume_offset(sdc_builder, sdc_executor, database, cleanup, table_name,
 
 
 @pytest.mark.parametrize("threads", [1, 4, 8])
-def test_multithreading(sdc_builder, sdc_executor, database, cleanup, test_name, table_name, threads):
+def test_multithreading(sdc_builder, sdc_executor, database, database_version, cleanup, test_name, table_name, threads):
     """Ensure the behaviour of the stage does not change with the number of parser threads."""
+
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     primary_column = "ID_COLUMN"
     secondary_column = "OTHER_COLUMN"
