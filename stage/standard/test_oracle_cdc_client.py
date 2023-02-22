@@ -15,12 +15,13 @@
 
 import logging
 import os
+import re
 import pytest
 import sqlalchemy
 from sqlalchemy.dialects import oracle
 from sqlalchemy.dialects.oracle.base import ischema_names as oracle_names
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from streamsets.testframework.markers import database, sdc_min_version
 
@@ -45,10 +46,29 @@ SERVICE_NAME = ""  # The value will be assigned during setup
 SYSTEM_IDENTIFIER = ""  # The value will be assigned during setup
 OK_STATUS = "0"
 
-DEFAULT_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+DEFAULT_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+DEFAULT_ZONED_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S %z"
+DEFAULT_DATETIME = datetime.strptime("1998-10-31 06:22:33", DEFAULT_DATETIME_FORMAT)
+LOCAL_TIMEZONE = datetime.now(timezone.utc).astimezone().tzinfo
 
 logger = logging.getLogger(__name__)
 pytestmark = [database("oracle"), sdc_min_version(RELEASE_VERSION)]
+
+def format_timezone_offset(dt):
+    """Add a colon separator between timezone hours and minutes.
+    Convert YYYY-MM-DDTHH:MM:SS+ZZZZ to YYYY-MM-DDTHH:MM:SS+ZZ:ZZ"""
+
+    dt_str = dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+    pattern = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+)(\d{4})"
+    match = re.compile(f"^{pattern}$").match(dt_str)
+    if not match:
+        return dt_str
+    main_datetime = match.group(1)
+    offset = match.group(2)
+    hh, mm = offset[:2], offset[2:]
+    return f"{main_datetime}{hh}:{mm}"
+
 
 @pytest.mark.parametrize("null", [True, False])
 @pytest.mark.parametrize(
@@ -57,37 +77,25 @@ pytestmark = [database("oracle"), sdc_min_version(RELEASE_VERSION)]
         ["BINARY_DOUBLE", oracle.BINARY_DOUBLE, 4.2, "DOUBLE", 4.2],
         ["BINARY_FLOAT", oracle.BINARY_FLOAT, 4.2, "FLOAT", 4.2],
         ["CHAR", oracle.CHAR, "A", "STRING", "A"],
-        [
-            "DATE",
-            oracle.DATE,
-            datetime.strptime("1998-10-31 06:22:33", DEFAULT_DATE_FORMAT),
-            "DATE",
-            datetime.strptime("1998-10-31 06:22:33", DEFAULT_DATE_FORMAT),
-        ],
+        ["DATE", oracle.DATE, DEFAULT_DATETIME, "DATE", DEFAULT_DATETIME],
         ["FLOAT", oracle.FLOAT, 4.2, "FLOAT", 4.2],
         ["NCHAR", oracle.NCHAR, "A", "STRING", "A"],
         ["NUMBER", oracle.NUMBER, 4, "DECIMAL", 4],
         ["NVARCHAR2", oracle.NVARCHAR2(length=3), "ABC", "STRING", "ABC"],
-        [
-            "TIMESTAMP",
-            oracle.TIMESTAMP,
-            datetime.strptime("1998-10-31 06:22:33", DEFAULT_DATE_FORMAT),
-            "DATETIME",
-            datetime.strptime("1998-10-31 06:22:33", DEFAULT_DATE_FORMAT),
-        ],
+        ["TIMESTAMP", oracle.TIMESTAMP, DEFAULT_DATETIME, "DATETIME", DEFAULT_DATETIME],
         [
             "TIMESTAMP WITH LOCAL TIME ZONE",
             oracle.TIMESTAMP(timezone=True),
-            datetime.strptime("1998-10-31 06:22:33", DEFAULT_DATE_FORMAT),
+            DEFAULT_DATETIME.replace(tzinfo=LOCAL_TIMEZONE),
             "ZONED_DATETIME",
-            "1998-10-31T06:22:33+01:00",
+            format_timezone_offset(DEFAULT_DATETIME.replace(tzinfo=LOCAL_TIMEZONE)),
         ],
         [
             "TIMESTAMP WITH TIME ZONE",
             oracle.TIMESTAMP(timezone=True),
-            datetime.strptime("1998-10-31 06:22:33", DEFAULT_DATE_FORMAT),
+            DEFAULT_DATETIME.replace(tzinfo=LOCAL_TIMEZONE),
             "ZONED_DATETIME",
-            "1998-10-31T06:22:33+01:00",
+            format_timezone_offset(DEFAULT_DATETIME.replace(tzinfo=LOCAL_TIMEZONE)),
         ],
         ["VARCHAR", oracle.VARCHAR(length=3), "ABC", "STRING", "ABC"],
         ["VARCHAR2", oracle.VARCHAR2(length=3), "ABC", "STRING", "ABC"],
