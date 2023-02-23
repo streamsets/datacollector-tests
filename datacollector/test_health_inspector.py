@@ -172,6 +172,10 @@ def test_health_host_information(sdc_executor):
     assert 'offset' in host_information, 'offset not in hostInformation'
     assert host_information['offset'] is not None
 
+    assert 'uptimeInformation' in host_information, 'uptimeInformation not in hostInformation'
+    assert host_information['uptimeInformation'] is not None
+
+
 
 def _find_health_check(result, name):
     for check in result['healthChecks']:
