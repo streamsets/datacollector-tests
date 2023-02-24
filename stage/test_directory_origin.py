@@ -344,18 +344,19 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
     The pipelines look like:
 
         Execute_shell 1 writes 100 files in tmp_directory
-        Execute_shell 2 writes 100 files in tmp_directory_2
-        Pipeline 3 (Directory Origin in SDC UI): directory >> local_fs
-        Pipeline 4 (tmp_directory to tmp_directory_2 in SDC UI): directory_2 >> local_fs_2
+        Execute_shell 2 writes 100 files in tmp_directory_2 lexicographically greater than the files written
+        by Execute_shell 1
+        Pipeline 1 (Directory Origin in SDC UI): directory >> local_fs
+        Pipeline 2 (tmp_directory to tmp_directory_2 in SDC UI): directory_2 >> local_fs_2
 
         The test works as follows:
             1) Execute_shell 1 writes files with prefix SDC1 to directory tmp_directory
-            2) Pipeline 3 is started and directory origin read files from directory tmp_directory. Pipeline is NOT
-                stopped
+            2) Pipeline 1 is started and directory origin read files from directory tmp_directory. Pipeline is
+                stopped because when we read lexicographicaly, we strongly recommend to avoid modification
             3) Execute_shell 2 writes files with prefix SDC2 to directory tmp_directory_2
-            4) Pipeline 4 reads files from directory tmp_directory_2 and writes them to directory tmp_directory, then
+            4) Pipeline 2 reads files from directory tmp_directory_2 and writes them to directory tmp_directory, then
                 it is stopped
-            5) Pipeline 3 will read files Pipeline 4 writes to directory tmp_directory
+            5) Pipeline 1 is started and it will read files Pipeline 2 wrote to directory tmp_directory
             6) Test checks that all the corresponding files from directory tmp_directory are read and then test ends
     """
 
@@ -379,6 +380,7 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
                              number_of_threads=no_of_threads,
                              process_subdirectories=True,
                              read_order='LEXICOGRAPHICAL',
+                             batch_size_in_recs=5,
                              file_post_processing='DELETE')
 
     local_fs = pipeline_builder.add_stage('Local FS', type='destination')
@@ -391,9 +393,14 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
     sdc_executor.add_pipeline(directory_pipeline)
     sdc_executor.start_pipeline(directory_pipeline)
     sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', msgs_sent_count, timeout_sec=120)
+    sdc_executor.stop_pipeline(directory_pipeline)
+    history = sdc_executor.get_pipeline_history(directory_pipeline)
+    msgs_result_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
+
+    assert msgs_result_count == msgs_sent_count
 
     sdc_executor.execute_shell(f'mkdir {tmp_directory_2}')
-    msgs_sent_count_2 = 100
+    msgs_sent_count_2 = 110
     sdc_executor.execute_shell(
         '\n'.join(
             [f'echo {str(uuid4())} > {tmp_directory_2}/sdc2-{str(uuid4())}.txt' for _ in range(msgs_sent_count_2)]))
@@ -409,6 +416,7 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
                                number_of_threads=no_of_threads,
                                process_subdirectories=True,
                                read_order='LEXICOGRAPHICAL',
+                               batch_size_in_recs=5,
                                file_post_processing='DELETE')
     local_fs_2 = pipeline_builder.add_stage('Local FS', type='destination')
     local_fs_2.set_attributes(data_format='WHOLE_FILE',
@@ -426,14 +434,15 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
     sdc_executor.stop_pipeline(directory_pipeline_2)
 
     # Wait until the pipeline reads all the expected files
-    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', msgs_sent_count + msgs_sent_count_2,
+    sdc_executor.start_pipeline(directory_pipeline)
+    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', msgs_sent_count_2,
                                           timeout_sec=360)
     sdc_executor.stop_pipeline(directory_pipeline)
 
     history = sdc_executor.get_pipeline_history(directory_pipeline)
     msgs_result_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
 
-    assert msgs_result_count == (msgs_sent_count + msgs_sent_count_2)
+    assert msgs_result_count == msgs_sent_count_2
 
 
 def test_directory_timestamp_ordering(sdc_builder, sdc_executor):
