@@ -20,7 +20,7 @@ import pytest
 from . import _clean_up_bigquery, _clean_up_gcs
 from google.cloud.bigquery import SchemaField, Table, DatasetReference
 from streamsets.testframework.markers import gcp, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_bigquery_enterprise_destination_BigQueryDTarget'
 
@@ -70,7 +70,7 @@ NESTED_MAP_TO_LOAD = [
         {"publisher1": "HarperCollins", "publisher2": "JB"}}
 ]
 
-EXPECTED_MAP_IN_DATABASE = [
+EXPECTED_AVRO_MAP_IN_DATABASE = [
     {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future",
      "publishers": [{'key': 'publisher1', 'value': 'HarperCollins'}, {'key': 'publisher2', 'value': 'JB'}]}
 ]
@@ -83,7 +83,44 @@ NESTED_DRIFT_TO_LOAD = [
     {"title": "Europe, Through the Back Door", "publishers": ["Rick Steves"], "readers": ["JB", "no one else"]}
 ]
 
-# we need to add the empty list in a previous non-existent field (we call X but could be whatever
+JSON_NESTED_MAP_TO_LOAD = [
+    {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future", "publishers":
+        {"publisher1": "HarperCollins", "publisher2": "JB", "inner_map": {"this_is_now": "working"}}}
+]
+
+JSON_NESTED_LIST_OF_MAPS_TO_LOAD = [
+    {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future", "publishers":
+        {"publisher1": "HarperCollins",
+         "publisher2": "JB", "inner_list": [{"this_is_now": "working", "and_before": "it didn't"}]}}
+]
+
+JSON_NESTED_LIST_OF_LISTS_OF_MAPS_TO_LOAD = [
+    {"title": "No more Elon", "publishers":
+        {"publisher1": "HarperCollins", "publisher2": "JB",
+         "inner_map": {"another_map": {"inner_string": "JB",
+                                       "inner_list1": [{"inner_key": "inner_value1"},
+                                                       {"inner_key": "inner_value2"}]}}}}
+]
+
+JSON_NESTED_LIST_OF_LISTS_OF_MAPS_WITH_NULLS_TO_LOAD = [
+    {"title": "No more Elon", "publishers":
+        {"publisher1": "HarperCollins", "publisher2": "JB",
+         "inner_map": {"another_map": {"inner_string": "JB",
+                                       "inner_list1": [{"inner_key1": "inner_value1"},
+                                                       {"inner_key2": "inner_value2"}],
+                                       "inner_map2": {"and_another_one": "some data"}}}}}
+]
+
+EXPECTED_JSON_NESTED_LIST_OF_LISTS_OF_MAPS_WITH_NULLS = [
+    {"title": "No more Elon", "publishers":
+        {"publisher1": "HarperCollins", "publisher2": "JB",
+         "inner_map": {"another_map": {"inner_string": "JB",
+                                       "inner_list1": [{"inner_key1": "inner_value1", 'inner_key2': None},
+                                                       {"inner_key1": None, "inner_key2": "inner_value2"}],
+                                       "inner_map2": {"and_another_one": "some data"}}}}}
+]
+
+# we need to add the empty list in a previous non-existent field (we call X but could be whatever)
 EXPECTED_NESTED_LIST_WITH_DRIFT = [
     {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future", "publishers": ["HarperCollins", "JB"], "X": []},
     {"title": "Europe, Through the Back Door", "publishers": ["Rick Steves"], "readers": ["JB", "no one else"]}
@@ -194,13 +231,17 @@ ROWS_FOR_DRIFT_EXT_FULL_STRING = [
 ]
 
 
-@pytest.mark.parametrize('file_format', ['CSV', 'AVRO'])
+@pytest.mark.parametrize('file_format', ['CSV', 'AVRO', 'JSON'])
 def test_basic(sdc_builder, sdc_executor, gcp, file_format):
     """Test for Google BigQuery with Google Cloud Storage staging.
 
     The pipeline looks like this:
         dev_raw_data_source >> bigquery
     """
+
+    if Version(sdc_builder.version) < Version('5.5.0') and file_format == 'JSON':
+        pytest.skip('JSON staging introduced in 5.5.0')
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
@@ -256,7 +297,7 @@ def test_basic(sdc_builder, sdc_executor, gcp, file_format):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-@pytest.mark.parametrize('file_format', ['CSV', 'AVRO'])
+@pytest.mark.parametrize('file_format', ['CSV', 'AVRO', 'JSON'])
 @pytest.mark.parametrize('bigquery_create_schema', [True, False])
 def test_basic_with_bigquery_schema_generator(sdc_builder, sdc_executor, gcp, file_format, bigquery_create_schema):
     """Test for Google BigQuery with Google Cloud Storage staging.
@@ -274,6 +315,10 @@ def test_basic_with_bigquery_schema_generator(sdc_builder, sdc_executor, gcp, fi
     The pipeline looks like this:
         dev_raw_data_source >> bigquery
     """
+
+    if Version(sdc_builder.version) < Version('5.5.0') and file_format == 'JSON':
+        pytest.skip('JSON staging introduced in 5.5.0')
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
@@ -595,13 +640,17 @@ def test_data_drift_avro(sdc_builder, sdc_executor, gcp, auto_create_dataset, au
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-@pytest.mark.parametrize('file_format', ['CSV', 'AVRO'])
+@pytest.mark.parametrize('file_format', ['CSV', 'AVRO', 'JSON'])
 def test_cdc_merge(sdc_builder, sdc_executor, gcp, file_format):
     """Test for Google BigQuery with Google Cloud Storage staging merge process.
 
     The pipeline looks like this:
         dev_raw_data_source >> expression_evaluator >> field_remover >> bigquery
     """
+
+    if Version(sdc_builder.version) < Version('5.5.0') and file_format == 'JSON':
+        pytest.skip('JSON staging introduced in 5.5.0')
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'STF_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'STF_{get_random_string(ascii_lowercase, 10)}'
@@ -874,7 +923,7 @@ def test_basic_values_as_null(sdc_builder, sdc_executor, gcp, null_value):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-@pytest.mark.parametrize('file_format', ['CSV', 'AVRO'])
+@pytest.mark.parametrize('file_format', ['CSV', 'AVRO', 'JSON'])
 @pytest.mark.parametrize('partition_type', ['DATE', 'DATETIME', 'TIMESTAMP', 'INTEGER', 'INGESTION'])
 def test_partition_tables_types(sdc_builder, sdc_executor, gcp, partition_type, file_format):
     """Test for Google BigQuery with Google Cloud Storage staging with datadrift (as we need datadrift to create
@@ -883,6 +932,10 @@ def test_partition_tables_types(sdc_builder, sdc_executor, gcp, partition_type, 
     The pipeline looks like this:
         dev_data_generator >> bigquery
     """
+
+    if Version(sdc_builder.version) < Version('5.5.0') and file_format == 'JSON':
+        pytest.skip('JSON staging introduced in 5.5.0')
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
@@ -1410,11 +1463,12 @@ def test_allow_quoted_newlines(sdc_builder, sdc_executor, gcp):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
+@pytest.mark.parametrize('file_format', ['AVRO', 'JSON'])
 @pytest.mark.parametrize('bigquery_create_schema', [True, False])
-def test_nested_fields_map(sdc_builder, sdc_executor, gcp, bigquery_create_schema):
+def test_nested_fields_map(sdc_builder, sdc_executor, gcp, bigquery_create_schema, file_format):
     """Test for Google BigQuery with Google Cloud Storage staging testing nested fields.
 
-    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro
+    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro and Json
 
     IMPORTANT: Sadly, if using AVRO, BigQuery converts map fields to a repeated RECORD that contains two
     fields: key and value, instead of the actual map. So we have to check the schema in the same way.
@@ -1423,6 +1477,10 @@ def test_nested_fields_map(sdc_builder, sdc_executor, gcp, bigquery_create_schem
     The pipeline looks like this:
         dev_raw_data_source >> bigquery
     """
+
+    if Version(sdc_builder.version) < Version('5.5.0') and file_format == 'JSON':
+        pytest.skip('JSON staging introduced in 5.5.0')
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
@@ -1444,7 +1502,7 @@ def test_nested_fields_map(sdc_builder, sdc_executor, gcp, bigquery_create_schem
                             table=table_name,
                             bucket=bucket_name,
                             schema_generator='BIGQUERY' if bigquery_create_schema else 'SDC',
-                            staging_file_format='AVRO',
+                            staging_file_format=file_format,
                             enable_data_drift=not bigquery_create_schema,
                             create_table=not bigquery_create_schema,
                             create_dataset=False,
@@ -1473,7 +1531,10 @@ def test_nested_fields_map(sdc_builder, sdc_executor, gcp, bigquery_create_schem
         data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
         data_from_bigquery.sort()
 
-        expected_data = [tuple(v for v in d.values()) for d in EXPECTED_MAP_IN_DATABASE]
+        if file_format == 'AVRO':
+            expected_data = [tuple(v for v in d.values()) for d in EXPECTED_AVRO_MAP_IN_DATABASE]
+        elif file_format == 'JSON':
+            expected_data = [tuple(v for v in d.values()) for d in NESTED_MAP_TO_LOAD]
 
         assert len(data_from_bigquery) == len(expected_data)
         assert data_from_bigquery == expected_data
@@ -1482,15 +1543,20 @@ def test_nested_fields_map(sdc_builder, sdc_executor, gcp, bigquery_create_schem
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
+@pytest.mark.parametrize('file_format', ['AVRO', 'JSON'])
 @pytest.mark.parametrize('bigquery_create_schema', [True, False])
-def test_nested_fields_list(sdc_builder, sdc_executor, gcp, bigquery_create_schema):
+def test_nested_fields_list(sdc_builder, sdc_executor, gcp, bigquery_create_schema, file_format):
     """Test for Google BigQuery with Google Cloud Storage staging testing nested fields.
 
-    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro
+    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro and Json
 
     The pipeline looks like this:
         dev_raw_data_source >> bigquery
     """
+
+    if Version(sdc_builder.version) < Version('5.5.0') and file_format == 'JSON':
+        pytest.skip('JSON staging introduced in 5.5.0')
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
@@ -1512,7 +1578,7 @@ def test_nested_fields_list(sdc_builder, sdc_executor, gcp, bigquery_create_sche
                             table=table_name,
                             bucket=bucket_name,
                             schema_generator='BIGQUERY' if bigquery_create_schema else 'SDC',
-                            staging_file_format='AVRO',
+                            staging_file_format=file_format,
                             enable_data_drift=not bigquery_create_schema,
                             create_table=not bigquery_create_schema,
                             create_dataset=False,
@@ -1550,15 +1616,161 @@ def test_nested_fields_list(sdc_builder, sdc_executor, gcp, bigquery_create_sche
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
-def test_nested_fields_data_drift(sdc_builder, sdc_executor, gcp):
-    """Test for Google BigQuery with Google Cloud Storage staging testing nested fields when the schema drifts.
-    BigQuery does not allow drift in schema, so just testing for SDC schema generation.
+@sdc_min_version('5.5.0')
+@pytest.mark.parametrize('input_data', [JSON_NESTED_MAP_TO_LOAD,
+                                        JSON_NESTED_LIST_OF_MAPS_TO_LOAD,
+                                        JSON_NESTED_LIST_OF_LISTS_OF_MAPS_TO_LOAD])
+@pytest.mark.parametrize('bigquery_create_schema', [True, False])
+def test_json_nested_fields(sdc_builder, sdc_executor, gcp, bigquery_create_schema, input_data):
+    """Test for Google BigQuery with Google Cloud Storage staging testing nested fields.
 
-    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro
+    JSON allows some more complicated nested structures that include different types for its subfields.
 
     The pipeline looks like this:
         dev_raw_data_source >> bigquery
     """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec) for rec in input_data)
+
+    # First, we create the initial pipeline, which will create datasets and tables as needed
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            schema_generator='BIGQUERY' if bigquery_create_schema else 'SDC',
+                            staging_file_format='JSON',
+                            enable_data_drift=not bigquery_create_schema,
+                            create_table=not bigquery_create_schema,
+                            create_dataset=False,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        logger.info('Creating dataset %s using Google BigQuery client ...', dataset_name)
+        bigquery_client.create_dataset(dataset_ref)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        # We retrieve the table after the pipeline is run
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(v for v in d.values()) for d in input_data]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@sdc_min_version('5.5.0')
+@pytest.mark.parametrize('bigquery_create_schema', [True, False])
+def test_json_nested_fields_with_nulls(sdc_builder, sdc_executor, gcp, bigquery_create_schema):
+    """Test for Google BigQuery with Google Cloud Storage staging testing nested fields.
+
+    Similar to test_json_nested_fields, but with special case handling NULLS (empty) inside nested structures
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec) for rec in JSON_NESTED_LIST_OF_LISTS_OF_MAPS_WITH_NULLS_TO_LOAD)
+
+    # First, we create the initial pipeline, which will create datasets and tables as needed
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            schema_generator='BIGQUERY' if bigquery_create_schema else 'SDC',
+                            staging_file_format='JSON',
+                            enable_data_drift=not bigquery_create_schema,
+                            create_table=not bigquery_create_schema,
+                            create_dataset=False,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        logger.info('Creating dataset %s using Google BigQuery client ...', dataset_name)
+        bigquery_client.create_dataset(dataset_ref)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        # We retrieve the table after the pipeline is run
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(v for v in d.values()) for d in EXPECTED_JSON_NESTED_LIST_OF_LISTS_OF_MAPS_WITH_NULLS]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@pytest.mark.parametrize('file_format', ['AVRO', 'JSON'])
+def test_nested_fields_data_drift(sdc_builder, sdc_executor, gcp, file_format):
+    """Test for Google BigQuery with Google Cloud Storage staging testing nested fields when the schema drifts.
+    BigQuery does not allow drift in schema, so just testing for SDC schema generation.
+
+    CSV and nested fields is not supported by BigQuery. So for now, we can just test it using Avro and Json
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+
+    if Version(sdc_builder.version) < Version('5.5.0') and file_format == 'JSON':
+        pytest.skip('JSON staging introduced in 5.5.0')
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
@@ -1581,7 +1793,7 @@ def test_nested_fields_data_drift(sdc_builder, sdc_executor, gcp):
                             table=table_name,
                             bucket=bucket_name,
                             schema_generator='SDC',
-                            staging_file_format='AVRO',
+                            staging_file_format=file_format,
                             enable_data_drift=True,
                             create_table=True,
                             create_dataset=True,
@@ -1655,6 +1867,7 @@ def test_nested_fields_data_drift(sdc_builder, sdc_executor, gcp):
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
 
+
 def start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
     with pytest.raises(Exception):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -1664,14 +1877,16 @@ def start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
     logger.info('Pipeline status %s ...', status)
     assert 'RUN_ERROR' == status, response
 
+
 def start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert 2 == len(wiretap.error_records)
 
+
 @sdc_min_version('5.4.0')
 @pytest.mark.parametrize("on_error_record, start_and_check",
                          [("STOP_PIPELINE", start_pipeline_and_check_stopped),
-                          ("TO_ERROR"     , start_pipeline_and_check_to_error)])
+                          ("TO_ERROR", start_pipeline_and_check_to_error)])
 def test_gcp_write_records_on_error(sdc_builder, sdc_executor, gcp,
                                     on_error_record, start_and_check):
     """

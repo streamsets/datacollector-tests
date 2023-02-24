@@ -23,7 +23,7 @@ from string import ascii_lowercase
 from google.cloud.bigquery import SchemaField, Table, DatasetReference
 from isodate import UTC
 from streamsets.testframework.markers import gcp, sdc_min_version, sdc_enterprise_lib_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_bigquery_enterprise_destination_BigQueryDTarget'
 
@@ -53,7 +53,8 @@ CSV_DATA_TO_INSERT = ['full_name,age'] + [','.join(str(element) for element in r
 # https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types
 # https://docs.streamsets.com/portal/#datacollector/latest/help/datacollector/UserGuide/Destinations/BigQuery.html
 # For every data type supported
-@pytest.mark.parametrize('origin_data_type, gcp_data_type, origin_data, gcp_expected_data', [
+DATA_TYPES = [
+    # origin_data_type, gcp_data_type, origin_data, gcp_expected_data
     # (DECIMAL is an alias for NUMERIC in GCP - BIGDECIMAL for BIGNUMERIC)
     # Boolean
     ('BOOLEAN', 'BOOLEAN', True, True),
@@ -102,8 +103,11 @@ CSV_DATA_TO_INSERT = ['full_name,age'] + [','.join(str(element) for element in r
     ('STRING', 'INTEGER', '2424', 2424),
     ('STRING', 'DECIMAL', '-123456789.12345', Decimal('-123456789.12345')),
     ('STRING', 'BIGDECIMAL', '-123456789.1234512345123451234512345', '-123456789.1234512345123451234512345'),
-])
-def test_data_type(sdc_builder, sdc_executor, gcp, origin_data_type, gcp_data_type, origin_data, gcp_expected_data):
+]
+
+
+@pytest.mark.parametrize('file_format', ['CSV', 'JSON'])
+def test_data_type(sdc_builder, sdc_executor, gcp, file_format):
     """
     Create data using Google BigQuery destination with different data types
     and then check if it has been correctly created using BigQuery client.
@@ -111,13 +115,31 @@ def test_data_type(sdc_builder, sdc_executor, gcp, origin_data_type, gcp_data_ty
     The pipeline looks like:
     dev_raw_data_source >> field_type_converter >> bigquery
     """
+
+    if Version(sdc_builder.version) < Version('5.5.0') and file_format == 'JSON':
+        pytest.skip('JSON staging introduced in 5.5.0')
+
     bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
     table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
-    data_to_insert = [(1, origin_data)]
-    data_to_expect = [(1, gcp_expected_data)]
-
-    rows_to_insert = ['id,data'] + [','.join(str(element) for element in row) for row in data_to_insert]
+    header_to_insert = ""
+    rows_to_insert = ""
+    data_to_expect = []
+    converter_configs = []
+    schema = []
+    for i in range(len(DATA_TYPES)):
+        header_to_insert = header_to_insert + 'data_' + str(i) + ","
+        rows_to_insert = rows_to_insert + str(DATA_TYPES[i][2]) + ","
+        data_to_expect.insert(i, DATA_TYPES[i][3])
+        converter_configs.insert(i, {
+            'fields': ['/data_' + str(i)],
+            'targetType': DATA_TYPES[i][0],
+            'dataLocale': 'en,US',
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
+            'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
+            'scale': 38
+        })
+        schema.insert(i, SchemaField('data_' + str(i), DATA_TYPES[i][1]))
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -125,24 +147,18 @@ def test_data_type(sdc_builder, sdc_executor, gcp, origin_data_type, gcp_data_ty
     dev_raw_data_source.set_attributes(data_format='DELIMITED',
                                        header_line='WITH_HEADER',
                                        stop_after_first_batch=True,
-                                       raw_data='\n'.join(rows_to_insert))
+                                       raw_data=header_to_insert[:-1] + '\n' + rows_to_insert[:-1])
 
     field_type_converter = pipeline_builder.add_stage('Field Type Converter')
     field_type_converter.conversion_method = 'BY_FIELD'
-    field_type_converter.field_type_converter_configs = [{
-        'fields': ['/data'],
-        'targetType': origin_data_type,
-        'dataLocale': 'en,US',
-        'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
-        'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
-        'scale': 38
-    }]
+    field_type_converter.field_type_converter_configs = converter_configs
 
     bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
     bigquery.set_attributes(project_id=gcp.project_id,
                             dataset=dataset_name,
                             table=table_name,
                             bucket=bucket_name,
+                            staging_file_format=file_format,
                             enable_data_drift=False,
                             create_table=False,
                             purge_stage_file_after_ingesting=True)
@@ -154,8 +170,6 @@ def test_data_type(sdc_builder, sdc_executor, gcp, origin_data_type, gcp_data_ty
     bigquery_client = gcp.bigquery_client
     dataset_ref = DatasetReference(gcp.project_id, dataset_name)
     # We create data type for bigquery, and insert it against that type to check if it works
-    schema = [SchemaField('id', 'INTEGER'),
-              SchemaField('data', gcp_data_type)]
     try:
         logger.info(f'Creating temporary bucket {bucket_name}')
         bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
@@ -172,8 +186,124 @@ def test_data_type(sdc_builder, sdc_executor, gcp, origin_data_type, gcp_data_ty
         data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
         data_from_bigquery.sort()
 
-        assert len(data_from_bigquery) == len(data_to_expect)
-        assert data_from_bigquery == data_to_expect
+        expected_data = [tuple(data_to_expect)]
+        expected_data.sort()
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+AVRO_DATA_TYPES = [
+    # origin_data_type, gcp_data_type, origin_data, gcp_expected_data
+    # sanity check knowing AVRO types is a bit special
+    # Boolean
+    ('BOOLEAN', 'BOOLEAN', True, True),
+    # Byte Array
+    ('BYTE_ARRAY', 'BYTES', 'dataAsBytes', b'dataAsBytes'),
+    # Date
+    ('DATE', 'DATE', '2020-01-01 10:00:00', datetime.date(2020, 1, 1)),
+    # Datetime
+    ('DATETIME', 'DATETIME', '2019-02-05 23:59:59', datetime.datetime(2019, 2, 5, 23, 59, 59)),
+    # Time
+    ('TIME', 'TIME', '2020-01-01 10:00:00',  datetime.time(17, 56, 42, 368000)),
+    # Double
+    ('DOUBLE', 'FLOAT', 2424.242431640625, 2424.242431640625),
+    # Float
+    ('FLOAT', 'FLOAT', 2424.242431640625, 2424.242431640625),
+    # Long
+    ('LONG', 'INTEGER', 2424, 2424),
+    # Integer
+    ('INTEGER', 'INTEGER', 2424, 2424),
+    # Decimal
+    ('DECIMAL', 'DECIMAL', -123456789.12345, Decimal('-123456789.12345')),
+    # String
+    ('STRING', 'STRING', 'gcp standard test 123', 'gcp standard test 123'),
+]
+
+
+def test_data_type_avro(sdc_builder, sdc_executor, gcp):
+    """
+    Create data using Google BigQuery destination with different data types
+    and then check if it has been correctly created using BigQuery client.
+
+    The pipeline looks like:
+    dev_raw_data_source >> field_type_converter >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    header_to_insert = ""
+    rows_to_insert = ""
+    data_to_expect = []
+    converter_configs = []
+    schema = []
+    for i in range(len(AVRO_DATA_TYPES)):
+        header_to_insert = header_to_insert + 'data_' + str(i) + ","
+        rows_to_insert = rows_to_insert + str(AVRO_DATA_TYPES[i][2]) + ","
+        data_to_expect.insert(i, AVRO_DATA_TYPES[i][3])
+        converter_configs.insert(i, {
+            'fields': ['/data_' + str(i)],
+            'targetType': AVRO_DATA_TYPES[i][0],
+            'dataLocale': 'en,US',
+            'dateFormat': 'YYYY_MM_DD_HH_MM_SS',
+            'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
+            'scale': 38
+        })
+        schema.insert(i, SchemaField('data_' + str(i), AVRO_DATA_TYPES[i][1]))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       stop_after_first_batch=True,
+                                       raw_data=header_to_insert[:-1] + '\n' + rows_to_insert[:-1])
+
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter.conversion_method = 'BY_FIELD'
+    field_type_converter.field_type_converter_configs = converter_configs
+
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            staging_file_format='AVRO',
+                            enable_data_drift=False,
+                            create_table=False,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> field_type_converter >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+    # We create data type for bigquery, and insert it against that type to check if it works
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        logger.info('Creating dataset %s and table %s using Google BigQuery client ...', dataset_name, table_name)
+        bigquery_client.create_dataset(dataset_ref)
+        table = bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=schema))
+
+        # Start pipeline and verify correct rows are received.
+        logger.info('Starting pipeline')
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(data_to_expect)]
+        expected_data.sort()
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
     finally:
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
