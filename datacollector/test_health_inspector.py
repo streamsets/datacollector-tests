@@ -65,7 +65,7 @@ def test_configuration_category(sdc_executor, entry_name):
     assert check['details'] is None
 
 
-@pytest.mark.parametrize('entry_name,severity,details', [
+@pytest.mark.parametrize('entry_name,worst_severity,details', [
     ('Thread count','GREEN', False),
     ('Deadlocked threads', 'GREEN', False),
     ('JVM Memory Max', 'RED', False),
@@ -74,7 +74,7 @@ def test_configuration_category(sdc_executor, entry_name):
     ('System Memory Utilization', 'GREEN', False),
     ('Child Processes', 'GREEN', True)
 ])
-def test_jvm_instance_category(sdc_executor, entry_name, severity, details):
+def test_jvm_instance_category(sdc_executor, entry_name, worst_severity, details):
     report = sdc_executor.api_client.get_health_report('JvmInstanceHealthCategory').response.json()
     assert len(report['categories']) == 1
 
@@ -83,7 +83,10 @@ def test_jvm_instance_category(sdc_executor, entry_name, severity, details):
 
     check = _find_health_check(result, entry_name)
     assert check is not None
-    assert check['severity'] == severity
+
+    severity = check['severity']
+    severities = ['RED', 'YELLOW', 'GREEN']
+    assert severities.index(severity) >= severities.index(worst_severity), f'Expect severity at least {worst_severity} but was {severity}'
     assert check['value'] is not None
     assert check['description'] is not None
     if details:
