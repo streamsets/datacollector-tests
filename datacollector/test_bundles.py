@@ -34,6 +34,7 @@ def pipeline(sdc_executor):
     builder = sdc_executor.get_pipeline_builder()
 
     generator = builder.add_stage(label='Dev Data Generator')
+    generator.set_attributes(header_attributes=[{"key": "password", "value": "not_a_safe_place"}])
     trash = builder.add_stage(label='Trash')
 
     generator >> trash
@@ -187,7 +188,7 @@ def test_validate_sdc_info_generator(sdc_executor):
     assert len(thread_dumps) >= 2
 
 
-def test_validate_redaction(sdc_executor):
+def test_validate_redaction(pipeline, sdc_executor):
     bundle = sdc_executor.get_bundle()
 
     # Redaction in files
@@ -195,3 +196,13 @@ def test_validate_redaction(sdc_executor):
         p = Properties()
         p.load(raw)
         assert p.get('https.keystore.password') == 'REDACTED'
+
+    # Redaction in nested parameters
+    with bundle.open(f'com.streamsets.datacollector.bundles.content.PipelineContentGenerator/'
+                     f'{pipeline.id}/pipeline.json') as raw:
+        bundle_json = json.loads(raw.read().decode())
+        for config in bundle_json['pipelineConfig']['stages'][0]['configuration']:
+            if config['name'] == 'headerAttributes':
+                assert config['value'][0]['key'] == 'password', 'header attributes must contain a password'
+                assert config['value'][0]['value'] == 'REDACTED', 'header password must be redacted'
+                break
