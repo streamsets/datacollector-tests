@@ -31,6 +31,32 @@ logger = logging.getLogger(__name__)
 
 DIR_TO_READ = Path(f'{dirname(__file__)}/pipelines')
 
+ONLY_JDK8_PIPELINES = [
+    'sdc_1.1.0_pipeline_Dev_Data_Trash.json',
+    'sdc_1.1.0_pipeline_HadoopFS_trash.json',
+    'sdc_1.1.0_pipeline_Kafka_consumer_trash.json',
+    'sdc_1.1.0_pipeline_Omniture.json',
+    'sdc_1.1.0_pipeline_Source_Destination.json',
+    'sdc_1.6.0.0_pipeline_DevData_Trash.json',
+    'sdc_1.6.0.0_pipeline_HadoopFS_Tarsh.json',
+    'sdc_1.6.0.0_pipeline_Source_Destination.json',
+    'sdc_1.6.0.0_pipeline_Source_Proccesors.json',
+    'sdc_2.0.0.0_pipeline_Dev_Data_Trash.json',
+    'sdc_2.0.0.0_pipeline_HadoopFS_trash.json',
+    'sdc_2.0.0.0_pipeline_source_destination.json',
+    'sdc_2.1.0.0_pipeline_HadoopFS_Trash.json',
+    'sdc_2.1.0.0_pipeline_Source_destination.json',
+    'sdc_2.1.0.0_pipeline_Source_processor.json',
+    'sdc_2.2.0.0_pipeline_Event_executor.json',
+    'sdc_2.2.0.0_pipeline_HadoopFS_Trash.json',
+    'sdc_2.2.0.0_pipeline_KafkaConsumer_Trash.json',
+    'sdc_2.2.0.0_pipeline_KinesisConsumer_Trash.json',
+    'sdc_2.2.0.0_pipeline_Orgin_Processor.json',
+    'sdc_2.2.0.0_pipeline_Origin_Destination.json',
+    'sdc_2.2.0.0_pipeline_RedisConsumer_Trash.json'
+
+]
+
 
 @pytest.fixture(scope='module')
 # sdc_executor_hook cannot be used instead as the tests in this module are designed to run against one given SDC
@@ -54,6 +80,16 @@ def sdc_builder_hook(args):
 def test_pipeline_upgrade(sdc_builder, pipeline_full_path):
     """Test pipeline upgrades by importing JSON files against a given SDC version and asserting that they
     have no pipeline import issues."""
+    
+    # There is a set of pipelines that can not be loaded in SDC when executing over JDK17 because are using
+    # stages that are disabled. The JDK version was included in the health report in the SDC 5.5.0. For previous 
+    # versions there is no way to know what java version is being used so defaulting to True.
+    sdc_host_info = sdc_builder.api_client.get_health_report('HealthHostInformation').response.json()
+    is_jdk8 = sdc_host_info['hostInformation']['jdkVersion'] == 8 if 'hostInformation' in sdc_host_info else True
+
+    if not is_jdk8 and pipeline_full_path.split('/')[-1] in ONLY_JDK8_PIPELINES:
+        pytest.skip(f'Skippingg upgrade tests for pipeline {pipeline_full_path}. It is not supported in java 17')
+    
     logger.info('Importing and checking pipeline JSON file %s', pipeline_full_path)
     uuid = str(uuid4())
     logger.debug('Using pipeline id %s for file %s', uuid, pipeline_full_path)
