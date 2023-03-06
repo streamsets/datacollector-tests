@@ -30,6 +30,7 @@ MESSAGE_TEXT = 'ABCDEF'
 def sdc_common_hook():
     def hook(data_collector):
         data_collector.add_stage_lib('streamsets-datacollector-crypto-lib')
+
     return hook
 
 
@@ -91,9 +92,41 @@ def test_field_decrypt(sdc_builder, sdc_executor, aws):
 
 
 @aws('kms')
+@sdc_min_version('5.5.0')
+def test_field_decrypt_error_records(sdc_builder, sdc_executor, aws):
+    """
+    We test that the pipeline will be producing error records instead of stage errors which should stop the pipeline
+
+    The pipeline looks like:
+        dev_data_generator >> field_decrypt >> wiretap.destination
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(batch_size=1,
+                                      records_to_be_generated=1,
+                                      fields_to_generate=[{
+                                          "type": "BYTE_ARRAY",
+                                          "field": "text"
+                                      }])
+
+    field_decrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_decrypt.set_attributes(fields=['/text'], mode='DECRYPT')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_data_generator >> field_decrypt >> wiretap.destination
+    pipeline = pipeline_builder.build('Field Decryption Pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert 0 == len(wiretap.output_records)
+    assert 1 == len(wiretap.error_records)
+
+
+@aws('kms')
 @sdc_min_version('3.5.0')
 def test_field_encrypt(sdc_builder, sdc_executor, aws):
-    """Baic test to verify Encrypt and Decrypt Fields processor can encrypt.
+    """Basic test to verify Encrypt and Decrypt Fields processor can encrypt.
     Verify by decrypting the field received from pipeline wiretap.
 
     The pipeline looks like:
