@@ -339,19 +339,26 @@ def test_directory_origin_configuration_charset(sdc_builder, sdc_executor, file_
                              data_format=data_format,
                              files_directory=files_directory,
                              file_name_pattern=FILE_NAME)
-    wiretap = pipeline_builder.add_wiretap()
+
+    local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(data_format='TEXT', directory_template=files_directory,
+                            charset=ENCODING if charset_correctly_set else 'US-ASCII',
+                            files_prefix='myfileoutput')
+
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-    directory >> [wiretap.destination, pipeline_finisher]
+    directory >> [local_fs, pipeline_finisher]
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    text_fields = [record.field['text'] for record in wiretap.output_records]
+
+    file_output = os.path.join(files_directory, 'myfileoutput*')
+    text_fields = sdc_executor.read_file(file_output).strip()
 
     if charset_correctly_set:
-        assert text_fields == [FILE_CONTENTS]
+        assert text_fields == FILE_CONTENTS
     else:
-        assert text_fields != [FILE_CONTENTS]
+        assert text_fields != FILE_CONTENTS
 
 
 @pytest.mark.parametrize('delimiter_format_type', ['CUSTOM'])
