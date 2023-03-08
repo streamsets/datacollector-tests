@@ -1881,6 +1881,8 @@ def test_salesforce_destination_null_datetime(
             record["FirstName"] == contact_name
         ), f"Expected record with FirstName {contact_name}, got {record['FirstName']}"
 
+        clean_up(sdc_executor, pipeline, client, read_ids, hard_delete=True)
+
 
 @salesforce
 def test_salesforce_destination_null_relationship(sdc_builder, sdc_executor, salesforce):
