@@ -49,6 +49,7 @@ LAST_NON_MULTITENANT_ORACLE_VERSION = 11
 SHORT_WAIT_TIME = 0
 LONG_WAIT_TIME = 2000
 SESSION_WAIT_TIME_MIN_VERSION = "5.3.0"
+PEG_LOB_SUPPORT_VERSION = Version("5.5.0")
 
 EMPTY_BLOB = b"EMPTY_BLOB()"
 EMPTY_BLOB_STRING = "EMPTY_BLOB()"
@@ -4761,13 +4762,19 @@ def test_enabling_lobs_without_local_buffering(sdc_builder, sdc_executor, databa
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
-def test_lob_insert(sdc_builder, sdc_executor, database, lob_type, buffer_location):
+def test_lob_insert(sdc_builder, sdc_executor, database, peg_parser, lob_type, buffer_location):
     """Do a simple LOB insert and check that a single record is outputted and said record contains
     the inserted value. The pipeline is the following:
         oracle_cdc_client >> wiretap
     """
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     source_table_name = get_random_string(string.ascii_uppercase, 16)
     primary_key = randint(10000, 100000)
     lob_column_name = "LOBCOL"
@@ -4810,6 +4817,8 @@ def test_lob_insert(sdc_builder, sdc_executor, database, lob_type, buffer_locati
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -4839,13 +4848,19 @@ def test_lob_insert(sdc_builder, sdc_executor, database, lob_type, buffer_locati
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("lob_types", [["BLOB", "BLOB"], ["BLOB", "CLOB"], ["CLOB", "BLOB"], ["CLOB", "CLOB"]])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
-def test_lob_insert_multicolumn(sdc_builder, sdc_executor, database, lob_types, buffer_location):
+def test_lob_insert_multicolumn(sdc_builder, sdc_executor, database, peg_parser, lob_types, buffer_location):
     """Do simple LOB inserts to multiple columns  and check that a single record is outputted
     and said record contains the inserted values. The pipeline is the following:
         oracle_cdc_client >> wiretap
     """
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     source_table_name = get_random_string(string.ascii_uppercase, 16)
     primary_key = randint(10000, 100000)
     test_values = {
@@ -4889,6 +4904,8 @@ def test_lob_insert_multicolumn(sdc_builder, sdc_executor, database, lob_types, 
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -4922,13 +4939,21 @@ def test_lob_insert_multicolumn(sdc_builder, sdc_executor, database, lob_types, 
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 @pytest.mark.parametrize("disable_continuous_mine", [True, False])
-def test_lob_insert_mixed(sdc_builder, sdc_executor, database, lob_type, buffer_location, disable_continuous_mine):
+def test_lob_insert_mixed(
+    sdc_builder, sdc_executor, database, peg_parser, lob_type, buffer_location, disable_continuous_mine
+):
     """Mixed the LOB insert with other operations to ensure LOBs do not affect other records.
     The pipeline is the following:
         oracle_cdc_client >> wiretap"""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     source_table_name = get_random_string(string.ascii_uppercase, 16)
     primary_key = randint(10000, 100000)
     test_values = {
@@ -4983,6 +5008,8 @@ def test_lob_insert_mixed(sdc_builder, sdc_executor, database, lob_type, buffer_
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5027,13 +5054,21 @@ def test_lob_insert_mixed(sdc_builder, sdc_executor, database, lob_type, buffer_
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 @pytest.mark.parametrize("disable_continuous_mine", [True, False])
-def test_lob_consecutive_writes(sdc_builder, sdc_executor, database, blob_file_specs, buffer_location, disable_continuous_mine):
+def test_lob_consecutive_writes(
+    sdc_builder, sdc_executor, database, peg_parser, blob_file_specs, buffer_location, disable_continuous_mine
+):
     """Write several (n) times to a BLOB before committing and check that n records are outputted.
     The main goal is to test that the RsIdSsnSql implementation is correct.
     The pipeline is the following:
         oracle_cdc_client >> wiretap"""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     id_column_name = "IDCOL"
     blob_column_name = "BLOBCOL"
     dir_name = get_random_string(string.ascii_uppercase, 16)
@@ -5071,6 +5106,8 @@ def test_lob_consecutive_writes(sdc_builder, sdc_executor, database, blob_file_s
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5118,11 +5155,19 @@ def test_lob_consecutive_writes(sdc_builder, sdc_executor, database, blob_file_s
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 @pytest.mark.parametrize("disable_continuous_mine", [True, False])
-def test_blob_write(sdc_builder, sdc_executor, database, buffer_location, blob_file_specs, disable_continuous_mine):
+def test_blob_write(
+    sdc_builder, sdc_executor, database, peg_parser, buffer_location, blob_file_specs, disable_continuous_mine
+):
     """Wrote a BLOB from a binary file and check the contents. The pipeline is the following:
     oracle_cdc_client >> wiretap"""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     id_column_name = "IDCOL"
     blob_column_name = "BLOBCOL"
     dir_name = get_random_string(string.ascii_uppercase, 16)
@@ -5157,8 +5202,10 @@ def test_blob_write(sdc_builder, sdc_executor, database, buffer_location, blob_f
             disable_continuous_mine=disable_continuous_mine,
             enable_blob_and_clob_columns_processing=True,
             buffer_changes_locally=True,
-            buffer_location=buffer_location
+            buffer_location=buffer_location,
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5206,12 +5253,20 @@ def test_blob_write(sdc_builder, sdc_executor, database, buffer_location, blob_f
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 @pytest.mark.parametrize("disable_continuous_mine", [True, False])
-def test_blob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, buffer_location, disable_continuous_mine):
+def test_blob_write_mixed(
+    sdc_builder, sdc_executor, database, peg_parser, blob_file_specs, buffer_location, disable_continuous_mine
+):
     """Mix other operations with BLOB loads from the filesystem to ensure other operations are not affected.
     The pipeline is the following:
         oracle_cdc_client >> wiretap"""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     id_column_name = "IDCOL"
     blob_column_name = "BLOBCOL"
     string_column_name = "STRCOL"
@@ -5250,6 +5305,8 @@ def test_blob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, 
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5335,12 +5392,18 @@ def test_blob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, 
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("max_lob_size", [0, 128, 4096])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
-def test_blob_max_size(sdc_builder, sdc_executor, database, max_lob_size, blob_file_specs, buffer_location):
+def test_blob_max_size(sdc_builder, sdc_executor, database, peg_parser, max_lob_size, blob_file_specs, buffer_location):
     """Set different maximum lob sizes and verify that BLOBs are split into the appropriate records.
     The pipeline is the following:
         oracle_cdc_client >> wiretap"""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     id_column_name = "IDCOL"
     blob_column_name = "BLOBCOL"
     dir_name = get_random_string(string.ascii_uppercase, 16)
@@ -5382,6 +5445,8 @@ def test_blob_max_size(sdc_builder, sdc_executor, database, max_lob_size, blob_f
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5460,14 +5525,22 @@ def test_blob_max_size(sdc_builder, sdc_executor, database, max_lob_size, blob_f
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("method", ["RAW", "FROM_FILE"])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 @pytest.mark.parametrize("disable_continuous_mine", [True, False])
-def test_clob_write(sdc_builder, sdc_executor, database, method, clob_file_specs, buffer_location, disable_continuous_mine):
+def test_clob_write(
+    sdc_builder, sdc_executor, database, peg_parser, method, clob_file_specs, buffer_location, disable_continuous_mine
+):
     """Write a CLOB of enough size that it will be internally split into multiple LOB_WRITE operations
     and ensure a single record is produced. The file must be bigger than 1022 characters or it will not be
     split by Oracle. The pipeline is the following:
         oracle_cdc_client >> wiretap"""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     id_column_name = "IDCOL"
     clob_column_name = "CLOBCOL"
     source_table_name = get_random_string(string.ascii_uppercase, 16)
@@ -5519,8 +5592,10 @@ def test_clob_write(sdc_builder, sdc_executor, database, method, clob_file_specs
             disable_continuous_mine=disable_continuous_mine,
             enable_blob_and_clob_columns_processing=True,
             buffer_changes_locally=True,
-            buffer_location=buffer_location
+            buffer_location=buffer_location,
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5579,12 +5654,20 @@ def test_clob_write(sdc_builder, sdc_executor, database, method, clob_file_specs
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 @pytest.mark.parametrize("disable_continuous_mine", [True, False])
-def test_clob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, buffer_location, disable_continuous_mine):
+def test_clob_write_mixed(
+    sdc_builder, sdc_executor, database, peg_parser, blob_file_specs, buffer_location, disable_continuous_mine
+):
     """Mix big CLOB writes with other instruction to verify they are not affected by each other.
     The pipeline is the following:
         oracle_cdc_client >> wiretap"""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     id_column_name = "IDCOL"
     clob_column_name = "CLOBCOL"
     string_column_name = "STRCOL"
@@ -5623,6 +5706,8 @@ def test_clob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, 
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5679,12 +5764,18 @@ def test_clob_write_mixed(sdc_builder, sdc_executor, database, blob_file_specs, 
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("max_lob_size", [0, 16, 64, 4096])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
-def test_clob_max_size(sdc_builder, sdc_executor, database, max_lob_size, buffer_location):
+def test_clob_max_size(sdc_builder, sdc_executor, database, peg_parser, max_lob_size, buffer_location):
     """Set different maximum lob sizes and verify that CLOBs are split into the appropriate records.
     The pipeline is the following:
         oracle_cdc_client >> wiretap"""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     id_column_name = "IDCOL"
     clob_column_name = "CLOBCOL"
     source_table_name = get_random_string(string.ascii_uppercase, 16)
@@ -5724,6 +5815,8 @@ def test_clob_max_size(sdc_builder, sdc_executor, database, max_lob_size, buffer
             buffer_changes_locally=True,
             buffer_location=buffer_location
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5784,16 +5877,12 @@ def test_clob_max_size(sdc_builder, sdc_executor, database, max_lob_size, buffer
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
 @pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 def test_lob_disabled_lob_insert(
-        sdc_builder,
-        sdc_executor,
-        database,
-        add_unsupported_fields_to_records,
-        lob_type,
-        buffer_location
+    sdc_builder, sdc_executor, database, peg_parser, add_unsupported_fields_to_records, lob_type, buffer_location
 ):
     """Do a simple LOB insert and check that a single record is outputted and said record contains
     the inserted value. The pipeline is the following:
@@ -5801,6 +5890,10 @@ def test_lob_disabled_lob_insert(
 
     SDC 5.2.0 added support for BLOB/CLOB data types, but still gave the option to treat them as unsupported types.
     This test also checks that that is no longer the case."""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
 
     source_table_name = get_random_string(string.ascii_uppercase, 16)
     primary_key = randint(10000, 100000)
@@ -5846,6 +5939,8 @@ def test_lob_disabled_lob_insert(
             add_unsupported_fields_to_records=add_unsupported_fields_to_records,
             unsupported_field_type="SEND_TO_PIPELINE"
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5877,15 +5972,11 @@ def test_lob_disabled_lob_insert(
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 def test_lob_disabled_blob_write(
-        sdc_builder,
-        sdc_executor,
-        database,
-        blob_file_specs,
-        add_unsupported_fields_to_records,
-        buffer_location
+    sdc_builder, sdc_executor, database, peg_parser, blob_file_specs, add_unsupported_fields_to_records, buffer_location
 ):
     """Write a LOB from a file while LOB support is disabled and ensure no LOB records are produced.
     The pipeline is the following:
@@ -5893,6 +5984,10 @@ def test_lob_disabled_blob_write(
 
     SDC 5.2.0 added support for BLOB/CLOB data types, but still gave the option to treat them as unsupported types.
     This test also checks that that is no longer the case."""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
 
     id_column_name = "IDCOL"
     blob_column_name = "BLOBCOL"
@@ -5932,6 +6027,8 @@ def test_lob_disabled_blob_write(
             add_unsupported_fields_to_records=add_unsupported_fields_to_records,
             unsupported_field_type="SEND_TO_PIPELINE"
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -5977,14 +6074,11 @@ def test_lob_disabled_blob_write(
 
 @sdc_min_version("5.2.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("add_unsupported_fields_to_records", [True, False])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
 def test_lob_disabled_clob_write(
-        sdc_builder,
-        sdc_executor,
-        database,
-        add_unsupported_fields_to_records,
-        buffer_location
+    sdc_builder, sdc_executor, database, peg_parser, add_unsupported_fields_to_records, buffer_location
 ):
     """Write a big CLOB while LOB support is disabled an ensure no CLOB records are produced.
     The pipeline is the following:
@@ -5992,6 +6086,11 @@ def test_lob_disabled_clob_write(
 
     SDC 5.2.0 added support for BLOB/CLOB data types, but still gave the option to treat them as unsupported types.
     This test also checks that that is no longer the case."""
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     id_column_name = "IDCOL"
     clob_column_name = "CLOBCOL"
     source_table_name = get_random_string(string.ascii_uppercase, 16)
@@ -6029,6 +6128,8 @@ def test_lob_disabled_clob_write(
             add_unsupported_fields_to_records=add_unsupported_fields_to_records,
             unsupported_field_type="SEND_TO_PIPELINE"
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -6059,13 +6160,19 @@ def test_lob_disabled_clob_write(
 
 @sdc_min_version("5.3.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
-def test_lob_trim(sdc_builder, sdc_executor, database, lob_type, buffer_location):
+def test_lob_trim(sdc_builder, sdc_executor, database, peg_parser, lob_type, buffer_location):
     """WRITE and TRIM a LOB and verify the TRIM record headers contain the expected information.
     The pipeline is the following:
         oracle_cdc_client >> wiretap
     """
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     source_table_name = get_random_string(string.ascii_uppercase, 16)
     primary_key = randint(10000, 100000)
     id_column_name = "IDCOL"
@@ -6114,6 +6221,8 @@ def test_lob_trim(sdc_builder, sdc_executor, database, lob_type, buffer_location
             buffer_changes_locally=True,
             buffer_location=buffer_location,
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
@@ -6170,13 +6279,19 @@ def test_lob_trim(sdc_builder, sdc_executor, database, lob_type, buffer_location
 
 @sdc_min_version("5.3.0")
 @database("oracle")
+@pytest.mark.parametrize("peg_parser", [True, False])
 @pytest.mark.parametrize("lob_type", ["BLOB", "CLOB"])
 @pytest.mark.parametrize("buffer_location", ["IN_MEMORY", "ON_DISK"])
-def test_lob_erase(sdc_builder, sdc_executor, database, lob_type, buffer_location):
+def test_lob_erase(sdc_builder, sdc_executor, database, peg_parser, lob_type, buffer_location):
     """WRITE and ERASE a LOB and verify the ERASE record headers contain the expected information.
     The pipeline is the following:
         oracle_cdc_client >> wiretap
     """
+
+    sdc_version = Version(sdc_builder.version)
+    if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
+        pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+
     source_table_name = get_random_string(string.ascii_uppercase, 16)
     primary_key = randint(10000, 100000)
     id_column_name = "IDCOL"
@@ -6226,6 +6341,8 @@ def test_lob_erase(sdc_builder, sdc_executor, database, lob_type, buffer_locatio
             buffer_changes_locally=True,
             buffer_location=buffer_location,
         )
+        if sdc_version >= PEG_LOB_SUPPORT_VERSION:
+            oracle_cdc_client.set_attributes(use_peg_parser=peg_parser)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
 
         _wait_until_time(_get_current_oracle_time(connection=connection))
