@@ -549,19 +549,33 @@ def test_directory_origin_configuration_delimiter_character(sdc_builder, sdc_exe
                                  delimiter_character=delimiter_character,
                                  root_field_type=root_field_type,
                                  header_line=header_line)
-        wiretap = pipeline_builder.add_wiretap()
+
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [wiretap.destination, pipeline_finisher]
+
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format=data_format,
+                                delimiter_format=delimiter_format_type,
+                                delimiter_character=delimiter_character,
+                                header_line=header_line,
+                                directory_template=files_directory,
+                                files_prefix='myfileoutput')
+
+        directory >> [local_fs, pipeline_finisher]
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        assert 2 == len(wiretap.output_records)
-        assert (wiretap.output_records[0].field == OrderedDict(
-            [('header1', 'Field11'), ('header2', 'Field12'), ('header3', 'fält13')]))
-        assert (wiretap.output_records[1].field == OrderedDict(
-            [('header1', 'стол'), ('header2', 'Field22'), ('header3', 'Field23')]))
+        file_output = os.path.join(files_directory, 'myfileoutput*')
+        text_read = sdc_executor.read_file(file_output).strip()
+
+        assert 3 == len(text_read.splitlines())
+        assert (text_read.splitlines()[0].split(delimiter_character) ==
+                ['header1', 'header2', 'header3'])
+        assert (text_read.splitlines()[1].split(delimiter_character) ==
+                ['Field11', 'Field12', 'fält13'])
+        assert (text_read.splitlines()[2].split(delimiter_character) ==
+                ['стол', 'Field22', 'Field23'])
     finally:
         shell_executor(f'rm -r {files_directory}')
 
