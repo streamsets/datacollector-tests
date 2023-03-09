@@ -748,6 +748,7 @@ def test_directory_origin_configuration_excel_header_option(sdc_builder, sdc_exe
                                                             file_writer):
     """Indicates whether files include a header row and whether to ignore the header row.
     A header row must be the first row of a file.
+    We don't use wiretap because we use special characters. Instead we use local filesystem.
     """
     files_directory = os.path.join('/tmp', get_random_string())
     file_name = f'{get_random_string()}.xls'
@@ -762,21 +763,35 @@ def test_directory_origin_configuration_excel_header_option(sdc_builder, sdc_exe
                                  data_format=data_format,
                                  files_directory=files_directory,
                                  file_name_pattern='*.xls')
-        wiretap = pipeline_builder.add_wiretap()
+
         pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        directory >> [wiretap.destination, pipeline_finisher]
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='JSON',
+                                directory_template=files_directory,
+                                files_prefix='myfileoutput')
+
+        directory >> [local_fs, pipeline_finisher]
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
+        file_output = os.path.join(files_directory, 'myfileoutput*')
+        json_read = [json.loads(line) for line in sdc_executor.read_file(file_output).strip().split('\n')]
+
         if excel_header_option == 'IGNORE_HEADER':
-            assert wiretap.output_records[0].field == OrderedDict([('0', 'Field11'), ('1', 'ఫీల్డ్12'), ('2', 'fält13')])
+            assert len(json_read) == 2
+            assert json_read[0] == {'0': 'Field11', '1': 'ఫీల్డ్12', '2': 'fält13'}
+            assert json_read[1] == {'0': 'поле21', '1': 'फील्ड22', '2': 'สนาม23'}
         elif excel_header_option == 'NO_HEADER':
-            assert wiretap.output_records[0].field == OrderedDict([('0', 'column1'), ('1', 'column2'), ('2', 'column3')])
+            assert len(json_read)  == 3
+            assert json_read[0] == {'0': 'column1', '1': 'column2', '2': 'column3'}
+            assert json_read[1] == {'0': 'Field11', '1': 'ఫీల్డ్12', '2': 'fält13'}
+            assert json_read[2] == {'0': 'поле21', '1': 'फील्ड22', '2': 'สนาม23'}
         elif excel_header_option == 'WITH_HEADER':
-            assert wiretap.output_records[0].field == OrderedDict([('column1', 'Field11'), ('column2', 'ఫీల్డ్12'),
-                                                           ('column3', 'fält13')])
+            assert len(json_read)  == 2
+            assert json_read[0] == {'column1':'Field11','column2':'ఫీల్డ్12','column3':'fält13'}
+            assert json_read[1] == {'column1': 'поле21','column2':'फील्ड22','column3':'สนาม23'}
     finally:
         shell_executor(f'rm -r {files_directory}')
 
