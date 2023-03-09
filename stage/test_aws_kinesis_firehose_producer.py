@@ -81,7 +81,7 @@ def test_firehose_destination_to_s3(sdc_builder, sdc_executor, aws):
             iteration = iteration + 1
             time.sleep(iteration * 5)
 
-        assert len(s3_put_keys) == record_count
+        assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, firehose_dest_pipeline)
         # delete S3 objects related to this test
@@ -149,7 +149,7 @@ def test_firehose_destination_to_s3_other_region(sdc_builder, sdc_executor, aws)
             iteration = iteration + 1
             time.sleep(iteration * 5)
 
-        assert len(s3_put_keys) == record_count
+        assert len(s3_put_keys) == record_count, "s3_put_keys should contain 1 record"
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, firehose_dest_pipeline)
         # delete S3 objects related to this test
@@ -174,12 +174,15 @@ def _get_firehose_data(s3_client, s3_bucket, random_raw_str):
     logger.info(f'Prefix name for firehose : {prefix}')
     logger.info(f'Random raw string : {random_raw_str}')
 
-    for s3_content in list_s3_objs['Contents']:
-        akey = s3_content['Key']
-        aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
-        aobj_body = aobj['Body'].read().decode().strip()
-        logger.info(f'Body : {aobj_body} for Key : {akey}')
-        if random_raw_str in aobj_body:
-            s3_put_keys.append(akey)
+    if 'Contents' in list_s3_objs:
+        for s3_content in list_s3_objs['Contents']:
+            akey = s3_content['Key']
+            aobj = s3_client.get_object(Bucket=s3_bucket, Key=akey)
+            aobj_body = aobj['Body'].read().decode().strip()
+            logger.info(f'Body : {aobj_body} for Key : {akey}')
+            if random_raw_str in aobj_body:
+                s3_put_keys.append(akey)
+    else:
+        logger.info(f'Response Content: {list_s3_objs}')
 
     return s3_put_keys
