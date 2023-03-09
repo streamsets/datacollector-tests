@@ -831,7 +831,7 @@ def test_salesforce_destination_special_characters(sdc_builder, sdc_executor, sa
                  "          Email "
                  "     from Contact "
                  f"   where Email like '%{test_token}%' "
-                 "      and Email like '%mathematics%'"
+                 "      and Email like '%lomagne%'"
                  " order by Id")
         result = client.query(query)
         ids = get_ids(result['records'], 'Id')
@@ -895,7 +895,7 @@ def test_salesforce_destination_double_quotes(sdc_builder, sdc_executor, salesfo
                  "          Email "
                  "     from Contact "
                  f"   where Email like '%{test_token}%' "
-                 "      and Email like '%mathematics%'"
+                 "      and Email like '%lomagne%'"
                  " order by Id")
         result = client.query(query)
         ids = get_ids(result['records'], 'Id')
