@@ -2138,17 +2138,24 @@ def test_directory_origin_configuration_read_order(sdc_builder, sdc_executor,
                                  file_name_pattern_mode='GLOB',
                                  read_order=read_order)
 
-        wiretap = pipeline_builder.add_wiretap()
-        directory >> wiretap.destination
+        # We use local fs as an experiment to check if wiretap was provoking a flakiness
+        local_fs = pipeline_builder.add_stage('Local FS', type='destination')
+        local_fs.set_attributes(data_format='TEXT', directory_template=files_directory,
+                                files_prefix='myfileoutput')
+
+        pipeline_finished_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finished_executor.set_attributes(
+            stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+        directory >> local_fs
+        directory >= pipeline_finished_executor
         pipeline = pipeline_builder.build()
 
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
-        sdc_executor.stop_pipeline(pipeline)
-
-        processed_data = f"{wiretap.output_records[0].field['text']}\n{wiretap.output_records[1].field['text']}"
+        file_output = os.path.join(files_directory, 'myfileoutput*')
+        processed_data = sdc_executor.read_file(file_output).strip()
 
         if read_order == "LEXICOGRAPHICAL":
             raw_data = '{}\n{}'.format(file_content_2, file_content_1)
