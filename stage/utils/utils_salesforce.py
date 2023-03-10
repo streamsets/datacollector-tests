@@ -612,8 +612,6 @@ def insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expect
     client = salesforce.client
     inserted_ids = None
     try:
-        # Create a hard delete permission file for this client
-        permission_set_id = assign_hard_delete(client, 'test_salesforce_verify_stage')
         # Using Salesforce client, create rows in Contact.
         logger.info('Creating rows using Salesforce client ...')
         inserted_ids = get_ids(client.bulk.Contact.insert(data_to_insert), 'id')
@@ -624,8 +622,6 @@ def insert_data_and_verify_using_wiretap(sdc_executor, pipeline, wiretap, expect
         verify_wiretap_data(wiretap, expected_data, sort)
     finally:
         clean_up(sdc_executor, pipeline, client, inserted_ids, hard_delete=True)
-        # Delete the hard delete permission file to keep the test account clean
-        revoke_hard_delete(client, permission_set_id)
 
 
 def get_ids(records, key):
