@@ -703,7 +703,7 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_n
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('JDBC Multitable Consumer')
-    origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
+    origin.table_configs = [{"tablePattern": f'{table_name}'}]
     origin.max_batch_size_in_records = 10
 
     wiretap = builder.add_wiretap()
@@ -712,7 +712,7 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, offset_n
 
     pipeline = builder.build().configure_for_environment(database)
     # Work-arounding STF behavior of upper-casing table name configuration
-    origin.table_configs[0]["tablePattern"] = f'%{table_name}%'
+    origin.table_configs[0]["tablePattern"] = f'{table_name}'
 
     if database is 'sqlserver':
         origin.set_attributes(quote_character='SQUARE_BRACKETS')
