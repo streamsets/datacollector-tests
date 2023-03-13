@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Sandbox prefix for S3 bucket
 S3_SANDBOX_PREFIX = 'sandbox'
+CHECKSUM_ALGORITHM_DEFAULT = 'MD5'
 
 
 @aws('s3')
@@ -223,6 +224,76 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
         s3_obj_key = client.get_object(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
         s3_contents = s3_obj_key['Body'].read().decode().strip()
         assert s3_contents == data
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+        logger.info('Deleting output S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_dest_key)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_dest_key)
+
+@aws('s3')
+def test_s3_whole_file_writes_with_checksum(sdc_builder, sdc_executor, aws):
+    """Test simple scenario of moving files from source to target using WHOLE_FILE_FORMAT with checksum"""
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+    s3_dest_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    origin = builder.add_stage('Amazon S3', type='origin')
+    origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
+                          prefix_pattern=f'{s3_key}/*',
+                          verify_checksum=True,
+                          max_batch_size_in_records=100)
+
+    target = builder.add_stage('Amazon S3', type='destination')
+    target.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
+                          include_checksum_in_events=True,
+                          file_exists='OVERWRITE',
+                          checksum_algorithm=CHECKSUM_ALGORITHM_DEFAULT,
+                          partition_prefix=s3_dest_key,
+                          file_name_expression='output.txt')
+
+    wiretap = builder.add_wiretap()
+
+    origin >> target
+    target >= wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(aws)
+    pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
+
+        # Validate event generation
+        assert len(wiretap.output_records) == 1
+        assert wiretap.output_records[0].get_field_data('/targetFileInfo/bucket') == aws.s3_bucket_name, \
+            'The targetFileInfo/bucket should have been a similar bucket to the bucket where the whole file is written.'
+        assert wiretap.output_records[0].get_field_data('/sourceFileInfo/bucket') == aws.s3_bucket_name, \
+            'The sourceFileInfo/bucket should have been the same as the origin system.'
+        assert wiretap.output_records[0].get_field_data(
+            '/targetFileInfo/objectKey') == f'{s3_dest_key}sdc-output.txt', \
+            'The targetFileInfo/objectKey should have been a similar objectKey to the objectKey name that was written.'
+
+        # We should have exactly one file on the destination side
+        list_s3_objs = client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_dest_key)
+        assert len(list_s3_objs['Contents']) == 1, 'The should have one file on the destination file'
+
+        s3_obj_key = client.get_object(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
+        checksum = s3_obj_key['ResponseMetadata']['HTTPHeaders']['etag'].replace('"', '')
+
+        assert wiretap.output_records[0].get_field_data('/checksum') == checksum, \
+            'The checksum should have been the same as the ETag in the HTTP headers'
+        assert wiretap.output_records[0].get_field_data('/checksumAlgorithm') == CHECKSUM_ALGORITHM_DEFAULT, \
+            'The checksumAlgorithm should have been the same as the destination system.'
+
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
