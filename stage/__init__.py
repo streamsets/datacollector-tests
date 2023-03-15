@@ -36,6 +36,13 @@ def _clean_up_gcs(gcp, bucket, bucket_name):
         logger.error(f'Error encountered while deleting Google Cloud Storage bucket = {bucket_name} as {ex}')
 
 
+def _clean_up_databricks(deltalake, table_name):
+    try:
+        deltalake.delete_table(table_name)
+    except Exception as ex:
+        logger.error(f'Error encountered while deleting Databricks Delta Lake table = {table_name} as {ex}')
+
+
 def _bigquery_insert_dml(bigquery_client, table, data):
     for row in data:
         fields_columns = ",".join(row.keys())
