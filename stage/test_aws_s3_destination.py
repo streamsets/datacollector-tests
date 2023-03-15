@@ -759,3 +759,72 @@ def test_s3_vpc_endpoint_and_region(sdc_builder, sdc_executor, aws):
         assert json.loads(s3_contents) == json.loads(raw_str)
     finally:
         aws.delete_s3_data(s3_bucket, s3_key)
+
+@aws('s3')
+@sdc_min_version('3.16.0')
+def test_s3_destination_write_text_data_with_prefix_suffix_and_partition(sdc_builder, sdc_executor, aws):
+    """
+    Test using a prefix, suffix, and partition for S3, and check if the result contains the prefix, suffix,
+    and partition.
+
+    S3_destination_pipeline:
+        dev_raw_data_source >> s3.destination >> wiretap
+    """
+    s3_bucket = aws.s3_bucket_name
+
+    s3_prefix = 'test_write_text_data'
+    s3_suffix = 'txt'
+    s3_partition = '${record:id()}'
+
+    # Bucket name is inside the record itself
+    raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}' \
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                                  raw_data=raw_str,
+                                                                                  stop_after_first_batch=True)
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(bucket=s3_bucket,
+                                  data_format='JSON',
+                                  common_prefix=s3_prefix,
+                                  partition_prefix=s3_partition,
+                                  object_name_suffix=s3_suffix)
+
+    wiretap = builder.add_wiretap()
+
+    dev_raw_data_source >> s3_destination
+    s3_destination >= wiretap.destination
+
+    pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Validate event generation
+        result = wiretap.output_records
+        assert len(result) == 1
+        assert [record.field['bucket'] for record in result][0] == s3_bucket
+        assert [record.field['recordCount'] for record in result][0] == 1, \
+            'The record count should have been one record'
+
+        list_s3_objs = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_prefix)
+        assert len(list_s3_objs['Contents']) == 1, 'The content should have been one element on the destination file'
+        assert list_s3_objs['Contents'][0]['Key'].startswith(s3_prefix + '/' + 'rawData::0' + '/sdc-'), \
+            'The path should have started the prefix and the partition'
+        assert list_s3_objs['Contents'][0]['Key'].endswith(s3_suffix), 'The path should have finished with the suffix. '
+
+        s3_obj_content = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+        s3_body_file_content = s3_obj_content['Body'].read().decode().splitlines()
+        assert len(s3_body_file_content) == 1, 'Only one line in the destination file'
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_prefix)
+        aws.delete_s3_data(aws.s3_bucket_name, s3_prefix)
+
