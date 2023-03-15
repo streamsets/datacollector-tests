@@ -23,9 +23,7 @@ from streamsets.sdk.utils import get_random_string
 from streamsets.testframework.markers import salesforce, sdc_min_version
 
 from .utils.utils_salesforce import (CASE_SUBJECT, clean_up, get_dev_raw_data_source,
-                                     get_ids, set_up_random, TEST_DATA, assign_hard_delete,
-                                     revoke_hard_delete, verify_result_ids, FORCE_60,
-                                     check_ids)
+                                     get_ids, set_up_random, TEST_DATA, verify_result_ids, FORCE_60, check_ids)
 
 CONTACT = 'Contact'
 COLON = ':'
@@ -37,21 +35,6 @@ logger = logging.getLogger(__name__)
 @pytest.fixture(autouse=True)
 def _set_up_random(salesforce):
     set_up_random(salesforce)
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _set_up_hard_delete_permission(salesforce):
-    # Having each test create and delete their own permissions file has various concurrency problems which make several
-    # tests fail each execution. Additionally, if the cleanup is not properly done the account fills up with leftovers
-    # and tests also start failing. Creating a single permissions file for the whole test file should alleviate both
-    # problems.
-    client = salesforce.client
-    permission_set_id = assign_hard_delete(client, 'test_salesforce_bulk2_destination')
-
-    yield
-
-    # Delete the hard delete permission file to keep the test account clean
-    revoke_hard_delete(client, permission_set_id)
 
 
 @salesforce

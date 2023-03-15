@@ -39,7 +39,7 @@ from .utils.utils_salesforce import (insert_data_and_verify_using_wiretap, verif
                                      get_cdc_wiretap_records, get_dev_raw_data_source, get_ids, set_up_random,
                                      FOLDER_NAME, TEST_DATA, TIMEOUT, verify_analytics_data,
                                      MULTIPLE_UPLOADS_PER_BATCH_SCRIPT, MULTIPLE_UPLOADS_BATCH_SIZE,
-                                     assign_hard_delete, revoke_hard_delete, verify_result_ids, FORCE_60,
+                                     verify_result_ids, FORCE_60,
                                      BULK_PIPELINE_TIMEOUT_SECONDS, SOAP_PIPELINE_TIMEOUT_SECONDS)
 
 CONTACT = 'Contact'
@@ -57,20 +57,6 @@ logger = logging.getLogger(__name__)
 def _set_up_random(salesforce):
     set_up_random(salesforce)
 
-
-@pytest.fixture(scope="module", autouse=True)
-def _set_up_hard_delete_permission(salesforce):
-    # Having each test create and delete their own permissions file has various concurrency problems which make several
-    # tests fail each execution. Additionally, if the cleanup is not properly done the account fills up with leftovers
-    # and tests also start failing. Creating a single permissions file for the whole test file should alleviate both
-    # problems.
-    client = salesforce.client
-    permission_set_id = assign_hard_delete(client, 'test_salesforce_stages')
-
-    yield
-
-    # Delete the hard delete permission file to keep the test account clean
-    revoke_hard_delete(client, permission_set_id)
 
 @salesforce
 def test_salesforce_destination(sdc_builder, sdc_executor, salesforce):

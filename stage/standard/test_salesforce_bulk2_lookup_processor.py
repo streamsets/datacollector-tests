@@ -20,9 +20,8 @@ from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 from ..utils.utils_salesforce import (BULK_PIPELINE_TIMEOUT_SECONDS, clean_up,
-                                      check_ids, get_ids, DATA_TYPES,
-                                      compare_values, set_up_random, assign_hard_delete,
-                                      revoke_hard_delete, create_custom_object, delete_custom_object, CUSTOM_OBJECT_NAME)
+                                      check_ids, get_ids, DATA_TYPES, compare_values, set_up_random,
+                                      create_custom_object, delete_custom_object, CUSTOM_OBJECT_NAME)
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +30,9 @@ def _set_up_environment(salesforce):
     client = salesforce.client
     create_custom_object(client)
 
-    # Having each test create and delete their own permissions file has various concurrency problems which make several
-    # tests fail each execution. Additionally, if the cleanup is not properly done the account fills up with leftovers
-    # and tests also start failing. Creating a single permissions file for the whole test file should alleviate both
-    # problems.
-    permission_set_id = assign_hard_delete(client, 'test_standard_salesforce_bulk2_lookup')
-
     yield
 
     delete_custom_object(client)
-
-    # Delete the hard delete permission file to keep the test account clean
-    revoke_hard_delete(client, permission_set_id)
 
 
 @pytest.fixture(autouse=True)
