@@ -96,8 +96,9 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
         # Use a Azure Rule filter to read topic for our specific Device ID.
         rule = servicebus.Rule()
         rule.filter_type = 'SqlFilter'
-        rule.filter_expression = f'iothub-connection-device-id = "{device_id}"'
+        rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
+        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -186,8 +187,9 @@ def test_object_names_device(sdc_builder, sdc_executor, azure, device_name_categ
         # Use a Azure Rule filter to read topic for our specific Device ID.
         rule = servicebus.Rule()
         rule.filter_type = 'SqlFilter'
-        rule.filter_expression = f'iothub-connection-device-id = "{device_id}"'
+        rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
+        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -264,8 +266,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, batch_size):
         # Use a Azure Rule filter to read topic for our specific Device ID.
         rule = servicebus.Rule()
         rule.filter_type = 'SqlFilter'
-        rule.filter_expression = f'iothub-connection-device-id = "{device_id}"'
+        rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
+        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(batches)
@@ -339,8 +342,9 @@ def test_data_format_json(sdc_builder, sdc_executor, azure):
         # Use a Azure Rule filter to read topic for our specific Device ID.
         rule = servicebus.Rule()
         rule.filter_type = 'SqlFilter'
-        rule.filter_expression = f'iothub-connection-device-id = "{device_id}"'
+        rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
+        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -412,8 +416,9 @@ def test_data_format_text(sdc_builder, sdc_executor, azure):
         # Use a Azure Rule filter to read topic for our specific Device ID.
         rule = servicebus.Rule()
         rule.filter_type = 'SqlFilter'
-        rule.filter_expression = f'iothub-connection-device-id = "{device_id}"'
+        rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
+        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -480,8 +485,9 @@ def test_data_format_xml(sdc_builder, sdc_executor, azure):
         # Use a Azure Rule filter to read topic for our specific Device ID.
         rule = servicebus.Rule()
         rule.filter_type = 'SqlFilter'
-        rule.filter_expression = f'iothub-connection-device-id = "{device_id}"'
+        rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
+        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -556,8 +562,9 @@ def test_push_pull(sdc_builder, sdc_executor, azure):
         # Use a Azure Rule filter to read topic for our specific Device ID.
         rule = servicebus.Rule()
         rule.filter_type = 'SqlFilter'
-        rule.filter_expression = f'iothub-connection-device-id = "{device_id}"'
+        rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
+        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(25, timeout_sec=120)

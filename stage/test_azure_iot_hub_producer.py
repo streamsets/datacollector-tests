@@ -18,6 +18,7 @@ import string
 
 import pytest
 from azure import servicebus
+
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -60,7 +61,7 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
     # Note: Test will fail till SDC-7638 is addressed/fixed
     device_id = get_random_string(string.ascii_letters, 10)
     subscriber_id = get_random_string(string.ascii_letters, 10)
-    raw_records = [{'Body': f'Hello {msg}'} for msg in range(10)]
+    raw_records = [{'Body': f'Hello PPPP {msg}'} for msg in range(10)]
 
     iot_hub = azure.iot_hub
     topic_name = azure.iot_hub_topic
@@ -92,8 +93,9 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
         # Use a Azure Rule filter to read topic for our specific Device ID.
         rule = servicebus.Rule()
         rule.filter_type = 'SqlFilter'
-        rule.filter_expression = f'iothub-connection-device-id = "{device_id}"'
+        rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
+        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(len(raw_records))
