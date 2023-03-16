@@ -21,6 +21,7 @@ import pytest
 from bson import binary, DBRef, decimal128
 import datetime
 import bson
+from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import mongodb, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -70,27 +71,6 @@ NESTED_DOCS = [
 ]
 
 
-def _write_in_mongodb_atlas(mongodb, mongodb_atlas_origin, data):
-    # MongoDB Atlas and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
-    # when used for inserting in collection. Hence the deep copy.
-    docs_in_database = copy.deepcopy(data)
-
-    # Create documents in MongoDB Atlas using PyMongo.
-    # First a database is created. Then a collection is created inside that database.
-    # Then documents are created in that collection.
-    logger.info('Adding documents into %s collection using PyMongo...', mongodb_atlas_origin.collection)
-    mongodb_database = mongodb.engine[mongodb_atlas_origin.database]
-    mongodb_collection = mongodb_database[mongodb_atlas_origin.collection]
-    if isinstance(docs_in_database, list):
-        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
-        assert len(insert_list) == len(docs_in_database)
-    else:
-        mongodb_collection.insert_one(docs_in_database)
-        docs_in_database = data.values()
-
-    return docs_in_database
-
-
 def test_mongodb_atlas_origin(sdc_builder, sdc_executor, mongodb):
     """
     Create 3 simple documents in MongoDB Atlas and confirm that MongoDB Atlas origin reads them.
@@ -126,7 +106,8 @@ def test_mongodb_atlas_origin(sdc_builder, sdc_executor, mongodb):
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
 
-        assert ORIG_DOCS == [{'name': record.field['name'].value} for record in wiretap.output_records]
+        assert [{'name': record.field['name'].value} for record in wiretap.output_records] == \
+               ORIG_DOCS, "The output records do not match the expected ones"
     finally:
         logger.info('Dropping %s database...', mongodb_atlas_origin.database)
         mongodb.engine.drop_database(mongodb_atlas_origin.database)
@@ -1096,3 +1077,107 @@ def test_mongodb_atlas_origin_read_write_uuid(sdc_builder, sdc_executor, mongodb
     finally:
         logger.info('Dropping %s database...', mongodb_atlas_origin.database)
         mongodb.engine.drop_database(mongodb_atlas_origin.database)
+
+
+@pytest.mark.parametrize('connection_string_selector', [
+    'CLUSTER_ADDRESS',
+    '3_HOSTS_OK',
+    '1_HOST_OK',
+    '0_HOSTS_OK'
+])
+def test_mongodb_atlas_origin_connection_string(sdc_builder, sdc_executor, mongodb, connection_string_selector):
+    """
+    Several connection strings are tested to assure that even with some unreachable hosts, the pipeline still works.
+    When no hosts are available it can't start the pipeline (StartError) due to Unknown Hosts.
+
+    Like in 'test_mongodb_atlas_origin', it creates 3 simple documents in MongoDB Atlas and confirm that MongoDB Atlas
+    origin reads them.
+
+    The pipeline looks like:
+        mongodb_atlas_origin >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    pipeline_builder.add_error_stage('Discard')
+
+    mongodb_atlas_origin = pipeline_builder.add_stage(name=MONGODB_ATLAS_ORIGIN)
+    mongodb_atlas_origin.set_attributes(database=get_random_string(ascii_letters, 5),
+                                        collection=get_random_string(ascii_letters, 10))
+
+    # Configure MongoDB Atlas origin to connect to old MongoDB version
+    if not mongodb.atlas:
+        mongodb_atlas_origin.tls_mode = 'NONE'
+        mongodb_atlas_origin.authentication_method = 'NONE'
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    mongodb_atlas_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(mongodb)
+
+    # Update connection string based on parametrize
+    connection_string = _select_connection_string(mongodb, connection_string_selector)
+    logger.info(f'Testing connection string: {connection_string}')
+    mongodb_atlas_origin.set_attributes(connection_string=connection_string)
+
+    try:
+        # Write data in a MongoDB Atlas database
+        docs_in_database = _write_in_mongodb_atlas(mongodb, mongodb_atlas_origin, ORIG_DOCS)
+
+        # Start pipeline and verify the documents using snapshot.
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert [{'name': record.field['name'].value} for record in wiretap.output_records] == \
+               ORIG_DOCS, "The output records do not match the expected ones"
+    except StartError as e:
+        assert '0' in connection_string_selector and 'Unknown host' in e.message, \
+            f'Fails due to an unexpected exception.\nException message: {e.message}'
+    finally:
+        logger.info('Dropping %s database...', mongodb_atlas_origin.database)
+        mongodb.engine.drop_database(mongodb_atlas_origin.database)
+
+
+def _write_in_mongodb_atlas(mongodb, mongodb_atlas_origin, data):
+    # MongoDB Atlas and PyMongo add '_id' to the dictionary entries e.g. docs_in_database
+    # when used for inserting in collection. Hence the deep copy.
+    docs_in_database = copy.deepcopy(data)
+
+    # Create documents in MongoDB Atlas using PyMongo.
+    # First a database is created. Then a collection is created inside that database.
+    # Then documents are created in that collection.
+    logger.info('Adding documents into %s collection using PyMongo...', mongodb_atlas_origin.collection)
+    mongodb_database = mongodb.engine[mongodb_atlas_origin.database]
+    mongodb_collection = mongodb_database[mongodb_atlas_origin.collection]
+    if isinstance(docs_in_database, list):
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+    else:
+        mongodb_collection.insert_one(docs_in_database)
+        docs_in_database = data.values()
+
+    return docs_in_database
+
+
+def _select_connection_string(mongodb, connection_string_selector):
+    # selection based on parametrize
+    connection_string = mongodb.uri  # default value
+
+    if "HOST" in connection_string_selector:
+        # MongoDB Atlas URI with multiple hosts to be used as connection strings
+        uri_nodes = mongodb.uri_nodes
+        host_substring_to_be_replaced = uri_nodes.split('@')[1].split(':')[0][:10]
+        host_not_working = "this_host_does_not_work_"
+
+        if '3' in connection_string_selector:
+            connection_string = uri_nodes
+        elif '1' in connection_string_selector:
+            connection_string = uri_nodes.replace(host_substring_to_be_replaced,
+                                                  host_not_working + host_substring_to_be_replaced, 2)
+        elif '0' in connection_string_selector:
+            # Replacing all hosts, so none is reachable and 'Unknown host' error is expected on pipeline start
+            connection_string = uri_nodes.replace(host_substring_to_be_replaced,
+                                                  host_not_working + host_substring_to_be_replaced, 3)
+
+    return connection_string
