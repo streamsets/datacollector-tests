@@ -21,11 +21,9 @@ from string import ascii_letters
 import pytest as pytest
 from streamsets.sdk.sdc_api import RunError, RunningError
 from streamsets.sdk.utils import get_random_string
-from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.markers import sdc_min_version, smtp
 
 logger = logging.getLogger(__name__)
-
-pytestmark = pytest.mark.skip("The environment required is not set up yet, it will be done in ticket TEST-2705.")
 
 SMTP_SERVER = "smtp.gmail.com"
 
@@ -56,6 +54,22 @@ ERROR_CODE = 'PIPELINE_FINISHER_001'
 ERROR_MESSAGE = 'Unsatisfied stage condition: The record is not an event'
 
 
+@pytest.fixture(scope='module')
+def sdc_common_hook(smtp):
+    def hook(data_collector):
+        data_collector.sdc_properties['mail.smtp.auth'] = 'true'
+        data_collector.sdc_properties['mail.smtp.host'] = 'smtp.gmail.com'
+        data_collector.sdc_properties['mail.smtp.port'] = '25'
+        data_collector.sdc_properties['mail.smtp.ssl.protocols'] = 'TLSv1.2'
+        data_collector.sdc_properties['mail.smtp.starttls.enable'] = 'true'
+        data_collector.sdc_properties['mail.transport.protocol'] = 'smtp'
+        data_collector.sdc_properties['xmail.from.address'] = smtp['mail']
+        data_collector.sdc_properties['xmail.password'] = smtp['password_code']
+        data_collector.sdc_properties['xmail.username'] = smtp['mail']
+    return hook
+
+
+@smtp
 @sdc_min_version('5.5.0')
 @pytest.mark.parametrize(
     'error_information_level',
@@ -64,6 +78,7 @@ ERROR_MESSAGE = 'Unsatisfied stage condition: The record is not an event'
 def test_pipeline_error_email_alerts(
         sdc_builder,
         sdc_executor,
+        smtp,
         error_information_level
 ):
     """
@@ -111,7 +126,7 @@ def test_pipeline_error_email_alerts(
 
     logger.debug("Pipeline finished, waiting for response")
 
-    received_email = read_email(sdc_executor)
+    received_email = read_email(smtp)
     assert received_email is not None, "The email has not been found"
 
     email_body = received_email.get_payload()
@@ -129,6 +144,7 @@ def test_pipeline_error_email_alerts(
         assert ERROR_MESSAGE not in email_body
 
 
+@smtp
 @sdc_min_version('5.5.0')
 @pytest.mark.parametrize(
     'error_information_level',
@@ -138,6 +154,7 @@ def test_pipeline_error_email_alerts(
 def test_pipeline_notifications(
         sdc_builder,
         sdc_executor,
+        smtp,
         error_information_level,
         pipeline_state
 ):
@@ -199,13 +216,14 @@ def test_pipeline_notifications(
     logger.debug("Pipeline finished, waiting for response")
 
     expected_email_subject = create_email_notification_subject(pipeline_state, pipeline_title)
-    received_email = read_email(sdc_executor, expected_email_subject)
+    received_email = read_email(smtp, expected_email_subject)
 
     assert received_email is not None, "The email has not been found"
     assert received_email['subject'].replace('\r\n', '') == expected_email_subject
     assert get_state_email_notification_key_phrase(pipeline_state) in received_email.get_payload()
 
 
+@smtp
 @sdc_min_version('5.5.0')
 @pytest.mark.parametrize(
     'error_information_level',
@@ -214,6 +232,7 @@ def test_pipeline_notifications(
 def test_pipeline_error_notifications(
         sdc_builder,
         sdc_executor,
+        smtp,
         error_information_level
 ):
     """
@@ -273,7 +292,7 @@ def test_pipeline_error_notifications(
     logger.debug("Pipeline finished, waiting for response")
 
     expected_email_subject = create_email_notification_subject(RUN_ERROR_STATE, pipeline_title)
-    received_email = read_email(sdc_executor, expected_email_subject)
+    received_email = read_email(smtp, expected_email_subject)
 
     assert received_email is not None, "The email has not been found"
     assert received_email['subject'].replace('\r\n', '') == expected_email_subject
@@ -320,12 +339,12 @@ def get_state_email_notification_key_phrase(pipeline_state):
     return key_phrase
 
 
-def read_email(sdc_executor, subject=None):
+def read_email(smtp, subject=None):
     try:
         mail = imaplib.IMAP4_SSL(SMTP_SERVER)
         mail.login(
-            sdc_executor.sdc_configuration.get('xmail.username'),
-            sdc_executor.read_file('**/email-password.txt')
+            smtp['mail'],
+            smtp['password_code']
         )
         mail.select('inbox')
 
