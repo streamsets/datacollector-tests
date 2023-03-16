@@ -26,6 +26,7 @@ import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
 from streamsets.sdk.exceptions import ValidationError
+from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -1748,3 +1749,57 @@ def _setup_delimited_file(sdc_executor, tmp_directory, csv_records):
 def _get_date_from_days(d):
     return datetime.date(1970, 1, 1) + datetime.timedelta(days=d)
 
+
+@sdc_min_version('5.5.0')
+@database('oracle')
+def test_jdbc_multitable_oracle_no_leaking_cursors(sdc_builder, sdc_executor, database):
+    """By default the maximum number of open cursors in Oracle is 300. By making the multitable stage
+    be reading 1000 tables we are forcing the cursors leakage detected in ESC-2017 appears and makes
+    the pipeline startup fails (StartError).
+    """
+    connection = database.engine.connect()
+    try:
+        connection.execute("""
+        BEGIN
+        FOR v_tableCounter IN 1..1000 LOOP
+            EXECUTE IMMEDIATE 'create table C##SDC.test_no_leaking_cursors_' || v_tableCounter || '(id NUMBER, text varchar(10) DEFAULT NULL)';
+            FOR v_loopCounter IN 1..10 LOOP
+                EXECUTE IMMEDIATE 'INSERT INTO C##SDC.test_no_leaking_cursors_'|| v_tableCounter || '(id) VALUES (1)';
+            END LOOP;
+        END LOOP
+        COMMIT;
+        END;
+        """)
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('JDBC Multitable Consumer')
+        origin.set_attributes(
+            maximum_number_of_tables=-1,
+            table_configs=[{
+                "tablePattern": 'test_no_leaking_cursors_%',
+                "enableNonIncremental": True,
+            }],
+            per_batch_strategy='PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE'
+        )
+        trash = builder.add_stage('Trash')
+
+        origin >> trash
+
+        pipeline = builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1_000)  # No need to read them all
+        sdc_executor.stop_pipeline(pipeline)
+    except StartError as e:
+        assert False, f'Pipeline failed to start, when reaching the max open cursors it used to fail with a JDBC_640: {e}'
+    finally:
+        connection.execute("""
+        BEGIN
+        FOR v_tableCounter IN 1..1000 LOOP
+            EXECUTE IMMEDIATE 'drop table C##SDC.test_no_leaking_cursors_' || v_tableCounter;
+        END LOOP
+        COMMIT;
+        END;
+        """)
