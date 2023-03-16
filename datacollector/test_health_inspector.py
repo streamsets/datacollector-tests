@@ -160,23 +160,23 @@ def test_health_host_information(sdc_executor):
     host_information = report['hostInformation']
     assert host_information is not None
 
-    assert 'operativeSystemDistribution' in host_information, 'operativeSystemDistribution not in hostInformation'
-    assert host_information['operativeSystemDistribution'] is not None
+    assert 'operatingSystemDistribution' in host_information, 'operatingSystemDistribution not in hostInformation'
+    assert host_information['operatingSystemDistribution']
 
-    assert 'operativeSystemVersion' in host_information, 'operativeSystemVersion not in hostInformation'
-    assert host_information['operativeSystemVersion'] is not None
+    assert 'operatingSystemVersion' in host_information, 'operatingSystemVersion not in hostInformation'
+    assert host_information['operatingSystemVersion']
 
-    assert 'jdkVersion' in host_information, 'jdkVersion not in hostInformation'
-    assert host_information['jdkVersion'] is not None
+    assert 'javaVersion' in host_information, 'javaVersion not in hostInformation'
+    assert host_information['javaVersion']
 
-    assert 'timeZone' in host_information, 'jdkVersion not in hostInformation'
-    assert host_information['timeZone'] is not None
+    assert 'timeZone' in host_information, 'timeZone not in hostInformation'
+    assert host_information['timeZone']
 
-    assert 'offset' in host_information, 'offset not in hostInformation'
-    assert host_information['offset'] is not None
+    assert 'timeOffset' in host_information, 'timeOffset not in hostInformation'
+    assert host_information['timeOffset']
 
     assert 'uptimeInformation' in host_information, 'uptimeInformation not in hostInformation'
-    assert host_information['uptimeInformation'] is not None
+    assert host_information['uptimeInformation']
 
 
 
