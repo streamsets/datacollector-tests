@@ -379,7 +379,15 @@ def test_basic_with_bigquery_schema_generator(sdc_builder, sdc_executor, gcp, fi
         expected_data = [tuple(v.lower() for v in d.values()) for d in ROWS_IN_DATABASE]
 
         assert len(data_from_bigquery) == len(expected_data)
-        assert data_from_bigquery == expected_data
+
+        if bigquery_create_schema and file_format == 'JSON':
+            # When bigquery creates the columns, the columns order is unkown
+            # thats is the reason for sorting each row
+            assert [sorted(row) for row in data_from_bigquery] == \
+                   [sorted(row) for row in expected_data]
+        else:
+            assert data_from_bigquery == expected_data
+
     finally:
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
