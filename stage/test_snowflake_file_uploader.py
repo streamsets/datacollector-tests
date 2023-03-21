@@ -15,10 +15,12 @@
 import json
 import logging
 import os
+import re
 import string
 import tempfile
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import snowflake, sdc_enterprise_lib_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -198,6 +200,7 @@ def test_multiple_files_semicolon(sdc_builder, sdc_executor, snowflake):
 @sdc_enterprise_lib_min_version({'snowflake': '1.8.0'})
 def test_produce_events(sdc_builder, sdc_executor, snowflake):
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+    regex = "^/tmp/streamsets-snowflake-uploader-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/$"
 
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Stoarge container.
@@ -237,6 +240,9 @@ def test_produce_events(sdc_builder, sdc_executor, snowflake):
         result.close()
         assert data_from_database == [(row['id'], row['name']) for row in ROWS_IN_DATABASE]
         assert len(wiretap.output_records) == 1
+
+        if Version(sdc_executor.version) >= Version('5.5.0'):
+            assert re.match(regex, str(wiretap.output_records[0].field['filepath']))
         assert wiretap.output_records[0].field['filename'] == 'input.csv'
         assert wiretap.output_records[0].field['length'] == 47
 
