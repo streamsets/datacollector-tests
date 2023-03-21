@@ -85,7 +85,7 @@ def test_pipeline_upgrade(sdc_builder, pipeline_full_path):
     # stages that are disabled. The JDK version was included in the health report in the SDC 5.5.0. For previous 
     # versions there is no way to know what java version is being used so defaulting to True.
     sdc_host_info = sdc_builder.api_client.get_health_report('HealthHostInformation').response.json()
-    is_jdk8 = sdc_host_info['hostInformation']['jdkVersion'] == 8 if 'hostInformation' in sdc_host_info else True
+    is_jdk8 = sdc_host_info['hostInformation']['javaVersion'] == 8 if 'hostInformation' in sdc_host_info else True
 
     if not is_jdk8 and pipeline_full_path.split('/')[-1] in ONLY_JDK8_PIPELINES:
         pytest.skip(f'Skippingg upgrade tests for pipeline {pipeline_full_path}. It is not supported in java 17')
