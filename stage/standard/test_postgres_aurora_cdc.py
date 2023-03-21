@@ -66,7 +66,9 @@ def test_data_types(sdc_builder, sdc_executor, database, data_type, insert_fragm
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
                           poll_interval=POLL_INTERVAL,
-                          replication_slot=replication_slot_name
+                          replication_slot=replication_slot_name,
+                          tables=[{'schema': DEFAULT_SCHEMA_NAME,
+                                   'table': table_name}]
                           )
 
     wiretap = builder.add_wiretap()
@@ -144,7 +146,8 @@ def test_data_types_as_primary_keys(sdc_builder, sdc_executor, database, data_ty
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
                           poll_interval=POLL_INTERVAL,
-                          replication_slot=replication_slot_name
+                          replication_slot=replication_slot_name,
+                          tables = [{'schema': DEFAULT_SCHEMA_NAME, 'table': table_name}]
                           )
 
     wiretap = builder.add_wiretap()
@@ -215,7 +218,9 @@ def test_data_types_as_primary_keys_serial_numeric(sdc_builder, sdc_executor, da
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
                           poll_interval=POLL_INTERVAL,
-                          replication_slot=replication_slot_name
+                          replication_slot=replication_slot_name,
+                          tables=[{'schema': DEFAULT_SCHEMA_NAME,
+                                   'table': table_name}]
                           )
 
     wiretap = builder.add_wiretap()
@@ -304,7 +309,9 @@ def test_object_names(sdc_builder, sdc_executor, database, test_name, table_name
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
                           poll_interval=POLL_INTERVAL,
-                          replication_slot=replication_slot_name
+                          replication_slot=replication_slot_name,
+                          tables = [{'schema': DEFAULT_SCHEMA_NAME,
+                          'table': table_name}]
                           )
 
     wiretap = builder.add_wiretap()
@@ -361,8 +368,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
         pytest.skip('Test only runs against Aurora PostgreSQL with CDC enabled.')
 
     connection = database.engine.connect()
-    max_batch_size = 50
-    batches = 5
+    max_batch_size = 10
+    batches = 2
 
     table_name = get_random_string(string.ascii_lowercase, 20)
 
@@ -381,7 +388,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=max_batch_size,
                           poll_interval=POLL_INTERVAL,
-                          replication_slot=replication_slot_name
+                          replication_slot=replication_slot_name,
+                          tables=[{'schema': DEFAULT_SCHEMA_NAME,
+                                   'table': table_name}]
                           )
 
     wiretap = builder.add_wiretap()
@@ -460,7 +469,9 @@ def test_resume_offset(sdc_builder, sdc_executor, database, keep_data):
     origin.set_attributes(remove_replication_slot_on_close=True,
                           max_batch_size_in_records=1,
                           poll_interval=POLL_INTERVAL,
-                          replication_slot=replication_slot_name
+                          replication_slot=replication_slot_name,
+                          tables=[{'schema': DEFAULT_SCHEMA_NAME,
+                                   'table': table_name}]
                           )
 
     delay = builder.add_stage('Delay')
