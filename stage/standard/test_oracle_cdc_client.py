@@ -301,11 +301,7 @@ def test_multiple_batches(
 
     wiretap = pipeline_builder.add_wiretap()
 
-    finisher = pipeline_builder.add_stage("Pipeline Finisher Executor")
-    finisher.stage_record_preconditions = ["${record:eventType() == 'TRUNCATE'}"]
-
     oracle_cdc_origin >> wiretap.destination
-    oracle_cdc_origin >= finisher
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
@@ -317,9 +313,8 @@ def test_multiple_batches(
     for value in expected_values:
         connection.execute(table.insert({id_column: value, other_column: value}))
     txn.commit()
-    connection.execute(f"TRUNCATE TABLE {table_name}")
 
-    handler.wait_for_status(pipeline, "FINISHED", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
+    handler.wait_for_metric(pipeline, "input_record_count", len(expected_values), timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
 
     assert len(wiretap.output_records) == len(expected_values)
     record_values = set(
