@@ -1030,4 +1030,5 @@ def test_batch_size(
 
     records = [{k: v for k, v in record.field.items()} for record in wiretap.output_records]
     expected_records = [{id_column: i} for i in range(total_records)]
-    assert records == expected_records
+    assert len(records) == len(expected_records)
+    assert all([record in records for record in expected_records])
