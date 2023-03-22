@@ -1101,6 +1101,8 @@ def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, co
         num_expected_records = 3 if combine_update_records else 4
 
         sdc_executor.start_pipeline(pipeline)
+        ct_table_name = f'{capture_instance_name}_CT'
+        wait_for_data_in_ct_table(ct_table_name, num_expected_records, database)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_expected_records)
         assert len(wiretap.output_records) == num_expected_records
 
