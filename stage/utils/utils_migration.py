@@ -62,7 +62,7 @@ class LegacyHandler(PipelineHandler):
         self.logger = logger
 
     def add_pipeline(self, pipeline):
-        self.sdc_builder.add_pipeline(pipeline)
+        self.sdc_executor.add_pipeline(pipeline)
         return pipeline
 
     def execute_shell(self, *args, **kwargs):
