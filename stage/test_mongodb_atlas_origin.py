@@ -1079,6 +1079,7 @@ def test_mongodb_atlas_origin_read_write_uuid(sdc_builder, sdc_executor, mongodb
         mongodb.engine.drop_database(mongodb_atlas_origin.database)
 
 
+@sdc_min_version('5.5.0')
 @pytest.mark.parametrize('connection_string_selector', [
     'CLUSTER_ADDRESS',
     '3_HOSTS_OK',
