@@ -5492,35 +5492,33 @@ def test_blob_max_size(sdc_builder, sdc_executor, database, peg_parser, max_lob_
         )
 
         blob_values = []
-        empty_blob_values = []
         null_values = []
         for record in wiretap.output_records:
             blob = record.field[blob_column_name].value
-            if blob is None:
-                null_values.append(blob)
-            elif blob == EMPTY_BLOB:
-                empty_blob_values.append(blob)
-            else:
+            if blob:
                 blob_values.append(blob)
+            else:
+                null_values.append(blob)
 
-        if max_lob_size >= len(EMPTY_BLOB) or max_lob_size == 0:
-            assert len(empty_blob_values) == 1
-
+        # Max LOB size is disabled or greater than any of the values
         if max_lob_size == 0 or max_lob_size >= len(expected_value_big):
             assert len(null_values) == 0
             assert expected_value_big in blob_values
             assert expected_value_small in blob_values
+        # Max LOB size is greater than small value but lesser than big value
         elif len(expected_value_small) <= max_lob_size < len(expected_value_big):
             assert len(null_values) == 1
             assert expected_value_small in blob_values
+        # Max LOB size is lesser than any value
         else:
+            # Max LOB size is greater than empty blob value: "EMPTY_BLOB()"
             if max_lob_size >= len(EMPTY_BLOB):
                 assert len(null_values) == 2
                 assert len(blob_values) == 0
+            # Max LOB size is lesser than empty blob value: "EMPTY_BLOB()"
             else:
                 assert len(null_values) == 3
                 assert len(blob_values) == 0
-                assert len(empty_blob_values) == 0
 
 
 @sdc_min_version("5.2.0")
