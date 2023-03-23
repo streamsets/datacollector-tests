@@ -23,6 +23,8 @@ from streamsets.sdk.sdc_api import RunError, RunningError
 from streamsets.sdk.utils import get_random_string
 from streamsets.testframework.markers import sdc_min_version, smtp
 
+pytestmark = smtp
+
 logger = logging.getLogger(__name__)
 
 SMTP_SERVER = "smtp.gmail.com"
@@ -69,17 +71,21 @@ def sdc_common_hook(smtp):
     return hook
 
 
-@smtp
 @sdc_min_version('5.5.0')
 @pytest.mark.parametrize(
-    'error_information_level',
-    ['FULL_ERROR_INFORMATION', 'NO_ERROR_DETAILS', 'NO_ERROR_INFORMATION']
+    'error_information_level, email_subject',
+    [
+        ['FULL_ERROR_INFORMATION', FULL_ERROR_INFORMATION_EMAIL_SUBJECT],
+        ['NO_ERROR_DETAILS', NO_ERROR_DETAILS_EMAIL_SUBJECT],
+        ['NO_ERROR_INFORMATION', NO_ERROR_INFORMATION_EMAIL_SUBJECT]
+    ]
 )
 def test_pipeline_error_email_alerts(
         sdc_builder,
         sdc_executor,
         smtp,
-        error_information_level
+        error_information_level,
+        email_subject
 ):
     """
     Tests that mails are properly sent with Pipeline Alerts.
@@ -126,25 +132,21 @@ def test_pipeline_error_email_alerts(
 
     logger.debug("Pipeline finished, waiting for response")
 
-    received_email = read_email(smtp)
+    received_email = read_and_delete_email(smtp, email_subject)
     assert received_email is not None, "The email has not been found"
 
     email_body = received_email.get_payload()
     if error_information_level == 'FULL_ERROR_INFORMATION':
-        assert received_email['subject'].replace('\r\n', '') == FULL_ERROR_INFORMATION_EMAIL_SUBJECT
         assert ERROR_CODE in email_body
         assert ERROR_MESSAGE in email_body
     elif error_information_level == 'NO_ERROR_DETAILS':
-        assert received_email['subject'].replace('\r\n', '') == NO_ERROR_DETAILS_EMAIL_SUBJECT
         assert ERROR_CODE in email_body
         assert ERROR_MESSAGE not in email_body
     elif error_information_level == 'NO_ERROR_INFORMATION':
-        assert received_email['subject'].replace('\r\n', '') == NO_ERROR_INFORMATION_EMAIL_SUBJECT
         assert ERROR_CODE not in email_body
         assert ERROR_MESSAGE not in email_body
 
 
-@smtp
 @sdc_min_version('5.5.0')
 @pytest.mark.parametrize(
     'error_information_level',
@@ -216,14 +218,13 @@ def test_pipeline_notifications(
     logger.debug("Pipeline finished, waiting for response")
 
     expected_email_subject = create_email_notification_subject(pipeline_state, pipeline_title)
-    received_email = read_email(smtp, expected_email_subject)
+    received_email = read_and_delete_email(smtp, expected_email_subject)
 
     assert received_email is not None, "The email has not been found"
     assert received_email['subject'].replace('\r\n', '') == expected_email_subject
     assert get_state_email_notification_key_phrase(pipeline_state) in received_email.get_payload()
 
 
-@smtp
 @sdc_min_version('5.5.0')
 @pytest.mark.parametrize(
     'error_information_level',
@@ -292,7 +293,7 @@ def test_pipeline_error_notifications(
     logger.debug("Pipeline finished, waiting for response")
 
     expected_email_subject = create_email_notification_subject(RUN_ERROR_STATE, pipeline_title)
-    received_email = read_email(smtp, expected_email_subject)
+    received_email = read_and_delete_email(smtp, expected_email_subject)
 
     assert received_email is not None, "The email has not been found"
     assert received_email['subject'].replace('\r\n', '') == expected_email_subject
@@ -339,7 +340,7 @@ def get_state_email_notification_key_phrase(pipeline_state):
     return key_phrase
 
 
-def read_email(smtp, subject=None):
+def read_and_delete_email(smtp, subject=None):
     try:
         mail = imaplib.IMAP4_SSL(SMTP_SERVER)
         mail.login(
@@ -356,6 +357,7 @@ def read_email(smtp, subject=None):
         data = mail.fetch(str(email_id), '(RFC822)')
         for response_part in data:
             if isinstance(response_part[0], tuple):
+                mail.store(str(email_id).encode(), '+FLAGS', '\\Deleted')
                 return email.message_from_string(str(response_part[0][1], 'utf-8'))
 
     except Exception as e:
