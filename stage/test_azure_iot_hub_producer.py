@@ -61,7 +61,7 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
     # Note: Test will fail till SDC-7638 is addressed/fixed
     device_id = get_random_string(string.ascii_letters, 10)
     subscriber_id = get_random_string(string.ascii_letters, 10)
-    raw_records = [{'Body': f'Hello PPPP {msg}'} for msg in range(10)]
+    raw_records = [{'Body': f'Hello {msg}'} for msg in range(10)]
 
     iot_hub = azure.iot_hub
     topic_name = azure.iot_hub_topic
@@ -104,7 +104,7 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
         # read data from Azure Service Bus Topic and assert
         logger.info('Reading data from Azure Service Bus topic %s ...', topic_name)
         messages = [json.loads(sb_service.receive_subscription_message(topic_name=topic_name,
-                                                                       subscription_name=subscriber_id, peek_lock=False,
+                                                                       subscription_name=subscriber_id, peek_lock=True,
                                                                        timeout=10).body.decode().strip())
                     for _ in range(len(raw_records))]
         assert len(raw_records) == len(messages)

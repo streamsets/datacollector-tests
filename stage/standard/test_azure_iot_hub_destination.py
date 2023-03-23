@@ -108,7 +108,7 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
         logger.info('Reading data from Azure Service Bus topic %s ...', topic_name)
         messages = json.loads(sb_service.receive_subscription_message(topic_name=topic_name,
                                                                       subscription_name=subscriber_id,
-                                                                      peek_lock=False,
+                                                                      peek_lock=True,
                                                                       timeout=10).body.decode().strip())
         assert messages['value'] == expected
 
@@ -199,7 +199,7 @@ def test_object_names_device(sdc_builder, sdc_executor, azure, device_name_categ
         logger.info('Reading data from Azure Service Bus topic %s ...', topic_name)
         messages = json.loads(sb_service.receive_subscription_message(topic_name=topic_name,
                                                                       subscription_name=subscriber_id,
-                                                                      peek_lock=False,
+                                                                      peek_lock=True,
                                                                       timeout=10).body.decode().strip())
         assert messages == raw_records
 
@@ -278,7 +278,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, batch_size):
         logger.info('Reading data from Azure Service Bus topic %s ...', topic_name)
         messages = [json.loads(sb_service.receive_subscription_message(topic_name=topic_name,
                                                                        subscription_name=subscriber_id,
-                                                                       peek_lock=False,
+                                                                       peek_lock=True,
                                                                        timeout=10).body.decode().strip())
                     for _ in range(no_of_records)]
         assert len(messages) == no_of_records
@@ -354,7 +354,7 @@ def test_data_format_json(sdc_builder, sdc_executor, azure):
         logger.info('Reading data from Azure Service Bus topic %s ...', topic_name)
         messages = json.loads(sb_service.receive_subscription_message(topic_name=topic_name,
                                                                       subscription_name=subscriber_id,
-                                                                      peek_lock=False,
+                                                                      peek_lock=True,
                                                                       timeout=10).body.decode().strip())
         assert messages == raw_records
 
@@ -428,7 +428,7 @@ def test_data_format_text(sdc_builder, sdc_executor, azure):
         logger.info('Reading data from Azure Service Bus topic %s ...', topic_name)
         messages = sb_service.receive_subscription_message(topic_name=topic_name,
                                                            subscription_name=subscriber_id,
-                                                           peek_lock=False,
+                                                           peek_lock=True,
                                                            timeout=10).body.decode("utf-8").rstrip()
         assert messages == raw_record
 
@@ -497,7 +497,7 @@ def test_data_format_xml(sdc_builder, sdc_executor, azure):
         logger.info('Reading data from Azure Service Bus topic %s ...', topic_name)
         messages = sb_service.receive_subscription_message(topic_name=topic_name,
                                                            subscription_name=subscriber_id,
-                                                           peek_lock=False,
+                                                           peek_lock=True,
                                                            timeout=10).body.decode().rstrip()
         assert messages == EXPECTED_XML_OUTPUT
 
@@ -574,7 +574,7 @@ def test_push_pull(sdc_builder, sdc_executor, azure):
         logger.info('Reading data from Azure Service Bus topic %s ...', topic_name)
         messages = json.loads(sb_service.receive_subscription_message(topic_name=topic_name,
                                                                       subscription_name=subscriber_id,
-                                                                      peek_lock=False,
+                                                                      peek_lock=True,
                                                                       timeout=10).body.decode().strip())
         assert len(messages) == 1
 
