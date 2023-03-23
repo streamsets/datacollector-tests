@@ -367,13 +367,22 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
-    query = (f"SELECT Id, FirstName FROM Contact "
-             "WHERE Id > '${OFFSET}' "
-             f"AND LastName = '{test_name}' "
-             "ORDER BY Id")
+
+    # We can't have the query sort by Id, because Salesforce does not guarantee that newly added ids will always be before
+    # the already existing ones, which means that in some instances the test would not be able to read all the data added
+    # in subsequent iterations because the offset is already past the new data, leading to flakyness.
+
+    # The solution then is to sort instead by the LastName and control that value by adding to it an increasing binary
+    # number with 8 digits, guaranteeing that the new data is always added after the saved offset.
+
+    query = ("SELECT Id, FirstName, LastName FROM Contact "
+             "WHERE LastName > '${OFFSET}' "
+             f"AND LastName LIKE '{test_name}%' "
+             "ORDER BY LastName")
     origin.set_attributes(soql_query=query,
                           query_interval='${1 * SECONDS}',
-                          incremental_mode=True)
+                          incremental_mode=True,
+                          offset_field='LastName')
 
     wiretap = builder.add_wiretap()
 
@@ -390,7 +399,7 @@ def test_resume_offset(sdc_builder, sdc_executor, salesforce):
             wiretap.reset()
 
             logger.info('Inserting data into Contacts')
-            records = [{'FirstName': str(n), 'LastName': test_name} for n in range(iteration * records_per_iteration + 1, iteration * records_per_iteration + 1 + records_per_iteration)]
+            records = [{'FirstName': str(n), 'LastName': test_name + '{0:08b}'.format(n)} for n in range(iteration * records_per_iteration + 1, iteration * records_per_iteration + 1 + records_per_iteration)]
             record_ids += check_ids(get_ids(client.bulk.Contact.insert(records), 'id'))
 
 
