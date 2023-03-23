@@ -280,7 +280,7 @@ def test_stop_event_failure(generator_failure_builder, successful_receiver_pipel
         sdc_executor.start_pipeline(successful_receiver_pipeline.pipeline, wait=False)
         with pytest.raises(Exception) as error:
             sdc_executor.start_pipeline(stop_event_pipeline)
-        assert "SCRIPTING_06" in error.value.message, f'Expected a SCRIPTING_06 error, got "{error.message}" instead'
+        assert "SCRIPTING_06" in error.value.message, f'Expected a SCRIPTING_06 error, got "{error.value.message}" instead'
 
         #Validate that the event arrived to the receiver pipeline
         sdc_executor.wait_for_pipeline_metric(successful_receiver_pipeline.pipeline, 'input_record_count', 1)
