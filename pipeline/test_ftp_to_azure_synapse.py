@@ -20,7 +20,7 @@ from streamsets.testframework.markers import azure, ftp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from stage.utils.utils_azure_synapse import STAGE_NAME, delete_table, stop_pipeline
 
-pytestmark = sdc_min_version('5.5.0')
+pytestmark = [azure('synapse'), ftp, sdc_min_version('5.5.0')]
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 FTP_ORIGIN_CLIENT_NAME = 'com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource'
 
 
-@ftp
-@azure('synapse')
 def test_fpt_synapse_destination(sdc_builder, sdc_executor, ftp, azure):
     """
     Test for FTP consumer to Azure Synapse target stage.

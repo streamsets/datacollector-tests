@@ -27,7 +27,7 @@ from ..utils.utils_azure_synapse import \
     get_synapse_pipeline,\
     stop_pipeline
 
-pytestmark = sdc_min_version('5.5.0')
+pytestmark = [azure('synapse'), sdc_min_version('5.5.0')]
 
 logger = logging.getLogger(__name__)
 
@@ -300,7 +300,6 @@ def test_on_record_error(sdc_builder, sdc_executor, stage_attributes):
 
 
 @category('basic')
-@azure('synapse')
 @pytest.mark.parametrize(
     'partition_values',
     [
@@ -394,7 +393,6 @@ def test_partition_values(sdc_builder, sdc_executor, azure, partition_values):
 
 
 @category('basic')
-@azure('synapse')
 @pytest.mark.parametrize('partition_boundary', ['UPPER', 'LOWER'])
 def test_partition_boundary(sdc_builder, sdc_executor, azure, partition_boundary):
     """
@@ -467,7 +465,6 @@ def test_partition_boundary(sdc_builder, sdc_executor, azure, partition_boundary
 
 
 @category('basic')
-@azure('synapse')
 @pytest.mark.parametrize('auto_create_table', [True, False])
 def test_auto_create_table(sdc_builder, sdc_executor, azure, auto_create_table):
     """
@@ -519,7 +516,6 @@ def test_auto_create_table(sdc_builder, sdc_executor, azure, auto_create_table):
 
 
 @category('basic')
-@azure('synapse')
 @pytest.mark.parametrize('partition_table', [False, True])
 def test_partition_table(sdc_builder, sdc_executor, azure, partition_table):
     """
@@ -592,7 +588,6 @@ def test_partition_table(sdc_builder, sdc_executor, azure, partition_table):
 
 
 @category('basic')
-@azure('synapse')
 @pytest.mark.parametrize('distribute_table', [True, False])
 def test_distribute_table(sdc_builder, sdc_executor, azure, distribute_table):
     """
@@ -751,7 +746,6 @@ def test_storage_account_key(sdc_builder, sdc_executor, stage_attributes):
 
 
 @category('basic')
-@azure('synapse')
 @pytest.mark.parametrize('storage_type', ['ADLSG2', 'BLOB'])
 def test_storage_type(sdc_builder, sdc_executor, azure, storage_type):
     """

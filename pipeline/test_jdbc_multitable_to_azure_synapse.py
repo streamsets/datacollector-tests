@@ -21,13 +21,11 @@ from streamsets.testframework.markers import azure, database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from stage.utils.utils_azure_synapse import STAGE_NAME, delete_table, stop_pipeline
 
-pytestmark = sdc_min_version('5.5.0')
+pytestmark = [azure('synapse'), database, sdc_min_version('5.5.0')]
 
 logger = logging.getLogger(__name__)
 
 
-@database
-@azure('synapse')
 @pytest.mark.parametrize('no_of_threads', [1, 2, 3])
 def test_jdbc_multitable_synapse_destination(sdc_builder, sdc_executor, database, azure, no_of_threads):
     """

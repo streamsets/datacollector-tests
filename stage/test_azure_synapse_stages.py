@@ -44,12 +44,11 @@ from .utils.utils_azure_synapse import \
     get_synapse_pipeline,\
     stop_pipeline
 
-pytestmark = sdc_min_version('5.5.0')
+pytestmark = [azure('synapse'), sdc_min_version('5.5.0')]
 
 logger = logging.getLogger(__name__)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('create_new_columns_as_varchar', [True, False])
 def test_synapse_destination_data_drift(sdc_builder, sdc_executor, azure, create_new_columns_as_varchar):
     """
@@ -131,7 +130,6 @@ def test_synapse_destination_data_drift(sdc_builder, sdc_executor, azure, create
             logger.error(ex)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('create_new_columns_as_varchar', [True, False])
 @pytest.mark.parametrize('case_insensitive', [True, False])
 @pytest.mark.parametrize('table_name_uppercase', [True, False])
@@ -252,7 +250,6 @@ def test_synapse_destination_data_drift_same_pipeline(
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_destination_missing_fields(sdc_builder, sdc_executor, azure):
     """
     Test for Azure Synapse target stage. Send an initial batch of records, then send a second
@@ -307,7 +304,6 @@ def test_synapse_destination_missing_fields(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_destination_invalid_fields(sdc_builder, sdc_executor, azure):
     """
     Test for Azure Synapse target stage. Send an initial batch of records, then send a second
@@ -362,7 +358,6 @@ def test_synapse_destination_invalid_fields(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_handle_directory_template_starting_with_slash(sdc_builder, sdc_executor, azure):
     def resolve_staging_dir(fs):
         base_paths = dl_fs.ls(base_directory).response.json()['paths']
@@ -414,7 +409,6 @@ def test_synapse_handle_directory_template_starting_with_slash(sdc_builder, sdc_
             logger.error(ex)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('purge_stage_file', [True, False])
 def test_synapse_purge_staged_files(sdc_builder, sdc_executor, azure, purge_stage_file):
     """
@@ -501,7 +495,6 @@ def test_synapse_purge_staged_files(sdc_builder, sdc_executor, azure, purge_stag
             logger.error(ex)
 
 
-@azure('synapse')
 def test_partition_table_column_invalid(sdc_builder, sdc_executor, azure):
     """
     Test for Azure Synapse target stage. Partition column does not exist.
@@ -567,7 +560,6 @@ def test_partition_table_column_invalid(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 def test_partition_table_el(sdc_builder, sdc_executor, azure):
     """
     Test for Azure Synapse target stage. We do so by running a dev raw data source to
@@ -662,7 +654,6 @@ def test_partition_table_el(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 def test_distribute_table_el(sdc_builder, sdc_executor, azure):
     """
     Test for Azure Synapse target stage. We do so by running a dev raw data source to
@@ -767,7 +758,6 @@ def test_distribute_table_el(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 def test_cdc_synapse_multiple_ops_two_batches(sdc_builder, sdc_executor, azure):
     """
     Test for Azure Synapse destination stage. Data is inserted into Azure Synapse using the pipeline.
@@ -897,7 +887,6 @@ def test_cdc_synapse_multiple_ops_two_batches(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('threads', [5, 25])
 def test_table_el_eval_azure_synapse(sdc_builder, sdc_executor, azure, threads):
     """
@@ -995,7 +984,6 @@ def test_table_el_eval_azure_synapse(sdc_builder, sdc_executor, azure, threads):
             logger.error(ex)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('auto_create', ["NONE", "TABLE", "SCHEMA"])
 def test_table_and_schema_el_eval_azure_synapse(sdc_builder, sdc_executor, azure, auto_create):
     """
@@ -1182,7 +1170,6 @@ def test_table_and_schema_el_eval_azure_synapse(sdc_builder, sdc_executor, azure
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_merge_cdc_op_4(sdc_builder, sdc_executor, azure):
     table_name = f'stf_{get_random_string(string.ascii_uppercase, 10)}'
     stage_name = f'stf_{get_random_string(string.ascii_uppercase, 10)}'
@@ -1273,7 +1260,6 @@ def test_synapse_merge_cdc_op_4(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_merge_cdc_op_4_el_table(sdc_builder, sdc_executor, azure):
     table_name_1 = f'stf_{get_random_string(string.ascii_uppercase, 10)}'
     table_name_2 = f'stf_{get_random_string(string.ascii_uppercase, 10)}'
@@ -1378,7 +1364,6 @@ def test_synapse_merge_cdc_op_4_el_table(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('staging_authentication', ['OAUTH', 'SHARED_KEY'])
 @pytest.mark.parametrize(
     'copy_statement_authentication',
@@ -1475,7 +1460,6 @@ def test_synapse_destination_authentications_azure_active_directory(
             logger.error(ex)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('staging_authentication', ['OAUTH', 'SHARED_KEY'])
 @pytest.mark.parametrize(
     'copy_statement_authentication',
@@ -1578,7 +1562,6 @@ def test_synapse_destination_authentications_sql_server_login(
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_destination_merge_cdc_enable_data_drift(sdc_builder, sdc_executor, azure):
     table_name = f'stf_{get_random_string(string.ascii_uppercase, 10)}'
     stage_name = f'stf_{get_random_string(string.ascii_uppercase, 10)}'
@@ -1667,7 +1650,6 @@ def test_synapse_destination_merge_cdc_enable_data_drift(sdc_builder, sdc_execut
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_destination_jdbc_header(sdc_builder, sdc_executor, azure):
     primary_key_columns = ['TYPE', 'ID']
     table_name = f'stf_{get_random_string(string.ascii_uppercase, 10)}'
@@ -1753,7 +1735,6 @@ def test_synapse_destination_jdbc_header(sdc_builder, sdc_executor, azure):
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_destination_table_with_pk_and_enable_data_drift(sdc_builder, sdc_executor, azure):
     table_name = f'stf_{get_random_string(string.ascii_uppercase, 10)}'
     stage_name = f'stf_{get_random_string(string.ascii_uppercase, 10)}'

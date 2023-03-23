@@ -26,12 +26,11 @@ from .utils.utils_azure_synapse import \
     delete_table,\
     stop_pipeline
 
-pytestmark = sdc_min_version('5.5.0')
+pytestmark = [azure('synapse'), sdc_min_version('5.5.0')]
 
 logger = logging.getLogger(__name__)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('is_cdc', [True, False])
 def test_synapse_destination_data_types(sdc_builder, sdc_executor, azure, is_cdc):
     """
@@ -79,7 +78,6 @@ def test_synapse_destination_data_types(sdc_builder, sdc_executor, azure, is_cdc
             logger.error(ex)
 
 
-@azure('synapse')
 def test_synapse_destination_propagate_numeric_values(sdc_builder, sdc_executor, azure):
     """
     Similar to test above, but making sure columns created with Replicate Decimal Columns

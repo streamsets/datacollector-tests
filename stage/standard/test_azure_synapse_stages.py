@@ -27,12 +27,11 @@ from ..utils.utils_azure_synapse import \
     get_synapse_pipeline,\
     stop_pipeline
 
-pytestmark = sdc_min_version('5.5.0')
+pytestmark = [azure('synapse'), sdc_min_version('5.5.0')]
 
 logger = logging.getLogger(__name__)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('table_name', ['random', 'table', 'select', 'from', 'table*', 'ta$ble'])
 def test_object_names(sdc_builder, sdc_executor, azure, table_name):
     """
@@ -87,7 +86,6 @@ def test_object_names(sdc_builder, sdc_executor, azure, table_name):
             logger.error(ex)
 
 
-@azure('synapse')
 @pytest.mark.parametrize('number_of_threads', [1, 5])
 def test_multiple_batches(sdc_builder, sdc_executor, azure, number_of_threads):
     """
@@ -152,7 +150,6 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, number_of_threads):
             logger.error(ex)
 
 
-@azure('synapse')
 @pytest.mark.parametrize(
     'input, converter_type, database_type, expected',
     DATA_TYPES, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES]
