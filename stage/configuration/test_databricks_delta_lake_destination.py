@@ -326,9 +326,152 @@ def test_new_line_replacement_character(sdc_builder, sdc_executor, deltalake, aw
         _clean_up_databricks(deltalake, table_name)
 
 
-@stub
-def test_null_value(sdc_builder, sdc_executor):
-    pass
+@aws('s3')
+@pytest.mark.parametrize('null_value', ['\\N', 'stf', ''])
+def test_null_value(sdc_builder, sdc_executor,  deltalake, aws, null_value):
+    """Test for Databricks Delta Lake with AWS S3 storage.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    table_name = f'stf_test_null_value_{get_random_string()}'
+
+    rows_data = [{"title": f'{null_value}', "author": "Pepito", "genre": "Comedy",
+                  "publisher": "HarperCollins Publishers"},]
+
+    engine = deltalake.engine
+    data = '\n'.join(json.dumps(rec) for rec in rows_data)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name=table_name,
+                                        null_value=null_value,
+                                        purge_stage_file_after_ingesting=True,
+                                        column_separator=';')
+
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+
+    try:
+        logger.info(f'Creating table {table_name} ...')
+        deltalake.create_table(table_name)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+        # Assert data from deltalake table is same as what was input.
+        connection = engine.connect()
+        result = connection.execute(f'select * from {table_name}')
+        data_from_database = sorted(result.fetchall())
+
+        expected_data = [dict(d) for d in rows_data]
+
+        assert len(data_from_database) == len(expected_data)
+        assert data_from_database[0]['title'] is None
+
+        result.close()
+
+        # Assert that we actually purged the staged file
+        assert aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] == 0
+
+    finally:
+        _clean_up_databricks(deltalake, table_name)
+
+
+
+@aws('s3')
+@pytest.mark.parametrize('null_value', ['\\N', 'stf', ''])
+def test_cdc_null_value(sdc_builder, sdc_executor, deltalake, aws, null_value):
+    """Test for Databricks Delta lake with AWS S3 storage. Using CDC data as input
+
+    The pipeline looks like this:
+        dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> databricks_deltalake
+    """
+    table_name = f'stf_test_cdc_null_value_{get_random_string()}'
+
+    engine = deltalake.engine
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    cdc_rows = [
+        {'OP': 4, 'ID': 1, 'NAME': f'{null_value}'},
+        {'OP': 4, 'ID': 2, 'NAME': 'Enric Potter'},
+        {'OP': 4, 'ID': 3, 'NAME': 'Tomas Riddle'}
+    ]
+
+    # Build Dev Raw Data Source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    raw_data = '\n'.join((json.dumps(row) for row in cdc_rows))
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    # Build Expression Evaluator
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {'attributeToSet': 'sdc.operation.type',
+         'headerAttributeExpression': "${record:value('/OP')}"}
+    ])
+
+    # Build Field Remover
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ['/OP']
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location="AWS_S3",
+                                        stage_file_prefix=s3_key)
+    databricks_deltalake.set_attributes(table_name=table_name,
+                                        purge_stage_file_after_ingesting=True,
+                                        null_value=null_value,
+                                        enable_data_drift=True,
+                                        auto_create_table=True,
+                                        merge_cdc_data=True,
+                                        key_columns=[{
+                                            "keyColumns": [
+                                                "ID"
+                                            ],
+                                            "table": table_name
+                                        }])
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+
+    try:
+        connection = engine.connect()
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Assert data from deltalake table is same as what was input.
+        result = connection.execute(f'select ID, NAME from {table_name}')
+        data_from_database = sorted(result.fetchall())
+
+        expected_data = [tuple(v for v in d.values()) for d in cdc_rows]
+
+        assert len(data_from_database) == len(expected_data)
+        assert data_from_database[0]['NAME'] is None
+
+        result.close()
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+        _clean_up_databricks(deltalake, table_name)
 
 
 @stub
