@@ -121,7 +121,8 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
                                  sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=False, autoincrement=False, quote=True),
                                  quote=True)
         table.create(database.engine)
-        connection.execute(table.insert(), {'id': 1})
+        connection.execute(table.insert(), {'id': 0})
+        first_insert_number_of_records = 1
 
         # We need two pipelines that are using the same server id
         builder = sdc_builder.get_pipeline_builder()
@@ -141,29 +142,29 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
         origin.set_attributes(initial_offset=initial_offset,
                               server_id=server_id,
                               include_tables=database.database + '.' + table_name)
-        wiretap2 = builder.add_wiretap()
-        origin >> wiretap2.destination
+        trash = builder.add_stage('Trash')
+        origin >> trash
         pipeline2 = builder.build().configure_for_environment(database)
         pipeline2.configuration['shouldRetry'] = False
         sdc_executor.add_pipeline(pipeline2)
 
         # 1) Start pipeline 1, wait until it consumes at least that one record
-        sdc_executor.start_pipeline(pipeline1).wait_for_pipeline_output_records_count(1)
+        sdc_executor.start_pipeline(pipeline1).wait_for_pipeline_output_records_count(first_insert_number_of_records)
 
         # 2) Start pipeline 2 (while pipeline 1 is still running)
         sdc_executor.start_pipeline(pipeline2)
 
         # 3) Pipeline 1 should at this point fail (two different slaves with the same id)
-        time.sleep(5)
-        assert sdc_executor.get_pipeline_status(pipeline1).response.json().get('status') in ("RUN_ERROR", "RUNNING_ERROR")
+        _wait_for_pipeline_statuses(sdc_executor, pipeline1, ["RUN_ERROR", "RUNNING_ERROR"])
 
         # 4) Pipeline 2 can be stopped at this point
         sdc_executor.stop_pipeline(pipeline2)
 
-        # 5) We start the first pipeline and insert data in 5-second interval, the pipeline should read all of them
+        # 5) We start the first pipeline and insert data in 10-second interval, the pipeline should read all of them
         # In order to see the problem with the left-over thread, we need to wait at least a minute.
         sdc_executor.start_pipeline(pipeline1)
-        for i in range(2, 10):
+        second_insert_number_of_records = 8
+        for i in range(first_insert_number_of_records, first_insert_number_of_records + second_insert_number_of_records):
             time.sleep(10)
             logger.info(f"Inserting {i}")
             connection.execute(table.insert(), {'id': i})
@@ -172,14 +173,17 @@ def test_disconnect_on_error(sdc_builder, sdc_executor, database, keep_data):
         # a version without SDC-15872 should fail.
         assert sdc_executor.get_pipeline_status(pipeline1).response.json().get('status') == "RUNNING"
 
-        # 7) Stop pipeline 1 and validate that we got all the records into the wiretap
+        # 7) Wait for the 8 records to be processed then
+        #    stop pipeline 1 and validate that we got all the records into the wiretap
+        sdc_executor.wait_for_pipeline_metric(pipeline1, 'input_record_count', second_insert_number_of_records,
+                                              timeout_sec=120)
         sdc_executor.stop_pipeline(pipeline1)
 
         records = wiretap1.output_records
-        assert len(records) == 9
+        assert len(records) == first_insert_number_of_records + second_insert_number_of_records
 
-        for i in range(1, 10):
-            assert records[i - 1].field['Data']['id'] == i
+        for i in range(0, first_insert_number_of_records + second_insert_number_of_records):
+            assert records[i].field['Data']['id'] == i
     finally:
         if not keep_data:
             # Drop table and Connection.
@@ -1412,3 +1416,35 @@ def _get_initial_offset(database):
 
         if connection is not None:
             connection.close()
+
+DEFAULT_WAIT_FOR_STATUS_TIMEOUT = 200
+def _wait_for_pipeline_statuses(sdc_executor, pipeline, statuses, timeout_sec=DEFAULT_WAIT_FOR_STATUS_TIMEOUT):
+    """Block until a pipeline reaches a status included in the list of desired status.
+
+    Args:
+        pipeline (:py:class:`streamsets.sdk.sdc_models.Pipeline`): The pipeline instance.
+        status (:py:obj:`list`): The desired list of status to wait for.
+        timeout_sec (:obj:`int`, optional): Timeout to wait for ``pipeline`` to reach ``status``, in seconds.
+            Default: :py:const:`streamsets.sdk.sdc.DEFAULT_WAIT_FOR_STATUS_TIMEOUT`.
+
+    Raises:
+        TimeoutError: If ``timeout_sec`` passes without ``pipeline`` reaching ``status``.
+    """
+    logger.info('Waiting for pipeline to reach status %s ...', statuses)
+    start_waiting_time = time.time()
+    stop_waiting_time = start_waiting_time + timeout_sec
+
+    while time.time() < stop_waiting_time:
+        current_status = sdc_executor.get_pipeline_status(pipeline).response.json()['status']
+        logger.debug('Pipeline has current status %s ...', current_status)
+        if current_status in statuses:
+            logger.info('Pipeline (%s) reached status %s (took %.2f s).',
+                        pipeline.id,
+                        current_status,
+                        time.time() - start_waiting_time)
+            break
+        time.sleep(1)
+    else:
+        # We got out of the loop and did not get the status we were waiting for.
+        raise TimeoutError('Pipeline did not reach status {} '
+                           'after {} s (current status {})'.format(status, timeout_sec, current_status))
