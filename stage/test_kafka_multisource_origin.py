@@ -250,7 +250,7 @@ def test_kafka_origin_save_offset(sdc_builder, sdc_executor, cluster):
 
         # Run the pipeline second time
         sdc_executor.start_pipeline(pipeline)
-        time.sleep(10)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 3, timeout_sec=120)
         sdc_executor.stop_pipeline(pipeline)
 
         #  2nd run should processed only 3 records
