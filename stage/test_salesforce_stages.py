@@ -439,6 +439,12 @@ def test_salesforce_origin_platform_events(sdc_builder, sdc_executor, salesforce
             )
 
         sleep(10)
+
+        # Check if we have surpassed the amount of organization daily events and the pipeline has errored out
+        assert sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING', \
+            f"The pipeline is not in the RUNNING state, it errored out with the following message: " \
+            f"{sdc_executor.get_pipeline_status(pipeline).response.json().get('message')}"
+
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', number_of_events, timeout_sec=300)
         sdc_executor.stop_pipeline(pipeline)
 
@@ -1482,6 +1488,11 @@ def test_salesforce_subscription(sdc_builder, sdc_executor, salesforce, subscrip
         client.Contact.update(contact_id, test_data)
         logger.info('Updated a Contact using Salesforce client with id as %s', contact_id)
 
+        # Check if we have surpassed the amount of organization daily events and the pipeline has errored out
+        assert sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING', \
+            f"The pipeline is not in the RUNNING state, it errored out with the following message: " \
+            f"{sdc_executor.get_pipeline_status(pipeline).response.json().get('message')}"
+
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=300)
         if subscription_type == PUSH_TOPIC:
             change_records = [record for record in wiretap.output_records if record.field['Id'] == contact_id]
@@ -1557,6 +1568,13 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
 
         logger.info('Starting pipeline ...')
         sdc_executor.start_pipeline(pipeline)
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        # Check if we have surpassed the amount of organization daily events and the pipeline has errored out
+        assert sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING', \
+            f"The pipeline is not in the RUNNING state, it errored out with the following message: " \
+            f"{sdc_executor.get_pipeline_status(pipeline).response.json().get('message')}"
 
         # Note, from Salesforce docs: "Updates performed by the Bulk API won’t generate notifications, since such
         # updates could flood a channel."
@@ -1592,6 +1610,13 @@ def test_salesforce_cdc_delete_field(sdc_builder, sdc_executor, salesforce):
         logger.info('Restarting pipeline ...')
         wiretap.reset()
         sdc_executor.start_pipeline(pipeline)
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        # Check if we have surpassed the amount of organization daily events and the pipeline has errored out
+        assert sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING', \
+            f"The pipeline is not in the RUNNING state, it errored out with the following message: " \
+            f"{sdc_executor.get_pipeline_status(pipeline).response.json().get('message')}"
 
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1, timeout_sec=300)
         change_records_2 = get_cdc_wiretap_records(wiretap, [contact_id_2])
@@ -2369,6 +2394,14 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         sdc_executor.add_pipeline(pipeline)
 
         sdc_executor.start_pipeline(pipeline)
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        # Check if we have surpassed the amount of organization daily events and the pipeline has errored out
+        assert sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING', \
+            f"The pipeline is not in the RUNNING state, it errored out with the following message: " \
+            f"{sdc_executor.get_pipeline_status(pipeline).response.json().get('message')}"
+
         timeout_sec = BULK_PIPELINE_TIMEOUT_SECONDS if api == 'bulk' else SOAP_PIPELINE_TIMEOUT_SECONDS
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(test_data), timeout_sec=timeout_sec)
 
@@ -2385,6 +2418,11 @@ def test_salesforce_switch_from_query_to_subscription(sdc_builder, sdc_executor,
         contact_id = inserted_ids[0]['Id']
         client.Contact.update(contact_id, test_data[0])
         logger.info('Updated a Contact using Salesforce client with id as %s', contact_id)
+
+        # Check if we have surpassed the amount of organization daily events and the pipeline has errored out
+        assert sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING', \
+            f"The pipeline is not in the RUNNING state, it errored out with the following message: " \
+            f"{sdc_executor.get_pipeline_status(pipeline).response.json().get('message')}"
 
         logger.info('Capturing second batch of data ...')
         wiretap.reset()
@@ -2446,6 +2484,13 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
 
         logger.info('Starting pipeline ...')
         sdc_executor.start_pipeline(pipeline)
+        # Give the pipeline time to connect to the Streaming API
+        time.sleep(10)
+
+        # Check if we have surpassed the amount of organization daily events and the pipeline has errored out
+        assert sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING', \
+            f"The pipeline is not in the RUNNING state, it errored out with the following message: " \
+            f"{sdc_executor.get_pipeline_status(pipeline).response.json().get('message')}"
 
         # create change data
         test_data = {'Name': 'Test1', 'Fax': 'testFax'}
@@ -2467,7 +2512,8 @@ def test_salesforce_cdc_replay_all(sdc_builder, sdc_executor, salesforce):
             # we make sure pipeline is running - it cannot if it has API issues with Salesforce (like timeout) and
             # we don't want to keep looping in the condition
             if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') != 'RUNNING':
-                raise Exception('Pipeline is not in a RUNNING state. It possibly errored out')
+                raise Exception(f"The pipeline is not in the RUNNING state, it errored out with the following message: "
+                                f"{sdc_executor.get_pipeline_status(pipeline).response.json().get('message')}")
             metrics = sdc_executor.get_pipeline_metrics(pipeline)
             if metrics:
                 new_count = metrics.pipeline.output_record_count
