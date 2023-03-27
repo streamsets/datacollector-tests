@@ -19,10 +19,11 @@ import string
 from pprint import pformat
 
 from streamsets.testframework.markers import sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
+LINEAGE_MIN_VERSION = '5.4.0'
 LINEAGE_DIR = "/tmp/lineage_"+get_random_string(string.ascii_lowercase, 10)
 ENABLE_LINEAGE_JSON_PUBLISHER = {
     'lineage.publishers': 'json',
@@ -35,10 +36,11 @@ ENABLE_LINEAGE_JSON_PUBLISHER = {
 @pytest.fixture(scope='module')
 def sdc_common_hook(args):
     def hook(data_collector):
-        data_collector.sdc_properties.update(ENABLE_LINEAGE_JSON_PUBLISHER)
+        if Version(data_collector.version) >= Version(LINEAGE_MIN_VERSION):
+            data_collector.sdc_properties.update(ENABLE_LINEAGE_JSON_PUBLISHER)
     return hook
 
-@sdc_min_version('5.4.0')
+@sdc_min_version(LINEAGE_MIN_VERSION)
 @pytest.mark.parametrize('records_to_be_generated', [100])
 def test_lineage_json(sdc_builder, sdc_executor, records_to_be_generated):
     """
