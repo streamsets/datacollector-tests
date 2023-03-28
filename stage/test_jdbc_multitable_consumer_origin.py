@@ -1758,13 +1758,14 @@ def test_jdbc_multitable_oracle_no_leaking_cursors(sdc_builder, sdc_executor, da
     the pipeline startup fails (StartError).
     """
     connection = database.engine.connect()
+    schema = database.username.upper()
     try:
-        connection.execute("""
+        connection.execute(f"""
         BEGIN
         FOR v_tableCounter IN 1..1000 LOOP
-            EXECUTE IMMEDIATE 'create table C##SDC.test_no_leaking_cursors_' || v_tableCounter || '(id NUMBER, text varchar(10) DEFAULT NULL)';
+            EXECUTE IMMEDIATE 'create table {schema}.test_no_leaking_cursors_' || v_tableCounter || '(id NUMBER, text varchar(10) DEFAULT NULL)';
             FOR v_loopCounter IN 1..10 LOOP
-                EXECUTE IMMEDIATE 'INSERT INTO C##SDC.test_no_leaking_cursors_'|| v_tableCounter || '(id) VALUES (1)';
+                EXECUTE IMMEDIATE 'INSERT INTO {schema}.test_no_leaking_cursors_'|| v_tableCounter || '(id) VALUES (1)';
             END LOOP;
         END LOOP
         COMMIT;
@@ -1795,11 +1796,14 @@ def test_jdbc_multitable_oracle_no_leaking_cursors(sdc_builder, sdc_executor, da
     except StartError as e:
         assert False, f'Pipeline failed to start, when reaching the max open cursors it used to fail with a JDBC_640: {e}'
     finally:
-        connection.execute("""
+        connection.execute(f"""
         BEGIN
-        FOR v_tableCounter IN 1..1000 LOOP
-            EXECUTE IMMEDIATE 'drop table C##SDC.test_no_leaking_cursors_' || v_tableCounter;
-        END LOOP
-        COMMIT;
+            FOR v_tableCounter IN 1..1000 LOOP
+                EXECUTE IMMEDIATE 'drop table {schema}.test_no_leaking_cursors_' || v_tableCounter;
+            END LOOP
+            COMMIT;
+        EXCEPTION
+            WHEN OTHERS THEN
+                NULL;
         END;
         """)
