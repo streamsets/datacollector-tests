@@ -285,13 +285,13 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
     record_ids = []
 
     try:
-        logger.info('Adding a record into Salesforce ...')
+        logger.info('Adding a first record into Salesforce Contacts...')
         result = client.Contact.create({
             'FirstName': '1',
             'LastName': test_name
         })
+        logger.info(f"... added record with id {result['id']}")
         record_ids.append({'Id': result['id']})
-
 
         # Start the pipeline
         status = sdc_executor.start_pipeline(pipeline)
@@ -306,12 +306,26 @@ def test_dataflow_events(sdc_builder, sdc_executor, salesforce):
         wiretap.reset()
 
         # Second iteration - insert one new row
-        logger.info('Inserting row into Contacts')
+        logger.info('Adding a second record into Salesforce Contacts ...')
         result = client.Contact.create({
             'FirstName': '2',
             'LastName': test_name
         })
+        logger.info(f"... added record with id {result['id']}")
         record_ids.append({'Id': result['id']})
+
+        # Sometimes the second record is created with an Id smaller than the one from the previously created record. In
+        # these cases, the Salesforce Origin cannot find the new record as the SOQL Query set up looks for records with
+        # an increasing Id value in order not to read twice the same records.
+        while result['id'] < record_ids[0]['Id']:
+            logger.info('The previously added record has an Id smaller than the first record.')
+            logger.info('Adding a new second record into Salesforce Contacts ...')
+            result = client.Contact.create({
+                'FirstName': '2',
+                'LastName': test_name
+            })
+            logger.info(f"... added record with id {result['id']}")
+            record_ids.append({'Id': result['id']})
 
         # 1 data record, 1 event, 1 wiretap record more
         status.wait_for_pipeline_output_records_count(6)
