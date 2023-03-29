@@ -17,9 +17,13 @@ import pytest
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.sdk.sdc_api import StartError
 
+
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
+        if data_collector.use_jdk17:
+            pytest.skip("CDH stages are not supported with JDK17")
+
         data_collector.add_stage_lib('streamsets-datacollector-cdh_5_15-lib')
 
     return hook
