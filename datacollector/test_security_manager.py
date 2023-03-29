@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 @pytest.fixture(scope='module')
 def sdc_common_hook():
     def hook(data_collector):
+        if data_collector.use_jdk17:
+            pytest.skip("The Java Security Manager is deprecated and disabled when using Java versions greater than 8.")
+
         data_collector.add_stage_lib('streamsets-datacollector-jython_2_7-lib')
         data_collector.sdc_properties['security_manager.sdc_manager.enable'] = 'true'
     return hook
