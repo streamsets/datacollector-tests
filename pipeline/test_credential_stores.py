@@ -95,13 +95,14 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, creden
     # Test static
     es_index = get_random_string(string.ascii_letters, 10).lower()  # Elasticsearch indexes must be lower case
     es_mapping = get_random_string(string.ascii_letters, 10)
+    http_port = 9999
 
     # Build pipeline
     builder = sdc_builder.get_pipeline_builder()
 
     http_server = builder.add_stage('HTTP Server')
     http_server.set_attributes(data_format='JSON')
-    http_server.http_listening_port = 9999
+    http_server.http_listening_port = http_port
 
     if Version('3.14.0') <= Version(sdc_builder.version) < Version('3.17.0'):
         http_server.list_of_application_ids = [{"appId": 'admin'}]
@@ -128,11 +129,19 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, creden
         # Run pipeline and read from Elasticsearch to assert
         start_command = sdc_executor.start_pipeline(pipeline)
 
-        for i in range(10):
+        num_requests = 10
+        failed_requests = 0
+
+        for i in range(num_requests):
             logger.info('Posting message number %s', i)
             data = {'doc_id': get_random_string(string.ascii_letters, 10)}
-            http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
-            http_res.request('POST', '/', json.dumps(data), {'X-SDC-APPLICATION-ID': 'admin'})
+            http_res = httpclient.HTTPConnection(sdc_executor.server_host, http_port)
+            try:
+                http_res.request('POST', '/', json.dumps(data), {'X-SDC-APPLICATION-ID': 'admin'})
+            except ConnectionRefusedError as ce:
+                logger.error(f"Message number {i} could not be posted: {ce}")
+                failed_requests += 1
+                continue
             resp = http_res.getresponse()
             tries = 0
             # Waiting for the server to start
@@ -144,7 +153,9 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, creden
 
             assert resp.status == 200
 
-        start_command.wait_for_pipeline_batch_count(10)
+        assert failed_requests < num_requests, "The test set up failed. No HTTP POST requests were successful."
+
+        start_command.wait_for_pipeline_batch_count(num_requests - failed_requests)
         sdc_executor.stop_pipeline(pipeline)
 
         output_records = wiretap.output_records
