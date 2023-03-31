@@ -129,33 +129,40 @@ def test_http_to_elastic_search(sdc_builder, sdc_executor, elasticsearch, creden
         # Run pipeline and read from Elasticsearch to assert
         start_command = sdc_executor.start_pipeline(pipeline)
 
-        num_requests = 10
-        failed_requests = 0
+        # Waiting for the server to start
+        logger.info('Waiting for the server to start')
+        resp = None
+        tries = 0
+        max_tries = 5
+        seconds_to_sleep = 3
+        while resp is None and tries <= max_tries:
+            try:
+                logger.info(f"Try: {tries}")
+                data = {f'doc_id': f'Discard {tries}'}
+                http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
+                http_res.request('POST', '/', json.dumps(data), {'X-SDC-APPLICATION-ID': 'admin'})
+                resp = http_res.getresponse()
+            except Exception as ex:
+                logger.info(f"Exception {ex} for try: {tries}")
 
-        for i in range(num_requests):
+            tries = tries + 1
+            time.sleep(seconds_to_sleep)
+
+        # If the server http did not answered, the test should fail
+        assert resp.status == 200, "HTTP server is not available"
+
+        number_of_records_ok = 5
+        for i in range(number_of_records_ok):
             logger.info('Posting message number %s', i)
             data = {'doc_id': get_random_string(string.ascii_letters, 10)}
-            http_res = httpclient.HTTPConnection(sdc_executor.server_host, http_port)
-            try:
-                http_res.request('POST', '/', json.dumps(data), {'X-SDC-APPLICATION-ID': 'admin'})
-            except ConnectionRefusedError as ce:
-                logger.error(f"Message number {i} could not be posted: {ce}")
-                failed_requests += 1
-                continue
+            http_res = httpclient.HTTPConnection(sdc_executor.server_host, 9999)
+            http_res.request('POST', '/', json.dumps(data), {'X-SDC-APPLICATION-ID': 'admin'})
             resp = http_res.getresponse()
-            tries = 0
-            # Waiting for the server to start
-            while resp.status != 200 and tries <= 5:
-                time.sleep(1)
-                resp = http_res.getresponse()
-                logger.info('HTTP response number of tries = %s, status = %s', tries, resp.status)
-                tries = tries + 1
-
             assert resp.status == 200
 
-        assert failed_requests < num_requests, "The test set up failed. No HTTP POST requests were successful."
-
-        start_command.wait_for_pipeline_batch_count(num_requests - failed_requests)
+        # Waiting server for start loop adds just 1 record with id "Discard n" where n is
+        # the number of tries
+        start_command.wait_for_pipeline_batch_count(number_of_records_ok + 1)
         sdc_executor.stop_pipeline(pipeline)
 
         output_records = wiretap.output_records
