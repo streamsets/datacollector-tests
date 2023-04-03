@@ -1097,6 +1097,9 @@ def test_mongodb_atlas_origin_connection_string(sdc_builder, sdc_executor, mongo
     The pipeline looks like:
         mongodb_atlas_origin >> wiretap
     """
+    if not mongodb.atlas:
+        pytest.skip('This test is specific to MongoDB Atlas')
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
 
