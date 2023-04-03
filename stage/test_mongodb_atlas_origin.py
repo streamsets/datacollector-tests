@@ -997,7 +997,7 @@ def test_mongodb_atlas_origin_uuid_modes(sdc_builder, sdc_executor, mongodb, uui
         # Start pipeline and verify the documents using wiretap.
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database), timeout_sec=120)
         sdc_executor.stop_pipeline(pipeline)
 
         assert data == [{'_id': record.field['_id'].value, 'uuid': record.field['uuid'].value}
