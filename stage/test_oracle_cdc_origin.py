@@ -232,10 +232,6 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, buffer_locat
                  f"TO_TIMESTAMP('{timestamp_str}', 'YYYY-MM-DD HH24:MI:SS.FF'))",
                  f"INSERT INTO {table_name} VALUES (2, TO_DATE('{day_str}', 'YYYY-MM-DD'), "
                  f"TO_TIMESTAMP('{day_str}', 'YYYY-MM-DD'))"]
-        txn = connection.begin()
-        for line in lines:
-            connection.execute(line)
-        txn.commit()
 
         # Why do we need to wait?
         # The time at the DB might differ from here. If the DB is behind, we are ok, and we will get all the data.
@@ -244,6 +240,12 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, buffer_locat
         _wait_until_time(_get_current_oracle_time(connection=connection))
 
         sdc_executor.start_pipeline(pipeline)
+
+        # All the data is inserted after the pipeline is running.
+        txn = connection.begin()
+        for line in lines:
+            connection.execute(line)
+        txn.commit()
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 2)
         sdc_executor.stop_pipeline(pipeline=pipeline)
 
