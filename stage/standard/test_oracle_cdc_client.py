@@ -57,20 +57,22 @@ LOCAL_TIMEZONE = datetime.now(timezone.utc).astimezone().tzinfo
 logger = logging.getLogger(__name__)
 pytestmark = [database("oracle"), sdc_min_version(RELEASE_VERSION)]
 
+
 def format_timezone_offset(dt):
     """Add a colon separator between timezone hours and minutes.
     Convert YYYY-MM-DDTHH:MM:SS+ZZZZ to YYYY-MM-DDTHH:MM:SS+ZZ:ZZ"""
 
     dt_str = dt.strftime("%Y-%m-%dT%H:%M:%S%z")
 
-    pattern = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+)(\d{4})"
+    pattern = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\+(\d{4})"
     match = re.compile(f"^{pattern}$").match(dt_str)
     if not match:
         return dt_str
     main_datetime = match.group(1)
     offset = match.group(2)
     hh, mm = offset[:2], offset[2:]
-    return f"{main_datetime}{hh}:{mm}"
+    postfix = "Z" if hh == mm == "00" else f"+{hh}:{mm}"
+    return f"{main_datetime}{postfix}"
 
 
 @pytest.mark.parametrize("null", [True, False])
@@ -80,7 +82,7 @@ def format_timezone_offset(dt):
         ["BINARY_DOUBLE", oracle.BINARY_DOUBLE, 4.2, "DOUBLE", 4.2],
         ["BINARY_FLOAT", oracle.BINARY_FLOAT, 4.2, "FLOAT", 4.2],
         ["CHAR", oracle.CHAR, "A", "STRING", "A"],
-        ["DATE", oracle.DATE, DEFAULT_DATETIME, "DATE", DEFAULT_DATETIME],
+        ["DATE", oracle.DATE, DEFAULT_DATETIME, "DATETIME", DEFAULT_DATETIME],
         ["FLOAT", oracle.FLOAT, 4.2, "FLOAT", 4.2],
         ["NCHAR", oracle.NCHAR, "A", "STRING", "A"],
         ["NUMBER", oracle.NUMBER, 4, "DECIMAL", 4],
@@ -192,8 +194,8 @@ def test_data_types(
 
     # ToDo mikel: assert fail messages for all tests
     assert record.field[id_column].value == id_value
-    assert record.field[datatype_column].value == streamsets_value
     assert record.field[datatype_column].type == streamsets_type
+    assert record.field[datatype_column].value == streamsets_value
 
 
 @pytest.mark.parametrize(
