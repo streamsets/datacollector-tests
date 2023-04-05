@@ -227,6 +227,70 @@ def test_multiple_batches(sdc_builder, sdc_executor, database, keep_data):
                 logger.info('Dropping table %s in %s database ...', table_name, database.type)
                 connection.execute(f"DROP TABLE IF EXISTS \"{table_name}\"")
 
+@database('postgresql')
+def test_data_drift_between_batches(sdc_builder, sdc_executor, database):
+
+    CSV01 = "fa,fb\na,b"
+    CSV02 = "fa,fb,fc\na,b,c"  # add column fc
+    schema_name = "schema_" + get_random_string(string.ascii_letters, 5).lower()
+    table_name  = "table_" +  get_random_string(string.ascii_letters, 5).lower()
+    temp_dir = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
+
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Directory')
+    source.set_attributes(files_directory=temp_dir,
+                          file_name_pattern="*",
+                          data_format="DELIMITED",
+                          header_line="WITH_HEADER")
+
+    processor = builder.add_stage('PostgreSQL Metadata')
+    processor.set_attributes(schema_name=schema_name,
+                             table_name=table_name)
+
+    destination = builder.add_stage('JDBC Producer')
+    destination.set_attributes(schema_name=schema_name,
+                               table_name=table_name,
+                               default_operation="UPDATE",
+                               field_to_column_mapping=[])
+
+    source >> processor >> destination
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = database.engine.connect()
+    try:
+        # Create input files in SDC host
+        sdc_executor.execute_shell(f'echo "{CSV01}" > {temp_dir}/01.csv && \
+                                     echo "{CSV02}" > {temp_dir}/02.csv')
+
+        # Create DB
+        connection.execute(f"CREATE SCHEMA {schema_name}")
+        connection.execute(f"CREATE TABLE {schema_name}.{table_name}(\
+                                  fa varchar NULL,\
+                                  fb varchar NULL,\
+                                  CONSTRAINT {table_name}_pk PRIMARY KEY (fa)\
+                                  );")
+        connection.execute(f"INSERT INTO {schema_name}.{table_name} \
+                                  (fa, fb) \
+                                  VALUES('a', 'b');\
+                                  ")
+
+        # Run pipeline
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 2, timeout_sec=300)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Check results
+        rs = connection.execute(f"SELECT fc FROM {schema_name}.{table_name} WHERE fa = 'a'")
+        rows = [row for row in rs]
+        assert len(rows) == 1, "Expected just 1 row"
+        assert rows[0][0] == 'c', "Data drift value not present in database"
+
+    finally:
+        connection.execute(f"DROP TABLE IF EXISTS {table_name} CASCADE")
+        connection.execute(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE")
+        sdc_executor.execute_shell(f'rm -rf {temp_dir}')
+
 
 @database('postgresql')
 def test_dataflow_events(sdc_builder, sdc_executor, database):
