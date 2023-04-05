@@ -140,50 +140,9 @@ def test_xml_parser_namespace_xpath(sdc_builder, sdc_executor):
          sdc_executor.remove_pipeline(pipeline)
 
 
-def test_xml_parser_invalid_record(sdc_builder, sdc_executor):
-    """Test XML parser processor. XML in this test is invalid.
-       The pipeline would look like:
-
-           dev_raw_data_source >> xml_parser >> wiretap
-    """
-    raw_data = """<?xml version="1.0" encoding="UTF-8"?>
-                  <root>
-                      <msg>
-                          <time>8/12/2016 6:01:00
-                          <request>GET /index.html 200</request>
-                      </msg>
-                      <msg>
-                          <time>8/12/2016 6:03:43</time>
-                          <request>GET /images/sponsored.gif 304
-                      </msg>
-                  """
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    # Note that since the delimiter text '</dummy>' does not exist in input XML, the output of this stage is whole XML.
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, custom_delimiter='</dummy>',
-                                       use_custom_delimiter=True,
-                                       stop_after_first_batch=True)
-    xml_parser = pipeline_builder.add_stage('XML Parser', type='processor')
-    xml_parser.set_attributes(field_to_parse='/text', ignore_control_characters=True, target_field='/text')
-    wiretap = pipeline_builder.add_wiretap()
-
-    dev_raw_data_source >> xml_parser >> wiretap.destination
-    pipeline = pipeline_builder.build('XML Parser invalid record pipeline')
-
-    sdc_executor.add_pipeline(pipeline)
-    try:
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
-        # Verify no output records since invalid xml data.
-        assert len(wiretap.output_records) == 0
-        assert len(wiretap.error_records) == 1
-    finally:
-         sdc_executor.remove_pipeline(pipeline)
-
 def test_xml_parser_invalid_delimiter(sdc_builder, sdc_executor):
     """Test XML parser processor. XML in this test is simple.
        The pipeline would look like:
-
            dev_raw_data_source >> xml_parser >> wiretap
     """
     raw_data = """<?xml version="1.0" encoding="UTF-8"?>
@@ -224,18 +183,24 @@ def test_xml_parser_invalid_delimiter(sdc_builder, sdc_executor):
     finally:
         sdc_executor.remove_pipeline(pipeline)
 
-def test_xml_parser_multiple_values_as_list(sdc_builder, sdc_executor):
-    """Test XML parser processor. XML in this test is simple.
+
+def test_xml_parser_invalid_record(sdc_builder, sdc_executor):
+    """Test XML parser processor. XML in this test is invalid.
        The pipeline would look like:
 
            dev_raw_data_source >> xml_parser >> wiretap
     """
     raw_data = """<?xml version="1.0" encoding="UTF-8"?>
                   <root>
-                      <a>1</a>
-                      <a>2</a>
-                      <a>3</a>
-                  </root>"""
+                      <msg>
+                          <time>8/12/2016 6:01:00
+                          <request>GET /index.html 200</request>
+                      </msg>
+                      <msg>
+                          <time>8/12/2016 6:03:43</time>
+                          <request>GET /images/sponsored.gif 304
+                      </msg>
+                  """
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
     # Note that since the delimiter text '</dummy>' does not exist in input XML, the output of this stage is whole XML.
@@ -243,76 +208,26 @@ def test_xml_parser_multiple_values_as_list(sdc_builder, sdc_executor):
                                        use_custom_delimiter=True,
                                        stop_after_first_batch=True)
     xml_parser = pipeline_builder.add_stage('XML Parser', type='processor')
-    xml_parser.set_attributes(field_to_parse='/text', ignore_control_characters=True, target_field='/text',
-                              multiple_values_behavior='ALL_AS_LIST', delimiter_element='a')
+    xml_parser.set_attributes(field_to_parse='/text', ignore_control_characters=True, target_field='/text')
     wiretap = pipeline_builder.add_wiretap()
 
     dev_raw_data_source >> xml_parser >> wiretap.destination
-    pipeline = pipeline_builder.build('XML Parser multiple values as list pipeline')
+    pipeline = pipeline_builder.build('XML Parser invalid record pipeline')
 
     sdc_executor.add_pipeline(pipeline)
-
     try:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        # Gather wiretap data for verification.
-        record = wiretap.output_records
-        assert len(record) == 1
-        resultList = wiretap.output_records[0].field['text']
-        assert len(resultList) == 3
-        expectedList = [{'value': '1'}, {'value': '2'}, {'value': '3'}]
-        assert resultList == expectedList
+        # Verify no output records since invalid xml data.
+        assert len(wiretap.output_records) == 0
+        assert len(wiretap.error_records) == 1
     finally:
-        sdc_executor.remove_pipeline(pipeline)
-
-
-def test_xml_parser_multiple_values_as_split_records(sdc_builder, sdc_executor):
-    """Test XML parser processor. XML in this test is simple.
-       The pipeline would look like:
-
-           dev_raw_data_source >> xml_parser >> wiretap
-    """
-    raw_data = """<?xml version="1.0" encoding="UTF-8"?>
-                  <root>
-                      <a>1</a>
-                      <a>2</a>
-                      <a>3</a>
-                  </root>"""
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    # Note that since the delimiter text '</dummy>' does not exist in input XML, the output of this stage is whole XML.
-    dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, custom_delimiter='</dummy>',
-                                       use_custom_delimiter=True,
-                                       stop_after_first_batch=True)
-    xml_parser = pipeline_builder.add_stage('XML Parser', type='processor')
-    xml_parser.set_attributes(field_to_parse='/text', ignore_control_characters=True, target_field='/text',
-                              multiple_values_behavior='SPLIT_INTO_MULTIPLE_RECORDS', delimiter_element='a')
-    wiretap = pipeline_builder.add_wiretap()
-
-    dev_raw_data_source >> xml_parser >> wiretap.destination
-    pipeline = pipeline_builder.build('XML Parser multiple values as split records pipeline')
-    sdc_executor.add_pipeline(pipeline)
-
-    try:
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
-        # Gather wiretap data for verification.
-        record = wiretap.output_records
-        assert len(record) == 3
-        resultList=[]
-        for item in record:
-          resultList.append(item.field['text'])
-        assert len(resultList) == 3
-        expectedList = [{'value': '1'}, {'value': '2'}, {'value': '3'}]
-        assert resultList == expectedList
-    finally:
-        sdc_executor.remove_pipeline(pipeline)
+         sdc_executor.remove_pipeline(pipeline)
 
 
 def test_xml_flattener(sdc_builder, sdc_executor):
     """Test XML flattener processor.
     The pipeline would look like:
-
         dev_raw_data_source >> xml_flattener >> wiretap
     """
     raw_data = """<contacts>
@@ -363,3 +278,143 @@ def test_xml_flattener(sdc_builder, sdc_executor):
         assert items == expected_data
     finally:
         sdc_executor.remove_pipeline(pipeline)
+
+
+def test_xml_flattener_whitespace_after_prolog(sdc_builder, sdc_executor):
+    """Test XML flattener processor.
+    The pipeline would look like:
+
+        dev_raw_data_source >> xml_flattener >> wiretap
+    """
+    #Specify raw data with whitespace after prolog
+    raw_data = """<?xml version='1.0' encoding='UTF-8'?>            <note><to>Tove</to>   <from>Jani</from>
+                      <heading>Reminder</heading>    <body>Don't forget me this weekend!</body></note>"""
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=raw_data,
+                                       custom_delimiter='</dummy>',
+                                       use_custom_delimiter=True,
+                                       stop_after_first_batch=True)
+
+    xml_flattener = pipeline_builder.add_stage('XML Flattener', type='processor')
+    xml_flattener.set_attributes(field_to_flatten='/text',
+                                 record_delimiter='note',
+                                 keep_original_fields=False)
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> xml_flattener >> wiretap.destination
+    pipeline = pipeline_builder.build('XML flattener test whitespace after prolog pipeline')
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Gather wiretap data as a list for verification.
+        items = [record.field for record in wiretap.output_records]
+        expected_data = [{'note.to': 'Tove',
+                          'note.from': 'Jani',
+                          'note.heading': 'Reminder',
+                          'note.body': "Don't forget me this weekend!"}]
+        assert items == expected_data
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
+
+
+def test_xml_flattener_empty_record_delimiter(sdc_builder, sdc_executor):
+    """Test XML flattener processor.
+    The pipeline would look like:
+
+        dev_raw_data_source >> xml_flattener >> wiretap
+    """
+    raw_data = """<contacts>
+                      <contact>
+                          <name type="maiden">NAME1</name>
+                          <phone>(111)111-1111</phone>
+                          <phone>(222)222-2222</phone>
+                      </contact>
+                      <contact>
+                          <name type="maiden">NAME2</name>
+                          <phone>(333)333-3333</phone>
+                          <phone>(444)444-4444</phone>
+                      </contact>
+                  </contacts>"""
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=raw_data,
+                                       custom_delimiter='</dummy>',
+                                       use_custom_delimiter=True,
+                                       stop_after_first_batch=True)
+    # Set record delimiter as empty
+    xml_flattener = pipeline_builder.add_stage('XML Flattener', type='processor')
+    xml_flattener.set_attributes(field_to_flatten='/text',
+                                 record_delimiter='',
+                                 keep_original_fields=False)
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> xml_flattener >> wiretap.destination
+    pipeline = pipeline_builder.build('XML flattener test empty record delimiter pipeline')
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Gather wiretap data as a list for verification.
+        items = [record.field for record in wiretap.output_records]
+
+        expected_data = [{'contacts.contact(0).name#type': 'maiden',
+                          'contacts.contact(0).name': 'NAME1',
+                          'contacts.contact(0).phone(0)': '(111)111-1111',
+                          'contacts.contact(0).phone(1)': '(222)222-2222',
+                          'contacts.contact(1).name#type': 'maiden',
+                          'contacts.contact(1).name': 'NAME2',
+                          'contacts.contact(1).phone(0)': '(333)333-3333',
+                          'contacts.contact(1).phone(1)': '(444)444-4444'}]
+
+        assert items == expected_data
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
+
+
+def test_xml_flattener_invalid_record(sdc_builder, sdc_executor):
+    """Test XML flattener processor.
+    The pipeline would look like:
+
+        dev_raw_data_source >> xml_flattener >> wiretap
+    """
+    #Specify invalid xml
+    raw_data = """<contact><name type="maiden" xmlns="http://blah.com/blah.xml">NAME</name>
+                  <phone>(111)111-1111</phone><phone>(222)222-2222</phone></contact>
+                  <contact><name type="maiden" xmlns="http://blah.com/blah.xml">NAME</name>
+                  <phone>(111)111-1111</phone><phone>(222)222-2222</phone></contact>"""
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='TEXT',
+                                       raw_data=raw_data,
+                                       custom_delimiter='</dummy>',
+                                       use_custom_delimiter=True,
+                                       stop_after_first_batch=True)
+
+    xml_flattener = pipeline_builder.add_stage('XML Flattener', type='processor')
+    xml_flattener.set_attributes(field_to_flatten='/text',
+                                 record_delimiter='contact',
+                                 keep_original_fields=False)
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> xml_flattener >> wiretap.destination
+    pipeline = pipeline_builder.build('XML flattener test invalid record pipeline')
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify no output records since record is invalid
+        assert len(wiretap.output_records) == 0
+        assert len(wiretap.error_records) == 1
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
+
