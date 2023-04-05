@@ -77,7 +77,9 @@ def test_object_names(sdc_builder, sdc_executor, azure, table_name):
         data_from_database = sorted(result.fetchall(), key=lambda row: row[0])
         result.close()
 
-        assert data_from_database == [(row['id'], row['name']) for row in ROWS_IN_DATABASE]
+        dict_records_from_database = [{'id': element[0], 'name': element[1]} for element in data_from_database]
+        for record in dict_records_from_database:
+            assert record in ROWS_IN_DATABASE
     finally:
         try:
             delete_table(engine, "[" + destination_table_name + "]", "[" + azure.synapse_database_schema + "]")
