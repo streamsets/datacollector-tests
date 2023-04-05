@@ -245,7 +245,7 @@ def test_connection_types(
         # as ValidationError and others as JSONDecodeError
         with pytest.raises((ValidationError, JSONDecodeError)) as err:
             handler.validate_pipeline(pipeline)
-        assert type(err) == JSONDecodeError or expected_error in err.value.issues[STAGE_ISSUES]
+        assert type(err.value) == JSONDecodeError or expected_error in err.value.issues[STAGE_ISSUES]
 
 
 @pytest.mark.parametrize(
