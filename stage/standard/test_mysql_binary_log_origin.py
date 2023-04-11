@@ -163,28 +163,66 @@ def test_data_types(
 # Rules: https://dev.mysql.com/doc/refman/8.0/en/identifier-length.html
 # Rules: https://dev.mysql.com/doc/refman/8.0/en/identifiers.html
 OBJECT_NAMES = [
-    ('keywords', 'table', 'column'),
-    ('lowercase', get_random_string(string.ascii_lowercase, 20), get_random_string(string.ascii_lowercase, 20)),
-    ('uppercase', get_random_string(string.ascii_uppercase, 20), get_random_string(string.ascii_uppercase, 20)),
-    ('mixedcase', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 20)),
-    ('max_table_name', get_random_string(string.ascii_letters, 64), get_random_string(string.ascii_letters, 20)),
-    ('max_column_name', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 64)),
-    ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
-    ('special', get_random_string(string.ascii_letters, 5) + "$_", get_random_string(string.ascii_letters, 5) + "$_"),
+    ('keywords', 'schema_name', 'table', 'column'),
+    (
+        'lowercase',
+        get_random_string(string.ascii_lowercase, 20),
+        get_random_string(string.ascii_lowercase, 20),
+        get_random_string(string.ascii_lowercase, 20)
+    ), (
+        'uppercase',
+        get_random_string(string.ascii_uppercase, 20),
+        get_random_string(string.ascii_uppercase, 20),
+        get_random_string(string.ascii_uppercase, 20)
+    ), (
+        'mixedcase',
+        get_random_string(string.ascii_letters, 20),
+        get_random_string(string.ascii_letters, 20),
+        get_random_string(string.ascii_letters, 20)
+    ), (
+        'max_table_name',
+        get_random_string(string.ascii_letters, 64),
+        get_random_string(string.ascii_letters, 64),
+        get_random_string(string.ascii_letters, 20)
+    ), (
+        'max_column_name',
+        get_random_string(string.ascii_letters, 20),
+        get_random_string(string.ascii_letters, 20),
+        get_random_string(string.ascii_letters, 64)
+    ), (
+        'numbers',
+        get_random_string(string.ascii_letters, 5) + "0123456789",
+        get_random_string(string.ascii_letters, 5) + "0123456789",
+        get_random_string(string.ascii_letters, 5) + "0123456789"
+    ), (
+        'special',
+        get_random_string(string.ascii_letters, 5) + "$_",
+        get_random_string(string.ascii_letters, 5) + "$_",
+        get_random_string(string.ascii_letters, 5) + "$_"
+    ), (
+        'dashed',
+        get_random_string(string.ascii_letters, 5) + "-",
+        get_random_string(string.ascii_letters, 5) + "-",
+        get_random_string(string.ascii_letters, 5) + "-"
+    )
 ]
 
 
 @database('mysql')
-@pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
+@pytest.mark.parametrize('test_name,schema_name,table_name,offset_name', OBJECT_NAMES, ids=[i[0] for i in OBJECT_NAMES])
 def test_object_names(
         sdc_builder,
         sdc_executor,
         database,
         test_name,
+        schema_name,
         table_name,
         offset_name,
         keep_data
 ):
+    if test_name == 'dashed' and Version(sdc_builder.version) < Version('5.6.0'):
+        pytest.skip('Table and schema names with dashes were not correctly processed until SDC version 5.6.0')
+
     connection = database.engine.connect()
 
     builder = sdc_builder.get_pipeline_builder()
@@ -192,7 +230,7 @@ def test_object_names(
     origin = builder.add_stage('MySQL Binary Log')
     origin.initial_offset = _get_initial_offset(database)
     origin.server_id = _get_server_id()
-    origin.include_tables = database.database + '.' + table_name
+    origin.include_tables = schema_name + '.' + table_name
 
     wiretap = builder.add_wiretap()
     origin >> wiretap.destination
@@ -204,9 +242,13 @@ def test_object_names(
         table_name,
         metadata,
         sqlalchemy.Column(offset_name, sqlalchemy.Integer, primary_key=True, quote=True),
-        quote=True
+        quote=True,
+        schema=schema_name
     )
     try:
+        logger.info('Creating schema %s in %s database ...', schema_name, database.type)
+        database.engine.execute(sqlalchemy.schema.CreateSchema(schema_name))
+
         logger.info('Creating table %s in %s database ...', table_name, database.type)
         table.create(database.engine)
 
@@ -225,8 +267,11 @@ def test_object_names(
         assert wiretap.output_records[0].field['Data'][offset_name] == 1
     finally:
         if not keep_data:
-            logger.info('Dropping table %s in %s database...', table_name, database.type)
-            table.drop(database.engine)
+            logger.info(f'Dropping table {table_name} in {database.type} database...')
+            connection.execute(f'DROP TABLE IF EXISTS `{table_name}`')
+
+            logger.info(f'Dropping schema {schema_name} in {database.type} database')
+            connection.execute(f'DROP SCHEMA IF EXISTS `{schema_name}`')
 
 
 @database('mysql')
