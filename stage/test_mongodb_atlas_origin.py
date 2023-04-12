@@ -1022,7 +1022,7 @@ def test_mongodb_atlas_origin_read_write_uuid(sdc_builder, sdc_executor, mongodb
     database = get_random_string(ascii_letters, 5)
     collection = get_random_string(ascii_letters, 5)
 
-    data = [{'_id': str(uuid.uuid1()), 'uuid': str(uuid.uuid4())}]
+    data = [{'id': str(uuid.uuid1()), 'uuid': str(uuid.uuid4())}]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -1071,7 +1071,7 @@ def test_mongodb_atlas_origin_read_write_uuid(sdc_builder, sdc_executor, mongodb
         mongodb_documents = [doc for doc in mongodb.engine[mongodb_atlas_destination.database][
             mongodb_atlas_destination.collection].find()]
         assert len(mongodb_documents) == 1
-        assert mongodb_documents[0]['_id'] == data[0]['_id']
+        assert mongodb_documents[0]['id'] == data[0]['id']
         assert mongodb_documents[0]['uuid'] == data[0]['uuid']
 
     finally:
