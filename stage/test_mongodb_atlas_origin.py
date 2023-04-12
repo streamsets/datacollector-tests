@@ -961,7 +961,7 @@ def test_mongodb_atlas_origin_uuid_modes(sdc_builder, sdc_executor, mongodb, uui
     database = get_random_string(ascii_letters, 5)
     collection = get_random_string(ascii_letters, 5)
 
-    data = [{'_id': str(uuid.uuid1()), 'uuid': str(uuid.uuid4())}]
+    data = [{'id': str(uuid.uuid1()), 'uuid': str(uuid.uuid4())}]
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -1000,7 +1000,7 @@ def test_mongodb_atlas_origin_uuid_modes(sdc_builder, sdc_executor, mongodb, uui
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database), timeout_sec=120)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert data == [{'_id': record.field['_id'].value, 'uuid': record.field['uuid'].value}
+        assert data == [{'id': record.field['id'].value, 'uuid': record.field['uuid'].value}
                         for record in wiretap.output_records]
 
     finally:
