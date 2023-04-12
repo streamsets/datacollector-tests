@@ -58,6 +58,8 @@ def test_stream_name(sdc_builder, sdc_executor, aws, test_name, stream_generator
                           raw_data='\n'.join(expected_data),
                           stop_after_first_batch=True)
 
+    pipeline = None
+
     # Create Kinesis stream and capture the ShardId
     client = aws.kinesis
     try:
@@ -99,7 +101,7 @@ def test_stream_name(sdc_builder, sdc_executor, aws, test_name, stream_generator
         assert msgs_received == expected_data
 
     finally:
-        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
         if not keep_data:
             logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
