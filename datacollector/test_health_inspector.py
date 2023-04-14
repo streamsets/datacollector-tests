@@ -48,6 +48,7 @@ def test_inspector_list(sdc_executor):
     'Max Private ClassLoader',
     'Max Runner Size',
     'Max Pipeline Runner Size',
+    'WebSocket Tunneling Enabled',
 ])
 def test_configuration_category(sdc_executor, entry_name):
     """All configuration checks should be green by default - no point in shipping configuration that is read/yellow."""
