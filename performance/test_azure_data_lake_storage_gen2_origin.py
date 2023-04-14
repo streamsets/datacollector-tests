@@ -81,7 +81,9 @@ def test_data_lake_origin(sdc_builder, sdc_executor, azure, threads, keep_data):
         benchmark_stages = pipeline_builder.add_benchmark_stages()
         azure_data_lake_storage_gen2 = pipeline_builder.add_stage(name=ADLS_GEN2_ORIGIN)
         azure_data_lake_storage_gen2.set_attributes(data_format='TEXT',
-                                                    common_prefix=f'/{directory_name}',
+                                                    files_directory=f'/{directory_name}',
+                                                    file_name_pattern='*',
+                                                    process_subdirectories=True,
                                                     number_of_threads=threads)
         azure_data_lake_storage_gen2 >> benchmark_stages.destination
         pipeline = pipeline_builder.build().configure_for_environment(azure)

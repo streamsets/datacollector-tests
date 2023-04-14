@@ -38,7 +38,7 @@ def test_blob_storage_origin(sdc_builder, sdc_executor, azure, threads, keep_dat
         benchmark_stages = pipeline_builder.add_benchmark_stages()
         azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
         azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                                 common_prefix=f'/{directory_name}',
+                                                 common_path=f'/{directory_name}',
                                                  number_of_threads=threads)
         azure_blob_storage_origin >> benchmark_stages.destination
         pipeline = pipeline_builder.build().configure_for_environment(azure)

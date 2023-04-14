@@ -74,7 +74,7 @@ def test_data_lake_origin(sdc_builder, sdc_executor, azure, read_order):
         wiretap = builder.add_wiretap()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_prefix=f'/{directory_name}',
+                                              common_path=f'/{directory_name}',
                                               read_order=read_order)
         azure_data_lake_origin >> wiretap.destination
 
@@ -123,7 +123,7 @@ def test_data_lake_origin_with_avro(sdc_builder, sdc_executor, azure):
         origin = builder.add_stage(name=STAGE_NAME)
         origin.set_attributes(data_format='AVRO',
                               avro_schema_location='SOURCE',
-                              common_prefix=f'/{directory_name}')
+                              common_path=f'/{directory_name}')
         wiretap = builder.add_wiretap()
         origin >> wiretap.destination
 
@@ -170,7 +170,7 @@ def test_parse_timestamp_data_lake_origin(sdc_builder, sdc_executor, azure):
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         wiretap = builder.add_wiretap()
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_prefix=f'/{directory_name}',
+                                              common_path=f'/{directory_name}',
                                               include_metadata=True)
         azure_data_lake_origin >> wiretap.destination
 
@@ -217,7 +217,7 @@ def test_data_lake_origin_stop_go(sdc_builder, sdc_executor, azure):
         wiretap = builder.add_wiretap()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_prefix=f'/{directory_name}')
+                                              common_path=f'/{directory_name}')
         azure_data_lake_origin >> wiretap.destination
 
         data_lake_origin_pipeline = builder.build().configure_for_environment(azure)
@@ -283,7 +283,7 @@ def test_data_lake_origin_events(sdc_builder, sdc_executor, azure):
         wiretap_events = builder.add_wiretap()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_prefix=f'/{directory_name}')
+                                              common_path=f'/{directory_name}')
 
         pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
         pipeline_finisher_executor.set_attributes(
@@ -341,7 +341,7 @@ def test_data_lake_origin_resume_offset(sdc_builder, sdc_executor, azure):
         wiretap = builder.add_wiretap()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_prefix=f'/{directory_name}')
+                                              common_path=f'/{directory_name}')
         azure_data_lake_origin >> wiretap.destination
 
         data_lake_origin_pipeline = builder.build().configure_for_environment(azure)
@@ -374,8 +374,8 @@ def test_data_lake_origin_resume_offset(sdc_builder, sdc_executor, azure):
         dl_fs.rmdir(directory_name, recursive=True)
 
 
-@pytest.mark.parametrize('prefix_pattern', ['**', '**/*.txt', '*', '*/*', '*/*1/*', 'a/*', 'a/**', 'b/b*/**', 'c'])
-def test_data_lake_origin_prefix_pattern(sdc_builder, sdc_executor, azure, prefix_pattern):
+@pytest.mark.parametrize('path_pattern', ['**', '**/*.txt', '*', '*/*', '*/*1/*', 'a/*', 'a/**', 'b/b*/**', 'c'])
+def test_data_lake_origin_path_pattern(sdc_builder, sdc_executor, azure, path_pattern):
     """Test prefix pattern expressions for Data Lake origin.
 
     Prefix pattern (ANT pattern) takes care of the client when choosing which files to process, while common prefix is
@@ -424,7 +424,7 @@ def test_data_lake_origin_prefix_pattern(sdc_builder, sdc_executor, azure, prefi
         filepath = os.path.join(rootdir, path, 'file.txt')
         fs.touch(filepath)
         fs.write(filepath, data)
-        if path in expected_walk[prefix_pattern]:
+        if path in expected_walk[path_pattern]:
             expected_output += [data]
 
     try:
@@ -432,8 +432,8 @@ def test_data_lake_origin_prefix_pattern(sdc_builder, sdc_executor, azure, prefi
         builder = sdc_builder.get_pipeline_builder()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_prefix=f'/{rootdir}',
-                                              prefix_pattern=prefix_pattern)
+                                              common_path=f'/{rootdir}',
+                                              path_pattern=path_pattern)
         wiretap = builder.add_wiretap()
 
         azure_data_lake_origin >> wiretap.destination
@@ -492,9 +492,9 @@ def test_file_postprocessing(sdc_builder, sdc_executor, azure, action):
         builder = sdc_builder.get_pipeline_builder()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_prefix=f'/{rootdir}',
+                                              common_path=f'/{rootdir}',
                                               post_processing_option=action,
-                                              post_processing_prefix=f'/{archive_dir}',
+                                              post_processing_path=f'/{archive_dir}',
                                               error_handling_option='DELETE')
         trash = builder.add_stage('Trash')
         azure_data_lake_origin >> trash

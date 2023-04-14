@@ -77,7 +77,7 @@ def test_object_names(sdc_builder, sdc_executor, azure, test_name, object_name):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                             common_prefix=f'/{directory_name}')
+                                             common_path=f'/{directory_name}')
     wiretap = pipeline_builder.add_wiretap()
 
     azure_blob_storage_origin >> wiretap.destination
@@ -121,7 +121,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, azure):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                             common_prefix=f'/{directory_name}')
+                                             common_path=f'/{directory_name}')
     wiretap = pipeline_builder.add_wiretap()
     trash = pipeline_builder.add_stage("Trash")
 
@@ -168,7 +168,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                             common_prefix=f'/{directory_name}',
+                                             common_path=f'/{directory_name}',
                                              batch_wait_time_in_ms=20_000,
                                              max_batch_size_in_records=max_batch_size)
     wiretap = pipeline_builder.add_wiretap()
@@ -215,7 +215,7 @@ def test_data_format_whole_file(sdc_builder, sdc_executor, azure):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='WHOLE_FILE',
-                                             common_prefix=f'/{directory_name}')
+                                             common_path=f'/{directory_name}')
     wiretap = pipeline_builder.add_wiretap()
 
     azure_blob_storage_origin >> wiretap.destination
@@ -289,7 +289,7 @@ def test_multithreading(sdc_builder, sdc_executor, azure, threads):
         builder = sdc_builder.get_pipeline_builder()
         azure_blob_storage_origin = builder.add_stage(name=STAGE_NAME)
         azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                                 common_prefix=f'/{rootdir}',
+                                                 common_path=f'/{rootdir}',
                                                  number_of_threads=threads)
         wiretap = builder.add_wiretap()
 
@@ -329,7 +329,7 @@ def test_resume_offset(sdc_builder, sdc_executor, azure):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                             common_prefix=f'/{directory_name}',
+                                             common_path=f'/{directory_name}',
                                              batch_wait_time_in_ms=20_000,
                                              max_batch_size_in_records=max_batch_size)
     wiretap = pipeline_builder.add_wiretap()
@@ -389,7 +389,7 @@ def test_empty_objects(sdc_builder, sdc_executor, azure, ignore_empty_blobs):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                             common_prefix=f'/{directory_name}',
+                                             common_path=f'/{directory_name}',
                                              ignore_empty_blobs=ignore_empty_blobs)
     wiretap = pipeline_builder.add_wiretap()
 
@@ -424,7 +424,7 @@ def test_empty_folder(sdc_builder, sdc_executor, azure):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='WHOLE_FILE',
-                                             common_prefix=f'/{directory_name}')
+                                             common_path=f'/{directory_name}')
     wiretap = pipeline_builder.add_wiretap()
 
     azure_blob_storage_origin >> wiretap.destination

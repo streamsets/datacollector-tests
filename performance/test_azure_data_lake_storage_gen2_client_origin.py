@@ -38,7 +38,7 @@ def test_data_lake_origin(sdc_builder, sdc_executor, azure, threads, keep_data):
         benchmark_stages = pipeline_builder.add_benchmark_stages()
         azure_data_lake_origin = pipeline_builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_prefix=f'/{directory_name}',
+                                              common_path=f'/{directory_name}',
                                               number_of_threads=threads)
         azure_data_lake_origin >> benchmark_stages.destination
         pipeline = pipeline_builder.build().configure_for_environment(azure)
