@@ -50,6 +50,8 @@ KAFKA_NAMES = [
 ]
 
 
+PROTOBUF_FILE_PATH = 'resources/protobuf/addressbook.desc'
+
 @pytest.fixture(autouse=True)
 def kafka_check(cluster):
     if isinstance(cluster, ClouderaManagerCluster) and not hasattr(cluster, 'kafka'):
@@ -580,34 +582,27 @@ def test_data_format_protobuf(sdc_builder, sdc_executor, cluster):
     MESSAGE_TYPE = 'Contact'
     EXPECTED_OUTPUT = {'first_name': 'Martin', 'last_name': 'Balzamo'}
     topic = get_random_string()
-    protobuf_descriptor_filename = f'{get_random_string()}.desc'
 
     # We keep a pre-compiled Protobuf descriptor file in the stages/resources/protobuf folder. We write this
     # into the Data Collector instance's SDC_RESOURCES folder.
-    try:
-        with open(os.path.join(os.path.dirname(__file__), 'resources', 'protobuf', 'addressbook.desc'), 'rb') as f:
-            sdc_executor.write_file(f'${{SDC_RESOURCES}}/{protobuf_descriptor_filename}', f.read().decode('latin-1'))
-        producer = cluster.kafka.producer()
-        producer.send(topic, MESSAGE)
-        producer.flush()
+    producer = cluster.kafka.producer()
+    producer.send(topic, MESSAGE)
+    producer.flush()
 
-        pipeline_builder = sdc_builder.get_pipeline_builder()
-        kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
-        kafka_consumer.set_attributes(data_format='PROTOBUF',
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    kafka_consumer = pipeline_builder.add_stage('Kafka Consumer', library=cluster.kafka.standalone_stage_lib)
+    kafka_consumer.set_attributes(data_format='PROTOBUF',
                                       message_type=MESSAGE_TYPE,
-                                      protobuf_descriptor_file=protobuf_descriptor_filename,
+                                      protobuf_descriptor_file=PROTOBUF_FILE_PATH,
                                       topic=topic)
-        wiretap = pipeline_builder.add_wiretap()
-        pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
-        kafka_consumer >> [wiretap.destination, pipeline_finisher]
-        pipeline = pipeline_builder.build().configure_for_environment(cluster)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    kafka_consumer >> [wiretap.destination, pipeline_finisher]
+    pipeline = pipeline_builder.build().configure_for_environment(cluster)
 
-        sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
-    finally:
-        sdc_executor.execute_shell(f'rm ${{SDC_RESOURCES}}/{protobuf_descriptor_filename}')
-
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert [record.field for record in wiretap.output_records] == [EXPECTED_OUTPUT]
 
 @cluster('cdh', 'kafka')
 def test_data_format_text(sdc_builder, sdc_executor, cluster):
