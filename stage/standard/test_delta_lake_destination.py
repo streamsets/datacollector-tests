@@ -314,7 +314,8 @@ def test_with_aws_s3_storage_cdc(sdc_builder, sdc_executor, deltalake, aws, auto
                                         enable_data_drift=auto_create_table,
                                         auto_create_table=auto_create_table,
                                         merge_cdc_data=True,
-                                        key_columns=[{
+                                        primary_key_location="TABLE",
+                                        table_key_columns=[{
                                             "keyColumns": [
                                                 "NAME"
                                             ],
@@ -426,7 +427,8 @@ def test_cdc_deltalake_multiple_ops_two_batches(sdc_builder, sdc_executor, delta
                                         enable_data_drift=True,
                                         auto_create_table=True,
                                         merge_cdc_data=True,
-                                        key_columns=[{
+                                        primary_key_location="TABLE",
+                                        table_key_columns=[{
                                             "keyColumns": [
                                                 "ID"
                                             ],
@@ -1150,7 +1152,8 @@ def test_cdc_with_partitioned_table(sdc_builder, sdc_executor, deltalake, aws, p
                                         enable_data_drift=False,
                                         auto_create_table=False,
                                         merge_cdc_data=True,
-                                        key_columns=[{
+                                        primary_key_location="TABLE",
+                                        table_key_columns=[{
                                             "keyColumns": [
                                                 "NAME"
                                             ],

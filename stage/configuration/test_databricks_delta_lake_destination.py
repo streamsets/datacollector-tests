@@ -14,6 +14,10 @@ pytestmark = [deltalake, sdc_min_version('5.5.0')]
 
 logger = logging.getLogger(__name__)
 
+PRIMARY_KEY_COLUMN_OLD_VALUE = 'jdbc.primaryKey.before'
+PRIMARY_KEY_COLUMN_NEW_VALUE = 'jdbc.primaryKey.after'
+PRIMARY_KEY_SPECIFICATION = 'jdbc.primaryKeySpecification'
+
 ROWS_IN_DATABASE = [
     {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future",
      "author": "Ashlee Vance",
@@ -59,6 +63,98 @@ ROWS_IN_DATABASE_WITH_NEWLINE = [
      "author": "Ashlee Vance",
      "genre": "Biography",
      "publisher": "HarperCollins Publishers"}
+]
+
+CDC_PK_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY_HEADER = [
+    {
+        'sdc.operation.type': 1,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 2,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 2,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit - Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 3,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit - Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 3,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 4,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit, Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 4,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 4,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit, Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'
+    }
+]
+
+CDC_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY = [
+    {
+        'TYPE': 'Hobbit',
+        'ID': 1,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 0'
+    }, {
+        'TYPE': 'Fallohide',
+        'ID': 1,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 1'
+    }, {
+        'TYPE': 'Fallohide',
+        'ID': 2,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 2'
+    }, {
+        'TYPE': 'Hobbit - Fallohide',
+        'ID': 3,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 3'
+    }, {
+        'TYPE': 'Hobbit, Fallohide',
+        'ID': 3,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 4'
+    }, {
+        'TYPE': 'Hobbit, Fallohide',
+        'ID': 4,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 5'
+    }, {
+        'TYPE': 'Hobbit, Fallohide',
+        'ID': 4,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 6'
+    }
 ]
 
 
@@ -163,7 +259,7 @@ def test_decimal_default(sdc_builder, sdc_executor):
 @aws('s3')
 def test_directory_for_table_location(sdc_builder, sdc_executor, deltalake, aws):
     """Test for Databricks Delta Lake with AWS S3 storage.
-    Verifies that the propeerty for table location respects where the table is created
+    Verifies that the property for table location respects where the table is created
 
     The pipeline looks like this:
         dev_raw_data_source >> databricks_deltalake
@@ -262,6 +358,94 @@ def test_key_columns(sdc_builder, sdc_executor, stage_attributes):
 @pytest.mark.parametrize('stage_attributes', [{'merge_cdc_data': False}, {'merge_cdc_data': True}])
 def test_merge_cdc_data(sdc_builder, sdc_executor, stage_attributes):
     pass
+
+
+@aws('s3')
+def test_cdc_jdbc_header(sdc_builder, sdc_executor, deltalake, aws):
+    """ We will set up the headers the same way JDBC origins do. We will use primary_key_location="HEADER"
+
+    The pipeline looks like:
+    Databricks deltalake pipeline:
+        dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> databricks_deltalake
+    """
+
+    table_name = f'stf_{get_random_string()}'
+
+    engine = deltalake.engine
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Build Dev Raw
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    rows = CDC_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY
+    for row, header in zip(rows, CDC_PK_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY_HEADER):
+        row['HEADER'] = header
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       json_content='ARRAY_OBJECTS',
+                                       raw_data=json.dumps(rows),
+                                       stop_after_first_batch=True)
+    # Build Expression Evaluator
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {
+            'attributeToSet': 'sdc.operation.type',
+            'headerAttributeExpression': "${record:value('/HEADER/sdc.operation.type')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID',
+            'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_OLD_VALUE + ".ID')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID',
+            'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_NEW_VALUE + ".ID')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE',
+            'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_OLD_VALUE + ".TYPE')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE',
+            'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_NEW_VALUE + ".TYPE')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_SPECIFICATION}',
+            'headerAttributeExpression': '{\"ID\":{}, \"TYPE\":{}}'
+        }
+    ])
+
+    # Build Field Remover
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ['/HEADER']
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location="AWS_S3",
+                                        stage_file_prefix=s3_key)
+    databricks_deltalake.set_attributes(table_name=table_name,
+                                        purge_stage_file_after_ingesting=True,
+                                        enable_data_drift=True,
+                                        auto_create_table=True,
+                                        merge_cdc_data=True,
+                                        primary_key_location="HEADER")
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> databricks_deltalake
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        connection = engine.connect()
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        result = connection.execute(f'select * from {table_name}')
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[0])
+        result.close()
+
+        expected_data = rows[6]
+        assert data_from_database == [(expected_data['TYPE'], expected_data['ID'],
+                                       expected_data['NAME'], expected_data['SURNAME'], expected_data['ADDRESS'])]
+
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+        _clean_up_databricks(deltalake, table_name)
+
 
 
 @aws('s3')
@@ -431,6 +615,8 @@ def test_cdc_null_value(sdc_builder, sdc_executor, deltalake, aws, null_value):
     # AWS S3 destination
     s3_key = f'stf-deltalake/{get_random_string()}'
 
+    table_key_columns = [{"keyColumns": ["ID"], "table": table_name}]
+
     # Databricks Delta lake destination stage
     databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
     databricks_deltalake.set_attributes(staging_location="AWS_S3",
@@ -441,12 +627,8 @@ def test_cdc_null_value(sdc_builder, sdc_executor, deltalake, aws, null_value):
                                         enable_data_drift=True,
                                         auto_create_table=True,
                                         merge_cdc_data=True,
-                                        key_columns=[{
-                                            "keyColumns": [
-                                                "ID"
-                                            ],
-                                            "table": table_name
-                                        }])
+                                        primary_key_location="TABLE",
+                                        table_key_columns=table_key_columns)
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> databricks_deltalake
 
