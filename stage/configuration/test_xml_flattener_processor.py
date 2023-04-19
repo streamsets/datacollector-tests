@@ -399,11 +399,9 @@ def test_overwrite_existing_fields(sdc_builder, sdc_executor, stage_attributes):
                               'contact.phone(0)': '111111',
                               'contact.phone(1)': '222222'}]
         elif stage_attributes['overwrite_existing_fields'] == True:
-            # looks like bug as same result getting produced with True value as well. Tracking JIRA- COLLECTOR-2909
             expected_data = [{'text': '<contact><name>NAME1</name><phone>111111</phone><phone>222222</phone></contact>',
                               'contact.name':'NAME1',
-                              'contact.phone(0)': '111111',
-                              'contact.phone(1)': '222222'}]
+                              'contact.phone': '222222'}]
         assert items == expected_data
     finally:
         sdc_executor.remove_pipeline(pipeline)
