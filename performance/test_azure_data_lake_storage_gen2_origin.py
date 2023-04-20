@@ -69,6 +69,7 @@ def test_initial_scan(sdc_builder, sdc_executor, azure, keep_data):
             fs.rmdir(directory_name, recursive=True)
 
 
+@azure('datalake')
 @pytest.mark.parametrize('threads', [1, 5, 15])
 def test_data_lake_origin(sdc_builder, sdc_executor, azure, threads, keep_data):
     """Benchmark ADLS Gen2 origin loading speed"""
