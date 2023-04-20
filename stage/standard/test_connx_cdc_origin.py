@@ -29,30 +29,37 @@ pytestmark = [pytest.mark.connx, sdc_min_version('5.4.0')]
 def prepare_CDC(connx, table_name, table_id, transform_name):
     with connx.get_connection() as conn:
         with conn.cursor() as cursor:
+            logger.info(f'Creating table {table_name}...')
             cursor.execute(
                 f'CREATE TABLE localhost.dbo.{table_name} (id INTEGER, tinyintval TINYINT, smallintval SMALLINT,'
                 f'intval INT, decimalval DECIMAL(5,2), numericval NUMERIC(5,2), doubleval DOUBLE,'
                 f'realval REAL, bitval BIT, dateval DATE, timestampval TIMESTAMP, charval CHAR(5),'
                 f'varcharval VARCHAR(5), longvarcharval LONGVARCHAR(5), ncharval NCHAR(5), binaryval BINARY,'
                 f'varbinaryval VARBINARY(8), longvarbinaryval LONGVARBINARY(8), PRIMARY KEY (ID));')
+            logger.info(f'Creating table index for {table_name}...')
             cursor.execute(f'CREATE UNIQUE INDEX {table_name}_INDEX ON localhost.dbo.{table_name} (ID);')
+            logger.info(f'Adding table {table_name} to DataSync TableList...')
             cursor.execute(
                 f'INSERT INTO CONNXDataSync.datasync.TableList (TableID,TableName,SynchronizationCategoryID,'
                 f'TransformSQL,TransformTargetTable,TransformSourceTableForGuiPath,TimeStampFilterField,'
                 f'LastDataTimestamp,DaylightSavingsType,DaylightSavingsBegins,DaylightSavingsEnds,DriftSeconds,'
                 f'DropAndRecreate,PurgeUsingDelete) VALUES ({table_id},\'{transform_name}\',1,\'SELECT * FROM "localhost"."dbo"."{table_name}"\','
                 f'\'\',\'localhost.dbo.{table_name}\',\'\',NULL,\'\',NULL,NULL,5,1,1);')
+            logger.info(f'Adding table {table_name} to DataSync TableMapper...')
             cursor.execute(
                 f'INSERT INTO CONNXDataSync.datasync.TableMapper (TableID,TargetColumnOrdinal,SourceExpression,'
                 f'SourceDataType,TargetColumn,TargetDataType,TargetSqlDataType,TargetSqlLength,TargetScale,'
                 f'TargetPrecision,TargetIsNullable,SourceColumnOrdinal)VALUES ({table_id},0,\'ID\',\'4\',\'ID\',\'\','
                 f'4,4,0,0,1,0);')
+            logger.info(f'Adding table {table_name} to DataSync TargetTableIndex...')
             cursor.execute(
                 f'INSERT INTO CONNXDataSync.datasync.TargetTableIndex (TableID,IndexID,IsUnique,IsPrimary,IsIndexUsedForSync,IndexName) '
                 f'VALUES ({table_id},1,-1,-1,NULL,\'{table_name}_INDEX\');')
+            logger.info(f'Adding table {table_name} to DataSync TargetTableIndexColumns...')
             cursor.execute(
                 f'INSERT INTO CONNXDataSync.datasync.TargetTableIndexColumns (TableID,IndexID,ColumnSequence,ColumnName,'
                 f'ColumnSortOrder) VALUES ({table_id},1,1,\'ID\',\'ASC\');')
+            logger.info(f'Executing CRC operations for transform {transform_name}...')
             cursor.execute(f'SELECT create_crc_baseline(\'{transform_name}\');')
             cursor.execute(f'SELECT create_crc_savepoint(\'{transform_name}\');')
             cursor.execute(f'SELECT create_crc_finalize(\'{transform_name}\');')
