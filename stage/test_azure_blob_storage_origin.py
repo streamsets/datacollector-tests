@@ -463,6 +463,8 @@ def test_file_postprocessing(sdc_builder, sdc_executor, azure, action):
     Pipeline:  azure_blob_storage_origin >> trash
 
     """
+    if action == 'ARCHIVE' and azure.adls_gen2_auth_method != 'OAUTH':
+        pytest.skip("Copy Blob operation is not enabled in our Azure account if not using OAuth")
     fs = azure.datalake.file_system
 
     # Variable `files` define the directory tree employed in the test. Keys are the directories and values are
