@@ -15,6 +15,7 @@
 import logging
 import pytest
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 
 
@@ -52,6 +53,9 @@ def test_inspector_list(sdc_executor):
 ])
 def test_configuration_category(sdc_executor, entry_name):
     """All configuration checks should be green by default - no point in shipping configuration that is read/yellow."""
+    if Version(sdc_executor.version) < Version('5.6.0') and entry_name == 'WebSocket Tunneling Enabled':
+        pytest.skip("The 'WebSocket Tunneling Enabled' was added to the Health Inspector in SDC version 5.6.0")
+        
     report = sdc_executor.api_client.get_health_report('ConfigurationHealthCategory').response.json()
     assert len(report['categories']) == 1
 
