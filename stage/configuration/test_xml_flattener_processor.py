@@ -13,6 +13,7 @@
 # limitations under the License.
 import pytest
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
 
 
@@ -366,6 +367,10 @@ def test_overwrite_existing_fields(sdc_builder, sdc_executor, stage_attributes):
 
         dev_raw_data_source >> xml_flattener >> wiretap
     """
+    if Version(sdc_builder.version) < Version('5.6.0') and stage_attributes['overwrite_existing_fields']:
+        pytest.skip("The parameter 'overwrite_existing_fields' = True,"
+                    " behaves differently only from SDC version >= 5.6.0")
+
     raw_data = """<contact><name>NAME1</name><phone>111111</phone><phone>222222</phone></contact>"""
     pipeline_builder = sdc_builder.get_pipeline_builder()
     # Note that since the delimiter text '</dummy>' does not exist in input XML, the output of this stage is whole XML.
