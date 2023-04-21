@@ -12,27 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-import time
-
 import pytest
-import sqlalchemy
 
 from contextlib import ExitStack
 
 from streamsets.testframework.markers import database, sdc_min_version
-from streamsets.testframework.utils import get_random_string
-
 
 ORACLE_CDC = "Oracle CDC"
 RECORD_COUNT = 10**7
+MIN_ORACLE_VERSION = 18
 RELEASE_VERSION = "5.4.0"
 pytestmark = [database("oracle"), sdc_min_version(RELEASE_VERSION)]
 
 
 # TODO replace credentials fixture with .configure_for_environment once it is ready
-@database("oracle")
-def default_config(db):
+def _default_config(db):
     database = db
     service_name = "ORCLCDB"  # default value
     start_scn = 0  # default value
@@ -69,14 +63,29 @@ def default_config(db):
     }
 
 
+def _get_database_version(db):
+    with ExitStack() as exit_stack:
+        connection = db.engine.connect()
+        exit_stack.callback(connection.close)
+        db_version = connection.execute("SELECT version FROM product_component_version").fetchall()[0][0]
+        str_version_list = db_version.split(".")
+        version_list = [int(i) for i in str_version_list]
+        return version_list[0]  # return mayor version
+
+
+@database("oracle")
 @pytest.mark.parametrize("batch_size", [1_000, 10_000, 20_000])
 def test_defaults(sdc_builder, sdc_executor, database, origin_table, batch_size):
+
+    database_version = _get_database_version(database)
+    if database_version < MIN_ORACLE_VERSION:
+        pytest.skip(f"Oracle version {database_version} is not officially supported")
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     benchmark_stages = pipeline_builder.add_benchmark_stages()
 
     oracle_cdc = pipeline_builder.add_stage(ORACLE_CDC)
-    default_parameters = default_config(database)
+    default_parameters = _default_config(database)
     oracle_cdc.set_attributes(tables_filter=[{"tablesInclusionPattern": origin_table.name}], **default_parameters)
 
     oracle_cdc >> benchmark_stages.destination
