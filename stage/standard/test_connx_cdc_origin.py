@@ -64,11 +64,11 @@ def prepare_CDC(connx, table_name, table_id, transform_name):
             cursor.execute(f'SELECT create_crc_savepoint(\'{transform_name}\');')
             cursor.execute(f'SELECT create_crc_finalize(\'{transform_name}\');')
 
-def tear_down_CDC(connx, table_name, table_id, transform_name):
+def tear_down_CDC(connx, table_name, table_id):
     with connx.get_connection() as conn:
         with conn.cursor() as cursor:
             logger.info(f'Tear the environment down')
-            cursor.execute(f'delete from CONNXDataSync.datasync.TableList where TableName = \'{transform_name}\';')
+            cursor.execute(f'delete from CONNXDataSync.datasync.TableList where TableID = {table_id};')
             cursor.execute(f'delete from CONNXDataSync.datasync.TableMapper where TableID = {table_id};')
             cursor.execute(f'delete from CONNXDataSync.datasync.TargetTableIndex where TableID = {table_id};')
             cursor.execute(f'delete from CONNXDataSync.datasync.TargetTableIndexColumns where TableID = {table_id};')
@@ -123,7 +123,6 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
                 cursor.execute(f"INSERT INTO {table_name} (id, {connx_type}) VALUES(2,NULL)")
 
         builder = sdc_builder.get_pipeline_builder()
-
         origin = builder.add_stage('CONNX CDC')
         origin.datasync_transform = transform_name
 
@@ -152,7 +151,7 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
         assert record.field[connx_type]._data['value'] == expected_value
         assert null_record.field[connx_type] == None
     finally:
-        tear_down_CDC(connx, table_name, table_id, transform_name)
+        tear_down_CDC(connx, table_name, table_id)
 
 
 def test_object_names(sdc_builder, sdc_executor, connx):
@@ -211,7 +210,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, connx):
             assert record.field['id'] == expected_number
             expected_number = expected_number + 1
     finally:
-        tear_down_CDC(connx, table_name, table_id, transform_name)
+        tear_down_CDC(connx, table_name, table_id)
 
 
 def test_dataflow_events(sdc_builder, sdc_executor, connx):
@@ -281,7 +280,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx):
         assert 'timestamp' in records[4].field
         assert 'query' in records[4].field
     finally:
-        tear_down_CDC(connx, table_name, table_id, transform_name)
+        tear_down_CDC(connx, table_name, table_id)
 
 
 def test_data_format(sdc_builder, sdc_executor, connx, keep_data):
