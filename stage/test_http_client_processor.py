@@ -351,16 +351,18 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
 
 
 @http
-@sdc_min_version("3.17.0")
+@sdc_min_version("5.6.0")
 @pytest.mark.parametrize("one_request_per_batch", [True, False])
-def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, http_client, one_request_per_batch):
+@pytest.mark.parametrize("on_record_error", ['TO_ERROR', 'DISCARD', 'STOP_PIPELINE'])
+def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, http_client, one_request_per_batch, on_record_error):
     """
         When the Batch Wait Time is not big enough and there is a retry action configured it can be the batch time
-        expires before the number of retries is finished yet. In this case an stage error must be raised explaining
-        the reason. We force the error to appear by configuring the pipeline to stop when it finds an stage error.
+        expires before the number of retries is finished yet. In this case the part of the batch that was already
+        computed should continue down the stream and the rest of records that weren't able to be processed because
+        of the timeout should go to error records just in case the user wants to reprocess them.
 
         We use the pipeline:
-             dev_raw_data_source >> http_client_processor >> trash
+             dev_raw_data_source >> http_client_processor >> wiretap
     """
     one_request_per_batch_option = {}
     if Version(sdc_builder.version) < Version("4.4.0"):
@@ -371,10 +373,16 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
 
     mock_path = get_random_string(string.ascii_letters, 10)
     fake_mock_path = get_random_string(string.ascii_letters, 10)
-    raw_dict = dict(city='San Francisco')
-    raw_data = json.dumps(raw_dict)
-    record_output_field = 'result'
+
     http_mock = http_client.mock()
+    raw_data = f"""
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path}"}}
+    {{"id": 1, "url": "{http_mock.pretend_url}/{mock_path}"}}
+    {{"id": 2, "url": "{http_mock.pretend_url}/{fake_mock_path}"}}
+    {{"id": 3, "url": "{http_mock.pretend_url}/{mock_path}"}}
+    {{"id": 4, "url": "{http_mock.pretend_url}/{mock_path}"}}
+    """
+
     try:
         http_mock.when(
             rule=f'GET /{mock_path}'
@@ -383,40 +391,276 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
             status=200,
             times=FOREVER
         )
-        mock_uri = f'{http_mock.pretend_url}/{fake_mock_path}'
         builder = sdc_builder.get_pipeline_builder()
         dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
-        dev_raw_data_source.set_attributes(data_format='TEXT', raw_data=raw_data, stop_after_first_batch=True)
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+        # If we are using one request per batch, the URL would get solved using only the first record, this is
+        # because for this case, the url is explicitly set instead of using EL
+        resource_url = '${record:value("/url")}' if not one_request_per_batch else f'{http_mock.pretend_url}/{fake_mock_path}'
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
-        http_client_processor.set_attributes(data_format='JSON', default_request_content_type='application/text',
+        http_client_processor.set_attributes(data_format='TEXT', 
+                                             default_request_content_type='application/text',
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
-                                             http_method='GET', request_data="${record:value('/text')}",
-                                             resource_url=mock_uri,
-                                             output_field=f'/{record_output_field}',
+                                             http_method='GET', 
+                                             request_data="${record:value('/text')}",
+                                             output_field=f'/result',
+                                             resource_url=resource_url,
+                                             records_for_remaining_statuses = False,
+                                             batch_wait_time_in_ms = 1000,
+                                             multiple_values_behavior = 'ALL_AS_LIST',
+                                             per_status_actions = [
+                                                 {
+                                                     'statusCode': 404,
+                                                     'action': 'RETRY_LINEAR_BACKOFF',
+                                                     'backoffInterval': 1000,  # We force the batch timeout while retrying
+                                                     'maxNumRetries': 10
+                                                 },
+                                             ],
+                                             on_record_error = on_record_error,
                                              **one_request_per_batch_option)
 
-        http_client_processor.records_for_remaining_statuses = False
-        http_client_processor.batch_wait_time_in_ms = 150
-        http_client_processor.multiple_values_behavior = 'ALL_AS_LIST'
-        http_client_processor.per_status_actions = [
-            {
-                'statusCode': 404,
-                'action': 'RETRY_LINEAR_BACKOFF',
-                'backoffInterval': 100,
-                'maxNumRetries': 10
-            },
-        ]
-        http_client_processor.on_record_error = 'STOP_PIPELINE'
+        wiretap = builder.add_wiretap()
 
-        trash = builder.add_stage('Trash')
-        dev_raw_data_source >> http_client_processor >> trash
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+        pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions '
+                                       'Max wait Time is not enough stage error')
+        sdc_executor.add_pipeline(pipeline)
+        exception_at_start = None
+        try:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        except sdc_api.RunError as e:
+            exception_at_start = e
+
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+
+        if on_record_error == 'TO_ERROR':
+            assert exception_at_start is None
+            if one_request_per_batch:
+                assert len(output_records) == 0
+                assert len(error_records) == 5
+                assert [0,1,2,3,4] == sorted([r.field['id'] for r in error_records])
+            else:
+                assert len(output_records) == 2
+                assert len(error_records) == 3
+                assert [0,1] == sorted([r.field['id'] for r in output_records])
+                assert [2,3,4] == sorted([r.field['id'] for r in error_records])
+            assert all(r.header['errorCode'] == 'HTTP_67' for r in error_records)
+        elif on_record_error == 'DISCARD':
+            if one_request_per_batch:
+                assert exception_at_start is None
+                assert len(output_records) == 0
+                assert len(error_records) == 0
+            else:
+                assert exception_at_start is None
+                assert len(output_records) == 2
+                assert len(error_records) == 0
+                assert [0,1] == sorted([r.field['id'] for r in output_records])
+        elif on_record_error == 'STOP_PIPELINE':
+            assert exception_at_start is not None
+            assert 'HTTP_67' in exception_at_start.message
+            assert len(output_records) == 0
+            assert len(error_records) == 0
+        else:
+            raise Exception(f'Invalid on_record_error value: {on_record_error}')
+    finally:
+        logger.info("Deleting http mock")
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("5.6.0")
+@pytest.mark.parametrize("timeout_params", [
+        {"backoff_interval": 1500, "batch_timeout": 5000, "total_number_of_retries": 3}
+    ]
+)
+def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_batch(sdc_builder, sdc_executor, http_client, timeout_params):
+    if Version(sdc_builder.version) < Version("4.4.0"):
+        pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
+
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+    raw_data = f"""
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path}"}}
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path}"}}
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path}"}}
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path}"}}
+    """
+
+    try:
+        http_mock.when(rule=f'GET /{mock_path}').reply(body="Example", status=404, times=FOREVER)
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+        resource_url = f'{http_mock.pretend_url}/{mock_path}'
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='TEXT', 
+                                             default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='GET', 
+                                             request_data="${record:value('/text')}",
+                                             output_field=f'/result',
+                                             resource_url=resource_url,
+                                             records_for_remaining_statuses = False,
+                                             batch_wait_time_in_ms = timeout_params['batch_timeout'],
+                                             multiple_values_behavior = 'ALL_AS_LIST',
+                                             per_status_actions = [
+                                                 {
+                                                     'statusCode': 404,
+                                                     'action': 'RETRY_LINEAR_BACKOFF',
+                                                     'backoffInterval': timeout_params['backoff_interval'],
+                                                     'maxNumRetries': 100
+                                                 },
+                                             ],
+                                             on_record_error = 'STOP_PIPELINE',
+                                             one_request_per_batch = True)
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
         pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions '
                                        'Max wait Time is not enough stage error')
         sdc_executor.add_pipeline(pipeline)
 
         with pytest.raises(sdc_api.RunError) as exception_info:
-            sdc_executor.start_pipeline(pipeline)
-        assert 'HTTP_67 - ' in f'{exception_info.value}'
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert 'HTTP_67' in exception_info.value.message
+
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+        assert len(output_records) == 0
+        assert len(error_records) == 0
+
+        assert len(http_mock.get_request()) == timeout_params['total_number_of_retries']
+
+    finally:
+        logger.info("Deleting http mock")
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("5.6.0")
+@pytest.mark.parametrize("timeout_params", [
+        {"backoff_interval": 1500, "batch_timeout": 10_000, "total_number_of_requests": 6}  # 3 successful + 3 retries on last record (1s * 3 + 1.5s + 3s + 4.5s)
+    ]
+)
+def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_record(sdc_builder, sdc_executor, http_client, timeout_params):
+    mock_path_ok = get_random_string(string.ascii_letters, 10)
+    mock_path_ko = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+    raw_data = f"""
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path_ok}"}}
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path_ok}"}}
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path_ok}"}}
+    {{"id": 0, "url": "{http_mock.pretend_url}/{mock_path_ko}"}}
+    """
+
+    try:
+        http_mock.when(rule=f'GET /{mock_path_ok}').reply(body="Example", status=200, times=FOREVER, after=1)
+        http_mock.when(rule=f'GET /{mock_path_ko}').reply(body="Example", status=404, times=FOREVER)
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+        resource_url = '${record:value("/url")}'
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='TEXT', 
+                                             default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='GET', 
+                                             request_data="${record:value('/text')}",
+                                             output_field=f'/result',
+                                             resource_url=resource_url,
+                                             records_for_remaining_statuses = False,
+                                             batch_wait_time_in_ms = timeout_params['batch_timeout'],
+                                             multiple_values_behavior = 'ALL_AS_LIST',
+                                             per_status_actions = [
+                                                 {
+                                                     'statusCode': 404,
+                                                     'action': 'RETRY_LINEAR_BACKOFF',
+                                                     'backoffInterval': timeout_params['backoff_interval'],
+                                                     'maxNumRetries': 100
+                                                 },
+                                             ],
+                                             on_record_error = 'STOP_PIPELINE',
+                                             one_request_per_batch = False)
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+        pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions '
+                                       'Max wait Time is not enough stage error')
+        sdc_executor.add_pipeline(pipeline)
+
+        with pytest.raises(sdc_api.RunError) as exception_info:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert 'HTTP_67' in exception_info.value.message
+
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+        assert len(output_records) == 0
+        assert len(error_records) == 0
+
+        assert len(http_mock.get_request()) == timeout_params['total_number_of_requests']
+    finally:
+        logger.info("Deleting http mock")
+        http_mock.delete_mock()
+
+
+
+@http
+@sdc_min_version("5.6.0")
+@pytest.mark.parametrize("timeout_params", [
+        {"batch_timeout": 5000, 'response_wait_seconds': 2, 'number_of_records': 5, "total_number_of_requests": 3},
+        {"batch_timeout": 9000, 'response_wait_seconds': 2, 'number_of_records': 10, "total_number_of_requests": 5}
+    ]
+)
+def test_http_processor_batch_wait_timeout_on_slow_connections(sdc_builder, sdc_executor, http_client, timeout_params):
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+    raw_data = ('\n').join([f'{{"url": "{http_mock.pretend_url}/{mock_path}"}}']*timeout_params['number_of_records'])
+
+    try:
+        http_mock.when(rule=f'GET /{mock_path}').reply(body="Example", status=200, times=FOREVER, after=timeout_params['response_wait_seconds'])
+
+        builder = sdc_builder.get_pipeline_builder()
+        dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+        resource_url = '${record:value("/url")}'
+        http_client_processor = builder.add_stage('HTTP Client', type='processor')
+        http_client_processor.set_attributes(data_format='TEXT', 
+                                             default_request_content_type='application/text',
+                                             headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
+                                             http_method='GET', 
+                                             request_data="${record:value('/text')}",
+                                             output_field=f'/result',
+                                             resource_url=resource_url,
+                                             records_for_remaining_statuses = False,
+                                             batch_wait_time_in_ms = timeout_params['batch_timeout'],
+                                             multiple_values_behavior = 'ALL_AS_LIST',
+                                             on_record_error = 'STOP_PIPELINE')
+
+        wiretap = builder.add_wiretap()
+
+        dev_raw_data_source >> http_client_processor >> wiretap.destination
+        pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions '
+                                       'Max wait Time is not enough stage error')
+        sdc_executor.add_pipeline(pipeline)
+        with pytest.raises(sdc_api.RunError) as exception_info:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert 'HTTP_67' in exception_info.value.message
+
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+        assert len(output_records) == 0
+        assert len(error_records) == 0
+
+        assert len(http_mock.get_request()) == timeout_params['total_number_of_requests']
 
     finally:
         logger.info("Deleting http mock")
@@ -1008,8 +1252,8 @@ def test_http_client_processor_timeout(sdc_builder,
     else:
         one_request_per_batch_option = {"one_request_per_batch": one_request_per_batch, "request_data_format": "TEXT"}
 
+    http_mock_server = http_client.mock()
     try:
-
         logger.info(f'Running test: {timeout_mode} - {timeout_action} - {pass_record}')
 
         non_routable_ip = '192.168.255.255'
@@ -1022,7 +1266,6 @@ def test_http_client_processor_timeout(sdc_builder,
         short_time = 1
         long_time = (one_millisecond * wait_seconds * (retries + 2)) * 100
 
-        http_mock_server = http_client.mock()
         http_mock_path = get_random_string(string.ascii_letters, 10)
         http_mock_content = dict(kisei='Kobayashi Koichi', meijin='Ishida Yoshio', honinbo='Takemiya Masaki')
         http_mock_data = json.dumps(http_mock_content)
@@ -1059,7 +1302,7 @@ def test_http_client_processor_timeout(sdc_builder,
             connect_timeout = long_time
             read_timeout = long_time
             maximum_request_time_in_sec = long_time
-            batch_wait_time_in_ms = short_time
+            batch_wait_time_in_ms = short_time  # Forcing a batch timeout (HTTP_67)
         else:
             resource_url = http_mock_url_ko
             connect_timeout = no_time
@@ -1092,6 +1335,7 @@ def test_http_client_processor_timeout(sdc_builder,
                                              pass_record=pass_record,
                                              records_for_remaining_statuses=False,
                                              missing_values_behavior='SEND_TO_ERROR',
+                                             on_record_error='TO_ERROR',
                                              **one_request_per_batch_option)
 
 
@@ -1126,15 +1370,17 @@ def test_http_client_processor_timeout(sdc_builder,
 
         if timeout_action == 'STAGE_ERROR':
             if timeout_mode == 'record':
-                expected_error = 0
-                expected_message = 1
+                expected_error = 1
+                expected_error_code = 'HTTP_67'
+                expected_message = 0
             else:
                 expected_error = 0
                 expected_message = 0
         else:
             if timeout_mode == 'record':
-                expected_error = 0
-                expected_message = 1
+                expected_error = 1
+                expected_error_code = 'HTTP_67'
+                expected_message = 0
             else:
                 if expected_output == 0:
                     expected_error = 1
@@ -1174,7 +1420,6 @@ def test_http_client_processor_timeout(sdc_builder,
             assert pipeline_status == 'FINISHED'
 
     finally:
-
         http_mock_server.delete_mock()
 
 
