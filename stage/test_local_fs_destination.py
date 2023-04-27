@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
+import os
 import pytest
 import string
-import json
-from datetime import datetime, timedelta
+import tempfile
 
+from datetime import datetime, timedelta
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -95,3 +97,93 @@ def test_local_fs_late_records_time_limit(sdc_builder, sdc_executor, late_record
                     tmp_directory_local_fs_late_record)
         sdc_executor.execute_shell(f'rm -R /tmp/out/')
         sdc_executor.execute_shell(f'rm -R {tmp_directory_local_fs_late_record}')
+
+
+@sdc_min_version('5.6.0')
+def test_local_fs_whole_file_with_colon_in_file_name(sdc_builder, sdc_executor):
+    """
+    Tests Local FS cannot copy files via WhOle File Format if they have a colon character in the file name and throws a
+    record error but continues to process the remaining files.
+
+    The test creates a file with a colon on the name and another file with an accepted name and then tries to copy them
+    to the local file system, but only the second file should be copied. The file with the incorrect name is set to be
+    processed first to check the remaining files are processed.
+
+    The pipeline looks like:
+        Directory >> Local FS >= Wiretap
+    """
+    temp_dir = os.path.join('~', tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    temp_dir_input = temp_dir + '/input/'
+    temp_dir_output = temp_dir + '/output/'
+
+    random_file_name = get_random_string(string.ascii_letters, 10)
+
+    correct_file_name = f"2_correct_name_{random_file_name}"
+    correct_file_path = temp_dir_input + correct_file_name
+    final_correct_file_path = temp_dir_output + correct_file_name
+    correct_file_content = 'This file should be correctly processed' \
+                           '.'
+    incorrect_file_name = f"1_incorrect:name_{random_file_name}"
+    incorrect_file_content = 'This file should raise a Record Error.'
+    incorrect_file_path = temp_dir_input + incorrect_file_name
+    final_incorrect_file_path = temp_dir_output + incorrect_file_name
+
+    logger.info(f'Creating directory {temp_dir}...')
+    sdc_executor.execute_shell(f"mkdir {temp_dir}")
+
+    logger.info(f'Creating directory {temp_dir_input}...')
+    sdc_executor.execute_shell(f"mkdir {temp_dir_input}")
+
+    logger.info(f'Creating files {incorrect_file_path} and {correct_file_path} in {temp_dir_input}...')
+    sdc_executor.execute_shell(f"echo {incorrect_file_content} > {incorrect_file_path}")
+    sdc_executor.execute_shell(f"echo {correct_file_content} > {correct_file_path}")
+
+    logger.info('Checking the files have been correctly created...')
+    assert sdc_executor.execute_shell(f'cat {correct_file_path}').stdout == correct_file_content + '\n'
+    assert sdc_executor.execute_shell(f'cat {incorrect_file_path}').stdout == incorrect_file_content + '\n'
+
+    builder = sdc_builder.get_pipeline_builder()
+    directory = builder.add_stage('Directory')
+    directory.set_attributes(
+        data_format='WHOLE_FILE',
+        files_directory=temp_dir_input,
+        file_name_pattern='*'
+    )
+
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(
+        data_format='WHOLE_FILE',
+        file_type='WHOLE_FILE',
+        files_prefix='',
+        directory_template=temp_dir_output,
+        file_name_expression='${record:value("/fileInfo/filename")}'
+    )
+
+    wiretap = builder.add_wiretap()
+
+    directory >> local_fs >= wiretap.destination
+
+    pipeline = builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        output_records = wiretap.output_records
+        assert len(output_records) == 1
+        assert correct_file_path in output_records[0].field['sourceFileInfo']['file'].value
+        assert sdc_executor.execute_shell(f'cat {final_correct_file_path}').stdout == correct_file_content + '\n'
+
+        error_records = wiretap.error_records
+        assert len(error_records) == 1
+        assert error_records[0].header['errorCode'] == 'HADOOPFS_64'
+        assert "No such file or directory" in sdc_executor.execute_shell(f'cat {final_incorrect_file_path}').stderr
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+        logger.info(f'Deleting the folder {temp_dir} and its contents...')
+        sdc_executor.execute_shell(f'rm -R {temp_dir}')
