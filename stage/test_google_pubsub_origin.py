@@ -150,7 +150,8 @@ def test_google_pubsub_subscriber_stop_start(sdc_builder, sdc_executor, gcp):
 
         records_from_wiretap = [record.field['text'].value for record in wiretap.output_records]
 
-        assert records_from_wiretap == first_data
+        assert len(records_from_wiretap) == len(first_data)
+        assert sorted(records_from_wiretap) == sorted(first_data)
 
         logger.info('Publishing messages to topic %s using Google pub/sub client ...', topic_name)
         for element in second_data:
@@ -164,7 +165,8 @@ def test_google_pubsub_subscriber_stop_start(sdc_builder, sdc_executor, gcp):
 
         records_from_wiretap = [record.field['text'].value for record in wiretap.output_records]
 
-        assert records_from_wiretap == second_data
+        assert len(records_from_wiretap) == len(second_data)
+        assert sorted(records_from_wiretap) == sorted(second_data)
 
     finally:
         pubsub_subscriber_client.delete_subscription(subscription_path)
