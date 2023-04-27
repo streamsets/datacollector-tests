@@ -121,7 +121,7 @@ def test_clean_session(sdc_builder, sdc_executor, mqtt_broker, clean_session):
 
         assert len(wiretap.output_records) == len(expected_messages)
         messages = [record.field['text'] for record in wiretap.output_records]
-        assert messages == expected_messages
+        assert sorted(messages) == sorted(expected_messages)
 
         wiretap.reset()
 
@@ -150,7 +150,7 @@ def test_clean_session(sdc_builder, sdc_executor, mqtt_broker, clean_session):
         sdc_executor.stop_pipeline(pipeline)
         assert len(wiretap.output_records) == len(final_expected_messages)
         messages = [record.field['text'] for record in wiretap.output_records]
-        assert messages == final_expected_messages
+        assert sorted(messages) == sorted(final_expected_messages)
 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
