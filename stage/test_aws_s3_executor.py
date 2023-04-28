@@ -122,12 +122,8 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, sse_kms,
     sdc_executor.add_pipeline(s3_exec_pipeline)
 
     client = aws.s3
-    public_access_block = None
-    bucket_policy = None
-    try:
-        if anonymous:
-            public_access_block, bucket_policy = allow_public_access(client, s3_bucket, True, True)
 
+    try:
         sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_finished()
 
         # Assert record count to S3 the size of the objects put.
@@ -135,9 +131,8 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, sse_kms,
         assert len(list_s3_objs['Contents']) == 1
 
         # Read data from S3 to assert it is what got ingested into the pipeline.
-        client_to_read = create_anonymous_client() if anonymous else client
         s3_contents = [
-            client_to_read.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
+            client.get_object(Bucket=s3_bucket, Key=s3_content['Key'])['Body'].read().decode().strip()
             for s3_content in list_s3_objs['Contents']]
 
         assert s3_contents[0] == 'StreamSets Inc.'
@@ -148,13 +143,12 @@ def _run_test_s3_executor_create_object(sdc_builder, sdc_executor, aws, sse_kms,
             assert wiretap.output_records[0].header.values['sdc.event.type'] == 'file-created'
 
         if sse_kms:
-            s3_obj_key = client_to_read.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+            s3_obj_key = client.get_object(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
             # assert that the data was stored with SSE using the KMS
             assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
             assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
     finally:
         _ensure_pipeline_is_stopped(sdc_executor, s3_exec_pipeline)
-        restore_public_access(client, s3_bucket, public_access_block, bucket_policy)
         aws.delete_s3_data(s3_bucket, s3_key)
 
 
