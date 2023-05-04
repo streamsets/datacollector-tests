@@ -18,7 +18,7 @@ import string
 import json
 
 import pytest
-from streamsets.testframework.environments.databases import MySqlDatabase, MariaDBDatabase, MemSqlDatabase
+from streamsets.testframework.environments.databases import MySqlDatabase, MariaDBDatabase, MemSqlDatabase, PostgreSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 
@@ -604,7 +604,7 @@ OBJECT_NAMES_POSTGRESQL = [
 @pytest.mark.parametrize('use_multi_row_operation', [True, False])
 @pytest.mark.parametrize('test_name,table_name,column_name', OBJECT_NAMES_POSTGRESQL, ids=[i[0] for i in OBJECT_NAMES_POSTGRESQL])
 def test_object_names_postgresql(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data):
-    _test_object_names(sdc_builder, sdc_executor, database, table_name, column_name, use_multi_row_operation, keep_data)
+    _test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data)
 
 
 # Rules: https://mariadb.com/kb/en/identifier-names/
@@ -622,7 +622,7 @@ OBJECT_NAMES_MARIADB = [
 @pytest.mark.parametrize('use_multi_row_operation', [True, False])
 @pytest.mark.parametrize('test_name,table_name,column_name', OBJECT_NAMES_MARIADB, ids=[i[0] for i in OBJECT_NAMES_MARIADB])
 def test_object_names_mariadb(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data):
-    _test_object_names(sdc_builder, sdc_executor, database, table_name, column_name, use_multi_row_operation, keep_data)
+    _test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data)
 
 
 # Rules: https://dev.mysql.com/doc/refman/8.0/en/identifier-length.html
@@ -643,13 +643,27 @@ OBJECT_NAMES_MYSQL = [
 def test_object_names_mysql(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data):
     if isinstance(database, MemSqlDatabase):
         pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
-    _test_object_names(sdc_builder, sdc_executor, database, table_name, column_name, use_multi_row_operation, keep_data)
+    _test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data)
 
 
-def _test_object_names(sdc_builder, sdc_executor, database, table_name, column_name, use_multi_row_operation, keep_data):
+def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_name, column_name, use_multi_row_operation, keep_data):
     connection = database.engine.connect()
     if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         connection.execute("SET sql_mode=ANSI_QUOTES")
+
+    # To avoid two tests to collision when using the same table name 'table'
+    # a schema is created and used.
+    if test_name == 'keywords':
+        # schemas in Postgress are cases sensitives and our connector 'lowercases' it
+        # and schemas are not found
+        schema = get_random_string(string.ascii_lowercase, 10)
+        info = connection.execute(f"CREATE SCHEMA {schema}")
+        logger.info(f"Create Schema info {info}")
+        if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
+            info = connection.execute(f"USE {schema}")
+        if isinstance(database, PostgreSqlDatabase):
+            info = connection.execute(f"SET search_path TO public,{schema}")
+        logger.info(f"Set Schema info {info}")
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -679,6 +693,10 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, column_n
     # Work-arounding STF behavior of upper-casing table name configuration
     tee.table_name = table_name
 
+    # When test_name is keywords a different schema is created an configured after configuring_for_environment
+    if test_name == 'keywords':
+        tee.schema_name = schema
+
     # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
     if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         tee.init_query = "SET sql_mode=ANSI_QUOTES"
@@ -693,12 +711,21 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, column_n
                 )
             """)
         else: # Assuming PostgreSQL (no other DB is supported
-            connection.execute(f"""
-                CREATE TABLE "{table_name}"(
-                   "id" serial, 
-                    "{column_name}" int NULL
-                )
-            """)
+            if test_name == 'keywords':
+                # In postgres, to create a table inside a schema, the schema needs to be explicit
+                connection.execute(f"""
+                    CREATE TABLE {schema}.{table_name}(
+                       "id" serial, 
+                        "{column_name}" int NULL
+                    )
+                """)
+            else:
+                connection.execute(f"""
+                    CREATE TABLE "{table_name}"(
+                       "id" serial, 
+                        "{column_name}" int NULL
+                    )
+                """)
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -721,6 +748,9 @@ def _test_object_names(sdc_builder, sdc_executor, database, table_name, column_n
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
             connection.execute(f'DROP TABLE "{table_name}"')
+            if test_name == 'keywords':
+                info = connection.execute(f'DROP SCHEMA "{schema}"')
+                logger.info(f"Drop Schema info {info}")
 
 
 @database('mysql', 'postgresql')
