@@ -1798,21 +1798,125 @@ def test_field_zip(sdc_builder, sdc_executor):
 
     pipeline = pipeline_builder.build('Field Zip pipeline')
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline)
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
-    sdc_executor.stop_pipeline(pipeline)
 
-    record_result = wiretap.output_records[0].field
-    # assert we got expected number of merge fields
-    assert len(raw_list[0]) + len(fields_to_zip_configs) == len(record_result)
-    # assert data is merged as expected
-    raw_merge = list(zip(raw_list[0]['itemID'], raw_list[0]['cost']))
-    record_field_result = record_result[result_key_1]
-    record_field_merge = [tuple(float(b.value) for b in a.values()) for a in record_field_result]
-    assert raw_merge == record_field_merge
-    # assert the missing record fields do not merge anything
-    assert result_key_1 not in wiretap.output_records[1].field
-    assert result_key_2 not in wiretap.output_records[1].field
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        record_result = wiretap.output_records[0].field
+        # assert we got expected number of merge fields
+        assert len(raw_list[0]) + len(fields_to_zip_configs) == len(record_result)
+        # assert data is merged as expected
+        raw_merge = list(zip(raw_list[0]['itemID'], raw_list[0]['cost']))
+        record_field_result = record_result[result_key_1]
+        record_field_merge = [tuple(float(b.value) for b in a.values()) for a in record_field_result]
+        assert raw_merge == record_field_merge
+        # assert the missing record fields do not merge anything
+        assert result_key_1 not in wiretap.output_records[1].field
+        assert result_key_2 not in wiretap.output_records[1].field
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
+
+
+@pytest.mark.parametrize('first_field,second_field,field_data_type', [
+    ('list1', 'list2', 'list'),
+    ('list', 'map', 'list_map'),
+    ('map1', 'map2', 'map'),
+])
+def test_field_zip_fields_to_zip(sdc_builder, sdc_executor, first_field, second_field, field_data_type):
+    """Test field zip processor. The pipeline would look like:
+
+        dev_raw_data_source >> field_zip >> wiretap
+
+    With given config, /first_field and /second_field will zip to /zipped path.
+    """
+    if field_data_type=='list':
+      raw_data = """
+              [
+                {
+                  "list1": [1,2],
+                  "list2": [11,12,13,14]
+                }
+              ]
+          """
+    elif field_data_type=='list_map':
+      raw_data = """
+              [
+                {
+                  "list": [1,2,3],
+                  "map": [
+                            {"mapField1":"11"},
+                            {"mapField2":"12"},
+                            {"mapField3":"13"}
+                         ]
+                }
+              ]
+          """
+    elif field_data_type=='map':
+          raw_data = """
+              [
+                {
+                  "map1": [
+                            {"mapField1":"1"},
+                            {"mapField2":"2"},
+                            {"mapField3":"3"}
+                          ],
+                  "map2": [
+                            {"mapField11":"11"},
+                            {"mapField12":"12"},
+                            {"mapField13":"13"}
+                         ]
+                }
+              ]
+          """
+
+    raw_list = json.loads(raw_data)
+    fields_to_zip_configs = [
+        {
+            'zippedFieldPath': '/zipped',
+            'firstField': f'/{first_field}',
+            'secondField': f'/{second_field}'
+        }
+    ]
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       json_content='ARRAY_OBJECTS',
+                                       raw_data=raw_data)
+    field_zip = pipeline_builder.add_stage('Field Zip')
+    field_zip.set_attributes(field_does_not_exist='TO_ERROR',
+                             fields_to_zip=fields_to_zip_configs,
+                             zip_values_only=False)
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_zip >> wiretap.destination
+
+    pipeline = pipeline_builder.build('Field Zip Test Fields To Zip pipeline')
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        record_result = wiretap.output_records[0].field
+
+        # assert we got expected number of merge fields
+        assert len(raw_list[0]) + len(fields_to_zip_configs) == len(record_result), "Got wrong number of merge fields"
+
+        # assert data is merged as expected
+        raw_merge = list(zip(raw_list[0][first_field], raw_list[0][second_field]))
+        record_field_result = record_result['zipped']
+
+        if field_data_type=='list':
+          record_field_merge = [tuple(int(b.value) for b in a.values()) for a in record_field_result]
+        else:
+          record_field_merge = [tuple(value for value in a.values()) for a in record_field_result]
+        assert raw_merge == record_field_merge, "Got wrong merge field record result"
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
 
 
 def test_value_replacer(sdc_builder, sdc_executor):
