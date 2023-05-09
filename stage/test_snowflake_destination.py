@@ -79,6 +79,15 @@ CDC_ROWS_IN_DATABASE = [
     {'OP': 1, 'ID': 2, 'NAME': 'Rafa Nadal'},
     {'OP': 1, 'ID': 3, 'NAME': 'Domi Thiem'}
 ]
+INSERT_UPDATE_DELETE_INSERT_DELETE_CDC_ROWS_IN_DATABASE = [
+    {'OP': 1, 'ID': 1, 'NAME': 'Rogelio Federer'},
+    {'OP': 3, 'ID': 1, 'NAME': 'Rafa Nadal'},
+    {'OP': 2, 'ID': 1, 'NAME': 'Domi Thiem'},
+    {'OP': 1, 'ID': 1, 'NAME': 'Carlos Alcaraz'},
+    {'OP': 2, 'ID': 1, 'NAME': 'Joaquin Bo'},
+    # we insert one last record to ensure the other ones got deleted and there is no error
+    {'OP': 1, 'ID': 2, 'NAME': 'Pingu'},
+]
 CDC_ROWS_IN_DATABASE_COMPOSITE_KEY = [
     {'OP': 1, 'A': 1, 'B': 3, 'NAME': 'Rogelio Federer'},
     {'OP': 1, 'A': 2, 'B': 2, 'NAME': 'Rafa Nadal'},
@@ -1178,6 +1187,91 @@ def test_cdc_snowflake_jdbc_header(sdc_builder, sdc_executor, snowflake, primary
             else:
                 assert nullable == 'Y'
                 assert primary_key == 'N'
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        logger.debug('Dropping Snowflake stage %s ...', stage_name)
+        snowflake.drop_entities(stage_name=stage_name)
+        table.drop(engine)
+        engine.dispose()
+
+
+@snowflake
+@sdc_min_version('5.6.0')
+def test_cdc_snowflake_insert_update_delete_insert_delete(sdc_builder, sdc_executor, snowflake):
+    """We had an issue with the CDCRecordConsolidator class in which chain operations for the same pk
+    when doing multiple insert+delete with middle updates (so upserts when consolidated) caused issues:
+    either stage/record errors OR data missmatch in the destination table.
+
+    We need the first record already inserted, and make sure it is deleted in the end.
+
+    This test addresses this specific CDC case.
+
+    The pipeline looks like:
+    Snowflake pipeline:
+        dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> snowflake_destination
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Create a table and stage in Snowflake.
+    table = snowflake.create_table(table_name.lower())
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    # Build the pipeline with created entities in Snowflake stage configurations.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Build Dev Raw Data Source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    # we insert the first row manually
+    raw_data = ('\n').join((json.dumps(row) for row in INSERT_UPDATE_DELETE_INSERT_DELETE_CDC_ROWS_IN_DATABASE[1:]))
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    # Build Expression Evaluator
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {'attributeToSet': 'sdc.operation.type',
+         'headerAttributeExpression': "${record:value('/OP')}"}])
+
+    # Build Field Remover
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ['/OP']
+
+    # Build Snowflake
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         processing_cdc_data=True,
+                                         primary_key_location="TABLE",
+                                         table_key_columns=[{
+                                             "keyColumns": [
+                                                 "ID"
+                                             ],
+                                             "table": table_name
+                                         }])
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> snowflake_destination
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        first_row = INSERT_UPDATE_DELETE_INSERT_DELETE_CDC_ROWS_IN_DATABASE[0]
+        engine.execute(f'INSERT INTO {table_name} (NAME, ID)'
+                       f' values (\'{first_row["NAME"]}\', {first_row["ID"]});')
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=300)
+        result = engine.execute(table.select())
+        data_from_database = sorted(result.fetchall(), key=lambda row: row[1])
+        result.close()
+        rows_in_db = [INSERT_UPDATE_DELETE_INSERT_DELETE_CDC_ROWS_IN_DATABASE[-1]]
+        assert data_from_database == [(row['NAME'], row['ID']) for row in rows_in_db]
+        stage_errors = sdc_executor.get_stage_errors(pipeline, snowflake_destination)
+        assert len(stage_errors) == 0
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
         snowflake.delete_staged_files(storage_path)
