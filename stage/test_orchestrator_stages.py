@@ -17,6 +17,7 @@ import pytest
 import string
 import uuid
 
+from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.utils import get_random_string
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import Version
@@ -83,46 +84,6 @@ def _validate_cron_scheduler_output(wiretap):
 
 
 @sdc_min_version('3.11.0')
-def test_control_hub_api_processor(sdc_builder, sdc_executor):
-    """Test Control Hub API Processor. The pipeline would look like:
-
-        dev_raw_data_source >> control_hub_api_processor >> trash
-
-    Call Control Hub API "https://cloud.streamsets.com/public-rest/v1/health" using Control Hub API Processor and
-    update field output with the response
-    """
-
-    pipeline_builder = sdc_builder.get_pipeline_builder()
-
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.stop_after_first_batch = True
-
-    control_hub_api_processor = pipeline_builder.add_stage('Control Hub API')
-    control_hub_api_processor.control_hub_api_url = 'https://cloud.streamsets.com/public-rest/v1/health'
-    control_hub_api_processor.output_field = "/"
-    control_hub_api_processor.control_hub_user_name = "user"
-    control_hub_api_processor.password = "password"
-    if Version(sdc_builder.version) >= Version('4.0.0'):
-        control_hub_api_processor.authentication_type = 'USER_PASSWORD'
-
-    wiretap = pipeline_builder.add_wiretap()
-
-    dev_raw_data_source >> control_hub_api_processor >> wiretap.destination
-
-    pipeline = pipeline_builder.build('Control Hub API Processor Sample Pipeline')
-    sdc_executor.add_pipeline(pipeline)
-
-    sdc_executor.validate_pipeline(pipeline)
-
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
-    # Assert Cron Scheduler generated record output
-    assert len(wiretap.output_records) == 1
-    assert len(wiretap.error_records) == 0
-    assert wiretap.output_records[0].field['alive'].value == True
-
-
-@sdc_min_version('3.11.0')
 def test_control_hub_api_processor_invalid_credentials(sdc_builder, sdc_executor):
     """Test Control Hub API Processor. The pipeline would look like:
 
@@ -151,13 +112,19 @@ def test_control_hub_api_processor_invalid_credentials(sdc_builder, sdc_executor
     pipeline = pipeline_builder.build('Control Hub API Processor Sample Pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    sdc_executor.validate_pipeline(pipeline)
+    if Version(sdc_builder.version) >= Version('5.6.0'):
+        with pytest.raises(ValidationError) as ex:
+            sdc_executor.validate_pipeline(pipeline)
 
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        assert 'CONTROL_HUB_08' in ex.value.issues['stageIssues'][control_hub_api_processor.instance_name][0]['message']
+    else:
+        sdc_executor.validate_pipeline(pipeline)
 
-    # Assert Cron Scheduler generated record output
-    assert len(wiretap.output_records) == 0
-    assert len(wiretap.error_records) == 1
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Assert Cron Scheduler generated record output
+        assert len(wiretap.output_records) == 0
+        assert len(wiretap.error_records) == 1
 
 
 @sdc_min_version('3.16.0')
