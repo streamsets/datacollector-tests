@@ -2068,6 +2068,96 @@ def test_directory_origin_number_of_batches_generated(
             sdc_executor.stop_pipeline(pipeline)
 
 
+@sdc_min_version('5.6.0')
+def test_directory_origin_compression_library_snappy(sdc_builder, sdc_executor, shell_executor):
+    """
+    Tests the Compression Library option to indicate which library has been used to compress a file. Checks this option
+    can be used to decompress a file compressed with Snappy with an HDFS target stage, which uses a custom Snappy
+    library.
+
+    The test creates the following pipeline to create the file:
+        Dev Raw Data >> Local FS
+
+    And then uses the pipeline below to test the Compression Library option and check the file can be decompressed:
+        Directory >> Local FS
+    """
+    files_directory = os.path.join('/tmp', get_random_string())
+    compressed_file_prefix = 'compressed_sdc'
+    decompressed_file_prefix = 'decompressed_sdc'
+    file_content = 'Oh! Bello papaguena! Tu le Bella comme le papaya.'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='TEXT',
+        raw_data=file_content,
+        stop_after_first_batch=True
+    )
+
+    local_fs = pipeline_builder.add_stage('Local FS')
+    local_fs.set_attributes(
+        directory_template=files_directory,
+        files_prefix=compressed_file_prefix,
+        data_format='TEXT',
+        compression_codec='SNAPPY'
+    )
+
+    dev_raw_data_source >> local_fs
+    file_generator_pipeline = pipeline_builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(file_generator_pipeline)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory')
+    directory.set_attributes(
+        files_directory=files_directory,
+        file_name_pattern='*.snappy',
+        data_format='TEXT',
+        compression_format='COMPRESSED_FILE',
+        compression_library='SNAPPY'
+    )
+
+    local_fs = pipeline_builder.add_stage('Local FS')
+    local_fs.set_attributes(
+        directory_template=files_directory,
+        files_prefix=decompressed_file_prefix,
+        data_format='TEXT'
+    )
+
+    directory >> local_fs
+    pipeline = pipeline_builder.build().configure_for_environment()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info(f'Creating the Snappy compressed file in {files_directory}...')
+        sdc_executor.start_pipeline(file_generator_pipeline).wait_for_finished()
+
+        logger.info('Checking the file has been created...')
+        shell_result = sdc_executor.execute_shell(f'cat {files_directory}/{compressed_file_prefix}*')
+        assert shell_result.stderr == ''
+        assert shell_result.exit_code == '0'
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        logger.info('Checking the file has been decompressed successfully...')
+        shell_result = sdc_executor.execute_shell(f'cat {files_directory}/{decompressed_file_prefix}*')
+        assert shell_result.stderr == ''
+        assert shell_result.exit_code == '0'
+        assert shell_result.stdout == file_content + '\n'
+    finally:
+        logger.info(f'Delete directory in {files_directory}...')
+        shell_executor(f'rm -r {files_directory}')
+
+        if file_generator_pipeline and \
+                (sdc_executor.get_pipeline_status(file_generator_pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(file_generator_pipeline)
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
 def assert_record_count(sdc_executor, pipeline, expected_count):
     history = sdc_executor.get_pipeline_history(pipeline)
     output_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
