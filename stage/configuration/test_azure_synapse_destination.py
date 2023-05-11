@@ -20,6 +20,7 @@ from copy import deepcopy
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import azure, category, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
+from streamsets.sdk.sdc_api import StartError
 from ..utils.utils_azure_synapse import \
     FORMATTED_ROWS_IN_DATABASE_WITH_PARTITION,\
     ROWS_IN_DATABASE_WITH_PARTITION,\
@@ -786,6 +787,55 @@ def test_storage_type(sdc_builder, sdc_executor, azure, storage_type):
         try:
             delete_table(engine, destination_table_name, azure.synapse_database_schema)
             stop_pipeline(sdc_executor, synapse_pipeline)
+        except Exception as ex:
+            logger.error(ex)
+
+
+@sdc_min_version('5.6.0')
+@category('advanced')
+@pytest.mark.parametrize('connection_timeout', [200, 1000])
+def test_additional_connection_properties(sdc_builder, sdc_executor, azure, connection_timeout):
+    """
+    Test for Azure Synapse target stage. We do so by running a dev raw data source to
+    Azure Synapse destination and then trying to provide multiple connectionTimeout values
+        1. timeout < 250, it should ideally result in Start error related to connection timeout
+        2. timeout >= 250, the pipeline should run successfully
+
+    The pipeline looks like:
+    dev_raw_data_source >> azure_synapse_destination
+    """
+
+    destination_table_name = f'stf_{get_random_string(string.ascii_letters, 10)}'
+    logger.info('destination_table_name = %s', destination_table_name)
+
+    stage_file_prefix = f'stf_{get_random_string(string.ascii_letters, 10)}'
+    synapse_pipeline = get_synapse_pipeline(
+        sdc_builder,
+        azure,
+        ROWS_IN_DATABASE_WITH_PARTITION,
+        stage_file_prefix,
+        destination_table_name
+    )
+
+    properties = [{'name': 'connectionTimeout', 'value': str(connection_timeout)}]
+    attributes = {'additional_connection_properties': properties}
+    synapse_pipeline.stages[1].set_attributes(**attributes)
+    sdc_executor.add_pipeline(synapse_pipeline)
+    try:
+        sdc_executor.start_pipeline(synapse_pipeline).wait_for_status(status='RUNNING')
+        if connection_timeout < 250:
+            pytest.fail("Test should not reach here as StartError should have been raised")
+        else:
+            status = sdc_executor.get_pipeline_status(synapse_pipeline).response.json().get('status')
+            assert status == 'RUNNING', "Expecting pipeline status to be - 'RUNNING'"
+    except StartError as error:
+        if connection_timeout < 250:
+            assert 'AZURE_DATA_WAREHOUSE_08' in error.message, "Expecting a StartError related to connection timeout"
+        else:
+            raise error
+    finally:
+        try:
+            sdc_executor.stop_pipeline(synapse_pipeline)
         except Exception as ex:
             logger.error(ex)
 
