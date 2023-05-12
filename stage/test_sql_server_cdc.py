@@ -31,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SCHEMA_NAME = 'dbo'
 
+BASIC_RECORDS = 'BASIC'
+DISCARD_BEFORE_UPDATE_RECORDS = 'DISCARD_BEFORE_UPDATE'
+RICH_RECORDS = 'RICH'
+
+BASIC_RECORDS_CODE = '1'
+DISCARD_BEFORE_UPDATE_RECORDS_CODE = '2'
+RICH_RECORDS_CODE = '3'
+
 
 def setup_table(connection, schema_name, table_name, sample_data=None, capture_instance_name=None):
     """Create table and insert the sample data into the table"""
@@ -88,11 +96,11 @@ def assert_table_replicated(database, sample_data, schema_name, table_name):
     assert sorted(input_values) == sorted(target_result_list)
 
 
-def assert_recovered_data(initial_data, output_records, expected_number_of_records, combine_update_records):
+def assert_recovered_data(initial_data, output_records, expected_number_of_records, record_format=BASIC_RECORDS):
     assert len(output_records) == expected_number_of_records
 
     recovered_information = []
-    if combine_update_records:
+    if record_format == RICH_RECORDS:
         for record in output_records:
             assert 'Data' in record.field
             assert record.field['Data'] is not None
@@ -141,14 +149,12 @@ def wait_for_data_in_ct_table(ct_table_name, no_of_records, database=None, timeo
 
 @database('sqlserver')
 @pytest.mark.parametrize('no_of_threads', [1, 5])
-@pytest.mark.parametrize('combine_update_records', [True, False])
 @sdc_min_version('3.0.1.0')
 def test_sql_server_cdc_with_specific_capture_instance_name(
         sdc_builder,
         sdc_executor,
         database,
-        no_of_threads,
-        combine_update_records
+        no_of_threads
 ):
     """Test for SQL Server CDC origin stage when capture instance is configured.
     We do so by capturing Insert Operation on CDC enabled table
@@ -162,9 +168,6 @@ def test_sql_server_cdc_with_specific_capture_instance_name(
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
-
-    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
-        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     try:
         connection = database.engine.connect()
@@ -194,9 +197,6 @@ def test_sql_server_cdc_with_specific_capture_instance_name(
                                       number_of_threads=no_of_threads,
                                       table_configs=table_configs)
 
-        if Version(sdc_builder.version) >= Version('5.2.0'):
-            sql_server_cdc.combine_update_records = combine_update_records
-
         wiretap = pipeline_builder.add_wiretap()
         sql_server_cdc >> wiretap.destination
 
@@ -212,7 +212,7 @@ def test_sql_server_cdc_with_specific_capture_instance_name(
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(expected_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert_recovered_data(rows_in_database, wiretap.output_records, expected_no_of_records, combine_update_records)
+        assert_recovered_data(rows_in_database, wiretap.output_records, expected_no_of_records)
 
     finally:
         for table in tables:
@@ -223,13 +223,11 @@ def test_sql_server_cdc_with_specific_capture_instance_name(
 @database('sqlserver')
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
-@pytest.mark.parametrize('combine_update_records', [True, False])
 def test_sql_server_cdc_with_empty_initial_offset(
         sdc_builder,
         sdc_executor,
         database,
-        use_table,
-        combine_update_records
+        use_table
 ):
     """Test for SQL Server CDC origin stage with the empty initial offset (fetch all changes)
     on both use table config is true and false
@@ -239,9 +237,6 @@ def test_sql_server_cdc_with_empty_initial_offset(
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
-
-    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
-        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     try:
         connection = database.engine.connect()
@@ -261,9 +256,6 @@ def test_sql_server_cdc_with_empty_initial_offset(
         sql_server_cdc.set_attributes(table_configs=[{'capture_instance': capture_instance_name}],
                                       use_direct_table_query=use_table)
 
-        if Version(sdc_builder.version) >= Version('5.2.0'):
-            sql_server_cdc.combine_update_records = combine_update_records
-
         wiretap = pipeline_builder.add_wiretap()
         sql_server_cdc >> wiretap.destination
 
@@ -273,7 +265,7 @@ def test_sql_server_cdc_with_empty_initial_offset(
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(no_of_records)
         sdc_executor.stop_pipeline(pipeline)
 
-        assert_recovered_data(rows_in_database, wiretap.output_records, no_of_records, combine_update_records)
+        assert_recovered_data(rows_in_database, wiretap.output_records, no_of_records)
 
     finally:
         if table is not None:
@@ -284,13 +276,11 @@ def test_sql_server_cdc_with_empty_initial_offset(
 @database('sqlserver')
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
-@pytest.mark.parametrize('combine_update_records', [True, False])
 def test_sql_server_cdc_with_nonempty_initial_offset(
         sdc_builder,
         sdc_executor,
         database,
-        use_table,
-        combine_update_records
+        use_table
 ):
     """Test for SQL Server CDC origin stage with non-empty initial offset (fetch the data from the given LSN)
     on both use table config is true and false
@@ -300,9 +290,6 @@ def test_sql_server_cdc_with_nonempty_initial_offset(
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
-
-    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
-        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     try:
         connection = database.engine.connect()
@@ -336,9 +323,6 @@ def test_sql_server_cdc_with_nonempty_initial_offset(
                                       use_direct_table_query=use_table
                                       )
 
-        if Version(sdc_builder.version) >= Version('5.2.0'):
-            sql_server_cdc.combine_update_records = combine_update_records
-
         wiretap = pipeline_builder.add_wiretap()
         sql_server_cdc >> wiretap.destination
 
@@ -351,8 +335,7 @@ def test_sql_server_cdc_with_nonempty_initial_offset(
         assert_recovered_data(
             rows_in_database[first_no_of_records:total_no_of_records],
             wiretap.output_records,
-            second_no_of_records,
-            combine_update_records
+            second_no_of_records
         )
 
     finally:
@@ -368,7 +351,7 @@ def test_sql_server_cdc_with_nonempty_initial_offset(
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
 @pytest.mark.timeout(180)
-def test_sql_server_cdc_insert_and_update(sdc_builder, sdc_executor, database, use_table):
+def test_sql_server_cdc_insert_and_update_basic_record_format(sdc_builder, sdc_executor, database, use_table):
     """Test for SQL Server CDC origin stage with insert and update ops
 
     The pipeline looks like:
@@ -447,7 +430,7 @@ def test_sql_server_cdc_insert_and_update(sdc_builder, sdc_executor, database, u
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
 @pytest.mark.timeout(180)
-def test_sql_server_cdc_insert_update_delete(sdc_builder, sdc_executor, database, use_table):
+def test_sql_server_cdc_insert_update_delete_basic_record_format(sdc_builder, sdc_executor, database, use_table):
     """Test for SQL Server CDC origin stage with insert, update, and delete ops
 
     The pipeline looks like:
@@ -527,14 +510,12 @@ def test_sql_server_cdc_insert_update_delete(sdc_builder, sdc_executor, database
 @database('sqlserver')
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
-@pytest.mark.parametrize('combine_update_records', [True, False])
 @pytest.mark.timeout(180)
 def test_sql_server_cdc_multiple_tables(
         sdc_builder,
         sdc_executor,
         database,
-        use_table,
-        combine_update_records
+        use_table
 ):
     """Test for SQL Server CDC origin stage with multiple transactions on multiple CDC tables (SDC-10926)
 
@@ -543,9 +524,6 @@ def test_sql_server_cdc_multiple_tables(
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
-
-    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
-        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
 
     try:
         connection = database.engine.connect()
@@ -578,16 +556,13 @@ def test_sql_server_cdc_multiple_tables(
                                       use_direct_table_query=use_table
                                       )
 
-        if Version(sdc_builder.version) >= Version('5.2.0'):
-            sql_server_cdc.combine_update_records = combine_update_records
-
         wiretap = pipeline_builder.add_wiretap()
         sql_server_cdc >> wiretap.destination
 
         pipeline = pipeline_builder.build().configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
 
-        total_no_of_records = 7 if combine_update_records else 11
+        total_no_of_records = 11
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_no_of_records)
         sdc_executor.stop_pipeline(pipeline)
@@ -595,35 +570,21 @@ def test_sql_server_cdc_multiple_tables(
         records = wiretap.output_records
         assert len(records) == total_no_of_records
 
-        records.sort(key=lambda record: _get_data_field_from_record(record, 'id', combine_update_records).value)
+        records.sort(key=lambda record: _get_data_field_from_record(record, 'id').value)
 
         date = '2017-05-03'
-        if combine_update_records:
-            index = 0
-            for row_id in range(0, 3):
-                data = rows_in_database[row_id]
-                _check_record(records[index], '1', row_id, data['name'], data['dt'], True, 'Data')
-                _check_record(records[index + 1], '3', row_id, data['name'], data['dt'], True, 'OldData')
-                _check_record(records[index + 1], '3', row_id, updated_name, date, True, 'Data')
+        index = 0
+        for row_id in range(0, 3):
+            data = rows_in_database[row_id]
+            _check_record(records[index], '1', row_id, data['name'], data['dt'], False)
+            _check_record(records[index + 1], '5', row_id, data['name'], data['dt'], False)
+            _check_record(records[index + 2], '3', row_id, updated_name, date, False)
+            index += 3
+
+            if row_id == 0:
+                _check_record(records[index], '5', row_id, updated_name, date, False)
+                _check_record(records[index + 1], '3', row_id, new_updated_name, date, False)
                 index += 2
-
-                if row_id == 0:
-                    _check_record(records[index], '3', row_id, updated_name, date, True, 'OldData')
-                    _check_record(records[index], '3', row_id, new_updated_name, date, True, 'Data')
-                    index += 1
-        else:
-            index = 0
-            for row_id in range(0, 3):
-                data = rows_in_database[row_id]
-                _check_record(records[index], '1', row_id, data['name'], data['dt'], False)
-                _check_record(records[index + 1], '5', row_id, data['name'], data['dt'], False)
-                _check_record(records[index + 2], '3', row_id, updated_name, date, False)
-                index += 3
-
-                if row_id == 0:
-                    _check_record(records[index], '5', row_id, updated_name, date, False)
-                    _check_record(records[index + 1], '3', row_id, new_updated_name, date, False)
-                    index += 2
 
         sqlserver_cdc_pipeline_history_metrics = sdc_executor.get_pipeline_history(pipeline).latest.metrics
         records_sent = sqlserver_cdc_pipeline_history_metrics.counter('pipeline.batchInputRecords.counter').count
@@ -639,12 +600,12 @@ def test_sql_server_cdc_multiple_tables(
 
 @database('sqlserver')
 @pytest.mark.timeout(180)
-@pytest.mark.parametrize('combine_update_records', [True, False])
+@pytest.mark.parametrize('record_format', [BASIC_RECORDS, DISCARD_BEFORE_UPDATE_RECORDS, RICH_RECORDS])
 def test_sql_server_cdc_source_table_in_record_header(
         sdc_builder,
         sdc_executor,
         database,
-        combine_update_records
+        record_format
 ):
     """Test for SQL Server CDC origin stage puts the source table in a record header attribute,
         * jdbc.cdc.source_schema_name = <source schema>
@@ -653,9 +614,12 @@ def test_sql_server_cdc_source_table_in_record_header(
     The pipeline looks like:
         sql_server_cdc_origin >> wiretap
     """
-
-    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
-        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
+    if Version(sdc_builder.version) < Version('5.2.0') and record_format == RICH_RECORDS:
+        pytest.skip(f'The "Combine Update Records" option / "Rich" Record Format in not available until version 5.2.0. '
+                    f'Skipping as the current version is {sdc_builder.version}.')
+    if Version(sdc_builder.version) < Version('5.6.0') and record_format == DISCARD_BEFORE_UPDATE_RECORDS:
+        pytest.skip(f'The record format "Basic Discarding \'Before Update\' Records" was introduced in SDC version '
+                    f'5.6.0. Skipping as the current version is {sdc_builder.version}.')
 
     table = None
     connection = None
@@ -685,7 +649,10 @@ def test_sql_server_cdc_source_table_in_record_header(
                                       )
 
         if Version(sdc_builder.version) >= Version('5.2.0'):
-            sql_server_cdc.combine_update_records = combine_update_records
+            if Version(sdc_builder.version) < Version('5.6.0'):
+                sql_server_cdc.combine_update_records = (record_format == RICH_RECORDS)
+            else:
+                sql_server_cdc.record_format = record_format
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -704,7 +671,7 @@ def test_sql_server_cdc_source_table_in_record_header(
 
         # assert all the data captured have the same raw_data
         for record in wiretap.output_records:
-            field_data = record.field['Data'] if combine_update_records else record.field
+            field_data = record.field['Data'] if record_format == RICH_RECORDS else record.field
             assert field_data['id'] == rows_in_database[0].get('id')
             assert field_data['name'] == rows_in_database[0].get('name')
             assert field_data['dt'] == rows_in_database[0].get('dt')
@@ -726,12 +693,10 @@ def test_sql_server_cdc_source_table_in_record_header(
 @database('sqlserver')
 @sdc_min_version('3.8.0')
 @pytest.mark.timeout(180)
-@pytest.mark.parametrize('combine_update_records', [True, False])
 def test_sql_server_cdc_starting_without_operation_committed_offset(
         sdc_builder,
         sdc_executor,
-        database,
-        combine_update_records
+        database
 ):
     """Test for SQL Server CDC origin stage running on missing __$operation in the committed offset
         __$operation field was introduced after 3.8.0
@@ -739,10 +704,6 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(
     The pipeline looks like:
         sql_server_cdc_origin >> wiretap
     """
-
-    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
-        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
-
     table = None
     connection = None
     if not database.is_cdc_enabled:
@@ -767,9 +728,6 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(
                                       max_batch_size_in_records=1,
                                       table_configs=[{'capture_instance': capture_instance_name}]
                                       )
-
-        if Version(sdc_builder.version) >= Version('5.2.0'):
-            sql_server_cdc.combine_update_records = combine_update_records
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -798,11 +756,11 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(
         sdc_executor.stop_pipeline(pipeline)
 
         # assert all the data captured have the same raw_data
-        for record in wiretap.output_records:
-            field_data = record.field['Data'] if combine_update_records else record.field
-            assert field_data['id'] == rows_in_database[0].get('id')
-            assert field_data['name'] == rows_in_database[0].get('name')
-            assert field_data['dt'] == rows_in_database[0].get('dt')
+        output_records = wiretap.output_records
+        for record in output_records:
+            assert record.field['id'] == rows_in_database[0].get('id')
+            assert record.field['name'] == rows_in_database[0].get('name')
+            assert record.field['dt'] == rows_in_database[0].get('dt')
     finally:
         if table is not None:
             logger.info('Dropping table %s in %s database...', table, database.type)
@@ -815,13 +773,13 @@ def test_sql_server_cdc_starting_without_operation_committed_offset(
 @database('sqlserver')
 @sdc_min_version('3.0.0.0')
 @pytest.mark.timeout(180)
-@pytest.mark.parametrize('combine_update_records', [True, False])
+@pytest.mark.parametrize('record_format', [BASIC_RECORDS, DISCARD_BEFORE_UPDATE_RECORDS, RICH_RECORDS])
 def test_schema_change(
         sdc_builder,
         sdc_executor,
         database,
         keep_data,
-        combine_update_records
+        record_format
 ):
     """
     Test for SQL Server CDC origin stage when schema change is enabled. We do so by capturing Insert Operation on CDC
@@ -833,8 +791,13 @@ def test_schema_change(
         sql_server_cdc_origin >> wiretap
     """
 
-    if Version(sdc_builder.version) < Version('5.2.0') and combine_update_records:
-        pytest.skip('The Combine Update Records option in not available until version 5.2.0.')
+    if Version(sdc_builder.version) < Version('5.2.0') and record_format == RICH_RECORDS:
+        pytest.skip(f'The "Combine Update Records" / "Rich" Record Format is not available in versions prior to 5.2.0. '
+                    f'Skipping as the current version is {sdc_builder.version}.')
+
+    if Version(sdc_builder.version) < Version('5.6.0') and record_format == DISCARD_BEFORE_UPDATE_RECORDS:
+        pytest.skip(f'The record format "Basic Discarding \'Before Update\' Records" is not available in versions prior'
+                    f' to 5.6.0. Skipping as the current version is {sdc_builder.version}.')
 
     num_of_tables = 2
     schema_name = DEFAULT_SCHEMA_NAME
@@ -851,8 +814,12 @@ def test_schema_change(
     origin.new_table_discovery_interval = '${1 * SECONDS}'
     origin.table_configs = [{'capture_instance': f'dbo_{table_prefix}_%'}]
     origin.number_of_threads = num_of_tables
-    if Version(sdc_builder.version) >= Version('5.2.0'):
-        origin.combine_update_records = combine_update_records
+
+    if Version('5.2.0') <= Version(sdc_builder.version):
+        if Version(sdc_builder.version) < Version('5.6.0'):
+            origin.combine_update_records = (record_format == RICH_RECORDS)
+        else:
+            origin.record_format = record_format
 
     wiretap = builder.add_wiretap()
 
@@ -881,9 +848,10 @@ def test_schema_change(
 
         records = wiretap.output_records
         assert len(records) == num_of_tables
-        records.sort(key=_sort_combined_records if combine_update_records else _sort_records)
+        using_rich_format = record_format == RICH_RECORDS
+        records.sort(key=_sort_combined_records if using_rich_format else _sort_records)
         for i in range(0, num_of_tables):
-            assert _get_data_field_from_record(records[i], 'id', combine_update_records) == i
+            assert _get_data_field_from_record(records[i], 'id', record_format) == i
 
         # Add a new column to the tables
         for table_name in tables:
@@ -910,9 +878,9 @@ def test_schema_change(
         # All data were read
         records = wiretap.output_records
         assert len(records) == num_of_tables
-        records.sort(key=_sort_combined_records if combine_update_records else _sort_records)
+        records.sort(key=_sort_combined_records if using_rich_format else _sort_records)
         for i in range(0, num_of_tables):
-            record_field_data = records[i].field['Data'] if combine_update_records else records[i].field
+            record_field_data = records[i].field['Data'] if using_rich_format else records[i].field
             assert record_field_data['id'] == num_of_tables + i
             assert record_field_data['new_column'] == num_of_tables + i
     finally:
@@ -932,6 +900,9 @@ def test_combined_update_record_format(sdc_builder, sdc_executor, database, use_
     """
     Tests the format of the data returned in insert, update and delete records for the SQL Server CDC origin stage when
     the "Combine Update Records" option is activated.
+
+    As of SDC version 5.6.0, activating the "Combine Update Records" option is equivalent to selecting the "Rich"
+    Record Format.
 
     The pipeline looks like:
         sql_server_cdc_origin >> jdbc_producer
@@ -960,9 +931,13 @@ def test_combined_update_record_format(sdc_builder, sdc_executor, database, use_
         sql_server_cdc.set_attributes(
             table_configs=[{'capture_instance': capture_instance_name}],
             use_direct_table_query=use_table,
-            fetch_size=1,
-            combine_update_records=True
+            fetch_size=1
         )
+
+        if Version(sdc_builder.version) < Version('5.6.0'):
+            sql_server_cdc.combine_update_records = True
+        else:
+            sql_server_cdc.record_format = RICH_RECORDS
 
         wiretap = pipeline_builder.add_wiretap()
         sql_server_cdc >> wiretap.destination
@@ -1022,11 +997,95 @@ def test_combined_update_record_format(sdc_builder, sdc_executor, database, use_
             connection.close()
 
 
+@database('sqlserver')
+@sdc_min_version('5.6.0')
+@pytest.mark.parametrize('use_table', [True, False])
+@pytest.mark.timeout(180)
+def test_discard_before_update_record_format(sdc_builder, sdc_executor, database, use_table):
+    """
+    Tests the format of the data returned in insert, update and delete records for the SQL Server CDC origin stage when
+    the "Basic Discarding 'Before Update' Records" record format is defined.
+
+    The pipeline looks like:
+        sql_server_cdc_origin >> wiretap
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    table = None
+    pipeline = None
+    connection = database.engine.connect()
+
+    try:
+        # Create a table, insert 1 row, update it and then delete it
+        table_name = get_random_string(string.ascii_lowercase, 20)
+        rows_in_database = setup_sample_data(1)
+        table = setup_table(connection, DEFAULT_SCHEMA_NAME, table_name, rows_in_database)
+        updated_name = 'new_updated_name'
+        connection.execute(table.update().where(table.c.id == 0).values(name=updated_name))
+        connection.execute(table.delete())
+
+        total_number_of_records = 3
+        capture_instance_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}'
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(
+            table_configs=[{'capture_instance': capture_instance_name}],
+            use_direct_table_query=use_table,
+            fetch_size=1,
+            record_format=DISCARD_BEFORE_UPDATE_RECORDS
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Wait for the data to be captured by CDC jobs in SQL Server before starting the pipeline
+        ct_table_name = f'{capture_instance_name}_CT'
+        wait_for_data_in_ct_table(ct_table_name, total_number_of_records, database)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(total_number_of_records)
+
+        output_records = wiretap.output_records
+        assert len(output_records) == total_number_of_records
+
+        old_row = rows_in_database[0]
+        new_row = rows_in_database[0]
+        new_row['name'] = updated_name
+
+        for record in output_records:
+            operation = record.header.values['sdc.operation.type']
+            assert 'OldData' not in record.field
+            assert 'Data' not in record.field
+            if operation == '1':
+                assert sorted(record.field) == sorted(old_row)
+            elif operation == '2' or operation == '3':
+                assert sorted(record.field) == sorted(new_row)
+            else:
+                assert False, 'Should not reach here. An unexpected value has been set for "sdc.operation.type".'
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table, database.type)
+            table.drop(database.engine)
+
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+
+        if connection is not None:
+            connection.close()
+
+
 @sdc_min_version('5.2.0')
 @database('sqlserver')
 @pytest.mark.parametrize('use_table', [True, False])
-@pytest.mark.parametrize('combine_update_records', [True, False])
-def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, combine_update_records):
+@pytest.mark.parametrize('record_format', [BASIC_RECORDS, DISCARD_BEFORE_UPDATE_RECORDS, RICH_RECORDS])
+def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, record_format):
     """
     Test to check the primary keys are present in the headers of the output records.
 
@@ -1036,9 +1095,13 @@ def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, co
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
 
-    if not combine_update_records and Version(sdc_builder.version) < Version('5.5.0'):
-        pytest.skip('The primary keys header values are not generated if "Combine Update Records" is not set in SDC '
-                    'versions prior to 5.5.0.')
+    if (record_format == BASIC_RECORDS) and (Version(sdc_builder.version) < Version('5.5.0')):
+        pytest.skip(f'The primary keys header values are not generated if not using the "Combine Update Records" format'
+                    f' in versions prior to 5.5.0. Skipping as the current version is {sdc_builder.version}.')
+
+    if (record_format == DISCARD_BEFORE_UPDATE_RECORDS) and (Version(sdc_builder.version) < Version('5.6.0')):
+        pytest.skip(f'The record format "Basic Discarding \'Before Update\' Records" was introduced in SDC version '
+                    f'5.6.0. Skipping as the current version is {sdc_builder.version}.')
 
     pipeline = None
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -1065,9 +1128,13 @@ def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, co
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
         sql_server_cdc.set_attributes(
             table_configs=[{'capture_instance': capture_instance_name}],
-            use_direct_table_query=use_table,
-            combine_update_records=combine_update_records
+            use_direct_table_query=use_table
         )
+
+        if Version(sdc_builder.version) < Version('5.6.0'):
+            sql_server_cdc.combine_update_records = (record_format == RICH_RECORDS)
+        else:
+            sql_server_cdc.record_format = record_format
 
         wiretap = pipeline_builder.add_wiretap()
         sql_server_cdc >> wiretap.destination
@@ -1098,7 +1165,7 @@ def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, co
 
         connection.execute(f"delete from {table_name}")
 
-        num_expected_records = 3 if combine_update_records else 4
+        num_expected_records = 4 if record_format == BASIC_RECORDS else 3
 
         sdc_executor.start_pipeline(pipeline)
         ct_table_name = f'{capture_instance_name}_CT'
@@ -1108,6 +1175,7 @@ def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, co
 
         primary_key_before_prefix = "jdbc.primaryKey.before."
         primary_key_after_prefix = "jdbc.primaryKey.after."
+        op_type = 'sdc.operation.type'
 
         for index in range(0, num_expected_records):
             header_values = wiretap.output_records[index].header.values
@@ -1117,8 +1185,8 @@ def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, co
             assert primary_key_after_prefix + "type" not in header_values
             assert primary_key_after_prefix + "generation" not in header_values
 
-            if index == 1 or (index == 2 and not combine_update_records):
-                assert header_values['sdc.operation.type'] == '3' if combine_update_records or index == 2 else '5'
+            if index == 1 or (index == 2 and record_format == BASIC_RECORDS):
+                assert header_values[op_type] == '3' if (record_format != BASIC_RECORDS or index == 2) else '5'
 
                 assert primary_key_before_prefix + "name" in header_values
                 assert primary_key_before_prefix + "pokedex_id" in header_values
@@ -1136,9 +1204,9 @@ def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, co
                 assert header_values[f"{primary_key_after_prefix}pokedex_id"] == f'{updated_data.get("pokedex_id")}'
             else:
                 if index == 0:
-                    assert header_values['sdc.operation.type'] == '1'
+                    assert header_values[op_type] == '1'
                 else:
-                    assert header_values['sdc.operation.type'] == '2'
+                    assert header_values[op_type] == '2'
 
                 assert primary_key_before_prefix + "name" not in header_values
                 assert primary_key_before_prefix + "pokedex_id" not in header_values
@@ -1159,14 +1227,18 @@ def test_primary_keys_headers(sdc_builder, sdc_executor, database, use_table, co
 @database('sqlserver')
 @pytest.mark.parametrize('values', ['numeric', 'non-numeric'])
 @pytest.mark.parametrize('use_table', [True, False])
-@pytest.mark.parametrize('combine_update_records', [True, False])
-def test_primary_keys_metadata(sdc_builder, sdc_executor, database, use_table, values, combine_update_records):
+@pytest.mark.parametrize('record_format', [BASIC_RECORDS, DISCARD_BEFORE_UPDATE_RECORDS, RICH_RECORDS])
+def test_primary_keys_metadata(sdc_builder, sdc_executor, database, use_table, values, record_format):
     """
     Test to check the metadata of the primary keys is correctly set in the headers of the output records.
     """
-    if not combine_update_records and Version(sdc_builder.version) < Version('5.5.0'):
-        pytest.skip('The primary keys header values are not generated if "Combine Update Records" is not set in SDC '
-                    'versions prior to 5.5.0.')
+    if (record_format == BASIC_RECORDS) and (Version(sdc_builder.version) < Version('5.5.0')):
+        pytest.skip(f'The primary keys metadata is not generated if not using the "Combine Update Records" format '
+                    f'in versions prior to 5.5.0. Skipping as the current version is {sdc_builder.version}.')
+
+    if (record_format == DISCARD_BEFORE_UPDATE_RECORDS) and (Version(sdc_builder.version) < Version('5.6.0')):
+        pytest.skip(f'The record format "Basic Discarding \'Before Update\' Records" was introduced in SDC version '
+                    f'5.6.0. Skipping as the current version is {sdc_builder.version}.')
 
     pipeline = None
     table_name = get_random_string(string.ascii_lowercase, 20)
@@ -1191,9 +1263,14 @@ def test_primary_keys_metadata(sdc_builder, sdc_executor, database, use_table, v
         sql_server_cdc.set_attributes(
             table_configs=[{'capture_instance': capture_instance_name}],
             use_direct_table_query=use_table,
-            fetch_size=1,
-            combine_update_records=combine_update_records
+            fetch_size=1
         )
+
+        if Version(sdc_builder.version) < Version('5.6.0'):
+            sql_server_cdc.combine_update_records = (record_format == RICH_RECORDS)
+        else:
+            sql_server_cdc.record_format = record_format
+
         wiretap = pipeline_builder.add_wiretap()
         sql_server_cdc >> wiretap.destination
 
@@ -1229,6 +1306,111 @@ def test_primary_keys_metadata(sdc_builder, sdc_executor, database, use_table, v
 
         if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
             sdc_executor.stop_pipeline(pipeline)
+
+
+@database('sqlserver')
+@sdc_min_version('5.6.0')
+@pytest.mark.parametrize('record_format', [BASIC_RECORDS, DISCARD_BEFORE_UPDATE_RECORDS, RICH_RECORDS])
+@pytest.mark.timeout(180)
+def test_record_format_header(sdc_builder, sdc_executor, database, record_format):
+    """
+    Tests the header of the records includes the parameter `record_format` indicating the record format the records are
+    written in.
+
+    The pipeline looks like:
+        sql_server_cdc_origin >> wiretap
+    """
+    pipeline = None
+    table_name = get_random_string(string.ascii_lowercase, 20)
+
+    try:
+        # Create the table
+        connection = database.engine.connect()
+
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(
+            table_name,
+            sqlalchemy.MetaData(database.engine),
+            sqlalchemy.Column('name', sqlalchemy.String(64), primary_key=True),
+            sqlalchemy.Column('pokedex_id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('type', sqlalchemy.String(64)),
+            sqlalchemy.Column('generation', sqlalchemy.Integer)
+        )
+
+        table.create(database.engine)
+        capture_instance_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}'
+        _enable_cdc(connection, DEFAULT_SCHEMA_NAME, table_name, capture_instance_name)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(
+            table_configs=[{'capture_instance': capture_instance_name}],
+            record_format=record_format
+        )
+
+        wiretap = pipeline_builder.add_wiretap()
+        sql_server_cdc >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Define the data for each statement
+        initial_data = {'name': 'Azurill', 'pokedex_id': 298, 'type': 'Normal', 'generation': 3}
+        updated_data = {'name': 'Azurill', 'pokedex_id': 298, 'type': 'Normal/Fairy', 'generation': 6}
+
+        # Insert some data and update it
+        connection.execute(f"""
+            insert into {table_name}
+            values (
+                '{initial_data.get("name")}',
+                {initial_data.get("pokedex_id")},
+                '{initial_data.get("type")}',
+                {initial_data.get("generation")}
+            )
+        """)
+
+        connection.execute(f"""
+            update {table_name}
+            set type = '{updated_data.get("type")}', generation = {updated_data.get("generation")}
+            where name = '{updated_data.get("name")}' and pokedex_id = {updated_data.get("pokedex_id")}
+        """)
+
+        connection.execute(f"delete from {table_name}")
+
+        num_expected_records = 4 if record_format == BASIC_RECORDS else 3
+
+        sdc_executor.start_pipeline(pipeline)
+        wait_for_data_in_ct_table(f'{capture_instance_name}_CT', num_expected_records, database)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_expected_records)
+
+        assert len(wiretap.output_records) == num_expected_records
+
+        record_format_header = 'record_format'
+        record_format_code = _get_record_format_code(record_format)
+        output_records = wiretap.output_records
+
+        for index in range(0, num_expected_records):
+            header_values = output_records[index].header.values
+            assert record_format_header in header_values
+            assert header_values[record_format_header] == record_format_code
+
+        sdc_executor.stop_pipeline(pipeline)
+
+    finally:
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        connection.execute(f'drop table if exists {table_name}')
+
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
+
+
+def _get_record_format_code(record_format):
+    if record_format == BASIC_RECORDS:
+        return BASIC_RECORDS_CODE
+    elif record_format == DISCARD_BEFORE_UPDATE_RECORDS:
+        return DISCARD_BEFORE_UPDATE_RECORDS_CODE
+    else:
+        return RICH_RECORDS_CODE
 
 
 def _sort_records(entry):
@@ -1269,7 +1451,9 @@ def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
 
 def _wait_until_is_tracked_by_cdc(connection, table_name, is_tracked_by_cdc):
     while True:
-        cursor = connection.execute(f"select name from sys.tables where is_tracked_by_cdc = {is_tracked_by_cdc} and name = '{table_name}'")
+        cursor = connection.execute(
+            f"select name from sys.tables where is_tracked_by_cdc = {is_tracked_by_cdc} and name = '{table_name}'"
+        )
         if len(cursor.fetchall()) > 0:
             break
         else:
@@ -1277,13 +1461,13 @@ def _wait_until_is_tracked_by_cdc(connection, table_name, is_tracked_by_cdc):
             sleep(1)
 
 
-def _get_data_field_from_record(record, field_name, combine_update_records):
-    return record.field['Data'][field_name] if combine_update_records else record.field[field_name]
+def _get_data_field_from_record(record, field_name, record_format=BASIC_RECORDS):
+    return record.field['Data'][field_name] if record_format == RICH_RECORDS else record.field[field_name]
 
 
-def _check_record(record, sdc_operation_type, id, name, dt, combine_update_records, combine_update_records_field=None):
+def _check_record(record, sdc_operation_type, id, name, dt, record_format, combine_update_records_field=None):
     assert record.header.values['sdc.operation.type'] == sdc_operation_type
-    record_field_data = record.field[combine_update_records_field] if combine_update_records else record.field
+    record_field_data = record.field[combine_update_records_field] if record_format == RICH_RECORDS else record.field
     assert record_field_data['id'].value == id
     assert record_field_data['name'].value == name
     assert record_field_data['dt'].value == dt
