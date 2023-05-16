@@ -137,6 +137,7 @@ def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_build
     else:
         table_name = get_random_string(string.ascii_letters, 10)
         offset_name = get_random_string(string.ascii_letters, 10)
+    connection = None
 
     origin = builder.add_stage('JDBC Multitable Consumer')
     origin.table_configs = [{"tablePattern": f'%{table_name}%'}]
@@ -207,8 +208,11 @@ def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_build
             assert wiretap.output_records[0].field[offset_name] == 1
 
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 
 @pytest.mark.parametrize('auto_commit', [False, True])
@@ -423,6 +427,7 @@ def insert_data_in_table(database, table, rows_to_insert):
     logger.info('Adding three rows into %s database ...', database.type)
     connection = database.engine.connect()
     connection.execute(table.insert(), rows_to_insert)
+    connection.close()
 
 
 def delete_table(tables, database):

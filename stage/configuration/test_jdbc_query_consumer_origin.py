@@ -247,6 +247,7 @@ def test_username(sdc_builder, sdc_executor, stage_attributes):
 def _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes=None):
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
     table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    connection = Nono
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -284,6 +285,8 @@ def _test_sql_query(sdc_builder, sdc_executor, database, stage_attributes=None):
         assert [row['name'] for row in ROWS_IN_DATABASE] == [record.field['name'] for record in wiretap.output_records]
 
     finally:
+        if connection is not None:
+            connection.close()
         _clean_up(database, table, table_name)
 
 

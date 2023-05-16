@@ -71,6 +71,7 @@ def test_jdbc_multitable_consumer_with_no_more_data_event_generation_delay(sdc_b
            >= delay (only for no-more-data) >> trash
     """
     src_table = get_random_string(string.ascii_lowercase, 6)
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
@@ -132,7 +133,10 @@ def test_jdbc_multitable_consumer_with_no_more_data_event_generation_delay(sdc_b
         assert history.latest.metrics.timer('pipeline.batchProcessing.timer')._data.get('max') >= 10
     finally:
         if table is not None:
+            logger.info('Dropping table %s in %s database...', src_table, database.type)
             table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 
 # SDC-10987: JDBC Multitable Consumer multiple offset columns with initial offset
@@ -142,6 +146,7 @@ def test_jdbc_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_exe
     Set initial offset at the end of the table and verify that no records were read.
     """
     table_name = get_random_string(string.ascii_lowercase, 10)
+    connection = None
 
     builder = sdc_builder.get_pipeline_builder()
 
@@ -190,15 +195,18 @@ def test_jdbc_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_exe
         assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 0
         assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 0
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
-
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 # SDC-11324: JDBC MultiTable origin can create duplicate offsets
 @database('mysql')
 def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
     """Validate that we will not create duplicate offsets. """
     table_name = get_random_string(string.ascii_lowercase, 10)
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -246,9 +254,11 @@ def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
         }
         assert offset['offsets'] == expected_offset
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
-
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 # SDC-11326: JDBC MultiTable origin forgets offset of non-incremental table on consecutive execution
 @database('mysql')
@@ -256,6 +266,7 @@ def test_jdbc_multitable_duplicate_offsets(sdc_builder, sdc_executor, database):
 def test_jdbc_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, database):
     """Validate the origin does not loose non-incremental offset on various runs."""
     table_name = get_random_string(string.ascii_lowercase, 10)
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -322,9 +333,11 @@ def test_jdbc_multitable_lost_nonincremental_offset(sdc_builder, sdc_executor, d
             assert offset['offsets'] == expected_offset
 
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
-
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 @sdc_min_version('3.9.0')
 @database('oracle')
@@ -411,9 +424,11 @@ def test_jdbc_multitable_oracle_split_by_timestamp_with_timezone(sdc_builder, sd
         assert len(result) == 0
 
     finally:
-        logger.info('Dropping table %s and %s in %s database ...', table_name, table_name_dest, database.type)
-        connection.execute(f"DROP TABLE {table_name}")
-        connection.execute(f"DROP TABLE {table_name_dest}")
+        if connection is not None:
+            logger.info('Dropping table %s and %s in %s database ...', table_name, table_name_dest, database.type)
+            connection.execute(f"DROP TABLE {table_name}")
+            connection.execute(f"DROP TABLE {table_name_dest}")
+            connection.close()
 
 
 # SDC-12404: Pipeline Stuck in Running State on JDBC MultiTable exception (Exception not propagated/Pipeline Hangs)
@@ -515,10 +530,11 @@ def test_jdbc_multitable_oracle_split_by_date(sdc_builder, sdc_executor, databas
         assert len(result) == 0
 
     finally:
-        logger.info('Dropping table %s and %s in %s database ...', table_name, table_name_dest, database.type)
-        connection.execute(f"DROP TABLE {table_name}")
-        connection.execute(f"DROP TABLE {table_name_dest}")
-
+        if connection is not None:
+            logger.info('Dropping table %s and %s in %s database ...', table_name, table_name_dest, database.type)
+            connection.execute(f"DROP TABLE {table_name}")
+            connection.execute(f"DROP TABLE {table_name_dest}")
+            connection.close()
 
 @sdc_min_version('3.9.0')
 @database('mysql')
@@ -534,6 +550,7 @@ def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_bu
     """
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
     table_name = f'{src_table_prefix}_{get_random_string(string.ascii_lowercase, 20)}'
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -584,9 +601,10 @@ def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_bu
         assert name_id_from_output == [('Romualdo', 4), ('Charly', 1)]
 
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        connection.execute(f'DROP TABLE {table_name}')
-
+        if connection is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            connection.execute(f'DROP TABLE {table_name}')
+            connection.close()
 
 # SDC-10053: Jdbc Multitable does not handle large gap in primary keys
 @database
@@ -604,6 +622,7 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
 
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
     table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -651,8 +670,11 @@ def test_jdbc_multitable_consumer_partitioned_large_offset_gaps(sdc_builder, sdc
         logger.info('Actual %s expected %s', rows_from_wiretap, expected_data)
         assert rows_from_wiretap == expected_data
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 
 @sdc_min_version('3.12.0')
@@ -721,9 +743,10 @@ def test_jdbc_sqlserver_on_unknown_type_action(sdc_builder, sdc_executor, databa
         status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
         if status == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
-
-        logger.info('Dropping table %s in %s database ...', table_name, database.type)
-        connection.execute(f"DROP TABLE {table_name}")
+        if connection is not None:
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
+            connection.execute(f"DROP TABLE {table_name}")
+            connection.close()
 
 
 @sdc_min_version('3.14.0')
@@ -769,8 +792,10 @@ def test_jdbc_sqlserver_datetimeoffset_as_primary_key(sdc_builder, sdc_executor,
         assert record.field['dto'].value == EXPECTED_VALUE
 
     finally:
-        logger.info('Dropping table %s in %s database ...', table_name, database.type)
-        connection.execute(f"DROP TABLE {table_name}")
+        if connection is not None:
+            logger.info('Dropping table %s in %s database ...', table_name, database.type)
+            connection.execute(f"DROP TABLE {table_name}")
+            connection.close
 
 
 # Test for SDC-13288
@@ -877,6 +902,7 @@ def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured
 
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
     table_name = '{}_{}'.format(src_table_prefix, get_random_string(string.ascii_lowercase, 20))
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -939,8 +965,11 @@ def test_jdbc_multitable_consumer_duplicates_read_when_initial_offset_configured
         expected_data = [(row['name'], row['id'], row['created']) for row in rows_in_table]
         assert rows_from_wiretap == expected_data
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 
 # SDC-14489: JDBC Multitable origin must escape string columns
@@ -957,6 +986,7 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
 
     builder = sdc_builder.get_pipeline_builder()
     table_name = get_random_string(string.ascii_letters, 10)
+    connection = None
 
     origin = builder.add_stage('JDBC Multitable Consumer')
     origin.table_configs = [{"tablePattern": f'{table_name}'}]
@@ -997,8 +1027,11 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
         assert len(wiretap.output_records) == 1
         assert wiretap.output_records[0].get_field_data('/id') == input_string
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 
 @database
@@ -1019,6 +1052,7 @@ def test_jdbc_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, data
     src_table_prefix = get_random_string(string.ascii_lowercase, 6)
     table_name1 = f'{src_table_prefix}_{get_random_string(string.ascii_lowercase, 20)}'
     table_name2 = f'{src_table_prefix}_{get_random_string(string.ascii_lowercase, 20)}'
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -1090,10 +1124,14 @@ def test_jdbc_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, data
         assert all(element in records for element in table_data1)
         assert all(element in records for element in table_data2)
     finally:
-        logger.info('Dropping table %s in %s database...', table_name1, database.type)
-        logger.info('Dropping table %s in %s database...', table_name2, database.type)
-        table1.drop(database.engine)
-        table2.drop(database.engine)
+        if table1 is not None:
+            logger.info('Dropping table %s in %s database...', table_name1, database.type)
+            table1.drop(database.engine)
+        if table2 is not None:
+            logger.info('Dropping table %s in %s database...', table_name2, database.type)
+            table2.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 @sdc_min_version('5.4.0')
 @database
@@ -1205,6 +1243,7 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
     tables = []
     all_rows = []
     pipeline = None
+    connection = None
 
     try:
         all_row_count = 0
@@ -1307,6 +1346,8 @@ def test_no_data_losses_or_duplicates_in_multithreaded_mode(sdc_builder, sdc_exe
             sdc_executor.stop_pipeline(pipeline)
         for table in tables:
             table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 
 # COLLECTOR-333: JDBC Multitable Consumer cannot use wildcard (%) in Schema selection
@@ -1393,6 +1434,7 @@ def test_jdbc_primary_keys_headers(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
     primary_key_specification = f"jdbc.primaryKeySpecification"
+    connection = None
 
     INPUT_DATA = [
         {'id': 1, 'name': 'The Lich King', 'game': 'World of Warcraft'},
@@ -1472,8 +1514,11 @@ def test_jdbc_primary_keys_headers(sdc_builder, sdc_executor, database):
             assert primary_key_specification_json == primary_key_specification_expected_json
 
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 
 @sdc_min_version('5.2.0')
@@ -1482,6 +1527,7 @@ def test_jdbc_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database)
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
     primary_key_specification = f"jdbc.primaryKeySpecification"
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -1555,8 +1601,10 @@ def test_jdbc_numeric_primary_keys_metadata(sdc_builder, sdc_executor, database)
         assert primary_key_specification_json == primary_key_specification_expected_json
 
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        connection.execute(f'drop table {table_name}')
+        if connection is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            connection.execute(f'drop table {table_name}')
+            connection.close()
 
 
 @sdc_min_version('5.2.0')
@@ -1565,6 +1613,7 @@ def test_jdbc_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, datab
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
     primary_key_specification = f"jdbc.primaryKeySpecification"
+    connection = None
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -1636,8 +1685,10 @@ def test_jdbc_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, datab
         assert primary_key_specification_json == primary_key_specification_expected_json
 
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        connection.execute(f'drop table {table_name}')
+        if connection is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            connection.execute(f'drop table {table_name}')
+            connection.close()
 
 
 @sdc_min_version('5.2.0')
@@ -1645,6 +1696,7 @@ def test_jdbc_non_numeric_primary_keys_metadata(sdc_builder, sdc_executor, datab
 def test_jdbc_vendor_header(sdc_builder, sdc_executor, database):
     """Validate that the primary key (and no other columns) information is present in the record headers. """
     table_name = get_random_string(string.ascii_lowercase, 10)
+    connection = None
     vendor_specification = f"jdbc.vendor"
 
     INPUT_DATA = [
@@ -1712,8 +1764,11 @@ def test_jdbc_vendor_header(sdc_builder, sdc_executor, database):
             assert vendor_metadata == vendor_metadata_expected
 
     finally:
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
 
 
 #
@@ -1757,6 +1812,7 @@ def test_jdbc_multitable_oracle_no_leaking_cursors(sdc_builder, sdc_executor, da
     be reading 1000 tables we are forcing the cursors leakage detected in ESC-2017 appears and makes
     the pipeline startup fails (StartError).
     """
+
     connection = database.engine.connect()
     schema = database.username.upper()
     try:
@@ -1807,3 +1863,6 @@ def test_jdbc_multitable_oracle_no_leaking_cursors(sdc_builder, sdc_executor, da
                 NULL;
         END;
         """)
+        if connection is not None:
+            connection.close()
+            

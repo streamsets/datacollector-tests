@@ -102,6 +102,7 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
     pipeline = pipeline_builder.build(title='JDBC Lookup').configure_for_environment(database, credential_store)
     sdc_executor.add_pipeline(pipeline)
     try:
+        connection = None
         if column_type in {'String'}:
             logger.info('Adding %s rows into %s database ...', len(ROWS_IN_DATABASE), database.type)
             connection = database.engine.connect()
@@ -131,9 +132,10 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
     finally:
         if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
-        logger.info('Dropping table %s in %s database...', table_name, database.type)
-        table.drop(database.engine)
-
+        if connection is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+            connection.close()
 
 @database
 @sdc_min_version('3.22.0')
@@ -443,7 +445,8 @@ def _create_and_populate_lookup_table(name, database):
     logger.info('Adding %s rows into %s database ...', len(LOOKUP_TABLE_DATA), database.type)
     connection = database.engine.connect()
     connection.execute(table.insert(), LOOKUP_TABLE_DATA)
-
+    connection.close()
+    
     return table
 
 
