@@ -8,8 +8,7 @@ import string
 import tempfile
 import time
 import pytest
-
-from . import _clean_up_databricks
+from stage import _clean_up_databricks
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.sdc_api import StartError, RunError
 from streamsets.testframework.markers import aws, azure, deltalake, gcp, sdc_min_version
@@ -315,7 +314,8 @@ def test_with_aws_s3_storage_cdc(sdc_builder, sdc_executor, deltalake, aws, auto
                                         enable_data_drift=auto_create_table,
                                         auto_create_table=auto_create_table,
                                         merge_cdc_data=True,
-                                        key_columns=[{
+                                        primary_key_location="TABLE",
+                                        table_key_columns=[{
                                             "keyColumns": [
                                                 "NAME"
                                             ],
@@ -427,7 +427,8 @@ def test_cdc_deltalake_multiple_ops_two_batches(sdc_builder, sdc_executor, delta
                                         enable_data_drift=True,
                                         auto_create_table=True,
                                         merge_cdc_data=True,
-                                        key_columns=[{
+                                        primary_key_location="TABLE",
+                                        table_key_columns=[{
                                             "keyColumns": [
                                                 "ID"
                                             ],
@@ -1151,7 +1152,8 @@ def test_cdc_with_partitioned_table(sdc_builder, sdc_executor, deltalake, aws, p
                                         enable_data_drift=False,
                                         auto_create_table=False,
                                         merge_cdc_data=True,
-                                        key_columns=[{
+                                        primary_key_location="TABLE",
+                                        table_key_columns=[{
                                             "keyColumns": [
                                                 "NAME"
                                             ],
@@ -1646,7 +1648,7 @@ def test_with_gcs_storage(sdc_builder, sdc_executor, deltalake, gcp):
     dev_raw_data_source >> databricks_deltalake
 
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, gcp)
-
+    
     try:
         logger.info(f'Creating table {table_name} ...')
         deltalake.create_table(table_name)
