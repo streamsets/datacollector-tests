@@ -112,7 +112,7 @@ def test_control_hub_api_processor_invalid_credentials(sdc_builder, sdc_executor
     pipeline = pipeline_builder.build('Control Hub API Processor Sample Pipeline')
     sdc_executor.add_pipeline(pipeline)
 
-    if Version(sdc_builder.version) >= Version('5.6.0'):
+    if Version(sdc_executor.version) >= Version('5.6.0'):
         with pytest.raises(ValidationError) as ex:
             sdc_executor.validate_pipeline(pipeline)
 
