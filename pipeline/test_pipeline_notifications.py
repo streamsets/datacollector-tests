@@ -17,6 +17,7 @@ import imaplib
 import email
 import traceback
 from string import ascii_letters
+from time import sleep
 
 import pytest as pytest
 from streamsets.sdk.sdc_api import RunError, RunningError
@@ -342,6 +343,9 @@ def get_state_email_notification_key_phrase(pipeline_state):
 
 def read_and_delete_email(smtp, subject=None):
     try:
+        # Allow the email time to be sent and received
+        sleep(10)
+
         mail = imaplib.IMAP4_SSL(SMTP_SERVER)
         mail.login(
             smtp['mail'],
