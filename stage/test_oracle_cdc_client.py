@@ -14,13 +14,11 @@
 
 import logging
 import re
-import time
 
 import pytest
 import sqlalchemy
 import string
 
-from datetime import datetime, timedelta
 from json import JSONDecodeError
 from time import sleep
 
@@ -29,6 +27,7 @@ from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
+from stage.utils.common import cleanup
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 from stage.utils.utils_oracle import (
     DefaultConnectionParameters,
@@ -38,7 +37,6 @@ from stage.utils.utils_oracle import (
     DefaultWaitParameters,
     NoError,
     StartMode,
-    cleanup,
     database_version,
     service_name,
     system_identifier,

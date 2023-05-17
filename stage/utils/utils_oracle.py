@@ -81,16 +81,6 @@ def _get_database_version(db):
 
 
 @pytest.fixture()
-def cleanup(request):
-    """Provide an ExitStack to manage cleanup function execution."""
-    try:
-        with ExitStack() as exit_stack:
-            yield exit_stack
-    except Exception as exception:
-        logger.warning(f"Error during cleanup of {request.node.name}: {exception}")
-
-
-@pytest.fixture()
 def table_name():
     """Returns a random table name"""
     return get_random_string(string.ascii_uppercase, 10)

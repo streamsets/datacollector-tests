@@ -25,12 +25,12 @@ from datetime import datetime, timedelta, timezone
 
 from streamsets.testframework.markers import database, sdc_min_version
 
+from stage.utils.common import cleanup
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 from stage.utils.utils_oracle import (
     DefaultConnectionParameters,
     DefaultStartParameters,
     DefaultTableParameters,
-    cleanup,
     database_version,
     table_name,
     test_name,
