@@ -51,6 +51,8 @@ def test_basic_nifi_http_server(sdc_builder, sdc_executor, nifi, data_format, ex
     pipeline = pipeline_builder.build().configure_for_environment(nifi)
     sdc_executor.add_pipeline(pipeline)
 
+    template = None
+
     try:
         # Start SDC pipeline
         sdc_executor.start_pipeline(pipeline)
@@ -68,5 +70,5 @@ def test_basic_nifi_http_server(sdc_builder, sdc_executor, nifi, data_format, ex
         for element in expected_output:
             assert element in [record.field['text'].value for record in wiretap.output_records]
     finally:
-        if template:
+        if template is not None:
             nifi.delete_template(template, DATA_FORMAT_TEMPLATES_MAP[data_format])
