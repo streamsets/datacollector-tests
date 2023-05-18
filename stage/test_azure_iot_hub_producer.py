@@ -15,6 +15,7 @@
 import json
 import logging
 import string
+from time import sleep
 
 import pytest
 from azure import servicebus
@@ -95,7 +96,12 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
         rule.filter_type = 'SqlFilter'
         rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
-        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
+        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+
+        # Wait a bit to ensure the rule is created and read all the messages from other test executions that have been
+        # detected by the service bus subscription before the rule was up
+        sleep(10)
+        sb_service.receive_subscription_message(topic_name=topic_name, subscription_name=subscriber_id, timeout=10)
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(len(raw_records))
@@ -112,7 +118,7 @@ def test_azure_iot_hub_producer(sdc_builder, sdc_executor, azure):
 
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
-        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+        sb_service.delete_rule(topic_name, subscriber_id, f'{subscriber_id}Filter')
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)

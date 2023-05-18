@@ -15,6 +15,7 @@
 import logging
 import string
 import json
+from time import sleep
 
 import pytest
 from azure import servicebus
@@ -98,7 +99,12 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
         rule.filter_type = 'SqlFilter'
         rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
-        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
+        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+
+        # Wait a bit to ensure the rule is created and read all the messages from other test executions that have been
+        # detected by the service bus subscription before the rule was up
+        sleep(10)
+        sb_service.receive_subscription_message(topic_name=topic_name, subscription_name=subscriber_id, timeout=10)
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -114,7 +120,7 @@ def test_data_types(sdc_builder, sdc_executor, azure, input, converter_type, exp
 
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
-        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+        sb_service.delete_rule(topic_name, subscriber_id, f'{subscriber_id}Filter')
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)
@@ -189,7 +195,12 @@ def test_object_names_device(sdc_builder, sdc_executor, azure, device_name_categ
         rule.filter_type = 'SqlFilter'
         rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
-        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
+        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+
+        # Wait a bit to ensure the rule is created and read all the messages from other test executions that have been
+        # detected by the service bus subscription before the rule was up
+        sleep(10)
+        sb_service.receive_subscription_message(topic_name=topic_name, subscription_name=subscriber_id, timeout=10)
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -205,7 +216,7 @@ def test_object_names_device(sdc_builder, sdc_executor, azure, device_name_categ
 
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
-        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+        sb_service.delete_rule(topic_name, subscriber_id, f'{subscriber_id}Filter')
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)
@@ -268,7 +279,12 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, batch_size):
         rule.filter_type = 'SqlFilter'
         rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
-        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
+        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+
+        # Wait a bit to ensure the rule is created and read all the messages from other test executions that have been
+        # detected by the service bus subscription before the rule was up
+        sleep(10)
+        sb_service.receive_subscription_message(topic_name=topic_name, subscription_name=subscriber_id, timeout=10)
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_batch_count(batches)
@@ -285,7 +301,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure, batch_size):
 
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
-        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+        sb_service.delete_rule(topic_name, subscriber_id, f'{subscriber_id}Filter')
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)
@@ -344,7 +360,12 @@ def test_data_format_json(sdc_builder, sdc_executor, azure):
         rule.filter_type = 'SqlFilter'
         rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
-        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
+        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+
+        # Wait a bit to ensure the rule is created and read all the messages from other test executions that have been
+        # detected by the service bus subscription before the rule was up
+        sleep(10)
+        sb_service.receive_subscription_message(topic_name=topic_name, subscription_name=subscriber_id, timeout=10)
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -360,7 +381,7 @@ def test_data_format_json(sdc_builder, sdc_executor, azure):
 
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
-        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+        sb_service.delete_rule(topic_name, subscriber_id, f'{subscriber_id}Filter')
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)
@@ -418,7 +439,12 @@ def test_data_format_text(sdc_builder, sdc_executor, azure):
         rule.filter_type = 'SqlFilter'
         rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
-        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
+        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+
+        # Wait a bit to ensure the rule is created and read all the messages from other test executions that have been
+        # detected by the service bus subscription before the rule was up
+        sleep(10)
+        sb_service.receive_subscription_message(topic_name=topic_name, subscription_name=subscriber_id, timeout=10)
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -434,7 +460,7 @@ def test_data_format_text(sdc_builder, sdc_executor, azure):
 
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
-        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+        sb_service.delete_rule(topic_name, subscriber_id, f'{subscriber_id}Filter')
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)
@@ -487,7 +513,12 @@ def test_data_format_xml(sdc_builder, sdc_executor, azure):
         rule.filter_type = 'SqlFilter'
         rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
-        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
+        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+
+        # Wait a bit to ensure the rule is created and read all the messages from other test executions that have been
+        # detected by the service bus subscription before the rule was up
+        sleep(10)
+        sb_service.receive_subscription_message(topic_name=topic_name, subscription_name=subscriber_id, timeout=10)
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(1, timeout_sec=120)
@@ -503,7 +534,7 @@ def test_data_format_xml(sdc_builder, sdc_executor, azure):
 
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
-        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+        sb_service.delete_rule(topic_name, subscriber_id, f'{subscriber_id}Filter')
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)
@@ -564,7 +595,12 @@ def test_push_pull(sdc_builder, sdc_executor, azure):
         rule.filter_type = 'SqlFilter'
         rule.filter_expression = f"[$.cdid] = '{device_id}'"
         sb_service.create_rule(topic_name, subscriber_id, f'{subscriber_id}Filter', rule)
-        sb_service.delete_rule(topic_name, subscriber_id, '$Default')
+        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+
+        # Wait a bit to ensure the rule is created and read all the messages from other test executions that have been
+        # detected by the service bus subscription before the rule was up
+        sleep(10)
+        sb_service.receive_subscription_message(topic_name=topic_name, subscription_name=subscriber_id, timeout=10)
 
         sdc_executor.add_pipeline(producer_dest_pipeline)
         sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_pipeline_output_records_count(25, timeout_sec=120)
@@ -580,7 +616,7 @@ def test_push_pull(sdc_builder, sdc_executor, azure):
 
     finally:
         logger.info('Deleting %s Service Bus subscriber on topic %s', subscriber_id, topic_name)
-        sb_service.delete_rule(topic_name, subscriber_id, servicebus.DEFAULT_RULE_NAME)
+        sb_service.delete_rule(topic_name, subscriber_id, f'{subscriber_id}Filter')
         sb_service.delete_subscription(topic_name, subscriber_id)
         logger.info('Deleting %s IoT Hub device on %s IoT Hub', device_id, iot_hub.namespace)
         iot_hub.delete_device_id(device_id)
