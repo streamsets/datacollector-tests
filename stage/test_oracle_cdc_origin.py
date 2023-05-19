@@ -5405,6 +5405,10 @@ def test_blob_max_size(sdc_builder, sdc_executor, database, peg_parser, max_lob_
     sdc_version = Version(sdc_builder.version)
     if peg_parser and sdc_version < PEG_LOB_SUPPORT_VERSION:
         pytest.skip(f"BLOB parsing with the PEG parser is not supported for SDC v{PEG_LOB_SUPPORT_VERSION}")
+    
+    with database.engine.connect() as conn:
+        if _get_oracle_db_version(conn) == 12:
+            pytest.skip("Skipping test for Oracle 12 RAC")
 
     id_column_name = "IDCOL"
     blob_column_name = "BLOBCOL"
