@@ -19,13 +19,14 @@ import pytest
 import sqlalchemy
 import string
 
+from contextlib import ExitStack
 from json import JSONDecodeError
 from time import sleep
 
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import database, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 from stage.utils.common import cleanup
 from stage.utils.utils_migration import LegacyHandler as PipelineHandler
@@ -35,6 +36,9 @@ from stage.utils.utils_oracle import (
     DefaultThreadingParameters,
     DefaultStartParameters,
     DefaultWaitParameters,
+    ConditionalParameters,
+    FETCH_PARAMETERS,
+    FEAT_VER_FETCH_STRATEGY,
     NoError,
     StartMode,
     database_version,
@@ -428,6 +432,11 @@ def test_basic_operations(
     rows,
     columns,
     session_wait_time,
+    fetch_strategy=None,  # unused by default
+    fetch_overflow=None,  # unused by default
+    wait_time_before_session_start_in_ms=None,  # unused by default
+    wait_time_after_session_start_in_ms=None,  # unused by default
+    wait_time_after_session_end_in_ms=None,  # unused by default
 ):
     """Insert, update and delete n=@rows rows into a table and verify that each operation produces
     a record with the correct values."""
@@ -483,6 +492,12 @@ def test_basic_operations(
         | DefaultTableParameters(table_name)
         | DefaultStartParameters(database)
         | DefaultWaitParameters(session_wait_time)
+        | ConditionalParameters()
+        .add_if(fetch_strategy is not None, fetch_strategy=fetch_strategy)
+        .add_if(fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None, fetch_overflow=fetch_overflow)
+        .add_if(wait_time_before_session_start_in_ms is not None, wait_time_before_session_start_in_ms=wait_time_before_session_start_in_ms)
+        .add_if(wait_time_after_session_start_in_ms is not None, wait_time_after_session_start_in_ms=wait_time_after_session_start_in_ms)
+        .add_if(wait_time_after_session_end_in_ms is not None, wait_time_after_session_end_in_ms=wait_time_after_session_end_in_ms)
     )
 
     wiretap = pipeline_builder.add_wiretap()
@@ -525,7 +540,21 @@ def test_basic_operations(
     # fmt: on
 )
 def test_rollback(
-    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence, rows, columns
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    cleanup,
+    table_name,
+    test_name,
+    precedence,
+    rows,
+    columns,
+    fetch_strategy=None,  # unused by default
+    fetch_overflow=None,  # unused by default
+    wait_time_before_session_start_in_ms=None,  # unused by default
+    wait_time_after_session_start_in_ms=None,  # unused by default
+    wait_time_after_session_end_in_ms=None,  # unused by default
 ):
     """Ensure no records are produced from transactions that were rolled back."""
 
@@ -585,6 +614,12 @@ def test_rollback(
         | DefaultStartParameters(database)
         | DefaultWaitParameters(0)
         | DefaultThreadingParameters()
+        | ConditionalParameters()
+        .add_if(fetch_strategy is not None, fetch_strategy=fetch_strategy)
+        .add_if(fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None, fetch_overflow=fetch_overflow)
+        .add_if(wait_time_before_session_start_in_ms is not None, wait_time_before_session_start_in_ms=wait_time_before_session_start_in_ms)
+        .add_if(wait_time_after_session_start_in_ms is not None, wait_time_after_session_start_in_ms=wait_time_after_session_start_in_ms)
+        .add_if(wait_time_after_session_end_in_ms is not None, wait_time_after_session_end_in_ms=wait_time_after_session_end_in_ms)
     )
 
     wiretap = pipeline_builder.add_wiretap()
@@ -693,7 +728,16 @@ def test_mixed_workload(
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
 def test_overlapping_transactions(
-    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    cleanup,
+    table_name,
+    test_name,
+    precedence,
+    fetch_strategy=None,  # unused by default
+    fetch_overflow=None,  # unused by default
 ):
     """Test the stage produces a correct output when transactions overlap. This test will:
     1. Start the pipeline
@@ -732,7 +776,12 @@ def test_overlapping_transactions(
 
     oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
     oracle_cdc_origin.set_attributes(
-        **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database)
+        **DefaultConnectionParameters(database)
+        | DefaultTableParameters(table_name)
+        | DefaultStartParameters(database)
+        | ConditionalParameters()
+        .add_if(fetch_strategy is not None, fetch_strategy=fetch_strategy)
+        .add_if(fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None, fetch_overflow=fetch_overflow)
     )
 
     wiretap = pipeline_builder.add_wiretap()
@@ -1030,3 +1079,81 @@ def test_batch_size(
     expected_records = [{id_column: i} for i in range(total_records)]
     assert len(records) == len(expected_records)
     assert all([record in records for record in expected_records])
+
+
+@pytest.mark.parametrize("precedence", PRECEDENCES)
+@pytest.mark.parametrize("fetch_strategy, fetch_overflow", FETCH_PARAMETERS)
+@pytest.mark.parametrize("wait_time", [0, 1000])
+def test_fetch_strategy(
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    table_name,
+    test_name,
+    precedence,
+    fetch_strategy,
+    fetch_overflow,
+    wait_time,
+):
+    """Run some existing tests with different fetch strategies and ensure they are unaffected"""
+
+    if Version(sdc_builder.version) < FEAT_VER_FETCH_STRATEGY:
+        pytest.skip("Fetch strategies are unsupported in this version")
+
+    logger.info("Run 'test_basic_operations'")
+    with ExitStack() as cleanup:
+        test_basic_operations(
+            sdc_builder,
+            sdc_executor,
+            database,
+            database_version,
+            cleanup,
+            table_name + "A",
+            test_name + "with_basic_operations",
+            precedence,
+            rows=400,
+            columns=5,
+            session_wait_time=0,
+            fetch_strategy=fetch_strategy,
+            fetch_overflow=fetch_overflow,
+            wait_time_before_session_start_in_ms=wait_time,
+            wait_time_after_session_start_in_ms=wait_time,
+            wait_time_after_session_end_in_ms=wait_time,
+        )
+
+    logger.info("Run 'test_rollback'")
+    with ExitStack() as cleanup:
+        test_rollback(
+            sdc_builder,
+            sdc_executor,
+            database,
+            database_version,
+            cleanup,
+            table_name + "B",
+            test_name + "with_rollback",
+            precedence,
+            rows=400,
+            columns=5,
+            fetch_strategy=fetch_strategy,
+            fetch_overflow=fetch_overflow,
+            wait_time_before_session_start_in_ms=wait_time,
+            wait_time_after_session_start_in_ms=wait_time,
+            wait_time_after_session_end_in_ms=wait_time,
+        )
+
+    # Commented out to speed up the test
+    # logger.info("Run 'test_overlapping_transactions'")
+    # with ExitStack() as cleanup:
+    #     test_overlapping_transactions(
+    #         sdc_builder,
+    #         sdc_executor,
+    #         database,
+    #         database_version,
+    #         cleanup,
+    #         table_name + "C",
+    #         test_name + "with_overlapping_transactions",
+    #         precedence,
+    #         fetch_strategy=fetch_strategy,
+    #         fetch_overflow=fetch_overflow,
+    #     )

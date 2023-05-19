@@ -21,7 +21,7 @@ import pytest
 import string
 
 from streamsets.testframework.markers import database
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 
 logger = logging.getLogger(__name__)
@@ -30,9 +30,22 @@ logger = logging.getLogger(__name__)
 SERVICE_NAME = ""  # The value will be assigned during setup
 SYSTEM_IDENTIFIER = ""  # The value will be assigned during setup
 DB_VERSION = 0  # The value will be assigned during setup
-RECORD_FORMATS = ["BASIC", "RICH"]
+
+# Versions
+FEAT_VER_FETCH_STRATEGY = Version("5.6.0")
 MIN_ORACLE_VERSION = 18
 
+# Test parameters
+FETCH_PARAMETERS = (
+    # (fetch_strategy, fetch_overflow)
+    ("DISK_QUEUE", None),
+    ("MEMORY_QUEUE", None),
+    ("MEMORY_OVERFLOW_DISK", -1),
+    ("MEMORY_OVERFLOW_DISK", 0),
+    ("MEMORY_OVERFLOW_DISK", 1),
+    ("DIRECT", None),
+)
+RECORD_FORMATS = ["BASIC", "RICH"]
 
 
 class NoError(Exception):
@@ -69,6 +82,7 @@ def _get_service_name(db):
 
 def _get_system_identifier(db):
     return _get_single_context_parameter(db, "INSTANCE_NAME")
+
 
 def _get_database_version(db):
     with ExitStack() as exit_stack:
@@ -200,11 +214,26 @@ class Parameters(ABC):
         return self.as_dict().keys()
 
 
+class ConditionalParameters(Parameters):
+    """Stores parameters only if their bound condition is true."""
+
+    def __init__(self):
+        self.parameter_dict = {}
+
+    def add_if(self, condition, **kwargs):
+        if condition:
+            self.parameter_dict.update(**kwargs)
+        return self
+
+    def as_dict(self):
+        return self.parameter_dict
+
+
 class RawParameters(Parameters):
     """Empty canvas to fill with any dictionary."""
 
-    def __init__(self, parameter_dict):
-        self.parameter_dict = parameter_dict
+    def __init__(self, parameter_dict={}, **kwargs):
+        self.parameter_dict = {**parameter_dict, **kwargs}
 
     def as_dict(self):
         return self.parameter_dict

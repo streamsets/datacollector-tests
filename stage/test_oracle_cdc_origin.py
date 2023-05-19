@@ -32,7 +32,9 @@ from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
+
+from stage.utils.utils_oracle import FETCH_PARAMETERS, FEAT_VER_FETCH_STRATEGY
 
 
 logger = logging.getLogger(__name__)
@@ -280,11 +282,22 @@ def test_date_type_conversions(sdc_builder, sdc_executor, database, buffer_locat
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('use_pattern', [True, False])
-def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_locally, buffer_location, use_pattern):
+def test_oracle_cdc_client_basic(
+    sdc_builder,
+    sdc_executor,
+    database,
+    buffer_locally,
+    buffer_location,
+    use_pattern,
+    row_count=3,
+    fetch_strategy=None,
+    fetch_overflow=None,
+):
     """Basic test that reads inserts/updates/deletes to an Oracle table,
     and validates that they are read in the same order.
     Runs oracle_cdc_client >> wiretap
     """
+    assert row_count > 0, "row_count must be greater than 0"
 
     # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
     if buffer_location == 'ON_DISK':
@@ -322,22 +335,26 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
                                                           buffer_locally=buffer_locally,
                                                           buffer_location=buffer_location,
                                                           src_table_name=src_table_pattern)
+        if Version(sdc_builder.version) >= FEAT_VER_FETCH_STRATEGY and fetch_strategy is not None:
+            oracle_cdc_client.set_attributes(fetch_strategy=fetch_strategy)
+            if fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None:
+                oracle_cdc_client.set_attributes(fetch_overflow=fetch_overflow)
 
-        inserts = _insert(connection=connection, table=table)
+        inserts = _insert(connection=connection, table=table, count=row_count)
 
         rows = inserts.rows
         cdc_op_types = inserts.cdc_op_types
         sdc_op_types = inserts.sdc_op_types
         change_count = inserts.change_count
 
-        updates = _update(connection=connection, table=table)
+        updates = _update(connection=connection, table=table, count=row_count)
 
         rows += updates.rows
         cdc_op_types += updates.cdc_op_types
         sdc_op_types += updates.sdc_op_types
         change_count += updates.change_count
 
-        deletes = _delete(connection=connection, table=table)
+        deletes = _delete(connection=connection, table=table, count=row_count)
 
         # deletes should have the last state of the row, so it would be the what comes from the updates.
         rows += updates.rows
@@ -362,7 +379,7 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', change_count)
 
-        sleep(30)
+        sleep(10)  # If this test becomes flaky try increasing the sleep time, it used to be 30
 
         wiretap_output_records_max_retries = 12
         wiretap_output_records_max_wait = 10
@@ -383,7 +400,7 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
 
         sorted_records = sorted(wiretap_output_records,
                          key=lambda record: (record.header.values["oracle.cdc.scn"],
-                                             record.header.values['oracle.cdc.sequence.internal']))
+                                             int(record.header.values["oracle.cdc.sequence.internal"])))
 
         assert len(sorted_records) == wiretap_output_records_control_length
 
@@ -395,7 +412,7 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
             assert rows[op_index]['NAME'] == record.field['NAME'].value
             assert int(record.header.values['sdc.operation.type']) == sdc_op_types[op_index]
             assert record.header.values['oracle.cdc.operation'] == cdc_op_types[op_index]
-            row_index = (row_index + 1) % 3
+            row_index = (row_index + 1) % row_count
             op_index += 1
 
         assert op_index == change_count
@@ -412,11 +429,9 @@ def test_oracle_cdc_client_basic(sdc_builder, sdc_executor, database, buffer_loc
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
-def test_oracle_cdc_client_bulk(sdc_builder,
-                                sdc_executor,
-                                database,
-                                buffer_locally,
-                                buffer_location):
+def test_oracle_cdc_client_bulk(
+    sdc_builder, sdc_executor, database, buffer_locally, buffer_location, fetch_strategy=None, fetch_overflow=None
+):
     """Test that reads inserts/updates/deletes to an Oracle table with bulk sentences,
     and verifies that no record is lost .
     Runs oracle_cdc_client >> wiretap
@@ -500,6 +515,11 @@ def test_oracle_cdc_client_bulk(sdc_builder,
                                          max_batch_size_in_records=1,
                                          initial_change="SCN",
                                          start_scn=database_last_scn)
+        if Version(sdc_builder.version) >= FEAT_VER_FETCH_STRATEGY and fetch_strategy is not None:
+            oracle_cdc_client.set_attributes(fetch_strategy=fetch_strategy)
+            if fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None:
+                oracle_cdc_client.set_attributes(fetch_overflow=fetch_overflow)
+
         set_session_wait_times(sdc_builder, oracle_cdc_client)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
@@ -1741,7 +1761,16 @@ def test_oracle_cdc_to_jdbc_producer(sdc_builder, sdc_executor, database, buffer
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 @pytest.mark.parametrize('use_pattern', [True, False])
-def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_locally, buffer_location, use_pattern):
+def test_rollback_to_savepoint(
+    sdc_builder,
+    sdc_executor,
+    database,
+    buffer_locally,
+    buffer_location,
+    use_pattern,
+    fetch_strategy=None,
+    fetch_overflow=None,
+):
     """Test that writes some data, then creates a save point, writes some more data and then rolls back to savepoint,
     and validates that only the data that is before the save point and after the rollback is read
     Runs oracle_cdc_client >> wiretap
@@ -1792,6 +1821,10 @@ def test_rollback_to_savepoint(sdc_builder, sdc_executor, database, buffer_local
                                                           src_table_name=src_table_pattern,
                                                           initial_change='SCN',
                                                           start_scn=start_scn)
+        if Version(sdc_builder.version) >= FEAT_VER_FETCH_STRATEGY and fetch_strategy is not None:
+            oracle_cdc_client.set_attributes(fetch_strategy=fetch_strategy)
+            if fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None:
+                oracle_cdc_client.set_attributes(fetch_overflow=fetch_overflow)
 
         wiretap = pipeline_builder.add_wiretap()
         lines = [
@@ -6401,6 +6434,57 @@ def test_lob_erase(sdc_builder, sdc_executor, database, peg_parser, lob_type, bu
         assert headers["oracle.cdc.operation.lobLength"] == f"{erase_length}"
         assert headers["oracle.cdc.operation.lobOffset"] == f"{erase_offset}"
         assert headers["oracle.cdc.operation.lobOperationName"] == "ERASE"
+
+
+@database("oracle")
+@pytest.mark.parametrize(
+    "buffer_location, buffer_locally", [["IN_MEMORY", True], ["ON_DISK", True], ["IN_MEMORY", False]]
+)
+@pytest.mark.parametrize("fetch_strategy, fetch_overflow", FETCH_PARAMETERS)
+def test_fetch_strategy(
+    sdc_builder, sdc_executor, database, buffer_location, buffer_locally, fetch_strategy, fetch_overflow
+):
+    """Run some existing tests with different fetch strategies and ensure they are unaffected"""
+
+    if Version(sdc_builder.version) < FEAT_VER_FETCH_STRATEGY:
+        pytest.skip("Fetch strategies are unsupported in this version")
+
+    logger.info("Run 'test_oracle_cdc_client_basic'")
+    test_oracle_cdc_client_basic(
+        sdc_builder,
+        sdc_executor,
+        database,
+        buffer_locally,
+        buffer_location,
+        False,
+        fetch_strategy=fetch_strategy,
+        fetch_overflow=fetch_overflow,
+        row_count=300,
+    )
+
+    logger.info("Run 'test_rollback_to_savepoint'")
+    test_rollback_to_savepoint(
+        sdc_builder,
+        sdc_executor,
+        database,
+        buffer_locally,
+        buffer_location,
+        False,
+        fetch_strategy=fetch_strategy,
+        fetch_overflow=fetch_overflow,
+    )
+
+    # Commented out to speed up the test
+    # logger.info("Run 'test_oracle_cdc_client_bulk'")
+    # test_oracle_cdc_client_bulk(
+    #     sdc_builder,
+    #     sdc_executor,
+    #     database,
+    #     buffer_locally,
+    #     buffer_location,
+    #     fetch_strategy=fetch_strategy,
+    #     fetch_overflow=fetch_overflow,
+    # )
 
 
 def _get_oracle_cdc_client_origin(connection,
