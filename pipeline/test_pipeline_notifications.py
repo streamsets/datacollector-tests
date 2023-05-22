@@ -342,10 +342,6 @@ def get_state_email_notification_key_phrase(pipeline_state):
 
 
 def read_and_delete_email(smtp, subject=None):
-    try:
-        # Allow the email time to be sent and received
-        sleep(10)
-
         mail = imaplib.IMAP4_SSL(SMTP_SERVER)
         mail.login(
             smtp['mail'],
@@ -353,17 +349,30 @@ def read_and_delete_email(smtp, subject=None):
         )
         mail.select('inbox')
 
-        if subject is None:
-            email_id = int(mail.search(None, 'ALL')[1][0].split()[-1])
-        else:
-            email_id = int(mail.search(None, f'SUBJECT "{subject}"')[1][0].split()[-1])
+        timeout = 120
+        time_between_checks = 10
+        max_iterations = (timeout // time_between_checks) + 1
+        filter = 'ALL' if subject is None else f'SUBJECT "{subject}"'
 
-        data = mail.fetch(str(email_id), '(RFC822)')
-        for response_part in data:
-            if isinstance(response_part[0], tuple):
-                mail.store(str(email_id).encode(), '+FLAGS', '\\Deleted')
-                return email.message_from_string(str(response_part[0][1], 'utf-8'))
+        logger.info(f"Looking for the email for at most {timeout} seconds...")
+        for iteration in range(max_iterations):
+            # Prompt server for an update
+            mail.recent()
 
-    except Exception as e:
-        traceback.print_exc()
-        print(str(e))
+            try:
+                email_id = int(mail.search(None, filter)[1][0].split()[-1])
+                data = mail.fetch(str(email_id), '(RFC822)')
+                if data is not None:
+                    logger.info(f"Email found!")
+                    mail.store(str(email_id).encode(), '+FLAGS', '\\Deleted')
+                    return email.message_from_string(str(data[1][0][1], 'utf-8'))
+
+            except Exception as e:
+                logger.info(f"Email not found due to the following error: {str(e)}")
+
+            if (iteration < max_iterations - 1):
+                logger.info(f"Trying again in {time_between_checks} seconds...")
+                sleep(time_between_checks)
+
+        logger.info("Email not found")
+        return None
