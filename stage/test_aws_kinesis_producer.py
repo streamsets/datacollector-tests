@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 import string
 
 from streamsets.testframework.markers import aws
@@ -135,6 +136,161 @@ def test_kinesis_producer_other_region(sdc_builder, sdc_executor, aws):
         _ensure_pipeline_is_stopped(sdc_executor, producer_dest_pipeline)
         logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
         client.delete_stream(StreamName=stream_name)
+
+
+@aws('kinesis')
+def test_kinesis_preserve_record_order(sdc_builder, sdc_executor, aws, keep_data):
+    """
+    Test the 'Preserve Record Order' property on Kinesis producer destination stages. We do so by generating data with
+    Dev Raw Data Source and publishing it to a Kinesis stream using Kinesis Producer and checking it has been published
+    in the same order.
+
+    The pipeline looks like:
+        dev_raw_data_source >> kinesis_producer
+    """
+    expected_data = [f'Hello {i}' for i in range(100)]
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='TEXT',
+        raw_data='\n'.join(expected_data),
+        stop_after_first_batch=True
+    )
+
+    kinesis_producer = builder.add_stage('Kinesis Producer')
+    kinesis_producer.set_attributes(
+        data_format='TEXT',
+        stream_name=stream_name,
+        record_separator='',
+        preserve_record_order=True,
+        kinesis_producer_configuration=[{'key': 'AggregationEnabled', 'value': 'false'}]
+    )
+
+    dev_raw_data_source >> kinesis_producer
+    pipeline = builder.build().configure_for_environment(aws)
+
+    client = aws.kinesis
+    try:
+        logger.info(f'Creating a Kinesis Stream {stream_name} on AWS ...')
+        client.create_stream(
+            StreamName=stream_name,
+            ShardCount=1
+        )
+        aws.wait_for_stream_status(
+            stream_name=stream_name,
+            status='ACTIVE'
+        )
+        desc_response = client.describe_stream(
+            StreamName=stream_name
+        )
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        logger.info(f'Reading the data from the Kinesis Stream ...')
+        shard_iterator = client.get_shard_iterator(
+            StreamName=stream_name,
+            ShardId=desc_response['StreamDescription']['Shards'][0]['ShardId'],
+            ShardIteratorType='TRIM_HORIZON'
+        )
+        response = client.get_records(
+            ShardIterator=shard_iterator['ShardIterator']
+        )
+        received_data = [rec['Data'].decode().strip() for rec in response['Records']]
+
+        logger.debug(f'Number of messages received from Kinesis = {len(received_data)}')
+        assert received_data == expected_data
+
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, pipeline)
+        if not keep_data:
+            logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+            client.delete_stream(StreamName=stream_name)
+
+
+@aws('kinesis')
+def test_kinesis_too_large_record(sdc_builder, sdc_executor, aws, keep_data):
+    """
+    Test the Kinesis producer destination stage cannot produce a record too large and the pertinent error record is
+    created in such case. We do so by generating a file with 2 correct records and one that is too large, reading them
+    with a Directory stage and publishing it to a Kinesis stream using Kinesis Producer. We then check the correct
+    records have been successfully produced and a record error has been created for the incorrect record.
+
+    The pipeline looks like:
+        Directory >> [Kinesis Producer, Wiretap]
+    """
+    record_1_content = 'Hello 1'
+    record_2_content = 'Hello ' + '2' * 1024 * 1024
+    record_3_content = 'Hello 3'
+    file_content = f'{record_1_content}\n{record_2_content}\n{record_3_content}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='TEXT',
+        raw_data=file_content,
+        stop_after_first_batch=True,
+        max_line_length=len(record_2_content)
+    )
+    stream_name = '{}_{}'.format(aws.kinesis_stream_prefix, get_random_string(string.ascii_letters, 10))
+
+    kinesis_producer = pipeline_builder.add_stage('Kinesis Producer')
+    kinesis_producer.set_attributes(
+        data_format='TEXT',
+        stream_name=stream_name,
+        record_separator='',
+        preserve_record_order=True,
+        kinesis_producer_configuration=[{'key': 'AggregationEnabled', 'value': 'false'}]
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> [kinesis_producer, wiretap.destination]
+    pipeline = pipeline_builder.build().configure_for_environment(aws)
+
+    client = aws.kinesis
+    try:
+        logger.info(f'Creating a Kinesis Stream {stream_name} on AWS...')
+        client.create_stream(
+            StreamName=stream_name,
+            ShardCount=1
+        )
+        aws.wait_for_stream_status(
+            stream_name=stream_name,
+            status='ACTIVE'
+        )
+        desc_response = client.describe_stream(
+            StreamName=stream_name
+        )
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        logger.info(f'Reading the data from the Kinesis Stream...')
+        shard_iterator = client.get_shard_iterator(
+            StreamName=stream_name,
+            ShardId=desc_response['StreamDescription']['Shards'][0]['ShardId'],
+            ShardIteratorType='TRIM_HORIZON'
+        )
+        response = client.get_records(
+            ShardIterator=shard_iterator['ShardIterator']
+        )
+        received_data = [rec['Data'].decode().strip() for rec in response['Records']]
+        assert len(received_data) == 2
+        assert received_data[0] == record_1_content
+        assert received_data[1] == record_3_content
+
+        error_records = wiretap.error_records
+        assert len(error_records) == 1
+        assert error_records[0].header['errorCode'] == 'KINESIS_08'
+
+    finally:
+        _ensure_pipeline_is_stopped(sdc_executor, pipeline)
+        if not keep_data:
+            logger.info('Deleting %s Kinesis stream on AWS ...', stream_name)
+            client.delete_stream(StreamName=stream_name)
 
 
 def _ensure_pipeline_is_stopped(sdc_executor, pipeline):
