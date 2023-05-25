@@ -536,6 +536,99 @@ def test_jdbc_multitable_oracle_split_by_date(sdc_builder, sdc_executor, databas
             connection.execute(f"DROP TABLE {table_name_dest}")
             connection.close()
 
+
+@database('oracle')
+def test_jdbc_multitable_multithread(sdc_builder, sdc_executor, database):
+    """Make sure that we can have multiple threads reading and writing:
+
+    multitable >> jdbc
+    multitable >= finisher
+
+    """
+    table_name_ori_pref = get_random_string(string.ascii_uppercase, 20)
+    table_name_dest_pref = get_random_string(string.ascii_uppercase, 20)
+    number_of_tables = 20
+    number_of_rows = 20
+    number_of_threads = 5
+    maximum_pool_size = 5
+    connection = database.engine.connect()
+
+    try:
+        # Create number_of_tables origin tables
+        for i in range(number_of_tables):
+            connection.execute(f"""
+                CREATE TABLE {table_name_ori_pref}_{i}(
+                    ID number primary key,
+                    ST varchar(10),
+                    TO_TABLE varchar(25)
+                )
+            """)
+            # Create number_of_tables destination table
+            connection.execute(f"""
+                CREATE TABLE {table_name_dest_pref}_{i} 
+                AS SELECT ID, ST FROM {table_name_ori_pref}_{i} WHERE 1=0
+            """)
+            # Insert number_of_rows rows in each table
+            for s in range(number_of_rows):
+                identifier = 100 * i + s
+                connection.execute(f"""
+                    INSERT INTO {table_name_ori_pref}_{i} 
+                    VALUES({identifier}, 'hello-{identifier}', '{table_name_dest_pref}_{i}')
+                """)
+        connection.execute("commit")
+
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('JDBC Multitable Consumer')
+        origin.table_configs = [{
+            "tablePattern": f'{table_name_ori_pref}%',
+            "overrideDefaultOffsetColumns": True,
+            "offsetColumns": ["ID"],
+            "enableNonIncremental": False
+        }]
+        origin.set_attributes(number_of_threads=number_of_threads, maximum_pool_size=maximum_pool_size,
+                              maximum_number_of_tables=-1)
+
+        finisher = builder.add_stage('Pipeline Finisher Executor')
+        finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+        FIELD_MAPPINGS = [dict(field='/ID', columnName='ID', dataType='DECIMAL'),
+                          dict(field='/ST', columnName='ST', dataType='STRING')]
+        destination = builder.add_stage('JDBC Producer')
+        destination.set_attributes(default_operation='INSERT',
+                                   field_to_column_mapping=FIELD_MAPPINGS,
+                                   stage_on_record_error='STOP_PIPELINE')
+
+        origin >> destination
+        origin >= finisher
+
+        pipeline = builder.build().configure_for_environment(database)
+
+        #Configure for environment capitalizes tablename value and makes the test fail
+        destination.set_attributes(table_name="${record:value('/TO_TABLE')}")
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        for i in range(number_of_tables):
+            result_origin = [row.items() for row in connection.execute(f'''
+                Select ID,ST from {table_name_ori_pref}_{i}
+            ''')]
+            result_dest = [row.items() for row in connection.execute(f'''
+                Select * from {table_name_dest_pref}_{i}
+            ''')]
+            assert result_origin == result_dest
+
+    finally:
+        if connection is not None:
+            for i in range(number_of_tables):
+                logger.info(
+                    f'Dropping tables {table_name_ori_pref}_{i},{table_name_dest_pref}_{i} in database {database.type}')
+                connection.execute(f"DROP TABLE {table_name_ori_pref}_{i}")
+                connection.execute(f"DROP TABLE {table_name_dest_pref}_{i}")
+            connection.close()
+
+
 @sdc_min_version('3.9.0')
 @database('mysql')
 def test_jdbc_multitable_consumer_origin_high_resolution_timestamp_offset(sdc_builder, sdc_executor, database):
