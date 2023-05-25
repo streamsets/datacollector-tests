@@ -108,7 +108,13 @@ def create_anonymous_client():
 def create_bucket(aws):
     """Creates a bucket with the same root name than  aws.s3_bucket_name"""
     s3_bucket = f'{aws.s3_bucket_name}-{get_random_string().lower()}'
-    aws.s3.create_bucket(Bucket=s3_bucket, CreateBucketConfiguration={'LocationConstraint': aws.region})
+    aws.s3.create_bucket(Bucket=s3_bucket, ObjectOwnership='ObjectWriter', CreateBucketConfiguration={'LocationConstraint': aws.region})
+    aws.s3.put_public_access_block(Bucket=s3_bucket,
+        PublicAccessBlockConfiguration={'BlockPublicAcls': False, 'IgnorePublicAcls': False,
+        'BlockPublicPolicy': False,'RestrictPublicBuckets': False})
+
+    aws.s3.put_bucket_acl(ACL='public-read-write', Bucket=s3_bucket)
+
     aws.s3.put_bucket_tagging(
         Bucket=s3_bucket,
         Tagging={
