@@ -3513,6 +3513,209 @@ def test_snowflake_write_records_on_error(sdc_builder, sdc_executor, snowflake,
         engine.dispose()
 
 
+@snowflake
+@sdc_min_version('5.6.0')
+@pytest.mark.parametrize(
+    'data',
+    (
+            [],
+            ['Cyndaquil', 'Quilava', 'Typhlosion'],
+            [1, 2, 3],
+            [2, 1, "Ash Ketchum", {'a': '1', 'b': '2'}, 3.91, ['Pichu', 'Pikachu', 'Raichu']]
+    )
+)
+def test_cdc_snowflake_array_columns(sdc_builder, sdc_executor, snowflake, data):
+    """
+    Tests the Snowflake destination stage can process insert and update commands with data that contains lists in CDC
+    format, even if the list item is the primary key.
+
+    The pipeline looks like:
+        Dev Raw Data Source >> Expression Evaluator >> Field Remover >> Snowflake destination
+    """
+    engine = snowflake.engine
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
+
+    input_data = [
+        {'OP': 1, 'ID': 1, 'PK_ARRAY': data, 'NON_PK_ARRAY': data},
+        {'OP': 1, 'ID': 2, 'PK_ARRAY': data, 'NON_PK_ARRAY': []},
+        {'OP': 3, 'ID': 2, 'PK_ARRAY': data, 'NON_PK_ARRAY': data},
+    ]
+    raw_data = ('\n').join((json.dumps(row) for row in input_data))
+
+    # Build Dev Raw Data Source
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='JSON',
+        raw_data=raw_data,
+        stop_after_first_batch=True
+    )
+
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(
+        header_attribute_expressions=[
+            {
+                'attributeToSet': 'sdc.operation.type',
+                'headerAttributeExpression': "${record:value('/OP')}"
+            }
+        ]
+    )
+
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ['/OP']
+
+    table_key_columns = [
+        {
+            "keyColumns": ["ID", "PK_ARRAY"],
+            "table": table_name
+        }
+    ]
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(
+        purge_stage_file_after_ingesting=True,
+        processing_cdc_data=True,
+        snowflake_stage_name=stage_name,
+        table=table_name,
+        on_record_error='STOP_PIPELINE',
+        primary_key_location="TABLE",
+        table_key_columns=table_key_columns
+    )
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        engine.execute(f"""
+            CREATE TABLE {table_name} (
+                "ID" NUMBER,
+                "PK_ARRAY" ARRAY,
+                "NON_PK_ARRAY" ARRAY,
+                PRIMARY KEY("ID", "PK_ARRAY")
+            )
+        """)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        rows = [row for row in engine.execute(f'select * from "{table_name}"')]
+        assert len(rows) == 2
+        assert rows[0][0] == 1
+        assert rows[1][0] == 2
+        for row in rows:
+            assert json.loads(row[1]) == data
+            assert json.loads(row[2]) == data
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.Snowflake_01.errorRecords.counter').count == 0
+    finally:
+        logger.info('Deleting table with name = %s...', table_name)
+        snowflake.drop_entities(stage_name=stage_name)
+        snowflake.engine.execute(f'DROP TABLE IF EXISTS "{table_name}";')
+        snowflake.engine.dispose()
+
+
+@snowflake
+@sdc_min_version('5.6.0')
+@pytest.mark.parametrize('array_default', (None, [], [1, 2, 3]))
+def test_cdc_snowflake_array_columns_default_value(sdc_builder, sdc_executor, snowflake, array_default):
+    """
+    Tests the default value for incorrect or missing array fields provided to the Snowflake destination stage. The test
+    creates a table with 2 columns, an integer and an array, and then sends an insert sql query without providing the
+    value for the array. We then check the value inserted into the table is the one defined as default value for arrays.
+
+    The pipeline looks like:
+        Dev Raw Data Source >> Expression Evaluator >> Snowflake destination
+    """
+    engine = snowflake.engine
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
+    raw_data = json.dumps({'ID': 1})
+
+    # Build Dev Raw Data Source
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='JSON',
+        raw_data=raw_data,
+        stop_after_first_batch=True
+    )
+
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(
+        header_attribute_expressions=[
+            {
+                'attributeToSet': 'sdc.operation.type',
+                'headerAttributeExpression': '1'
+            }
+        ]
+    )
+
+    table_key_columns = [
+        {
+            "keyColumns": ["ID"],
+            "table": table_name
+        }
+    ]
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(
+        purge_stage_file_after_ingesting=True,
+        processing_cdc_data=True,
+        snowflake_stage_name=stage_name,
+        table=table_name,
+        on_record_error='STOP_PIPELINE',
+        primary_key_location="TABLE",
+        table_key_columns=table_key_columns,
+        ignore_missing_fields=True
+    )
+
+    if array_default is not None:
+        snowflake_destination.array_default = json.dumps(array_default)
+
+    dev_raw_data_source >> expression_evaluator >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        engine.execute(f"""
+            CREATE TABLE {table_name} (
+                "ID" NUMBER,
+                "ARRAY" ARRAY,
+                PRIMARY KEY("ID")
+            )
+        """)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        rows = [row for row in engine.execute(f'select * from "{table_name}"')]
+        assert len(rows) == 1
+        assert rows[0][0] == 1
+        if array_default is not None:
+            assert json.loads(rows[0][1]) == array_default
+        else:
+            assert rows[0][1] is None
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.Snowflake_01.errorRecords.counter').count == 0
+    finally:
+        logger.info('Deleting table with name = %s...', table_name)
+        snowflake.drop_entities(stage_name=stage_name)
+        snowflake.engine.execute(f'DROP TABLE IF EXISTS "{table_name}";')
+        snowflake.engine.dispose()
+
+
 def wait_for_snowpipe_data_ingestion(query_function, max_attempts=5):
     attempts = 0
     data_from_database = []

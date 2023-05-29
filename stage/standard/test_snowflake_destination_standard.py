@@ -397,7 +397,7 @@ def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, e
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
-                                         on_record_error = 'STOP_PIPELINE')
+                                         on_record_error='STOP_PIPELINE')
 
     origin >> snowflake_destination
     pipeline = builder.build().configure_for_environment(snowflake)
@@ -420,6 +420,62 @@ def test_data_types_map(sdc_builder, sdc_executor, snowflake, keep_data, data, e
         rows = [row for row in rs]
         assert len(rows) == 1
         assert json.loads(rows[0][0]) == expected_value
+    finally:
+        if not keep_data:
+            try:
+                _delete_table(snowflake, table_name, stage_name)
+                _stop_pipeline(sdc_executor, pipeline)
+            except Exception as ex:
+                logger.error(ex)
+
+
+@snowflake
+@pytest.mark.parametrize(
+    'data',
+    (
+            [],
+            ['Cyndaquil', 'Quilava', 'Typhlosion'],
+            [1, 2, 3],
+            [2, 1, "Ash Ketchum", {'a': '1', 'b': '2'}, 3.91, ['Pichu', 'Pikachu', 'Raichu']]
+    )
+)
+def test_data_types_array(sdc_builder, sdc_executor, snowflake, keep_data, data):
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 20)}'
+    engine = snowflake.engine
+
+    # Build pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('Dev Raw Data Source')
+    origin.data_format = 'JSON'
+    origin.stop_after_first_batch = True
+    origin.raw_data = json.dumps({"VALUE": data})
+
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # Path inside the bucket in case of AWS S3 or the path inside the container in case of Azure Blob Storage container
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path)
+
+    snowflake_destination = builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         on_record_error='STOP_PIPELINE')
+
+    origin >> snowflake_destination
+    pipeline = builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        rs = engine.execute(f"""CREATE TABLE {table_name} ("VALUE" {'ARRAY'} NULL)""")
+        logger.info(f"Result from creating the table: {rs.fetchall()}")
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        rs = engine.execute(f'select VALUE from "{table_name}"')
+        rows = [row for row in rs]
+        assert len(rows) == 1
+        assert json.loads(rows[0][0]) == data
     finally:
         if not keep_data:
             try:
