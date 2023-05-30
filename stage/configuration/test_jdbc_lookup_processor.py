@@ -17,6 +17,8 @@ import string
 
 import pytest
 import sqlalchemy
+from sqlalchemy.dialects import postgresql
+
 from streamsets import sdk
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, MySqlDatabase, \
@@ -78,7 +80,14 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
 
     column_name_config = 'columnName' if existing_column_name else 'notAColumnName'
 
-    table = _create_table(table_name, database, None, name_type)
+    try:
+        table = _create_table(table_name, database, None, name_type)
+    except sqlalchemy.exc.ProgrammingError as error:
+        logger.info(f'Enum already exists: {error}')
+        # if enum exists in the database we set the parameter create_type in False
+        name_type = postgresql.ENUM('happy', 'sad', name="mood_enum", create_type=False)
+        table = _create_table(table_name, database, None, name_type)
+
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
