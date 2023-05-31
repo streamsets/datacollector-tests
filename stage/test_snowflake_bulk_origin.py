@@ -258,7 +258,7 @@ def test_large(sdc_builder, sdc_executor, snowflake, stage_location, records_to_
 
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+    sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=1800)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     snowflake_origin = pipeline_builder.add_stage('Snowflake Bulk', type='origin')
