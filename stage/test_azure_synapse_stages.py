@@ -1376,6 +1376,11 @@ def test_synapse_destination_authentications_azure_active_directory(
          staging_authentication,
          copy_statement_authentication
 ):
+    """
+    Skipping as it asks for MFA Code while trying to log in using AAD
+    """
+    pytest.skip("Skipped as it asks for Multi Factor Authentication Code")
+    
     destination_table_name = f'stf_{get_random_string(string.ascii_letters, 10)}'
     logger.info('destination_table_name = %s', destination_table_name)
     stage_file_prefix = f'stf_{get_random_string(string.ascii_letters, 10)}'
