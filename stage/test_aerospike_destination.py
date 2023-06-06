@@ -999,32 +999,36 @@ def test_check_wrong_use_tls_with_wrong_node_config(sdc_builder, sdc_executor, a
         sdc_executor.remove_pipeline(producer_dest_pipeline)
 
 
-def test_tls_for_login_only(sdc_builder, sdc_executor, aerospike):
-    if not aerospike.use_tls:
-        pytest.skip('This test only applies when using TLS')
-    input_data = { 'integer': 100 }
+def test_check_external_auth_no_tls(sdc_builder, sdc_executor, aerospike):
     record_key = get_random_string()
     builder = sdc_builder.get_pipeline_builder()
     dev_raw_data_source = builder.add_stage('Dev Raw Data Source').set_attributes(
-            data_format='JSON', raw_data=json.dumps(input_data), stop_after_first_batch=True)
+            data_format='JSON', raw_data=json.dumps({ 'map': {'b': 20} }), stop_after_first_batch=True)
     aerospike_destination = builder.add_stage(AEROSPIKE_CLIENT_DESTINATION).set_attributes(
             namespace='test', 
-            key=record_key,
-            on_record_error='STOP_PIPELINE',
-            tls_for_login_only=True)
+            key=record_key)
+    wiretap = builder.add_wiretap()
 
-    dev_raw_data_source >> aerospike_destination
-    producer_dest_pipeline = builder.build(title='Aerospike Destination Scalar Types Test').configure_for_environment(aerospike)
+    dev_raw_data_source >> [aerospike_destination, wiretap.destination]
+    producer_dest_pipeline = builder.build(title='Aerospike Destination External with no TLS').configure_for_environment(aerospike)
+
+    aerospike_destination.use_authentication = True
+    aerospike_destination.authentication_mode = 'EXTERNAL'
+    aerospike_destination.use_tls = False
 
     sdc_executor.add_pipeline(producer_dest_pipeline)
 
     try:
-        # I see this failing in local when running aerospike in docker and SDC out of docker. The reason is that
-        # for the non-TLS connections, the aerospike client uses the IP address of the aerospike container what is
-        # not accessible out of docker. In automatic test infrastructure should work.
-        sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         aerospike_key = ('test', None, record_key)
+        aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
+
+        with pytest.raises(sdc_api.StartError) as error:
+            sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
+        assert 'AEROSPIKE_01' in error.value.message
+
         (_, _, bins) = aerospike.engine.get(aerospike_key)
-        assert all(bins[k] == v for k,v in input_data.items())
+        assert list(bins.keys()) == ['map']
+        assert bins['map'] == {'a': 10}
+
     finally:
         sdc_executor.remove_pipeline(producer_dest_pipeline)
