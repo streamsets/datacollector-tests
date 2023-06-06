@@ -12,9 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
+import os
 import pytest
 from streamsets.testframework.markers import sdc_min_version
+from streamsets.testframework.utils import get_random_string
+import string
+import tempfile
 
 
 logger = logging.getLogger(__name__)
@@ -164,3 +169,64 @@ def test_execution_order_multiple_lines(sdc_builder, sdc_executor, with_crossing
            str(wiretap_4.output_records[0].field['time'])
     assert str(wiretap_2.output_records[0].field['time']) < \
            str(wiretap_4.output_records[0].field['time'])
+
+
+@sdc_min_version('5.6.0')
+def test_execution_order_crossing_target_multiplex(sdc_builder, sdc_executor, keep_data):
+    """
+    Test records multiplexion
+       The pipeline looks like:
+            dev_raw_data_source >> exp_eval >> exp_eval >> [filesystem1, filesystem2]
+            dev_raw_data_source >> exp_eval >> exp_eval >> [filesystem1, filesystem2]
+       And the exp_eval are crossed too.
+       Eight records should be produced.
+       File System is used because wiretap can not be crossed.
+       Shell executor is used to load the data
+    """
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data='{"f1": "0" }',
+                                       stop_after_first_batch=True)
+
+    expression_evaluator_1 = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator_1.field_expressions = [{'fieldToSet': '/f1', 'expression': '${record:value("/f1")}1'}]
+
+    expression_evaluator_2 = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator_2.field_expressions = [{'fieldToSet': '/f1', 'expression': '${record:value("/f1")}1'}]
+
+    expression_evaluator_3 = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator_3.field_expressions = [{'fieldToSet': '/f1', 'expression': '${record:value("/f1")}2'}]
+
+    expression_evaluator_4 = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator_4.field_expressions = [{'fieldToSet': '/f1', 'expression': '${record:value("/f1")}2'}]
+
+    tmp_directory = os.path.join(tempfile.gettempdir(), get_random_string(string.ascii_letters, 10))
+    local_fs_1 = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs_1.set_attributes(data_format='JSON', directory_template=tmp_directory,
+                              files_prefix='sdc1-', max_records_in_file=100)
+
+    local_fs_2 = pipeline_builder.add_stage('Local FS', type='destination')
+    local_fs_2.set_attributes(data_format='JSON', directory_template=tmp_directory,
+                              files_prefix='sdc2-', max_records_in_file=100)
+
+    dev_raw_data_source >> [expression_evaluator_1, expression_evaluator_2]
+
+    expression_evaluator_1 >> [expression_evaluator_3, expression_evaluator_4]
+    expression_evaluator_2 >> [expression_evaluator_3, expression_evaluator_4]
+    expression_evaluator_3 >> [local_fs_1, local_fs_2]
+    expression_evaluator_4 >> [local_fs_1, local_fs_2]
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        shell_result_1 = sdc_executor.execute_shell(f'cat {tmp_directory}/sdc1-*')
+        shell_result_2 = sdc_executor.execute_shell(f'cat {tmp_directory}/sdc2-*')
+        # Eight records should be produced.
+        assert shell_result_1.stdout.split('\n') == ['{"f1":"012"}'] * 4
+        assert shell_result_2.stdout.split('\n') == ['{"f1":"012"}'] * 4
+
+    finally:
+        if not keep_data:
+            sdc_executor.execute_shell(f'rm -r {tmp_directory}')
