@@ -19,7 +19,7 @@ from streamsets.sdk import sdc_api
 from streamsets.testframework.markers import aerospike, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
-AEROSPIKE_CLIENT_DESTINATION = 'Aerospike Client Destination'
+AEROSPIKE_CLIENT_DESTINATION = 'Aerospike Client'
 
 pytestmark = [aerospike, sdc_min_version('5.6.0')]
 
