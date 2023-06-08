@@ -295,7 +295,7 @@ def test_directory_for_table_location(sdc_builder, sdc_executor, deltalake, aws)
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=180)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -429,7 +429,7 @@ def test_cdc_jdbc_header(sdc_builder, sdc_executor, deltalake, aws):
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
@@ -496,7 +496,7 @@ def test_new_line_replacement_character(sdc_builder, sdc_executor, deltalake, aw
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -557,7 +557,7 @@ def test_null_value(sdc_builder, sdc_executor,  deltalake, aws, null_value):
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -636,7 +636,7 @@ def test_cdc_null_value(sdc_builder, sdc_executor, deltalake, aws, null_value):
 
 
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -773,7 +773,7 @@ def test_purge_stage_file_after_ingesting(sdc_builder, sdc_executor, aws, deltal
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1014,7 +1014,7 @@ def test_trim_spaces(sdc_builder, sdc_executor, deltalake, aws, is_trim_spaces):
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1073,7 +1073,7 @@ def test_use_iam_roles(sdc_builder, sdc_executor, deltalake, aws, use_instance_p
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1130,7 +1130,7 @@ def test_quoting_mode(sdc_builder, sdc_executor, deltalake, aws, quoting_mode):
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1189,7 +1189,7 @@ def test_quote_character(sdc_builder, sdc_executor, deltalake, aws, quote_charac
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1248,7 +1248,7 @@ def test_column_separator(sdc_builder, sdc_executor, deltalake, aws, column_sepa
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1309,7 +1309,7 @@ def test_escape_character(sdc_builder, sdc_executor, deltalake, aws, escape_char
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 

@@ -139,7 +139,7 @@ def test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, use_inst
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -198,7 +198,7 @@ def test_with_adls_shared_key_storage(sdc_builder, sdc_executor, deltalake, azur
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -253,7 +253,7 @@ def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure):
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -327,7 +327,7 @@ def test_with_aws_s3_storage_cdc(sdc_builder, sdc_executor, deltalake, aws, auto
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         if not auto_create_table:
             logger.info(f'Creating table {table_name} ...')
             query = f'create table {table_name} (NAME string, ROLE string, AGE integer, TEAM string) using DELTA'
@@ -438,7 +438,7 @@ def test_cdc_deltalake_multiple_ops_two_batches(sdc_builder, sdc_executor, delta
     dev_raw_data_source >> expression_evaluator >> field_remover >> databricks_deltalake
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=180)
@@ -555,7 +555,7 @@ def test_insert_multiple_types(sdc_builder, sdc_executor, deltalake, aws, stagin
 
     try:
         logger.info(f'Creating table {table_name} ...')
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         query = (f'create table {table_name} (integerField integer, longField bigint, floatField float, '
                  'doubleField double, decimalField decimal(10,2), stringField string, binaryField binary, '
                  'booleanField boolean, dateField date, datetimeField timestamp) using DELTA')
@@ -643,7 +643,7 @@ def test_insert_all_types(sdc_builder, sdc_executor, deltalake, aws, staging_for
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
     try:
         logger.info(f'Creating table {table_name} ...')
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         query = (f'create table {table_name} (byteField byte, shortField short, integerField integer, '
                  'longField bigint, floatField float, doubleField double, decimalField decimal(10,2), '
                  'stringField string, booleanField boolean) using DELTA')
@@ -702,7 +702,7 @@ def test_data_drift(sdc_builder, sdc_executor, deltalake, aws, auto_create_table
 
     try:
         logger.info(f'Creating table {table_name} ...')
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         if not auto_create_table:
             query = f'create table {table_name} (id integer, name string) using DELTA'
             connection.execute(query)
@@ -807,7 +807,7 @@ def test_el_eval_tablename(sdc_builder, sdc_executor, deltalake, aws, table_pref
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         logger.info(f'Creating table {table_name_1} ...')
         query = f'create table {table_name_1} (table string, id integer, name string) using DELTA'
         connection.execute(query)
@@ -819,7 +819,7 @@ def test_el_eval_tablename(sdc_builder, sdc_executor, deltalake, aws, table_pref
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result_1 = connection.execute(f'select * from {table_name_1}')
         result_2 = connection.execute(f'select * from {table_name_2}')
         data_from_database_1 = sorted(result_1.fetchall())
@@ -907,14 +907,14 @@ def test_table_el_eval_multiple_threads(sdc_builder, sdc_executor, deltalake, aw
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         for query in create_queries:
             connection.execute(query)
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=600)
 
         for i in range(4):
-            connection = engine.connect()
+            connection = deltalake.connect_engine(engine)
             result = connection.execute(f'{select_queries[i]}')
             data_from_database = sorted(result.fetchall())
 
@@ -969,7 +969,7 @@ def test_with_special_quoting(sdc_builder, sdc_executor, deltalake, aws):
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1031,7 +1031,7 @@ def test_with_quoting_mode_both(sdc_builder, sdc_executor, deltalake, aws):
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1085,7 +1085,7 @@ def test_pre_created_partitioned_table(sdc_builder, sdc_executor, deltalake, aws
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         logger.info(f'Creating table {table_name} ...')
         connection.execute(create_table_query)
 
@@ -1171,7 +1171,7 @@ def test_cdc_with_partitioned_table(sdc_builder, sdc_executor, deltalake, aws, p
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         if pre_created_table:
             logger.info(f'Creating table {table_name} ...')
             connection.execute(f'create table {table_name} (name string, role string, age integer, team string) using '
@@ -1262,7 +1262,7 @@ def test_partition_table_without_els(sdc_builder, sdc_executor, deltalake, aws, 
 
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
     sdc_executor.add_pipeline(pipeline)
-    connection = engine.connect()
+    connection = deltalake.connect_engine(engine)
     try:
         if partition_columns in ['Correct', 'Multiple', 'MultipleWithSpaces']:
             if pre_created_table:
@@ -1383,7 +1383,7 @@ def test_partition_table_with_el(sdc_builder, sdc_executor, deltalake, aws, part
 
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
     sdc_executor.add_pipeline(pipeline)
-    connection = engine.connect()
+    connection = deltalake.connect_engine(engine)
     try:
         if partition_columns in ['EL', 'Wildcard', 'Override']:
             sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
@@ -1495,7 +1495,7 @@ def test_directory_for_table_location_with_partition(sdc_builder, sdc_executor, 
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=180)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
@@ -1594,7 +1594,7 @@ def test_staging_file_formats(sdc_builder, sdc_executor, deltalake, aws, staging
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 
     try:
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         logger.info(f'Creating table {table_name} ...')
         query = f'create table {table_name} (title string, author string, genre string, publisher string) using DELTA'
         connection.execute(query)
@@ -1657,7 +1657,7 @@ def test_with_gcs_storage(sdc_builder, sdc_executor, deltalake, gcp):
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 

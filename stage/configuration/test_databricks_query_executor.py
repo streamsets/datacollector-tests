@@ -295,7 +295,7 @@ def _test_with_no_storage(sdc_builder, sdc_executor, deltalake, stage_attributes
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
         assert data_from_database == [(record['title'], record['author'], record['genre'], record['publisher'])
@@ -361,7 +361,7 @@ def _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, st
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # assert data from deltalake table is same as what was input
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
         assert data_from_database == [(record['title'], record['author'], record['genre'], record['publisher'])
@@ -424,7 +424,7 @@ def _test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, stage_a
         sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
 
         # Assert data from deltalake table is same as what was input.
-        connection = engine.connect()
+        connection = deltalake.connect_engine(engine)
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
         assert data_from_database == [(record['title'], record['author'], record['genre'], record['publisher'])

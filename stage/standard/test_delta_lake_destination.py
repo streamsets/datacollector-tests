@@ -124,7 +124,7 @@ def test_data_types(
 
     # Now let's run the pipeline and assert the results
     try:
-        connection = deltalake.engine.connect()
+        connection = deltalake.connect_engine(deltalake.engine)
         connection.execute(
             f"create table {table_name} (value {delta_lake_type}) using delta location '/deltalake/{table_name}'"
         )
@@ -306,7 +306,7 @@ def test_object_names(
 
     try:
         # Create table with special characters in table and fields
-        connection = deltalake.engine.connect()
+        connection = deltalake.connect_engine(deltalake.engine)
         columns = ",".join([f"`{c}` {t}" for c, t in fields])
         connection.execute(
             f"create table {table_name} ({columns}) using delta location '/deltalake/test_table_{get_random_string()}'"
@@ -371,7 +371,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, deltalake, aws):
 
     try:
         # Create table
-        connection = deltalake.engine.connect()
+        connection = deltalake.connect_engine(deltalake.engine)
         connection.execute(
             f"create table {table_name} (seq INT) using delta location '/deltalake/test_multiple_batches_{get_random_string()}'"
         )
@@ -568,7 +568,7 @@ def test_data_format(
 
 
     try:
-        connection = deltalake.engine.connect()
+        connection = deltalake.connect_engine(deltalake.engine)
         connection.execute(
             f"create table {table_name} ({table_columns}) using delta location '/deltalake/test_table_{get_random_string()}'"
         )
@@ -641,7 +641,7 @@ def test_multithreading(sdc_builder, sdc_executor, deltalake, aws, batch_size, b
 
     try:
         # Create table
-        connection = deltalake.engine.connect()
+        connection = deltalake.connect_engine(deltalake.engine)
         connection.execute(
             f"create table {table_name} (seq INT) using delta location '/deltalake/{table_name}_{get_random_string()}'"
         )
