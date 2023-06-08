@@ -11,8 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from dateutil import parser
+from dateutil.relativedelta import relativedelta
 
 import pytest
 from streamsets.testframework.markers import sdc_min_version
@@ -174,3 +177,167 @@ def test_job_els(sdc_executor, sdc_builder, expression):
             datetime.strptime(str(wiretap.output_records[0].field['text']), "%a %b %d %H:%M:%S %Z %Y")
         except ValueError:
             pytest.fail("Invalid start time job")
+
+
+@pytest.mark.parametrize('date_interval, date_value, expected_delta', [
+    # Using ~year interval to avoid timezone daylight saving (it creates lots of flakiness as it's system dependant)
+    # e.g.: 52 weeks is a year-ish, so note it can get to be flaky sometime.
+    # If the expected delta was in the same units as the interval, and the timezone was always the same, it would be
+    # 100% deterministic.
+    # It's good to leave the test with random numbers to spot more issues, acknowledging flakiness is possible
+    ('YEAR', 1, {'years': 1}),
+    ('YEAR', -1, {'years': -1}),
+    ('QUARTER', 4, {'years': 1}),
+    ('QUARTER', -4, {'years': -1}),
+    ('MONTH', 12, {'months': 12}),
+    ('MONTH', -12, {'months': -12}),
+    ('DAY_OF_YEAR', 365, {'days': 365}),
+    ('DAY_OF_YEAR', -365, {'days': -365}),
+    ('DAY', 365, {'days': 365}),
+    ('DAY', -365, {'days': -365}),
+    ('WEEKDAY', 365, {'days': 365}),
+    ('WEEKDAY', -365, {'days': -365}),
+    ('WEEK', 52, {'weeks': 52}),
+    ('WEEK', -52, {'weeks': -52}),
+    ('HOUR', 365 * 24, {'hours': 365 * 24}),
+    ('HOUR', - 365 * 24, {'hours': - 365 * 24}),
+    ('MINUTE', 365 * 24 * 60, {'minutes': 365 * 24 * 60}),
+    ('MINUTE', - 365 * 24 * 60, {'minutes': - 365 * 24 * 60}),
+    ('SECOND', 365 * 24 * 60 * 60, {'seconds': 365 * 24 * 60 * 60}),
+    ('SECOND', - 365 * 24 * 60 * 60, {'seconds': - 365 * 24 * 60 * 60}),
+    ('MILLISECOND', 24 * 60 * 60, {'microseconds': 24 * 60 * 60 * 1000}),
+    ('MILLISECOND', - 24 * 60 * 60, {'microseconds': - 24 * 60 * 60 * 1000}),
+])
+def test_date_addition_el(sdc_executor, sdc_builder, date_interval, date_value, expected_delta):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.records_to_be_generated = 1
+    dev_data_generator.fields_to_generate = [
+        {'field': 'field', 'precision': 10, 'scale': 2, 'type': 'DATETIME'}
+    ]
+
+    expression = f'time:dateAddition("{date_interval}", {date_value}, record:value("/field"))'
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.field_expressions = [
+        {'fieldToSet': '/transformed', 'expression': '${' + f'{expression}' + '}'}
+    ]
+
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
+
+    dev_data_generator >> [expression_evaluator, wiretap_1.destination]
+    expression_evaluator >> wiretap_2.destination
+
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    input_records = wiretap_1.output_records
+    output_records = wiretap_2.output_records
+    assert len(output_records) == len(input_records)
+    assert input_records[0].field['field'] == output_records[0].field['field']
+    input_data = parser.isoparse(str(output_records[0].field['field'])).astimezone(timezone.utc)
+    transformed_data = parser.isoparse(str(output_records[0].field['transformed'])).astimezone(timezone.utc)
+    assert transformed_data == input_data + relativedelta(**expected_delta)
+
+
+@pytest.mark.parametrize('date_interval, date_value, initial_date, expected_date', [
+    # We need fixed dates to test this, as by using decimal precision, it is really difficult to avoid timezone issues
+    ('YEAR', 1.5, "2013-01-15 08:11:41.345", "2014-07-15 07:11:41.345"),  # 7 instead of 8 is daylight saving thingy
+    ('QUARTER', 4.5, "2013-01-15 02:11:41.345", "2014-03-01 02:11:41.345"),  # here, we are past daylight again, so 02
+    ('MONTH', 12.5, "2013-01-15 02:11:41.345", "2014-01-30 14:11:41.345"),
+    ('DAY_OF_YEAR', 1.5, "2013-01-15 02:11:41.345", "2013-01-16 14:11:41.345"),
+    ('DAY', 1.5, "2013-01-15 02:11:41.345", "2013-01-16 14:11:41.345"),
+    ('WEEKDAY', 1.5, "2013-01-15 02:11:41.345", "2013-01-16 14:11:41.345"),
+    ('WEEK', 1.5, "2013-01-15 02:11:41.345", "2013-01-25 14:11:41.345"),
+    ('HOUR', 12.5, "2013-01-15 02:11:41.345", "2013-01-15 14:41:41.345"),
+    ('MINUTE', 125.5, "2013-01-15 02:11:41.345", "2013-01-15 04:17:11.345"),
+    ('SECOND', 1.5, "2013-01-15 02:11:41.345", "2013-01-15 02:11:42.845"),
+    ('MILLISECOND', 100.5, "2013-01-15 02:11:41.345", "2013-01-15 02:11:41.445"),  # ignoring further precision (0.5 is ignored)
+])
+def test_date_addition_decimal_el(sdc_executor, sdc_builder, date_interval, date_value, initial_date, expected_date):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.records_to_be_generated = 1
+    dev_data_generator.fields_to_generate = [
+        {'field': 'field', 'precision': 10, 'scale': 2, 'type': 'DATETIME'}
+    ]
+
+    expression = f'time:dateAddition("{date_interval}", {date_value},' \
+                 f' time:createDateFromStringTZ("{initial_date}", "UTC", "yyyy-MM-dd HH:mm:ss.SSS"))'
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.field_expressions = [
+        {'fieldToSet': '/transformed', 'expression': '${' + f'{expression}' + '}'}
+    ]
+
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
+
+    dev_data_generator >> [expression_evaluator, wiretap_1.destination]
+    expression_evaluator >> wiretap_2.destination
+
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    input_records = wiretap_1.output_records
+    output_records = wiretap_2.output_records
+    assert len(output_records) == len(input_records)
+    assert input_records[0].field['field'] == output_records[0].field['field']
+    input_data = parser.isoparse(expected_date).astimezone(timezone.utc)
+    transformed_data = parser.isoparse(str(output_records[0].field['transformed'])).astimezone(timezone.utc)
+    assert transformed_data == input_data
+
+
+@pytest.mark.parametrize('date_interval, date_diff_value', [
+    ('YEAR', 5),
+    ('QUARTER', 3),
+    ('MONTH', 10),
+    ('DAY_OF_YEAR', 10),
+    ('DAY', 365),
+    ('WEEKDAY', 7),
+    ('WEEK', 20),
+    ('HOUR', 18),
+    ('MINUTE', 100),
+    ('SECOND', 20),
+    ('MILLISECOND', 3000),
+])
+def test_date_difference_el(sdc_executor, sdc_builder, date_interval, date_diff_value):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.records_to_be_generated = 1
+    dev_data_generator.fields_to_generate = [
+        {'field': 'field', 'precision': 10, 'scale': 2, 'type': 'DATETIME'}
+    ]
+
+    add_expression = f'time:dateAddition("{date_interval}", {date_diff_value}, record:value("/field"))'
+    neg_expression = f'time:dateAddition("{date_interval}", -{date_diff_value}, record:value("/field"))'
+    diff_expression = f'time:dateDifference("{date_interval}", record:value("/transformed"), record:value("/field"))'
+    neg_diff_expression = f'time:dateDifference("{date_interval}", record:value("/transformed2"), record:value("/field"))'
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.field_expressions = [
+        {'fieldToSet': '/transformed', 'expression': '${' + f'{add_expression}' + '}'},
+        {'fieldToSet': '/transformed2', 'expression': '${' + f'{neg_expression}' + '}'},
+        {'fieldToSet': '/transformed3', 'expression': '${' + f'{diff_expression}' + '}'},
+        {'fieldToSet': '/transformed4', 'expression': '${' + f'{neg_diff_expression}' + '}'}
+    ]
+
+    wiretap_1 = pipeline_builder.add_wiretap()
+    wiretap_2 = pipeline_builder.add_wiretap()
+
+    dev_data_generator >> [expression_evaluator, wiretap_1.destination]
+    expression_evaluator >> wiretap_2.destination
+
+    pipeline = pipeline_builder.build()
+
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    input_records = wiretap_1.output_records
+    output_records = wiretap_2.output_records
+    assert len(output_records) == len(input_records)
+    assert input_records[0].field['field'] == output_records[0].field['field']
+    assert output_records[0].field['transformed3'] == date_diff_value
+    assert output_records[0].field['transformed4'] == -date_diff_value
