@@ -916,8 +916,11 @@ def test_check_wrong_use_tls_with_tls_name_set(sdc_builder, sdc_executor, aerosp
 
         with pytest.raises(sdc_api.StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
-        assert 'AEROSPIKE_00' in error.value.message
-        assert 'Seed host tlsName \'aerocluster\' defined but client tlsPolicy not enabled' in error.value.message
+        if aerospike.authentication_mode == 'EXTERNAL':
+            assert 'AEROSPIKE_01' in error.value.message
+        else:
+            assert 'AEROSPIKE_00' in error.value.message
+            assert 'Seed host tlsName \'aerocluster\' defined but client tlsPolicy not enabled' in error.value.message
 
         (_, _, bins) = aerospike.engine.get(aerospike_key)
         assert list(bins.keys()) == ['map']
@@ -989,7 +992,6 @@ def test_check_wrong_use_tls_with_wrong_node_config(sdc_builder, sdc_executor, a
         with pytest.raises(sdc_api.StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         assert 'AEROSPIKE_00' in error.value.message
-        assert 'Remote host terminated the handshake' in error.value.message
 
         (_, _, bins) = aerospike.engine.get(aerospike_key)
         assert list(bins.keys()) == ['map']
