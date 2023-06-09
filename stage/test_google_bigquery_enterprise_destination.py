@@ -14,7 +14,10 @@
 
 import json
 import logging
+import datetime
+from decimal import Decimal
 from string import ascii_lowercase
+import pytz
 
 import pytest
 from . import _clean_up_bigquery, _clean_up_gcs
@@ -229,6 +232,23 @@ ROWS_FOR_DRIFT_EXT_FULL_STRING = [
     {'id': '5', 'name': 'Ivan Lendl', 'ranking': '2'},
     {'id': '6', 'name': 'Guillermo Vilas', 'ranking': '12'}
 ]
+
+DATA_TYPES = {
+    # gcp_data_type, origin_data_type, origin_data, gcp_expected_data
+    'INTEGER': ('INTEGER', 2424, 2424),
+    'FLOAT': ('FLOAT', 2424.2424, 2424.2424),
+    'BOOLEAN': ('BOOLEAN', True, True),
+    # STRUCT and GEOGRAPHY do not actually support String defaults, so we expect NULLs coming from BQ
+    'STRUCT': ('STRING', None, None),
+    'GEOGRAPHY': ('STRING', None, None),
+    'BYTES': ('BYTE_ARRAY', 'dataAsBytes', b'u\xabZ\x02\xc0r\xb5\xeb'),
+    'DECIMAL': ('DECIMAL', -123456789.12345, Decimal('-123456789.12345')),
+    'DATE': ('DATE', '2020-01-01', datetime.date(2020, 1, 1)),
+    'DATETIME': ('DATETIME', '2019-02-05 23:59:59', datetime.datetime(2019, 2, 5, 23, 59, 59)),
+    'TIME': ('TIME', '10:00:00',  datetime.time(10, 0)),
+    'TIMESTAMP': ('TIME', '2019-02-05 23:59:59',  datetime.datetime(2019, 2, 5, 23, 59, 59, tzinfo=pytz.utc)),
+    'STRING': ('STRING', 'gcp standard test 123', 'gcp standard test 123'),
+}
 
 
 @pytest.mark.parametrize('file_format', ['CSV', 'AVRO', 'JSON'])
@@ -1946,6 +1966,170 @@ def test_gcp_write_records_on_error(sdc_builder, sdc_executor, gcp,
         bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=SCHEMA))
 
         start_and_check(sdc_executor, pipeline, wiretap)
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('file_format', ['CSV', 'JSON'])  # AVRO and data types handling is special
+@pytest.mark.parametrize('use_defaults', [True, False])
+@pytest.mark.parametrize('ignore_missing_fields', [True, False])
+def test_missing_field(sdc_builder, sdc_executor, gcp, file_format, use_defaults, ignore_missing_fields):
+    """
+    Check that missing field and invalid types work as expected, using Data Advanced default values.
+    Similar to standard-test_data_type
+
+    The setup might look complicated, but it's just because each data type is used with its own default,
+    coming from strings
+
+    The pipeline looks like:
+    dev_raw_data_source >> field_type_converter >> field_replacer >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    header_to_insert = ""
+    rows_to_insert = ""
+    data_to_expect = []
+    converter_configs = []
+    schema = []
+    replacement_rules = []
+    # we create a field for each data type, to later on set it to null (to test missing field with each type)
+    # but the table is created with other fields, so all fields are effectively missing
+    for data_type in DATA_TYPES.keys():
+        index = list(DATA_TYPES).index(data_type)
+        field_name = 'data_' + data_type
+
+        # fill stages based on the different data types and file formats
+        if data_type == 'STRUCT':
+            if file_format == 'CSV':
+                # CSV won't support nested types even with null values
+                continue
+            # struct is a bit different, as we cannot default to anything without knowing the schema
+            schema.insert(index, SchemaField(field_name, data_type, fields=(SchemaField('data', 'STRING'),)))
+        elif data_type == 'GEOGRAPHY':
+            # geography is also not supported as default, same reasoning as struct, hard to get from string
+            schema.insert(index, SchemaField(field_name, data_type))
+        else:
+            schema.insert(index, SchemaField(field_name, data_type))
+            missing_field_name = 'missing_data_' + data_type
+            header_to_insert = header_to_insert + missing_field_name + ","
+            # rows to insert is actually never inserted, as it's set to null later on
+            # to make sure, but we use same value for simplicity of getting a valid value
+            rows_to_insert = rows_to_insert + str(DATA_TYPES.get(data_type)[1]) + ","
+
+            if data_type == 'DATE':
+                date_format = 'YYYY_MM_DD'
+                other_date_format = ''
+            elif data_type == 'TIME':
+                date_format = 'OTHER'
+                other_date_format = 'HH:MM:SS'
+            else:
+                date_format = 'YYYY_MM_DD_HH_MM_SS'
+                other_date_format = ''
+
+            converter_configs.insert(index, {
+                'fields': ['/' + missing_field_name],
+                'targetType': DATA_TYPES.get(data_type)[0],
+                'dataLocale': 'en,US',
+                'dateFormat': date_format,
+                'otherDateFormat': other_date_format,
+                'zonedDateTimeFormat': 'ISO_OFFSET_DATE_TIME',
+                'scale': 38
+            })
+            replacement_rules.insert(index, {"fields": '/' + missing_field_name, "setToNull": True})
+
+        # fill expected data
+        if use_defaults:
+            data_to_expect.insert(index, DATA_TYPES.get(data_type)[2])
+        else:
+            if file_format == 'JSON' and data_type == 'BYTES':
+                # bytes in json in an empty bytes string, not none
+                data_to_expect.insert(index, b'')
+            elif file_format == 'JSON' and data_type == 'STRING':
+                # string in json in an empty string, not none
+                data_to_expect.insert(index, '')
+            else:
+                data_to_expect.insert(index, None)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       stop_after_first_batch=True,
+                                       raw_data=header_to_insert[:-1] + '\n' + rows_to_insert[:-1])
+
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter')
+    field_type_converter.conversion_method = 'BY_FIELD'
+    field_type_converter.field_type_converter_configs = converter_configs
+
+    field_replacer = pipeline_builder.add_stage("Field Replacer")
+    field_replacer.set_attributes(replacement_rules=replacement_rules)
+
+    defaults = {
+        'numeric_types_default': str(DATA_TYPES.get('INTEGER')[1]),
+        'float_default': str(DATA_TYPES.get('FLOAT')[1]),
+        'boolean_default': str(DATA_TYPES.get('BOOLEAN')[1]),
+        # struct has no default option, just empty
+        # geography has no default option, just empty
+        'bytes_default': str(DATA_TYPES.get('BYTES')[1]),
+        'decimal_default': str(DATA_TYPES.get('DECIMAL')[1]),
+        'date_default': str(DATA_TYPES.get('DATE')[1]),
+        'datetime_default': str(DATA_TYPES.get('DATETIME')[1]),
+        'time_default': str(DATA_TYPES.get('TIME')[1]),
+        'timestamp_default': str(DATA_TYPES.get('TIMESTAMP')[1]),
+        'string_default': str(DATA_TYPES.get('STRING')[1])
+    } if use_defaults else {}
+
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            staging_file_format=file_format,
+                            enable_data_drift=False,
+                            create_table=False,
+                            ignore_missing_fields=ignore_missing_fields,
+                            # these defaults were added in 5.6, but if sdc<5.6 and no defaults are specified,
+                            # we get an ugly exception as some defaults were not handled properly
+                            **defaults,
+                            purge_stage_file_after_ingesting=True)
+
+    dev_raw_data_source >> field_type_converter >> field_replacer >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        logger.info('Creating dataset %s and table %s using Google BigQuery client ...', dataset_name, table_name)
+        bigquery_client.create_dataset(dataset_ref)
+        table = bigquery_client.create_table(Table(dataset_ref.table(table_name), schema=schema))
+
+        # Start pipeline and verify correct rows are received.
+        logger.info('Starting pipeline')
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(data_to_expect)]
+        expected_data.sort()
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        if ignore_missing_fields:
+            assert history.latest.metrics.counter('stage.GoogleBigQuery_01.errorRecords.counter').count == 0
+            assert len(data_from_bigquery) == len(expected_data)
+            assert data_from_bigquery == expected_data
+        else:
+            assert history.latest.metrics.counter('stage.GoogleBigQuery_01.errorRecords.counter').count == 1
+            assert len(data_from_bigquery) == 0
     finally:
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
