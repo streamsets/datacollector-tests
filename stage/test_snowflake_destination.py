@@ -22,6 +22,7 @@ import time
 
 import pytest
 import sqlalchemy
+from operator import itemgetter
 from sqlalchemy.sql import text
 from streamsets.sdk.sdc_api import StartError
 from streamsets.sdk.utils import Version
@@ -117,6 +118,84 @@ def test_basic(sdc_builder, sdc_executor, snowflake, stage_location):
         dev_raw_data_source  >> snowflake_destination
     """
     _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location)
+
+@snowflake
+@sdc_min_version('5.6.0')
+@pytest.mark.parametrize('stage_location', ["AWS_S3"])
+@pytest.mark.parametrize('tags_size', [5, 20])
+def test_tags(sdc_builder, sdc_executor, snowflake, stage_location, tags_size):
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    tags = {}
+    for _ in range(tags_size):
+        tags[get_random_string()] = get_random_string()
+    s3_tags = []
+    for key, value in tags.items():
+        s3_tags.append({"key": key, "value": value})
+    s3_tags = sorted(s3_tags, key=itemgetter('key'))
+
+    # Create a table and stage in Snowflake.
+    table = snowflake.create_table(table_name.lower())
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+
+    raw_data = '\n'.join(json.dumps(row) for row in ROWS_IN_DATABASE)
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(stage_location=stage_location,
+                                         purge_stage_file_after_ingesting=False,
+                                         snowflake_stage_name=stage_name,
+                                         table=table_name,
+                                         s3_tags=s3_tags)
+
+    dev_raw_data_source >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    try:
+        if len(tags) > 10:
+            with pytest.raises(Exception) as error:
+                sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+            assert "AWS_02" in error.value.message, f'Expected a AWS_02 error, got "{error.value.message}" instead'
+        else:
+            sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+            client = snowflake.aws_s3_stage.s3_client.s3_client
+            s3_bucket = snowflake.aws_s3_stage.aws_s3_bucket_name
+            s3_key_prefix = f'{snowflake.aws_s3_stage.aws_s3_key_prefix}/{storage_path}'
+            s3_bucket_objects = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key_prefix)
+            if not 'Contents' in s3_bucket_objects:
+                pytest.fail(f'Contents not found in response: {s3_bucket_objects}')
+            keys = [k['Key'] for k in s3_bucket_objects['Contents']]
+            if not any(keys):
+                pytest.fail(f'keys not found in Contents response: {s3_bucket_objects["Contents"]}')
+            for key in keys:
+                response = client.get_object_tagging(Bucket=s3_bucket, Key=key)
+                if not 'TagSet' in response:
+                    pytest.fail(f'TagSet not found in response: {response}')
+                response_tags = sorted(response['TagSet'], key=itemgetter('Key'))
+                assert len(response_tags) == len(s3_tags), "number of tags differ!"
+                diff = [(x, y) for x, y in zip(s3_tags, response_tags) if x['key'] != y['Key'] or x['value'] != y['Value']]
+                assert not any(diff), f'tags do not match!'
+
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        table.drop(engine)
+        engine.dispose()
 
 
 @snowflake
