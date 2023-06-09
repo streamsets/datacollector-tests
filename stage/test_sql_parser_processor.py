@@ -19,6 +19,8 @@ import string
 import pytest
 import sqlalchemy
 from sqlalchemy import text
+from time import sleep
+
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database
@@ -33,6 +35,10 @@ SQL_PARSER_STAGE_NAME = 'com_streamsets_pipeline_stage_processor_parser_sql_SqlP
 # Support for multithreading was added in COLLECTOR-1357, scheduled for version 5.4.0.
 MULTITHREADING_SUPPORT_VERSION = '5.4.0'
 THREAD_COUNT_PARAMETER = 'parsing_thread_pool_size'
+
+SHORT_WAIT_TIME = 0
+LONG_WAIT_TIME = 2000
+SESSION_WAIT_TIME_MIN_VERSION = "5.3.0"
 
 
 @pytest.fixture(scope='module')
@@ -1003,6 +1009,268 @@ def test_decimal_attributes(sdc_builder,
         if table is not None:
             table.drop(db_engine)
             logger.info('Table: %s dropped.', table_name)
+
+
+@sdc_min_version('5.6.0')
+@database('oracle')
+@pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+@pytest.mark.parametrize('use_peg_parser', [True, False])
+def test_sql_parser_processor_primary_keys_headers(sdc_builder,
+                                                   sdc_executor,
+                                                   database,
+                                                   buffer_location,
+                                                   use_peg_parser):
+    """
+    Test to check all headers for primary keys are present in the output records.
+    """
+
+    # These versions contain a bug (COLLECTOR-987) that makes buffering on disk fail.
+    if buffer_location == 'ON_DISK':
+        if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
+            pytest.skip('Local buffering on disk will fail in this SDC version')
+
+    multithreading_parameters = {}
+
+    pipeline = None
+
+    try:
+
+        database_connection = database.engine.connect()
+
+        table_name = get_random_string(string.ascii_uppercase, 16)
+        logger.info('Creating source table %s in %s database ...', table_name, database.type)
+        table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                 sqlalchemy.Column('TYPE', sqlalchemy.String(64), primary_key=True),
+                                 sqlalchemy.Column('ID', sqlalchemy.Integer, primary_key=True),
+                                 sqlalchemy.Column('NAME', sqlalchemy.String(64)),
+                                 sqlalchemy.Column('SURNAME', sqlalchemy.String(64)),
+                                 sqlalchemy.Column('ADDRESS', sqlalchemy.String(64)))
+        table.create(database.engine)
+
+        database_last_scn = _get_last_scn(database_connection)
+
+        column_type = "'" + "Hobbit" + "'"
+        column_id = 1
+        column_name = "'" + "Bilbo" + "'"
+        column_surname = "'" + "Baggins" + "'"
+
+        column_address = "'" + "Bag End 0" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"insert into {table} " \
+                   f"values ({column_type}, {column_id}, {column_name}, {column_surname}, {column_address})"
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 1" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, TYPE = 'Fallohide' where TYPE = 'Hobbit' and ID = 1"
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 2" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, ID = 2 where TYPE = 'Fallohide' and ID = 1"
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 3" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, TYPE = 'Hobbit - Fallohide', ID = 3 where TYPE = 'Fallohide' and ID = 2"
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 4" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, TYPE = 'Hobbit, Fallohide' where TYPE = 'Hobbit - Fallohide'"
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 5" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address}, ID = 4 where ID = 3"
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        column_address = "'" + "Bag End 6" + "'"
+        database_transaction = database_connection.begin()
+        sentence = f"update {table_name} set ADDRESS = {column_address} where ID = 4"
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        database_transaction = database_connection.begin()
+        sentence = f"delete from {table_name}"
+        sql = text(sentence)
+        database_connection.execute(sql)
+        database_transaction.commit()
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        oracle_cdc_client = pipeline_builder.add_stage("Oracle CDC Client")
+        oracle_cdc_client.set_attributes(buffer_changes_locally=True,
+                                         buffer_location=buffer_location,
+                                         case_sensitive_names=False,
+                                         db_time_zone="UTC",
+                                         include_nulls=False,
+                                         initial_change="SCN",
+                                         dictionary_source="DICT_FROM_ONLINE_CATALOG",
+                                         disable_continuous_mine=True,
+                                         logminer_session_window="${2 * MINUTES}",
+                                         max_batch_size_in_records=8,
+                                         maximum_transaction_length="${1 * MINUTES}",
+                                         parse_sql_query=False,
+                                         pseudocolumns_in_header=False,
+                                         send_redo_query_in_headers=True,
+                                         start_scn=database_last_scn,
+                                         tables=[{"schema": database.username.upper(),
+                                                  "table": table_name,
+                                                  "excludePattern": ""}],
+                                         use_peg_parser=use_peg_parser)
+        set_session_wait_times(sdc_builder, oracle_cdc_client)
+
+        sql_parser_processor = pipeline_builder.add_stage(name=SQL_PARSER_STAGE_NAME)
+        sql_parser_processor.set_attributes(add_unsupported_fields_to_records=True,
+                                            case_sensitive_names=False,
+                                            db_time_zone='UTC',
+                                            include_nulls=True,
+                                            pseudocolumns_in_header=True,
+                                            resolve_schema_from_db=True,
+                                            sql_field='/sql',
+                                            target_field='/columns',
+                                            unsupported_field_type='SEND_TO_PIPELINE',
+                                            use_peg_parser=use_peg_parser,
+                                            **multithreading_parameters)
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        oracle_cdc_client >> sql_parser_processor >> wiretap.destination
+
+        pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 8)
+
+        sleep(30)
+
+        wiretap_output_records_max_retries = 12
+        wiretap_output_records_max_wait = 10
+        wiretap_output_records_retries = 0
+        wiretap_output_records_control_length = 8
+        wiretap_output_records = wiretap.output_records
+        while len(wiretap_output_records) != wiretap_output_records_control_length and \
+                wiretap_output_records_retries < wiretap_output_records_max_retries:
+            wiretap_output_records_retries = wiretap_output_records_retries + 1
+            logger.info(
+                f'wiretap says it has {wiretap_output_records_control_length} records, but it actually has {len(wiretap_output_records)} records')
+            logger.info(
+                f'waiting {wiretap_output_records_max_wait} seconds ({wiretap_output_records_retries} out of {wiretap_output_records_max_retries} retry)')
+            sleep(wiretap_output_records_max_wait)
+            wiretap_output_records = wiretap.output_records
+
+        assert len(wiretap_output_records) == 8
+
+        for record in wiretap_output_records:
+            assert "schema" in record.header.values
+            assert "oracle.cdc.table" in record.header.values
+            assert "oracle.cdc.operation" in record.header.values
+            assert "sdc.operation.type" in record.header.values
+            assert "oracle.cdc.redoValue" in record.header.values
+            assert "oracle.cdc.undoValue" in record.header.values
+            assert "oracle.cdc.query" in record.header.values
+            assert {record.header.values["schema"]} is not None
+            assert {record.header.values["oracle.cdc.table"]} is not None
+            assert {record.header.values["oracle.cdc.operation"]} is not None
+            assert {record.header.values["sdc.operation.type"]} is not None
+            assert {record.header.values["oracle.cdc.redoValue"]} is not None
+            assert {record.header.values["oracle.cdc.undoValue"]} is not None
+            assert {record.header.values["oracle.cdc.query"]} is not None
+            if record.header.values["oracle.cdc.operation"] == 'UPDATE':
+
+                assert "jdbc.primaryKey.before.TYPE" in record.header.values
+                assert "jdbc.primaryKey.before.ID" in record.header.values
+                assert "jdbc.primaryKey.after.TYPE" in record.header.values
+                assert "jdbc.primaryKey.after.ID" in record.header.values
+
+                assert record.header.values["jdbc.primaryKey.before.TYPE"] is not None
+                assert record.header.values["jdbc.primaryKey.before.ID"] is not None
+                assert record.header.values["jdbc.primaryKey.after.TYPE"] is not None
+                assert record.header.values["jdbc.primaryKey.after.ID"] is not None
+
+                column_address = record.field['columns']['ADDRESS'].value
+
+                if column_address == 'Bag End 1':
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Hobbit"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "1"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "1"
+                elif column_address == 'Bag End 2':
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "1"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "2"
+                elif column_address == 'Bag End 3':
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "2"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Hobbit - Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "3"
+                elif column_address == 'Bag End 4':
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Hobbit - Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "3"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "3"
+                elif column_address == 'Bag End 5':
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "3"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "4"
+                elif column_address == 'Bag End 6':
+                    assert record.header.values["jdbc.primaryKey.before.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.before.ID"] == "4"
+                    assert record.header.values["jdbc.primaryKey.after.TYPE"] == "Hobbit, Fallohide"
+                    assert record.header.values["jdbc.primaryKey.after.ID"] == "4"
+
+            else:
+
+                assert "jdbc.primaryKey.before.TYPE" not in record.header.values
+                assert "jdbc.primaryKey.before.ID" not in record.header.values
+                assert "jdbc.primaryKey.after.TYPE" not in record.header.values
+                assert "jdbc.primaryKey.after.ID" not in record.header.values
+
+            logger.info(f"schema..............: {record.header.values['schema']}")
+            logger.info(f"oracle.cdc.table....: {record.header.values['oracle.cdc.table']}")
+            logger.info(f"oracle.cdc.operation: {record.header.values['oracle.cdc.operation']}")
+            logger.info(f"sdc.operation.type..: {record.header.values['sdc.operation.type']}")
+            logger.info(f"oracle.cdc.redoValue: {record.header.values['oracle.cdc.redoValue']}")
+            logger.info(f"oracle.cdc.undoValue: {record.header.values['oracle.cdc.undoValue']}")
+            logger.info(f"oracle.cdc.query....: {record.header.values['oracle.cdc.query']}")
+            logger.info(f".....................")
+            if record.header.values["oracle.cdc.operation"] == 'UPDATE':
+                logger.info(f"column - address.................: {record.field['columns']['ADDRESS'].value}")
+                logger.info(f"jdbc.primaryKey.before.TYPE: {record.header.values['jdbc.primaryKey.before.TYPE']}")
+                logger.info(f"jdbc.primaryKey.before.ID..: {record.header.values['jdbc.primaryKey.before.ID']}")
+                logger.info(f"jdbc.primaryKey.after.TYPE.: {record.header.values['jdbc.primaryKey.after.TYPE']}")
+                logger.info(f"jdbc.primaryKey.after.ID...: {record.header.values['jdbc.primaryKey.after.ID']}")
+                logger.info(f"----------------------------------")
+
+    finally:
+
+        if pipeline is not None:
+            sdc_executor.stop_pipeline(pipeline=pipeline,
+                                       force=True)
+        if table is not None:
+            table.drop(database.engine)
+
+
+def set_session_wait_times(sdc_builder, oracle_cdc_client_stage, wait_time=SHORT_WAIT_TIME):
+    if Version(sdc_builder.version) >= Version(SESSION_WAIT_TIME_MIN_VERSION):
+        oracle_cdc_client_stage.set_attributes(time_after_session_window_start_in_ms=wait_time,
+                                               time_between_session_windows_in_ms=wait_time)
 
 
 def _get_last_scn(connection):
