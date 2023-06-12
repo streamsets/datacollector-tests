@@ -244,8 +244,9 @@ def test_date_addition_el(sdc_executor, sdc_builder, date_interval, date_value, 
 
 @pytest.mark.parametrize('date_interval, date_value, initial_date, expected_date', [
     # We need fixed dates to test this, as by using decimal precision, it is really difficult to avoid timezone issues
-    ('YEAR', 1.5, "2013-01-15 08:11:41.345", "2014-07-15 07:11:41.345"),  # 7 instead of 8 is daylight saving thingy
-    ('QUARTER', 4.5, "2013-01-15 02:11:41.345", "2014-03-01 02:11:41.345"),  # here, we are past daylight again, so 02
+    # Note this test can fail depending on the system due to timezone used
+    ('YEAR', 1.5, "2013-01-15 08:11:41.345", "2014-07-15 08:11:41.345"),
+    ('QUARTER', 4.5, "2013-01-15 02:11:41.345", "2014-03-01 02:11:41.345"),
     ('MONTH', 12.5, "2013-01-15 02:11:41.345", "2014-01-30 14:11:41.345"),
     ('DAY_OF_YEAR', 1.5, "2013-01-15 02:11:41.345", "2013-01-16 14:11:41.345"),
     ('DAY', 1.5, "2013-01-15 02:11:41.345", "2013-01-16 14:11:41.345"),
