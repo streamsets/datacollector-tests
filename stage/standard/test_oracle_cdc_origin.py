@@ -30,6 +30,37 @@ SESSION_WAIT_TIME_MIN_VERSION = "5.3.0"
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(scope='module', autouse=True)
+def create_logminer_dictionary(database):
+    """Fixture to ensure there will exist a LogMiner dictionary before running the Oracle CDC tests"""
+    connection = database.engine.connect()
+    query = ("  select thread#, "
+             "         sequence# "
+             "    from v$archived_log "
+             "   where dictionary_end = 'YES' "
+             "     and status = 'A' "
+             "order by first_change# desc")
+    result = connection.execute(query).first()
+    if result is not None:
+        thread, sequence = result
+        query = (f"select * "
+                 f"  from v$archived_log"
+                 f" where thread# = {thread} "
+                 f"   and sequence# = (select max(sequence#) "
+                 f"                      from v$archived_log"
+                 f"                     where thread# = {thread} "
+                 f"                       and sequence# <= {sequence} "
+                 f"                       and dictionary_begin = 'YES')")
+        result = connection.execute(query).first()
+        if result is not None:
+            logger.info('LogMiner dictionary found. No needs to create one.')
+            return
+
+    logger.info('No LogMiner dictionary found. Creating one...')
+    connection.execute('begin dbms_logmnr_d.build(options => dbms_logmnr_d.store_in_redo_logs); end;')
+    logger.info('LogMiner dictionary ready.')
+
+
 @database('oracle')
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 # https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm#CNCPT1821
@@ -44,19 +75,19 @@ logger = logging.getLogger(__name__)
     ('varchar2(4)', "'NVAR'", 'STRING', 'NVAR'),
     ('nchar(3)', "'NCH'", 'STRING', 'NCH'),
     ('nvarchar2(4)', "'NVAR'", 'STRING', 'NVAR'),
-#    ('binary_float', '1.0', 'FLOAT', '1.0'),
-#    ('binary_double', '2.0', 'DOUBLE', '2.0'),
+    # ('binary_float', '1.0', 'FLOAT', '1.0'),
+    # ('binary_double', '2.0', 'DOUBLE', '2.0'),
     ('date', "TO_DATE('1998-1-1 6:22:33', 'YYYY-MM-DD HH24:MI:SS')", 'DATETIME', 883635753000),
     ('timestamp', "TIMESTAMP'1998-1-2 6:00:00'", 'DATETIME', 883720800000),
-#    ('timestamp with time zone', "TIMESTAMP'1998-1-3 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-03T06:00:00-05:00'),
+    #  ('timestamp with time zone', "TIMESTAMP'1998-1-3 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-03T06:00:00-05:00'),
     ('timestamp with time zone', "null", 'ZONED_DATETIME', None),
-#    ('timestamp with local time zone', "TIMESTAMP'1998-1-4 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-04T07:00:00Z'),
+    # ('timestamp with local time zone', "TIMESTAMP'1998-1-4 6:00:00-5:00'", 'ZONED_DATETIME', '1998-01-04T07:00:00Z'),
     ('timestamp with local time zone', "null", 'ZONED_DATETIME', None),
-#    ('long', "'LONG'", 'STRING', 'LONG'),
-   ('blob', "utl_raw.cast_to_raw('BLOB')", 'BYTE_ARRAY', 'QkxPQg=='),
-   ('clob', "'CLOB'", 'STRING', 'CLOB'),
-#    ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
-#    ('XMLType', "xmltype('<a></a>')", 'STRING', '<a></a>')
+    #  ('long', "'LONG'", 'STRING', 'LONG'),
+    ('blob', "utl_raw.cast_to_raw('BLOB')", 'BYTE_ARRAY', 'QkxPQg=='),
+    ('clob', "'CLOB'", 'STRING', 'CLOB'),
+    # ('nclob', "'NCLOB'", 'STRING', 'NCLOB'),
+    # ('XMLType', "xmltype('<a></a>')", 'STRING', '<a></a>')
 ])
 def test_data_types(sdc_builder, sdc_executor, database, buffer_location, sql_type, insert_fragment, expected_type, expected_value):
     """Test all feasible Oracle types in the CDC origin."""
@@ -429,7 +460,8 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, buffer_location):
                                                    database=database,
                                                    sdc_builder=sdc_builder,
                                                    pipeline_builder=builder,
-                                                   batch_size=1,
+                                                   batch_size=6,
+                                                   batch_wait_time_in_secs=5,
                                                    buffer_locally=True,
                                                    buffer_location=buffer_location,
                                                    src_table_name=table_pattern,
@@ -446,18 +478,18 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, buffer_location):
         # Start pipeline, drop cities table and insert some records into sports table to capture the snapshot
         # with all the events. We use the PURGE clause in the DROP statement to avoid sending the table to the
         # recycle bin, as it would create spurious ALTER events.
-        sdc_pipeline_cmd=sdc_executor.start_pipeline(pipeline)
+        sdc_pipeline_cmd = sdc_executor.start_pipeline(pipeline)
 
-        for id, name, sport in sports_data:
-            connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
+        for identifier, name, sport in sports_data:
+            connection.execute(f"INSERT INTO {sports_table} VALUES({identifier}, '{name}', '{sport}')")
 
         connection.execute(f'TRUNCATE TABLE {sports_table}')
         connection.execute(f'DROP TABLE {cities_table} PURGE')
 
-        for id, name, sport in sports_data:
-            connection.execute(f"INSERT INTO {sports_table} VALUES({id}, '{name}', '{sport}')")
+        for identifier, name, sport in sports_data:
+            connection.execute(f"INSERT INTO {sports_table} VALUES({identifier}, '{name}', '{sport}')")
 
-        sdc_pipeline_cmd.wait_for_pipeline_output_records_count(len(2 * sports_data) + 2, timeout_sec=420)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 6, timeout_sec=600)
 
         sleep(30)
 
@@ -476,19 +508,20 @@ def test_dataflow_events(sdc_builder, sdc_executor, database, buffer_location):
             sleep(wiretap_output_records_max_wait)
             wiretap_output_records = wiretap.output_records
 
-        for record in wiretap_output_records:
-            logger.info(f'{record}')
-
-        assert len(wiretap_output_records) == wiretap_output_records_control_length
-
         sdc_events = [(event.header.values['oracle.cdc.table'],
                        event.header.values['sdc.event.type'],
                        event.field)
                       for event in wiretap_output_records]
 
-        assert len(sdc_events) == len(expected_events)
+        for record in wiretap_output_records:
+            logger.info(f'Read record (data): {record}')
+
         for _event in sdc_events:
-            logger.info(f'Read event: {_event}')
+            logger.info(f'Read record (event): {_event}')
+
+        assert len(wiretap_output_records) == wiretap_output_records_control_length
+
+        assert len(sdc_events) == len(expected_events)
 
         for _event in sdc_events:
             assert _event in expected_events[0:len(expected_events)], f'Missing event: {_event}'
