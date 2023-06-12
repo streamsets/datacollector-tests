@@ -261,3 +261,108 @@ def test_jms_producer_prefix_header(sdc_builder, sdc_executor, jms, remove_heade
     finally:
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
         connection.disconnect()
+
+
+@jms('activemq')
+def test_jms_producer_invalid_destination(sdc_builder, sdc_executor, jms):
+    """
+    Trying to subscribe a queue which doesn't exist
+    So it should not receive any message
+
+    JMS Producer pipeline:
+           dev_raw_data_source >> jms_producer
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = get_dev_raw_data_source_stage_text_input(pipeline_builder)
+
+    # Configure the jms_producer stage.
+    jms_producer = pipeline_builder.add_stage('JMS Producer', type='destination')
+    destination_name = get_random_string(ascii_letters, 5)
+    non_existing_destination = 'i-dont-exist'
+    jms_producer.set_attributes(data_format='TEXT',
+                                jms_destination_name=non_existing_destination,
+                                jms_destination_type=JMS_DESTINATION_TYPE,
+                                jms_initial_context_factory=JMS_INITIAL_CONTEXT_FACTORY,
+                                jndi_connection_factory=JNDI_CONNECTION_FACTORY,
+                                password=DEFAULT_PASSWORD,
+                                username=DEFAULT_USERNAME)
+    pipeline_builder.add_error_stage('Discard')
+    dev_raw_data_source >> jms_producer
+    pipeline_title = 'JMS Producer pipeline'
+    pipeline = pipeline_builder.build(title=pipeline_title).configure_for_environment(jms)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = jms.client_connection
+    try:
+        logger.info('Subscribing to queue ...')
+        listener = _TestListener()
+        connection.set_listener('', listener)
+        connection.start()
+        connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
+        connection.subscribe(destination=f'/queue/{destination_name}', id=destination_name)
+
+        # Send messages using pipeline to JMS Destination.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(listener.message_list) == 0
+
+    finally:
+        connection.send(destination_name, 'SHUTDOWN', persistent='false')
+        connection.disconnect()
+
+
+@jms('activemq')
+@pytest.mark.parametrize('jms_destination_type, destination_type', [
+    ('QUEUE', 'queue'),
+    ('TOPIC', 'topic'),
+    ('UNKNOWN', 'unknown')
+])
+def test_jms_producer_all_destination_types(sdc_builder, sdc_executor, jms, jms_destination_type, destination_type):
+    """
+    Testing connection to JMS Producer with different destination types
+        i.e. Queue, Topic, Unknown
+    JMS Producer pipeline:
+           dev_raw_data_source >> jms_producer
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_raw_data_source = get_dev_raw_data_source_stage_text_input(pipeline_builder)
+
+    # Configure the jms_producer stage.
+    jms_producer = pipeline_builder.add_stage('JMS Producer', type='destination')
+    destination_name = get_random_string(ascii_letters, 5)
+    jms_producer.set_attributes(data_format='TEXT',
+                                jms_destination_name=destination_name,
+                                jms_destination_type=jms_destination_type,
+                                jms_initial_context_factory=JMS_INITIAL_CONTEXT_FACTORY,
+                                jndi_connection_factory=JNDI_CONNECTION_FACTORY,
+                                password=DEFAULT_PASSWORD,
+                                username=DEFAULT_USERNAME)
+    pipeline_builder.add_error_stage('Discard')
+    dev_raw_data_source >> jms_producer
+    pipeline_title = 'JMS Producer pipeline'
+    pipeline = pipeline_builder.build(title=pipeline_title).configure_for_environment(jms)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = jms.client_connection
+    try:
+        logger.info('Subscribing to queue ...')
+        listener = _TestListener()
+        connection.set_listener('', listener)
+        connection.start()
+        connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
+        connection.subscribe(destination=f'/{destination_type}/{destination_name}', id=destination_name)
+
+        # Send messages using pipeline to JMS Destination.
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline)
+
+    except Exception as ex:
+        """ Should not reach here, as connection to different destination should give no exceptions """
+        logger.error(f"Error encountered while connecting to destination {destination_name} of type {jms_destination_type} as {ex}")
+
+    finally:
+        connection.send(destination_name, 'SHUTDOWN', persistent='false')
+        connection.disconnect()
