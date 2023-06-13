@@ -120,7 +120,7 @@ def test_basic(sdc_builder, sdc_executor, snowflake, stage_location):
     _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location)
 
 @snowflake
-@sdc_min_version('5.6.0')
+@sdc_min_version('5.7.0')
 @pytest.mark.parametrize('stage_location', ["AWS_S3"])
 @pytest.mark.parametrize('tags_size', [5, 20])
 def test_tags(sdc_builder, sdc_executor, snowflake, stage_location, tags_size):
