@@ -23,7 +23,7 @@ import time
 import pytest
 
 from pretenders.common.constants import FOREVER
-from streamsets.sdk.sdc_api import RunError
+from streamsets.sdk.sdc_api import RunError, RunningError
 from streamsets.testframework.constants import (CREDENTIAL_STORE_EXPRESSION, CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION,
                                                 STF_TESTCONFIG_DIR)
 from streamsets.testframework.credential_stores.jks import JKSCredentialStore
@@ -506,6 +506,54 @@ def test_http_origin_metrics(sdc_builder, sdc_executor, http_client, run_mode):
             assert metrics['status']['404'] == metrics['errors']['Http status']
         else:
             logger.error(f"Http Client Origin failed: {e}")
+
+    finally:
+        http_mock.delete_mock()
+
+
+@http
+@sdc_min_version("5.7.0")
+@pytest.mark.parametrize('exhausted_action',
+                         [
+                             'RETRY_IMMEDIATELY',
+                             'RETRY_LINEAR_BACKOFF',
+                             'RETRY_EXPONENTIAL_BACKOFF',
+                         ])
+def test_http_client_retry_limit(sdc_builder, sdc_executor, exhausted_action, http_client):
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    try:
+        http_mock.when(f'GET /{mock_path}').reply("", status=404, times=FOREVER)
+        mock_uri = f'{http_mock.pretend_url}/{mock_path}'
+
+        builder = sdc_builder.get_pipeline_builder()
+        origin = builder.add_stage('HTTP Client', type='origin')
+        origin.set_attributes(data_format='JSON',
+                              http_method='GET',
+                              resource_url=mock_uri,
+                              mode='BATCH')
+
+        origin.per_status_actions = [{
+            'statusCode': 404,
+            'action': exhausted_action,
+            'backoffInterval': 1000,
+            'maxNumRetries': 2,
+        }]
+
+        wiretap = builder.add_wiretap()
+
+        origin >> wiretap.destination
+        pipeline = builder.build()
+        sdc_executor.add_pipeline(pipeline)
+
+        with pytest.raises(RunError) as e:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        response = sdc_executor.get_pipeline_status(pipeline).response.json()
+        status = response.get('status')
+        logger.info('Pipeline status %s ...', status)
+        assert 'HTTP_14' in e.value.message
 
     finally:
         http_mock.delete_mock()
