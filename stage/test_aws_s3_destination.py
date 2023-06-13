@@ -387,7 +387,7 @@ def test_s3_destination_sse_kms(sdc_builder, sdc_executor, aws):
     _run_test_s3_destination(sdc_builder, sdc_executor, aws, True, False)
 
 
-def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous):
+def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous, acl="DEFAULT"):
     try:
         if anonymous:
             s3_bucket = create_bucket(aws)
@@ -409,7 +409,7 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
 
         s3_destination = builder.add_stage('Amazon S3', type='destination')
         bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
-        s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key)
+        s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key, acl=acl)
         if sse_kms:
             # Use SSE with KMS
             s3_destination.set_attributes(use_server_side_encryption=True,
@@ -452,6 +452,12 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous)
             # assert that the data was stored with SSE using the KMS
             assert s3_obj_key['ServerSideEncryption'] == 'aws:kms'
             assert s3_obj_key['SSEKMSKeyId'] == aws.kms_key_arn
+
+        if acl == "BUCKET_OWNER_FULL_CONTROL":
+            s3_acl = aws.s3.get_object_acl(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
+            assert s3_acl['Owner']['ID'] == s3_acl['Grants'][0]['Grantee']['ID'], "Failed to set ACL"
+            assert s3_acl['Grants'][0]['Permission'] == 'FULL_CONTROL', "Failed to set ACL"
+
     finally:
         try:
             aws.delete_s3_data(s3_bucket, s3_key)
@@ -831,3 +837,18 @@ def test_s3_destination_write_text_data_with_prefix_suffix_and_partition(sdc_bui
         logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_prefix)
         aws.delete_s3_data(aws.s3_bucket_name, s3_prefix)
 
+@aws('s3')
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('acl', ['BUCKET_OWNER_FULL_CONTROL'])
+def test_s3_destination_acl(sdc_builder, sdc_executor, aws, acl):
+    """Test for S3 target stage. We do so by running a dev raw data source generator to S3 destination
+    sandbox bucket and then reading S3 bucket using STF client to assert data between the client to what has
+    been ingested by the pipeline. We use a record deduplicator processor in between dev raw data source origin
+    and S3 destination in order to determine exactly what has been ingested. Uses anonymous credentials.
+    The pipeline looks like:
+
+    S3 Destination pipeline:
+        dev_raw_data_source >> record_deduplicator >> s3_destination
+                                                   >> to_error """
+
+    _run_test_s3_destination(sdc_builder, sdc_executor, aws, False, True, acl=acl)
