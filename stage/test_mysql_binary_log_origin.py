@@ -1377,6 +1377,70 @@ def test_mysql_binary_log_altering_columns(sdc_builder, sdc_executor, database):
             sdc_executor.stop_pipeline(pipeline=pipeline, force=True)
 
 
+@database('mysql')
+def test_mysql_binary_log_loaded_metadata_tables(sdc_builder, sdc_executor, database, keep_data):
+    """Test that MySQL Binary Log Origin loaded metadata for more than 10 tables.
+
+    Pipeline looks like:
+
+        mysql_binary_log >> wiretap
+    """
+    tables = []
+    connection = None
+
+    try:
+        # Create table.
+        connection = database.engine.connect()
+        connection.execute("SET GLOBAL binlog_row_metadata=full")
+        table_names = [f'{get_random_string(string.ascii_lowercase, 8)}' for i in range(1, 21)]
+        tables = []
+        for table_name in table_names:
+            table = sqlalchemy.Table(table_name, sqlalchemy.MetaData(),
+                                     sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, autoincrement=False),
+                                     sqlalchemy.Column('number1', sqlalchemy.Integer),
+                                     sqlalchemy.Column('number2', sqlalchemy.Integer),
+                                     sqlalchemy.Column('number3', sqlalchemy.Integer))
+            table.create(database.engine)
+            tables.append(table)
+
+        # Create Pipeline.
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        mysql_binary_log = pipeline_builder.add_stage('MySQL Binary Log')
+        mysql_binary_log.set_attributes(initial_offset=_get_initial_offset(database),
+                                        server_id=_get_server_id())
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        mysql_binary_log >> wiretap.destination
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Run pipeline and verify output.
+        sdc_executor.start_pipeline(pipeline)
+
+        # Insert data into table.
+        for table in tables:
+            connection.execute(table.insert(), {'id': 1, 'number1': 1, 'number2': 1, 'number3': 1})
+
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', len(tables))
+        sdc_executor.stop_pipeline(pipeline)
+
+        assert len(tables) == len(wiretap.output_records)
+
+    finally:
+        if not keep_data:
+            # Drop table and Connection.
+            for table in tables:
+                logger.info('Dropping table %s in %s database...', table, database.type)
+                table.drop(database.engine)
+
+            logger.info('Dropping table %s in %s database...', table, database.type)
+
+            if connection is not None:
+                connection.close()
+
+
 def _primary_key_specification_json(column_name, column_type, data_type, size, precision, scale, signed, currency):
     return f'''
         \"{column_name}\": {{
