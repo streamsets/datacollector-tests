@@ -5,7 +5,7 @@ import logging
 import pytest
 import string
 from .. import _clean_up_databricks
-from streamsets.sdk.utils import get_random_string
+from streamsets.sdk.utils import get_random_string, Version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import aws, azure, category, deltalake, sdc_min_version
 
@@ -248,10 +248,15 @@ def test_username(sdc_builder, sdc_executor, stage_attributes, deltalake):
 
 
 def _test_with_use_credentials_true(sdc_builder, sdc_executor, deltalake, stage_attributes={}):
-    stage_attributes.update({'jdbc_connection_string': deltalake.jdbc_connection_string.split('UID')[0],
-                             'username': deltalake.user,
-                             'user_token': deltalake.password,
+    if Version(sdc_builder.version) < Version('5.7.0'):
+        stage_attributes.update({'jdbc_connection_string': deltalake.jdbc_connection_string.split('UID')[0]})
+    else:
+        stage_attributes.update({'jdbc_url': deltalake.jdbc_connection_string.split('UID')[0]})
+
+    stage_attributes.update({'username': deltalake.user,
+                            'user_token': deltalake.password,
                              'storage_location': DEFAULT_STORAGE_LOCATION})
+
     _test_with_no_storage(sdc_builder, sdc_executor, deltalake, stage_attributes,
                           apply_configure_for_environment=False)
 
