@@ -22,11 +22,12 @@ def sdc_builder_hook():
 
 @database('oracle')
 @sdc_min_version('5.6.0')
-def test_oracle_consumer(sdc_builder, sdc_executor, database, benchmark):
+def test_oracle_consumer(sdc_builder, sdc_executor, database):
     """Performance benchmark a simple Oracle Bulk Loader to trash pipeline.
     The test uses an existing table in Oracle instance called VOLUME_TEST with 700000 records.
     The pipeline connects oracle bulk loader to trash and includes a finisher"""
 
+    read_count = 700_000
     pipeline_builder = sdc_builder.get_pipeline_builder()
     oracle_consumer = pipeline_builder.add_stage('Oracle Bulkload')
     oracle_consumer.set_attributes(tables=[dict(schemaName='', tableName='VOLUME_TEST')])
@@ -37,14 +38,4 @@ def test_oracle_consumer(sdc_builder, sdc_executor, database, benchmark):
     oracle_consumer >= finisher
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
-
-    def benchmark_pipeline(executor, pipeline):
-        pipeline.id = str(uuid.uuid4())
-        executor.add_pipeline(pipeline)
-        logger.info('Starting the pipeline...')
-        executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=3600)
-        logger.info('Removing the pipeline...')
-        executor.remove_pipeline(pipeline)
-
-    benchmark.pedantic(benchmark_pipeline, args=(sdc_executor, pipeline), rounds=1)
-
+    sdc_executor.benchmark_pipeline(pipeline, read_count=read_count, runs=1)
