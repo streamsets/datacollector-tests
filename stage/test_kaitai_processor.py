@@ -21,8 +21,9 @@ from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
-GIF_DIRECTORY = "resources/kaitai_processor/gif";
-KSY_FILE_LOCATION = "resources/kaitai_processor/ksy/gif.ksy";
+GIF_DIRECTORY = "/resources/resources/kaitai_processor/gif";
+KSY_FILE_LOCATION = "/resources/resources/kaitai_processor/ksy/gif.ksy";
+GIF_DIRECTORY_TEST = "resources/kaitai_processor/ksy/gif.ksy";
 S3_SANDBOX_PREFIX = 'sandbox'
 
 pytestmark = sdc_min_version('5.6.0')
@@ -41,7 +42,8 @@ def build_pipeline_with_inline_ksy(sdc_builder, number_of_threads):
 
     kaitai_struct = pipeline_builder.add_stage('Kaitai Struct Parser', type='processor')
     kaitai_struct.set_attributes(kaitai_struct_source='INLINE',
-                                 kaitai_struct_definition=get_kaitai_definition(KSY_FILE_LOCATION))
+                                 kaitai_struct_definition=get_kaitai_definition(GIF_DIRECTORY_TEST))
+
 
     wiretap = pipeline_builder.add_wiretap()
     directory >> kaitai_struct >> wiretap.destination
@@ -66,9 +68,16 @@ def validateOutput(wiretap):
         assert record.field['hdr']['magic'] == "R0lG"
 
 
+def skip_if_java8(sdc_builder):
+    sdc_host_info = sdc_builder.api_client.get_health_report('HealthHostInformation').response.json()
+    is_jdk8 = sdc_host_info['hostInformation']['javaVersion'] == 8 if 'hostInformation' in sdc_host_info else True
+    if is_jdk8:
+        pytest.skip("Skipping test for JDK 8")
+
 
 @pytest.mark.parametrize('number_of_threads', [1,5,10])
 def test_kaitai_processor_gif_dir_origin_inline(sdc_builder, sdc_executor, number_of_threads):
+    skip_if_java8(sdc_builder)
     pipeline_builder, wiretap = build_pipeline_with_inline_ksy(sdc_builder, number_of_threads)
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
@@ -79,6 +88,7 @@ def test_kaitai_processor_gif_dir_origin_inline(sdc_builder, sdc_executor, numbe
 
 @pytest.mark.parametrize('number_of_threads', [1,5,10])
 def test_kaitai_processor_gif_dir_origin_inline_multiple_pipelines(sdc_builder, sdc_executor, number_of_threads):
+    skip_if_java8(sdc_builder)
     pipeline_builder1, wiretap1 = build_pipeline_with_inline_ksy(sdc_builder, number_of_threads)
     pipeline1 = pipeline_builder1.build()
 
@@ -102,6 +112,7 @@ def test_kaitai_processor_gif_dir_origin_inline_multiple_pipelines(sdc_builder, 
 
 @pytest.mark.parametrize('number_of_threads', [1,5,10])
 def test_kaitai_processor_gif_dir_origin(sdc_builder, sdc_executor, number_of_threads):
+    skip_if_java8(sdc_builder)
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
 
@@ -130,6 +141,7 @@ def test_kaitai_processor_gif_dir_origin(sdc_builder, sdc_executor, number_of_th
 @aws('s3')
 @pytest.mark.parametrize('number_of_threads', [1,5,10])
 def test_kaitai_processor_gif_s3_origin(sdc_builder, sdc_executor, aws, number_of_threads):
+    skip_if_java8(sdc_builder)
     try:
         s3_bucket = aws.s3_bucket_name
         s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc/kaitai/'
@@ -160,8 +172,8 @@ def test_kaitai_processor_gif_s3_origin(sdc_builder, sdc_executor, aws, number_o
 
         client = aws.s3
         # Insert objects into S3.
-        for file_path in os.listdir(GIF_DIRECTORY):
-            client.upload_file(GIF_DIRECTORY+"/"+file_path, s3_bucket, s3_key + file_path)
+        for file_path in os.listdir(GIF_DIRECTORY_TEST):
+            client.upload_file(GIF_DIRECTORY_TEST+"/"+file_path, s3_bucket, s3_key + file_path)
 
         sdc_executor.start_pipeline(s3_origin_pipeline)
         sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', 9, 60)
