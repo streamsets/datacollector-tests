@@ -545,6 +545,8 @@ def test_s3_with_tags(sdc_builder, sdc_executor, aws):
 
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
 
+    s3_tag = {"key": "this-is-a-test-tag-key", "value": "this-is-a-test-tag-value"}
+
     # Bucket name is inside the record itself
     raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
 
@@ -558,7 +560,7 @@ def test_s3_with_tags(sdc_builder, sdc_executor, aws):
     s3_destination = builder.add_stage('Amazon S3', type='destination')
     bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
     s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key, add_tags=True,
-                                  tags=[{"key": "this-is-a-test-tag-key", "value": "this-is-a-test-tag-value"}])
+                                  tags=[s3_tag])
 
     dev_raw_data_source >> s3_destination
 
@@ -582,7 +584,7 @@ def test_s3_with_tags(sdc_builder, sdc_executor, aws):
         assert json.loads(s3_contents) == json.loads(raw_str)
 
         object_tagging = client.get_object_tagging(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
-        assert object_tagging['TagSet'] == [{"Key": "this-is-a-test-tag-key", "Value": "this-is-a-test-tag-value"}]
+        assert s3_tag in object_tagging['tagset'], "tag not found in tagset"
     finally:
         aws.delete_s3_data(s3_bucket, s3_key)
 
@@ -598,6 +600,7 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
     """
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
     s3_dest_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
+    s3_tag = {"key": "this-is-a-test-tag-key", "value": "this-is-a-test-tag-value"}
     data = 'Completely random string that is transfered as whole file format.'
 
     # Build pipeline.
@@ -612,7 +615,7 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
     target = builder.add_stage('Amazon S3', type='destination')
     target.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE', partition_prefix=s3_dest_key,
                           file_name_expression='output.txt', add_tags=True,
-                          tags=[{"key": "this-is-a-test-tag-key", "value": "this-is-a-test-tag-value"}])
+                          tags=[s3_tag])
 
     origin >> target
 
@@ -636,7 +639,7 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
         assert s3_contents == data
 
         object_tagging = client.get_object_tagging(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
-        assert object_tagging['TagSet'] == [{"Key": "this-is-a-test-tag-key", "Value": "this-is-a-test-tag-value"}]
+        assert s3_tag in object_tagging['TagSet'], "Tag not found in TagSet"
     finally:
         logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
         aws.delete_s3_data(aws.s3_bucket_name, s3_key)

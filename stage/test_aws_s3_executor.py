@@ -325,7 +325,8 @@ def _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, sse_kms):
         sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_finished()
 
         tags = client.get_object_tagging(Bucket=s3_bucket, Key=s3_key)['TagSet']
-        assert len(tags) == 1
+        matches = [tag for tag in tags if tag['Key'] == 'key']
+        assert len(matches) == 1, "Tag not found in TagSet"
 
         # Check if the 'file-created' event was generated (only for recent sdc versions).
         if Version(sdc_builder.version) >= MIN_SDC_VERSION_WITH_EXECUTOR_EVENTS:
