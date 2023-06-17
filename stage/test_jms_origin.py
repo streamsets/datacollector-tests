@@ -18,6 +18,7 @@ from string import ascii_letters
 
 from streamsets.testframework.markers import jms, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from streamsets.sdk.sdc_api import StartError
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ DEFAULT_USERNAME = 'admin'
 JMS_DESTINATION_TYPE = 'QUEUE'
 JMS_INITIAL_CONTEXT_FACTORY = 'org.apache.activemq.jndi.ActiveMQInitialContextFactory'
 JNDI_CONNECTION_FACTORY = 'ConnectionFactory'
+INVALID_JMS_DESTINATION = 'invalid'
 
 
 @jms('activemq')
@@ -189,6 +191,146 @@ def test_jms_consumer_origin_headers(sdc_builder, sdc_executor, jms):
         assert 'jms.header.type' in records[0].header.values
         assert 'jms.header.expiration' in records[0].header.values
         assert 'jms.header.priority' in records[0].header.values
+    finally:
+        connection.send(destination_name, 'SHUTDOWN', persistent='false')
+        connection.disconnect()
+
+
+@jms('activemq')
+def test_jms_consumer_origin_invalid_destination(sdc_builder, sdc_executor, jms):
+    """
+    Trying to send a queue which doesn't exist
+    Validating that the correct destination doesn't receive any message
+
+    The pipeline looks like:
+        jms_consumer >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Configure the jms_consumer stage
+    jms_consumer = pipeline_builder.add_stage('JMS Consumer')
+    destination_name = get_random_string(ascii_letters, 5)
+    jms_consumer.set_attributes(data_format='TEXT',
+                                jms_destination_name=INVALID_JMS_DESTINATION,
+                                jms_destination_type=JMS_DESTINATION_TYPE,
+                                jms_initial_context_factory=JMS_INITIAL_CONTEXT_FACTORY,
+                                jndi_connection_factory=JNDI_CONNECTION_FACTORY,
+                                password=DEFAULT_PASSWORD,
+                                username=DEFAULT_USERNAME)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_builder.add_error_stage('Discard')
+    jms_consumer >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(jms)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = jms.client_connection
+
+    try:
+        logger.info('Sending messages to JMS using ActiveMQ client ...')
+        connection.start()
+        connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
+        message_data = 'Hello World from SDC & DPM!'
+
+        connection.send(destination_name, message_data, persistent='false')
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.stop_pipeline(pipeline)
+        assert wiretap.output_records == []
+
+    finally:
+        connection.send(destination_name, 'SHUTDOWN', persistent='false')
+        connection.disconnect()
+
+
+@jms('activemq')
+def test_jms_consumer_origin_invalid_initial_context(sdc_builder, sdc_executor, jms):
+    """
+    Supplying invalid initial context and validating the error message
+
+    The pipeline looks like:
+        jms_consumer >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Configure the jms_consumer stage
+    jms_consumer = pipeline_builder.add_stage('JMS Consumer')
+    destination_name = get_random_string(ascii_letters, 5)
+    jms_consumer.set_attributes(data_format='TEXT',
+                                jms_destination_name=destination_name,
+                                jms_destination_type=JMS_DESTINATION_TYPE,
+                                jms_initial_context_factory=INVALID_JMS_DESTINATION,
+                                jndi_connection_factory=JNDI_CONNECTION_FACTORY,
+                                password=DEFAULT_PASSWORD,
+                                username=DEFAULT_USERNAME)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_builder.add_error_stage('Discard')
+    jms_consumer >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(jms)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = jms.client_connection
+
+    try:
+        logger.info('Sending messages to JMS using ActiveMQ client ...')
+        connection.start()
+        connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
+        message_data = 'Hello World from SDC & DPM!'
+
+        connection.send(destination_name, message_data, persistent='false')
+
+        sdc_executor.start_pipeline(pipeline)
+        assert False, "Should not reach here, as an exception is expected."
+
+    except StartError as error:
+        assert error.message.startswith("JMS_00")
+
+    finally:
+        connection.send(destination_name, 'SHUTDOWN', persistent='false')
+        connection.disconnect()
+
+
+@jms('activemq')
+def test_jms_consumer_origin_invalid_connection_factory(sdc_builder, sdc_executor, jms):
+    """
+    Supplying invalid connection factory and validating the error message
+
+    The pipeline looks like:
+        jms_consumer >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Configure the jms_consumer stage
+    jms_consumer = pipeline_builder.add_stage('JMS Consumer')
+    destination_name = get_random_string(ascii_letters, 5)
+    jms_consumer.set_attributes(data_format='TEXT',
+                                jms_destination_name=destination_name,
+                                jms_destination_type=JMS_DESTINATION_TYPE,
+                                jms_initial_context_factory=JMS_INITIAL_CONTEXT_FACTORY,
+                                jndi_connection_factory=INVALID_JMS_DESTINATION,
+                                password=DEFAULT_PASSWORD,
+                                username=DEFAULT_USERNAME)
+    wiretap = pipeline_builder.add_wiretap()
+    pipeline_builder.add_error_stage('Discard')
+    jms_consumer >> wiretap.destination
+    pipeline = pipeline_builder.build().configure_for_environment(jms)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = jms.client_connection
+
+    try:
+        logger.info('Sending messages to JMS using ActiveMQ client ...')
+        connection.start()
+        connection.connect(login=DEFAULT_USERNAME, passcode=DEFAULT_PASSWORD)
+        message_data = 'Hello World from SDC & DPM!'
+
+        connection.send(destination_name, message_data, persistent='false')
+
+        sdc_executor.start_pipeline(pipeline)
+        assert False, "Should not reach here, as an exception is expected."
+
+    except StartError as error:
+        assert error.message.startswith("JMS_01")
+
     finally:
         connection.send(destination_name, 'SHUTDOWN', persistent='false')
         connection.disconnect()
