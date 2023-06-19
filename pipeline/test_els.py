@@ -179,6 +179,7 @@ def test_job_els(sdc_executor, sdc_builder, expression):
             pytest.fail("Invalid start time job")
 
 
+@sdc_min_version('5.6.0')
 @pytest.mark.parametrize('date_interval, date_value, expected_delta', [
     # Using ~year interval to avoid timezone daylight saving (it creates lots of flakiness as it's system dependant)
     # e.g.: 52 weeks is a year-ish, so note it can get to be flaky sometime.
@@ -242,6 +243,7 @@ def test_date_addition_el(sdc_executor, sdc_builder, date_interval, date_value, 
     assert transformed_data == input_data + relativedelta(**expected_delta)
 
 
+@sdc_min_version('5.6.0')
 @pytest.mark.parametrize('date_interval, date_value, initial_date, expected_date', [
     # We need fixed dates to test this, as by using decimal precision, it is really difficult to avoid timezone issues
     # Note this test can fail depending on the system due to timezone used
@@ -292,6 +294,7 @@ def test_date_addition_decimal_el(sdc_executor, sdc_builder, date_interval, date
     assert transformed_data == input_data
 
 
+@sdc_min_version('5.6.0')
 @pytest.mark.parametrize('date_interval, date_diff_value', [
     ('YEAR', 5),
     ('QUARTER', 3),
