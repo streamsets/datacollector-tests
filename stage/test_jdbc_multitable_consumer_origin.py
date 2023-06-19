@@ -586,8 +586,9 @@ def test_jdbc_multitable_multithread(sdc_builder, sdc_executor, database):
             "offsetColumns": ["ID"],
             "enableNonIncremental": False
         }]
-        origin.set_attributes(number_of_threads=number_of_threads, maximum_pool_size=maximum_pool_size,
-                              maximum_number_of_tables=-1)
+        origin.set_attributes(number_of_threads=number_of_threads, maximum_pool_size=maximum_pool_size)
+        if Version(sdc_builder.version) >= Version('5.4.0'):
+            origin.set_attributes(maximum_number_of_tables=-1)
 
         finisher = builder.add_stage('Pipeline Finisher Executor')
         finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
