@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 GIF_DIRECTORY = "/resources/resources/kaitai_processor/gif";
 KSY_FILE_LOCATION = "/resources/resources/kaitai_processor/ksy/gif.ksy";
-GIF_DIRECTORY_TEST = "resources/kaitai_processor/ksy/gif.ksy";
+KAITAI_FILE_RELATIVE = "resources/kaitai_processor/ksy/gif.ksy";
+GIF_DIRECTORY_RELATIVE = "resources/kaitai_processor/gif";
+
 S3_SANDBOX_PREFIX = 'sandbox'
 
 pytestmark = sdc_min_version('5.6.0')
@@ -42,7 +44,7 @@ def build_pipeline_with_inline_ksy(sdc_builder, number_of_threads):
 
     kaitai_struct = pipeline_builder.add_stage('Kaitai Struct Parser', type='processor')
     kaitai_struct.set_attributes(kaitai_struct_source='INLINE',
-                                 kaitai_struct_definition=get_kaitai_definition(GIF_DIRECTORY_TEST))
+                                 kaitai_struct_definition=get_kaitai_definition(KAITAI_FILE_RELATIVE))
 
 
     wiretap = pipeline_builder.add_wiretap()
@@ -172,8 +174,8 @@ def test_kaitai_processor_gif_s3_origin(sdc_builder, sdc_executor, aws, number_o
 
         client = aws.s3
         # Insert objects into S3.
-        for file_path in os.listdir(GIF_DIRECTORY_TEST):
-            client.upload_file(GIF_DIRECTORY_TEST+"/"+file_path, s3_bucket, s3_key + file_path)
+        for file_path in os.listdir(GIF_DIRECTORY_RELATIVE):
+            client.upload_file(GIF_DIRECTORY_RELATIVE+"/"+file_path, s3_bucket, s3_key + file_path)
 
         sdc_executor.start_pipeline(s3_origin_pipeline)
         sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', 9, 60)
