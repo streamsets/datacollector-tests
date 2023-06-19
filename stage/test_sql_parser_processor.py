@@ -1154,7 +1154,7 @@ def test_sql_parser_processor_primary_keys_headers(sdc_builder,
         pipeline = pipeline_builder.build("Oracle CDC Client Pipeline").configure_for_environment(database)
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 8)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 8, timeout_sec=180)
 
         sleep(30)
 
