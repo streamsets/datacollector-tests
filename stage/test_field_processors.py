@@ -536,6 +536,51 @@ def test_field_renamer_uppercasing(sdc_builder, sdc_executor):
     assert record.field['SECOND_KEY'] == "StreamSets"
 
 
+@sdc_min_version('5.7.0')
+def test_field_renamer_lowercasing_nested_data(sdc_builder, sdc_executor):
+    """Test lower casing of all fields in nested data."""
+
+    raw_data = """{
+                 "Name": "Leo",
+                 "age": 20,
+                 "ADDRESS":{"Home":"XYZ", "Office":"ABC"},
+                 "Phone": ["11223344","222114455"],
+                 "Hobbies":[{"Reading":{"Books":["B1","B2"]}, "Music":["Jazz","Pop"]},"Travelling"]
+               }"""
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    field_renamer = pipeline_builder.add_stage('Field Renamer')
+    field_renamer.set_attributes(fields_to_rename=[{'fromFieldExpression':'/(.*)',
+                                                   'toFieldExpression': '/${str:toLower("$1")}'}],
+                                 target_field_already_exists='REPLACE')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_renamer >> wiretap.destination
+    pipeline = pipeline_builder.build('Field Renamer pipeline: Lower casing of fields in nested data')
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_record = wiretap.output_records[0].field
+
+        #verify all the fields have been converted to lowercase
+        assert "Name" not in output_record, "Field 'Name' should not exist"
+        assert "ADDRESS" not in output_record, "Field 'ADDRESS' should not exist"
+        assert "Phone" not in output_record, "Field 'Phone' should not exist"
+        assert "Hobbies" not in output_record, "Field 'Hobbies' should not exist"
+        assert output_record['name'] == "Leo"
+        assert output_record['age'] == 20
+        assert output_record['address'] == {'home':'XYZ', 'office':'ABC'}
+        assert output_record['phone'] == ['11223344','222114455']
+        assert output_record['hobbies'] == [{'reading':{'books':['B1','B2']}, 'music':['Jazz','Pop']},'Travelling']
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
+
+
 @sdc_min_version('3.1.0.0')
 def test_field_replacer(sdc_builder, sdc_executor):
     """Test field replacer processor. The pipeline would look like:
