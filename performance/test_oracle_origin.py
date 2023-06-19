@@ -27,7 +27,7 @@ def test_oracle_consumer(sdc_builder, sdc_executor, database):
     The test uses an existing table in Oracle instance called VOLUME_TEST with 700000 records.
     The pipeline connects oracle bulk loader to trash and includes a finisher"""
 
-    read_count = 700_000
+    record_count = 700_000
     pipeline_builder = sdc_builder.get_pipeline_builder()
     oracle_consumer = pipeline_builder.add_stage('Oracle Bulkload')
     oracle_consumer.set_attributes(tables=[dict(schemaName='', tableName='VOLUME_TEST')])
@@ -38,4 +38,4 @@ def test_oracle_consumer(sdc_builder, sdc_executor, database):
     oracle_consumer >= finisher
 
     pipeline = pipeline_builder.build().configure_for_environment(database)
-    sdc_executor.benchmark_pipeline(pipeline, read_count=read_count, runs=1)
+    sdc_executor.benchmark_pipeline(pipeline, record_count=record_count, runs=1)
