@@ -202,7 +202,6 @@ CDC_TEST_CASES = [
 ]
 
 
-@snowflake
 @pytest.mark.parametrize('primary_key_location', ['HEADER', 'TABLE'])
 @pytest.mark.parametrize('pk_columns,'  # pk columns used by the CDC process
                          'ops_1,'  # ops_1: used to set the state of the db, through the same pipeline. It can be empty
@@ -271,7 +270,6 @@ def test_cdc_record_consolidator(sdc_builder, sdc_executor, snowflake, primary_k
         engine.dispose()
 
 
-@snowflake
 @pytest.mark.parametrize('pk_columns,'
                          'ops',
                          [
@@ -330,7 +328,6 @@ def test_cdc_snowflake_empty_result_table_not_created(sdc_builder, sdc_executor,
         engine.dispose()
 
 
-@snowflake
 @pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "AZURE", "GCS"])
 @pytest.mark.parametrize('pk_columns,'
                          'ops,'
@@ -373,7 +370,7 @@ def test_cdc_snowflake_multiple_tables_and_ops(sdc_builder, sdc_executor, snowfl
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
-    snowflake.create_stage(stage_name, storage_path)
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
 
     records, pk_header_attribute_expressions = generate_cdc_records_with_header(pk_columns, ops)
     for record, op in zip(records, ops):
