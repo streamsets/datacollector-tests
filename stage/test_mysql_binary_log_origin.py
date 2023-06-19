@@ -1378,6 +1378,7 @@ def test_mysql_binary_log_altering_columns(sdc_builder, sdc_executor, database):
 
 
 @database('mysql')
+@sdc_min_version('5.7.0')
 def test_mysql_binary_log_loaded_metadata_tables(sdc_builder, sdc_executor, database, keep_data):
     """Test that MySQL Binary Log Origin loaded metadata for more than 10 tables.
 
