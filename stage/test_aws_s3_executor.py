@@ -288,6 +288,9 @@ def _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, sse_kms):
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
     raw_str = f'{{"bucket": "{s3_bucket}", "key": "{s3_key}"}}'
 
+    s3_tag = {'key': 'company', 'value': 'StreamSets'}
+    tags = [{'key': key, 'value': value} for key, value in aws.aws_tags.items()] + [s3_tag]
+
     # Build the pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
@@ -302,7 +305,7 @@ def _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, sse_kms):
     s3_executor.set_attributes(bucket='${record:value("/bucket")}',
                                task='CHANGE_EXISTING_OBJECT',
                                object='${record:value("/key")}',
-                               tags=Configuration(property_key='key', company='${record:value("/company")}'))
+                               tags=s3_tag)
 
     wiretap = builder.add_wiretap()
 
@@ -310,6 +313,7 @@ def _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, sse_kms):
     record_deduplicator >> to_error
 
     s3_exec_pipeline = builder.build(title='Amazon S3 executor pipeline').configure_for_environment(aws)
+    s3_executor.tags = [s3_tag]
     sdc_executor.add_pipeline(s3_exec_pipeline)
 
     client = aws.s3
@@ -324,9 +328,11 @@ def _run_test_s3_executor_tag_object(sdc_builder, sdc_executor, aws, sse_kms):
 
         sdc_executor.start_pipeline(s3_exec_pipeline).wait_for_finished()
 
-        tags = client.get_object_tagging(Bucket=s3_bucket, Key=s3_key)['TagSet']
-        matches = [tag for tag in tags if tag['Key'] == 'key']
-        assert len(matches) == 1, "Tag not found in TagSet"
+        object_tagging = client.get_object_tagging(Bucket=s3_bucket, Key=s3_key)
+        s3_tag = { key.capitalize() : value for key, value in s3_tag.items()}
+
+        assert len(tags) == len(object_tagging['TagSet']), "Number of tags diferent from expected"
+        assert s3_tag in object_tagging['TagSet'], "Tag not found in TagSet"
 
         # Check if the 'file-created' event was generated (only for recent sdc versions).
         if Version(sdc_builder.version) >= MIN_SDC_VERSION_WITH_EXECUTOR_EVENTS:

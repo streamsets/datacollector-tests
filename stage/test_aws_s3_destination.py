@@ -555,6 +555,7 @@ def test_s3_with_tags(sdc_builder, sdc_executor, aws):
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
 
     s3_tag = {"key": "this-is-a-test-tag-key", "value": "this-is-a-test-tag-value"}
+    tags = [{'key': key, 'value': value} for key, value in aws.aws_tags.items()] + [s3_tag]
 
     # Bucket name is inside the record itself
     raw_str = f'{{ "bucket" : "{s3_bucket}", "company" : "StreamSets Inc."}}'
@@ -574,6 +575,8 @@ def test_s3_with_tags(sdc_builder, sdc_executor, aws):
     dev_raw_data_source >> s3_destination
 
     s3_dest_pipeline = builder.build(title='Amazon S3 destination pipeline').configure_for_environment(aws)
+
+    s3_destination.tags = tags
     sdc_executor.add_pipeline(s3_dest_pipeline)
 
     client = aws.s3
@@ -593,7 +596,11 @@ def test_s3_with_tags(sdc_builder, sdc_executor, aws):
         assert json.loads(s3_contents) == json.loads(raw_str)
 
         object_tagging = client.get_object_tagging(Bucket=s3_bucket, Key=list_s3_objs['Contents'][0]['Key'])
-        assert s3_tag in object_tagging['tagset'], "tag not found in tagset"
+
+        s3_tag = { key.capitalize() : value for key, value in s3_tag.items()}
+
+        assert len(tags) == len(object_tagging['TagSet']), "Number of tags diferent from expected"
+        assert s3_tag in object_tagging['TagSet'], "Tag not found in TagSet"
     finally:
         aws.delete_s3_data(s3_bucket, s3_key)
 
@@ -611,6 +618,7 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
     s3_dest_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/'
     s3_tag = {"key": "this-is-a-test-tag-key", "value": "this-is-a-test-tag-value"}
     data = 'Completely random string that is transfered as whole file format.'
+    tags = [{'key': key, 'value': value} for key, value in aws.aws_tags.items()] + [s3_tag]
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -624,12 +632,14 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
     target = builder.add_stage('Amazon S3', type='destination')
     target.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE', partition_prefix=s3_dest_key,
                           file_name_expression='output.txt', add_tags=True,
-                          tags=[s3_tag])
+                          tags=tags)
 
     origin >> target
 
     pipeline = builder.build().configure_for_environment(aws)
     pipeline.configuration['shouldRetry'] = False
+
+    target.tags = tags
     sdc_executor.add_pipeline(pipeline)
 
     client = aws.s3
@@ -648,6 +658,10 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
         assert s3_contents == data
 
         object_tagging = client.get_object_tagging(Bucket=aws.s3_bucket_name, Key=list_s3_objs['Contents'][0]['Key'])
+
+
+        s3_tag = { key.capitalize() : value for key, value in s3_tag.items()}
+        assert len(tags) == len(object_tagging['TagSet']), "Number of tags diferent from expected"
         assert s3_tag in object_tagging['TagSet'], "Tag not found in TagSet"
     finally:
         logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_key)
