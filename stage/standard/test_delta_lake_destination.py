@@ -2,6 +2,7 @@
 
 import json
 import logging
+from operator import itemgetter
 
 import pytest
 from streamsets.testframework.markers import aws, deltalake, sdc_min_version, sdc_enterprise_lib_min_version
@@ -678,3 +679,76 @@ def test_multithreading(sdc_builder, sdc_executor, deltalake, aws, batch_size, b
                   "and Dev Raw Data Source (pull) is part of test_data_types.")
 def test_push_pull(sdc_builder, sdc_executor, deltalake, aws):
     pass
+
+@aws('s3')
+@pytest.mark.parametrize('tags_size', [5, 20])
+@sdc_min_version('5.7.0')
+def test_s3_tags(sdc_builder, sdc_executor, deltalake, aws, tags_size):
+    """Ensure the library works properly using s3 tags"""
+
+    tags = {}
+    for _ in range(tags_size):
+        tags[get_random_string()] = get_random_string()
+    s3_tags = []
+    for key, value in tags.items():
+        s3_tags.append({"key": key, "value": value})
+    s3_tags = sorted(s3_tags, key=itemgetter('key'))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage("Dev Data Generator")
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+
+    dev_data_generator.set_attributes(
+        records_to_be_generated=1,
+        batch_size=1,
+        fields_to_generate=[{"type": "LONG_SEQUENCE", "field": "seq"}]
+    )
+
+    table_name = f"test_s3_tags_{get_random_string()}"
+    s3_key = f"stf-deltalake/{get_random_string()}"
+    databricks_deltalake.set_attributes(
+        staging_location="AWS_S3",
+        stage_file_prefix=s3_key,
+        table_name=table_name,
+        s3_tags=s3_tags
+    )
+
+    dev_data_generator >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+    databricks_deltalake.purge_stage_file_after_ingesting=False  # configure_for_environment() sets it to True!
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create table
+        connection = deltalake.connect_engine(deltalake.engine)
+        connection.execute(
+            f"create table {table_name} (seq INT) using delta location '/deltalake/{table_name}_{get_random_string()}'"
+        )
+
+        if len(tags) > 10:
+            with pytest.raises(Exception) as error:
+                sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+            assert "AWS_02" in error.value.message, f'Expected a AWS_02 error, got "{error.value.message}" instead'
+        else:
+            sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+            s3_bucket_objects = aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)
+            assert 'Contents' in s3_bucket_objects, f'Contents not found in response: {s3_bucket_objects}'
+            keys = [k['Key'] for k in s3_bucket_objects['Contents']]
+            assert any(keys), f'keys not found in Contents response: {s3_bucket_objects["Contents"]}'
+            for key in keys:
+                response = aws.s3.get_object_tagging(Bucket=aws.s3_bucket_name, Key=key)
+                assert 'TagSet' in response, f'TagSet not found in response: {response}'
+                response_tags = sorted(response['TagSet'], key=itemgetter('Key'))
+                assert len(response_tags) == len(s3_tags), "number of tags differ!"
+                diff = [(x, y) for x, y in zip(s3_tags, response_tags) if x['key'] != y['Key'] or x['value'] != y['Value']]
+                assert not any(diff), f'tags do not match!'
+
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+        try:
+            deltalake.delete_table(table_name)
+        except Exception as ex:
+            logger.error(f"Error encountered while deleting Databricks Delta Lake table = {table_name} as {ex}")
