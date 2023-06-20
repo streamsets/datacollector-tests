@@ -12,8 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import pytest
+import logging
 
+from string import ascii_letters, ascii_lowercase
+from streamsets.testframework.markers import gcp, sdc_min_version
+from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.decorators import stub
+
+logger = logging.getLogger(__name__)
 
 
 @stub
@@ -142,16 +148,176 @@ def test_convert_hi_res_time_and_interval(sdc_builder, sdc_executor, stage_attri
     pass
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'credentials_provider': 'JSON'}])
-def test_credentials_file_content_in_json(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@gcp
+def test_credentials_file_content_in_json(sdc_builder, sdc_executor, gcp):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    google_cloud_storage >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    credentials_content_json = sdc_builder.read_file(gcp.path)
+    google_cloud_storage.set_attributes(credentials_provider='JSON',
+                                        credentials_file_content_in_json=credentials_content_json)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
+    try:
+        data = [get_random_string(ascii_letters, 100) for _ in range(10)]
+        blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test.txt')
+        blob.upload_from_string('\n'.join(data))
+
+        logger.info('Starting GCS Origin pipeline and wait until the information is read ...')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10, timeout_sec=120)
+
+        rows_from_wiretap = [record.field['text'] for record in wiretap.output_records]
+
+        assert len(data) == len(rows_from_wiretap)
+        assert rows_from_wiretap == data
+    finally:
+        if pipeline:
+            sdc_executor.stop_pipeline(pipeline, force=True)
+
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
 
 
-@stub
-@pytest.mark.parametrize('stage_attributes', [{'credentials_provider': 'JSON_PROVIDER'}])
-def test_credentials_file_path_in_json(sdc_builder, sdc_executor, stage_attributes):
-    pass
+@gcp
+def test_credentials_file_path_in_json(sdc_builder, sdc_executor, gcp):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    google_cloud_storage >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    credentials_file_path = gcp.path
+    google_cloud_storage.set_attributes(credentials_provider='JSON_PROVIDER',
+                                        credentials_file_path_in_json=credentials_file_path)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
+    try:
+        data = [get_random_string(ascii_letters, 100) for _ in range(10)]
+        blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test.txt')
+        blob.upload_from_string('\n'.join(data))
+
+        logger.info('Starting GCS Origin pipeline and wait until the information is read ...')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10, timeout_sec=120)
+
+        rows_from_wiretap = [record.field['text'] for record in wiretap.output_records]
+
+        assert len(data) == len(rows_from_wiretap)
+        assert rows_from_wiretap == data
+    finally:
+        if pipeline:
+            sdc_executor.stop_pipeline(pipeline, force=True)
+
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
+
+
+@gcp
+def test_credentials_file_path_in_json_not_found(sdc_builder, sdc_executor, gcp):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    google_cloud_storage >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    credentials_file_path = '/tmp/hola.txt'
+    google_cloud_storage.set_attributes(credentials_provider='JSON_PROVIDER',
+                                        credentials_file_path_in_json=credentials_file_path)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.stop_pipeline(pipeline, force=True)
+        assert False, 'Should not reach here.'
+
+    except Exception as error:
+        assert 'GOOGLE_01' in error.message
+
+
+
+@gcp
+def test_credentials_file_path_with_invalid_json(sdc_builder, sdc_executor, gcp):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.txt',
+                                        data_format='TEXT')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    google_cloud_storage >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    credentials_file_path = '/tmp/credentials.json'
+    sdc_executor.execute_shell(f'touch {credentials_file_path}')
+    google_cloud_storage.set_attributes(credentials_provider='JSON_PROVIDER',
+                                        credentials_file_path_in_json=credentials_file_path)
+
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        sdc_executor.stop_pipeline(pipeline, force=True)
+        assert False, 'Should not reach here.'
+
+    except Exception as error:
+        assert 'GOOGLE_02' in error.message
+
+    finally:
+        sdc_executor.execute_shell(f'rm -rf {credentials_file_path}')
+
 
 
 @stub
