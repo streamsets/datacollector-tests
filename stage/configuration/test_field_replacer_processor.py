@@ -34,7 +34,7 @@ def test_field_does_not_exist(sdc_builder, sdc_executor, stage_attributes):
     field_does_not_exist = stage_attributes['field_does_not_exist']
 
     # Updates in SDC 5.3.0 - ADD_FIELD option added, Change in CONTINUE option's results
-    if Version(sdc_executor.version) < Version('5.3.0'):
+    if Version(sdc_builder.version) < Version('5.3.0'):
         if field_does_not_exist == 'ADD_FIELD':
             pytest.skip("ADD_FIELD option added in SDC 5.3.0.")
         elif field_does_not_exist == 'CONTINUE':
