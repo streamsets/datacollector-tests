@@ -1436,8 +1436,6 @@ def test_mysql_binary_log_loaded_metadata_tables(sdc_builder, sdc_executor, data
                 logger.info('Dropping table %s in %s database...', table, database.type)
                 table.drop(database.engine)
 
-            logger.info('Dropping table %s in %s database...', table, database.type)
-
             if connection is not None:
                 connection.close()
 
