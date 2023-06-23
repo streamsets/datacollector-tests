@@ -19,6 +19,7 @@ import decimal
 import datetime
 
 import pytest
+import sqlalchemy
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -305,3 +306,109 @@ def test_data_format(sdc_builder, sdc_executor, database, keep_data):
 @database('postgresql')
 def test_push_pull(sdc_builder, sdc_executor, database):
     pytest.skip("We haven't re-implemented this test since Dev Data Generator (push) is art of test_multiple_batches and Dev Raw Data Source (pull) is part of test_data_types.")
+
+
+@database('postgresql')
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('omit_constraints_when_creating_tables', [False, True])
+@pytest.mark.parametrize('does_destination_table_exist', [False, True])
+def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, database, keep_data,
+                                               omit_constraints_when_creating_tables, does_destination_table_exist):
+    # Prepare data and table names
+    num_records = 2
+    input_data = [{'id': i,
+                   'name': get_random_string(string.ascii_lowercase, 10),
+                   'phone': get_random_string(string.ascii_lowercase, 10),
+                   'email': get_random_string(string.ascii_lowercase, 10)}
+                  for i in range(1, num_records + 1)]
+    origin_table_name = f'origin_table_{get_random_string(string.ascii_lowercase, 20)}'
+    destination_table_name = f'destination_table_{get_random_string(string.ascii_lowercase, 20)}'
+
+    sql_query = f'SELECT * FROM {origin_table_name}' + ' WHERE id > ${OFFSET} ORDER BY id ASC'
+
+    # Create pipeline
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    origin = pipeline_builder.add_stage('JDBC Query Consumer')
+    origin.set_attributes(incremental_mode=False,
+                          sql_query=sql_query,
+                          max_batch_size_in_records=num_records)
+
+    processor = pipeline_builder.add_stage('PostgreSQL Metadata')
+    processor.set_attributes(table_name=destination_table_name,
+                             omit_constraints_when_creating_tables=omit_constraints_when_creating_tables)
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    origin >> processor >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create and populate tables
+        connection = database.engine.connect()
+        logger.info('Creating origin table %s in %s database ...', origin_table_name, database.type)
+        origin_table = sqlalchemy.Table(origin_table_name,
+                                        sqlalchemy.MetaData(),
+                                        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                                        sqlalchemy.Column('name', sqlalchemy.String(32), primary_key=True),
+                                        sqlalchemy.Column('phone', sqlalchemy.String(32), nullable=False),
+                                        sqlalchemy.Column('email', sqlalchemy.String(32)))
+        origin_table.create(database.engine)
+        connection.execute(origin_table.insert(), input_data)
+        if does_destination_table_exist:
+            logger.info('Creating destination table %s in %s database ...', destination_table_name, database.type)
+            destination_table = sqlalchemy.Table(destination_table_name,
+                                                 sqlalchemy.MetaData(),
+                                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+                                                 sqlalchemy.Column('name', sqlalchemy.String(32)),
+                                                 sqlalchemy.Column('phone', sqlalchemy.String(32), nullable=False),
+                                                 sqlalchemy.Column('email', sqlalchemy.String(32)))
+            destination_table.create(database.engine)
+            connection.execute(destination_table.insert(), input_data)
+
+        # Run the pipeline
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Inspecting the tables
+        assert len(wiretap.output_records) == num_records,\
+            "The output records does not correspond to the inputs read from the origin."
+
+        # The destination table exists (has been created or already existed)
+        inspector = sqlalchemy.inspect(database.engine)
+        assert inspector.has_table(destination_table_name),\
+            f"Destination table {destination_table_name} has not been created."
+
+        # Primary Key and Nullable constraints check
+        primary_keys = inspector.get_pk_constraint(destination_table_name)['constrained_columns']
+        columns_nullable = []
+        for column in inspector.get_columns(destination_table_name):
+            # They keep the same order as they were created: id, name, phone, email
+            columns_nullable.append(column['nullable'])
+
+        assert len(columns_nullable) == 4,\
+            f"There are {len(columns_nullable)} columns in the destination table when there should be 4."
+
+        if omit_constraints_when_creating_tables and not does_destination_table_exist:
+            # As desired, the table has been created with no constraints
+            assert primary_keys == [] and \
+                   columns_nullable == [True, True, True, True], \
+                   "Table has been created with constraints!"
+        elif not omit_constraints_when_creating_tables and not does_destination_table_exist:
+            # The destination table has been created keeping the constraints of the origin table
+            assert primary_keys == ['id', 'name'] and \
+                   columns_nullable == [False, False, False, True], \
+                   "Destination and origin table constraints do not match!"
+        elif does_destination_table_exist:
+            assert primary_keys == ['id'] and \
+                   columns_nullable == [False, True, False, True], \
+                   "Table constraints have changed!"
+
+    finally:
+        if not keep_data:
+            for table in [origin_table_name, destination_table_name]:
+                logger.info('Dropping table %s in %s database ...', table, database.type)
+                connection.execute(f"DROP TABLE IF EXISTS \"{table}\"")
+            if pipeline is not None:
+                sdc_executor.remove_pipeline(pipeline)
