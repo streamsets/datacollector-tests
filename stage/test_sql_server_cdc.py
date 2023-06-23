@@ -633,13 +633,9 @@ def test_sql_server_cdc_source_table_in_record_header(
         rows_in_database = setup_sample_data(total_no_of_records)
 
         table_name = get_random_string(string.ascii_lowercase, 20)
-        schema_name = get_random_string(string.ascii_lowercase, 3)
-        capture_instance_name = get_random_string(string.ascii_lowercase, 20)
+        capture_instance_name = f'{DEFAULT_SCHEMA_NAME}_{table_name}'
 
-        # create schema & table
-        connection.execute(f'CREATE SCHEMA {schema_name}')
-        table = setup_table(connection, schema_name, table_name,
-                            rows_in_database[0:1], capture_instance_name)
+        table = setup_table(connection, DEFAULT_SCHEMA_NAME, table_name, rows_in_database[0:1], capture_instance_name)
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
@@ -675,16 +671,12 @@ def test_sql_server_cdc_source_table_in_record_header(
             assert field_data['id'] == rows_in_database[0].get('id')
             assert field_data['name'] == rows_in_database[0].get('name')
             assert field_data['dt'] == rows_in_database[0].get('dt')
-            assert record.header['values']['jdbc.cdc.source_schema_name'] == schema_name
+            assert record.header['values']['jdbc.cdc.source_schema_name'] == DEFAULT_SCHEMA_NAME
             assert record.header['values']['jdbc.cdc.source_name'] == table_name
     finally:
         if table is not None:
             logger.info('Dropping table %s in %s database...', table, database.type)
             table.drop(database.engine)
-
-        if schema_name is not None:
-            logger.info('Dropping schema %s in %s database...', schema_name, database.type)
-            connection.execute(f'drop schema {schema_name}')
 
         if connection is not None:
             connection.close()
