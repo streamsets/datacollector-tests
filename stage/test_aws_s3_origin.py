@@ -534,7 +534,7 @@ if (state['record-count'] >= 2):
         pipeline_cmd = sdc_executor.start_pipeline(s3_origin_pipeline)
         sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'data_batch_count', 1, timeout_sec=120)
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-2', Body=json.dumps(data2))
-
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'data_batch_count', 2, timeout_sec=120)
         pipeline_cmd.wait_for_finished()
         output_records_values = [record.field for record in wiretap.output_records]
         assert len(output_records_values) == 2 * records_per_file
