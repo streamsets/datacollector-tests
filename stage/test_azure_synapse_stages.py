@@ -1392,6 +1392,7 @@ def test_synapse_destination_authentications_azure_active_directory(
 
     azure_synapse_destination = builder.add_stage(name=STAGE_NAME)
     azure_synapse_destination.set_attributes(
+        on_record_error="STOP_PIPELINE",
         auto_create_table=True,
         table=destination_table_name,
         enable_data_drift=True,
