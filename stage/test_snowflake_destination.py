@@ -1643,7 +1643,7 @@ def test_instance_profile_credentials(sdc_builder, sdc_executor, snowflake):
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
-    snowflake.create_stage(stage_name, storage_path)
+    snowflake.create_stage(stage_name, storage_path, stage_location="AWS_S3")
 
     # Build the pipeline with created Snowflake entities.
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -1658,6 +1658,7 @@ def test_instance_profile_credentials(sdc_builder, sdc_executor, snowflake):
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
+                                         stage_location="AWS_S3",
                                          use_instance_profile=True)
 
     dev_raw_data_source >> snowflake_destination
