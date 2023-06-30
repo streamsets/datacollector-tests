@@ -3351,3 +3351,70 @@ def wait_for_snowpipe_data_ingestion(query_function, max_attempts=5):
         except Exception as e:
             logger.info(f'Found an error while querying database: {e}. Ignoring...')
     return data_from_database
+
+@snowflake
+@sdc_min_version('5.7.0')
+def test_primary_key(sdc_builder, sdc_executor, snowflake):
+    records_to_be_generated = 10
+    stage_location = "INTERNAL"
+    pk = "ID"
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    # Create stage in Snowflake.
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
+
+    # Build the pipeline with created Snowflake entities.
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_origin = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_origin.set_attributes(records_to_be_generated=records_to_be_generated)
+    dev_data_origin.fields_to_generate = [{'field': 'id', 'type': 'INTEGER'},
+                                          {'field': 'name', 'type': 'BOOK_AUTHOR'},
+                                          {'field': 'title', 'type': 'BOOK_TITLE'}]
+    dev_data_origin.header_attributes = [{"key": PRIMARY_KEY_SPECIFICATION, "value": "{\"" + pk + "\": {}}"}]
+
+    snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
+    snowflake_destination.set_attributes(stage_location=stage_location,
+                                         on_record_error='STOP_PIPELINE',
+                                         purge_stage_file_after_ingesting=True,
+                                         snowflake_stage_name=stage_name,
+                                         data_drift_enabled=True,
+                                         table_auto_create=True,
+                                         table=table_name)
+
+    dev_data_origin >> snowflake_destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+
+    engine = snowflake.engine
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        result = engine.execute(f'DESC TABLE {table_name};')
+        metadata_from_database = sorted(result.fetchall(), key=lambda row: row[1])
+        assert len(metadata_from_database) == 3, f'Wrong table description: {metadata_from_database}'
+        found = False
+        for column in metadata_from_database:
+            name = column[0]
+            nullable = column[3]
+            primary_key = column[5]
+            if name.upper() == pk.upper():
+                assert primary_key == 'Y', f'Column "{name}" must BE primary key'
+                assert nullable == 'N', f'Column "{name}" must BE NOT nullable'
+                found = True
+            else:
+                assert primary_key == 'N', f'Column "{name}" must NOT BE primary key'
+                assert nullable == 'Y', f'Column "{name}" must BE nullable'
+        assert found, "Primary key not found!"
+
+    finally:
+        logger.debug('Staged files will be deleted from %s ...', storage_path)
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        engine.execute(f'drop table {table_name}')
+        engine.dispose()
