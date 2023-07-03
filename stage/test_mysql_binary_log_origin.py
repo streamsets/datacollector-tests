@@ -1392,7 +1392,6 @@ def test_mysql_binary_log_loaded_metadata_tables(sdc_builder, sdc_executor, data
     try:
         # Create table.
         connection = database.engine.connect()
-        connection.execute("SET GLOBAL binlog_row_metadata=full")
         table_names = [f'{get_random_string(string.ascii_lowercase, 8)}' for i in range(1, 21)]
         tables = []
         for table_name in table_names:
