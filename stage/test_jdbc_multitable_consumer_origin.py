@@ -1129,6 +1129,102 @@ def test_multitable_string_offset_column(sdc_builder, sdc_executor, database, in
 
 
 @database
+@pytest.mark.parametrize('table_name_pattern, table_exclusion_pattern, total_processed_tables', [
+    ('#PREFIX#%', '', 10),  # no exclusion pattern
+    ('#PREFIX#%', '.*', 0),  # exclude everything
+    ('#PREFIX#TABLE%', '#PREFIX#TABLE[0-9]+', 5),  # exclude ending with numbers
+    ('#PREFIX#TABLE%', '#PREFIX#TABLE1', 9),  # exclude table name as regex
+    ('#PREFIX#TABLE%', '#PREFIX#TABLE1|#PREFIX#TABLE2', 8),  # exclude table using or regex
+])
+def test_jdbc_multitable_consumer_table_exclusion(sdc_builder, sdc_executor, database,
+                                                  table_name_pattern, table_exclusion_pattern, total_processed_tables):
+    """
+    Check if Jdbc Multi-table Origin can load multiple tables without duplicates using multiple combinations of table
+    patterns and exclusions.
+
+    jdbc_multitable_consumer >> wiretap.destination
+    jdbc_multitable_consumer >= pipeline_finished_executor
+    """
+    no_of_records_per_table = random.randint(51, 100)
+    table_suffixes = ["TABLEA", "TABLEB", "TABLEC", "TABLED", "TABLEE",
+                      "TABLE1", "TABLE2", "TABLE3", "TABLE4", "TABLE5"]
+    num_tables = len(table_suffixes)
+
+    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    table_names = [f'{src_table_prefix}{table_suffix}' for table_suffix in table_suffixes]
+    connection = None
+
+    table_name_pattern = table_name_pattern.replace("#PREFIX#", src_table_prefix)
+    table_exclusion_pattern = table_exclusion_pattern.replace("#PREFIX#", src_table_prefix)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(table_configs=[{"tablePattern": f'{table_name_pattern}',
+                                                            "tableExclusionPattern": f'{table_exclusion_pattern}'}])
+    if Version(sdc_builder.version) >= Version('5.4.0'):
+        jdbc_multitable_consumer.set_attributes(maximum_number_of_tables=-1)
+
+    pipeline_finished_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    jdbc_multitable_consumer >> wiretap.destination
+    jdbc_multitable_consumer >= pipeline_finished_executor
+
+    pipeline = pipeline_builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    def get_table_schema(table_name):
+        return sqlalchemy.Table(
+            table_name,
+            sqlalchemy.MetaData(),
+            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('field1', sqlalchemy.String(32)),
+            sqlalchemy.Column('field2', sqlalchemy.String(32)),
+        )
+
+    def get_table_data(table):
+        return [{'id': i, 'field1': f'field1_{i}_{table}', 'field2': f'field2_{i}_{table}'}
+                for i in range(1, no_of_records_per_table + 1)]
+
+    tables = [get_table_schema(table_name) for table_name in table_names]
+    table_datas = [get_table_data(i) for i in range(num_tables)]
+
+    try:
+        connection = database.engine.connect()
+        for table, table_name, table_data in zip(tables, table_names, table_datas):
+            logger.info('Creating table %s in %s database ...', table_name, database.type)
+            table.create(database.engine)
+            logger.info('Adding three rows into %s database ...', database.type)
+            connection.execute(table.insert(), table_data)
+
+        if total_processed_tables == 0:  # exclude everything
+            with pytest.raises(Exception) as error:
+                sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+            assert "JDBC_66" in error.value.message, f'Expected a JDBC_66 error, got "{error.value.message}" instead'
+
+        else:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+            records = [{'id': record.field['id'], 'field1': record.field['field1'], 'field2': record.field['field2']}
+                       for record in wiretap.output_records]
+
+            assert len(records) == no_of_records_per_table * total_processed_tables, "Wrong number of total records processed"
+            for record in records:
+                iterable = iter(record in table_data for table_data in table_datas)
+                assert any(iterable), f'Wrong record found: "{record}"'
+                assert not any(iterable), f'Duplicate record found: "{record}"'
+    finally:
+        for table, table_name in zip(tables, table_names):
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
+
+
+@database
 @pytest.mark.parametrize('batch_strategy', ['SWITCH_TABLES', 'PROCESS_ALL_AVAILABLE_ROWS_FROM_TABLE'])
 @pytest.mark.parametrize('no_of_threads', [1, 2, 3])
 def test_jdbc_multitable_consumer_batch_strategy(sdc_builder, sdc_executor, database, batch_strategy, no_of_threads):
