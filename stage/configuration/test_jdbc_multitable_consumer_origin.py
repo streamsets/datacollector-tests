@@ -13,6 +13,7 @@
 # limitations under the License.
 import logging
 import string
+import random
 
 import pytest
 import sqlalchemy
@@ -20,6 +21,7 @@ from sqlalchemy import Column, Integer, String, CHAR
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from streamsets.sdk.utils import Version
 
 logger = logging.getLogger(__name__)
 
@@ -270,11 +272,113 @@ def test_jdbc_multitable_consumer_origin_configuration_init_query(sdc_builder, s
     pass
 
 
-@pytest.mark.parametrize('initial_table_order_strategy', ['ALPHABETICAL', 'NONE', 'REFERENTIAL_CONSTRAINTS'])
-@pytest.mark.skip('Not yet implemented')
-def test_jdbc_multitable_consumer_origin_configuration_initial_table_order_strategy(sdc_builder, sdc_executor,
+@database
+@pytest.mark.parametrize('initial_table_order_strategy', ['REFERENTIAL_CONSTRAINTS'])
+def test_jdbc_multitable_consumer_origin_configuration_initial_table_order_strategy(sdc_builder, sdc_executor, database,
                                                                                     initial_table_order_strategy):
-    pass
+    num_batches = 8
+    records_per_batch = 2
+    table_prefix = get_random_string(string.ascii_lowercase)
+    connection = database.engine.connect()
+
+    user_table_records = [{"u_id": 1, "name": "Alice", "address": "100 First Street, Sunnyvale, CA."},
+                          {"u_id": 2, "name": "Zach", "address": "200 Second Street, Sunnyvale, CA."},
+                          {"u_id": 3, "name": "Jack", "address": "300 Third Street, Sunnyvale, CA."}]
+
+    product_records = [{ "p_id": 1, "name": "Coconut Chips", "manufacturer": "Dang"},
+                       { "p_id": 2, "name": "Bluberry Bar", "manufacturer": "Luna"},
+                       { "p_id": 3, "name": "Dark Chocolate Peanut Butter Bar", "manufacturer": "Kind"},
+                       { "p_id": 4, "name": "Oats and Honey Bar", "manufacturer": "Nature Valley"}]
+
+    order_tbl_records = [{"o_id": 1, "u_id":1,},
+                         {"o_id": 2, "u_id":2}]
+
+    currentTime = random.getrandbits(32)
+    items_records = [{ "time_id": currentTime,     "o_id": 1, "p_id": 1, "quantity": 2},
+                     { "time_id": currentTime + 1, "o_id": 1, "p_id": 2, "quantity": 3},
+                     { "time_id": currentTime + 2, "o_id": 2, "p_id": 1, "quantity": 4},
+                     { "time_id": currentTime + 3, "o_id": 2, "p_id": 3, "quantity": 2},
+                     { "time_id": currentTime + 4, "o_id": 2, "p_id": 4, "quantity": 1}]
+
+    try:
+        # USER_TABLE TABLE
+        connection.execute(f'CREATE TABLE {table_prefix}_USER_TABLE '
+                           f'(u_id INT PRIMARY KEY, name varchar(100), address varchar(1000))');
+        for r in user_table_records:
+            connection.execute(f'INSERT INTO {table_prefix}_USER_TABLE (u_id, name, address) '
+                               f'VALUES ({r["u_id"]}, \'{r["name"]}\', \'{r["address"]}\')')
+
+        # PRODUCT TABLE
+        connection.execute(f'CREATE TABLE {table_prefix}_PRODUCT '
+                           f'(p_id INT PRIMARY KEY, name varchar(100), manufacturer varchar(1000))');
+        for r in product_records:
+            connection.execute(f'INSERT INTO {table_prefix}_PRODUCT (p_id, name, manufacturer) '
+                               f'VALUES ({r["p_id"]}, \'{r["name"]}\', \'{r["manufacturer"]}\')')
+        # ORDER_TBL TABLE
+        connection.execute(f'CREATE TABLE {table_prefix}_ORDER_TBL '
+                           f'(o_id INT PRIMARY KEY, u_id INT, FOREIGN KEY (u_id) REFERENCES {table_prefix}_USER_TABLE(u_id))');
+        for r in order_tbl_records:
+            connection.execute(f'INSERT INTO {table_prefix}_ORDER_TBL (o_id, u_id) '
+                               f'VALUES ({r["o_id"]}, {r["u_id"]})')
+        # ITEMS TABLE
+        # We do not support composite keys so for now the primary key here is a timestamp.
+        connection.execute(f'CREATE TABLE {table_prefix}_ITEMS ('
+                           f'time_id BIGINT PRIMARY KEY, o_id INT,'
+                           f' p_id INT, quantity int,'
+                           f' FOREIGN KEY (o_id) REFERENCES {table_prefix}_ORDER_TBL(o_id), '
+                           f' FOREIGN KEY (p_id) REFERENCES {table_prefix}_PRODUCT(p_id))');
+        for r in items_records:
+            connection.execute(f'INSERT INTO {table_prefix}_ITEMS (time_id, o_id, p_id, quantity) '
+                               f'VALUES ({r["time_id"]}, {r["o_id"]}, {r["p_id"]}, {r["quantity"]})')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+        table_configs = [{'tablePattern': f'{table_prefix}%'}]
+        jdbc_multitable_consumer.set_attributes(per_batch_strategy="SWITCH_TABLES",
+                                                initial_table_order_strategy=initial_table_order_strategy,
+                                                max_batch_size_in_records=records_per_batch,
+                                                batches_from_result_set=num_batches,
+                                                table_configs=table_configs)
+        if Version(sdc_builder.version) >= Version('5.4.0'):
+            jdbc_multitable_consumer.maximum_number_of_tables = -1
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        pipeline_finished_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+        jdbc_multitable_consumer >> wiretap.destination
+        jdbc_multitable_consumer >= pipeline_finished_executor
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        batches = wiretap.batches
+        assert len(batches) == num_batches, "Wrong number of batches"
+        # Check records come in proper order
+        assert batches[0][0].field['p_id'] == product_records[0]["p_id"]
+        assert batches[0][1].field['p_id'] == product_records[1]["p_id"]
+        assert batches[1][0].field['u_id'] == user_table_records[0]["u_id"]
+        assert batches[1][1].field['u_id'] == user_table_records[1]["u_id"]
+        assert batches[2][0].field['o_id'] == order_tbl_records[0]["o_id"]
+        assert batches[2][1].field['o_id'] == order_tbl_records[1]["u_id"]
+        assert batches[3][0].field['time_id'] == items_records[0]["time_id"]
+        assert batches[3][1].field['time_id'] == items_records[1]["time_id"]
+        assert batches[4][0].field['p_id'] == product_records[2]["p_id"]
+        assert batches[4][1].field['p_id'] == product_records[3]["p_id"]
+        assert batches[5][0].field['u_id'] == user_table_records[2]["u_id"]
+        assert batches[6][0].field['time_id'] == items_records[2]["time_id"]
+        assert batches[6][1].field['time_id'] == items_records[3]["time_id"]
+        assert batches[7][0].field['time_id'] == items_records[4]["time_id"]
+
+    finally:
+        logger.info('Dropping tables in %s database...', database.type)
+        connection.execute(f'DROP TABLE IF EXISTS {table_prefix}_ITEMS')
+        connection.execute(f'DROP TABLE IF EXISTS {table_prefix}_ORDER_TBL')
+        connection.execute(f'DROP TABLE IF EXISTS {table_prefix}_PRODUCT')
+        connection.execute(f'DROP TABLE IF EXISTS {table_prefix}_USER_TABLE')
 
 
 @pytest.mark.skip('Not yet implemented')
