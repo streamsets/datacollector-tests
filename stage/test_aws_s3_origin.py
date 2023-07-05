@@ -1952,3 +1952,116 @@ def test_s3_keep_offset_on_disconnect(sdc_builder, sdc_executor, aws):
 
     finally:
         aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+
+
+@aws('s3')
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
+@pytest.mark.parametrize(
+    'num_records, num_reading_threads, file_processing_delay, batch_wait_time', [
+        (10, 1, 1000, 2000),
+        (150, 1, 1000, 2000),
+        (300, 10, 10000, 15000),
+        (150, 1, 10000, 2000),
+        (1000, 10, 3000, 1000),
+        (2000, 10, 3000, 1000)
+    ])
+def test_s3_multithreading_multiple_batches(
+        sdc_builder,
+        sdc_executor,
+        aws,
+        read_order,
+        num_records,
+        num_reading_threads,
+        file_processing_delay,
+        batch_wait_time
+):
+    client = aws.s3
+    s3_bucket = aws.s3_bucket_name
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+
+    logger.info('Creating the multi-threaded pipeline to create files in the S3 bucket ...')
+    builder = sdc_builder.get_pipeline_builder()
+
+    # Use multiple threads to create the files in the S3 bucket to try to get files with the same timestamp
+    num_writing_threads = 10
+    writing_batch_size = 1
+
+    dev_data_generator = builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(
+        fields_to_generate=[{'field': 'id', 'type': 'POKEMON'}],
+        delay_between_batches=0,
+        batch_size=writing_batch_size,
+        records_to_be_generated=num_records,
+        number_of_threads=num_writing_threads
+    )
+
+    s3_destination = builder.add_stage('Amazon S3', type='destination')
+    s3_destination.set_attributes(
+        bucket=s3_bucket,
+        data_format='JSON',
+        partition_prefix=s3_key
+    )
+
+    dev_data_generator >> s3_destination
+
+    s3_dest_pipeline = builder.build(title='Multi-threaded Writing Pipeline - Amazon S3 destination')\
+        .configure_for_environment(aws)
+    sdc_executor.add_pipeline(s3_dest_pipeline)
+
+    logger.info('Creating the multi-threaded pipeline to read files from the S3 bucket ...')
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+    s3_origin.set_attributes(
+        bucket=s3_bucket,
+        data_format='JSON',
+        prefix_pattern=f"{s3_key}/*",
+        max_batch_size_in_records=100,
+        number_of_threads=num_reading_threads,
+        file_pool_size=100,
+        file_processing_delay_in_ms=file_processing_delay,
+        batch_wait_time_in_ms=batch_wait_time,
+        read_order=read_order
+    )
+
+    pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
+    pipeline_finisher.set_attributes(react_to_events=True)
+
+    wiretap = builder.add_wiretap()
+
+    s3_origin >> wiretap.destination
+    s3_origin >= pipeline_finisher
+
+    s3_origin_pipeline = builder.build(title='Multi-threaded Reading Pipeline - Amazon S3 origin')\
+        .configure_for_environment(aws)
+    s3_origin_pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(s3_origin_pipeline)
+
+    try:
+        logger.info("Executing the pipeline that creates files in the S3 bucket ...")
+        sdc_executor.start_pipeline(s3_dest_pipeline)
+
+        logger.info("Executing the pipeline that reads files from the S3 bucket ...")
+        origin_pipeline_exec = sdc_executor.start_pipeline(s3_origin_pipeline)
+        origin_pipeline_exec.wait_for_finished(timeout_sec=500)
+
+        # list_objects_v2 only returns up to 1000 files, so we can't check if they were all correctly written otherwise
+        if num_records <= 1000:
+            num_records_written = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key)['Contents']
+            assert len(num_records_written) == num_records, \
+                f'{num_records} files should have been found in the S3 bucket, ' \
+                f'but only {num_records_written} were found'
+
+        num_records_read = len(wiretap.output_records)
+        assert num_records_read == num_records, \
+            f'{num_records} files should have been read from the S3 bucket, but only {num_records_read} were read'
+    finally:
+        if sdc_executor.get_pipeline_status(s3_dest_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(s3_dest_pipeline)
+
+        if sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(s3_origin_pipeline)
+
+        aws.delete_s3_data(s3_bucket, s3_key)
