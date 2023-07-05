@@ -21,6 +21,7 @@ import string
 import tempfile
 import time
 from collections import OrderedDict
+import uuid
 
 import pytest
 import sqlalchemy
@@ -134,6 +135,62 @@ def test_jdbc_multitable_consumer_with_no_more_data_event_generation_delay(sdc_b
     finally:
         if table is not None:
             logger.info('Dropping table %s in %s database...', src_table, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
+
+
+# SDC-5098: Multi Table JDBC: Specifying invalid type for initial offset leads to NumberFormatException
+@database
+def test_jdbc_multitable_consumer_invalid_initial_offset(sdc_builder, sdc_executor, database):
+    """
+    Set initial invalid offset and verify error is thrown
+    """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+    connection = None
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.table_configs = [{
+        "tablePattern": table_name,
+        "overrideDefaultOffsetColumns": True,
+        "offsetColumns": ["id"],
+        "offsetColumnToInitialOffsetValue": [{
+            "key": "id",
+            "value": str(uuid.uuid4())  # invalid offset
+        }]
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True)
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        with pytest.raises(Exception) as error:
+            sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        assert "JDBC_72" in error.value.message, f'Expected a JDBC_72 error, got "{error.value.message}" instead'
+
+    finally:
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
             table.drop(database.engine)
         if connection is not None:
             connection.close()
