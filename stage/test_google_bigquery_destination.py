@@ -21,6 +21,7 @@ import pytest
 from google.cloud.bigquery import Dataset, SchemaField, Table
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from stage.utils.common import cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -230,3 +231,82 @@ def test_google_bigquery_destination_empty_table_name_error(sdc_builder, sdc_exe
     assert len(wiretap.error_records) == 1
     # Verify that the error is indeed a BIGQUERY_18 (table name is empty or expression evaluates to empty)
     assert wiretap.error_records[0].header['errorCode'] == 'BIGQUERY_18'
+
+
+@gcp
+def test_split_records_by_table(sdc_builder, sdc_executor, gcp, cleanup):
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev Raw Data Source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    table_name_1 = f'stf_table_1_{get_random_string(ascii_letters, 5)}'
+    table_name_2 = f'stf_table_2_{get_random_string(ascii_letters, 5)}'
+    dataset_name = f'stf_dataset_{get_random_string(ascii_letters, 5)}'
+
+    rows_table_1 = [{'dataset_name': dataset_name,
+                     'table_name': table_name_1,
+                     'player': 'Alexia Putellas',
+                     'number': 11,
+                     'position': 'midfielder'
+                    },
+                    {'dataset_name': dataset_name,
+                     'table_name': table_name_1,
+                     'player': 'Maria Pilar León',
+                     'number': 4,
+                     'position': 'centre-back'}]
+
+    rows_table_2 = [{'dataset_name': dataset_name,
+                     'table_name': table_name_2,
+                     'player': 'Jill Jamie Roord',
+                     'number': 14,
+                     'position': 'midfielder'}]
+
+    total_rows = rows_table_1 + rows_table_2
+
+    DATA = '\n'.join(json.dumps(rec) for rec in total_rows)
+
+    schema = [SchemaField('player', 'STRING', mode='REQUIRED'),
+              SchemaField('number', 'INTEGER', mode='REQUIRED'),
+              SchemaField('position', 'STRING', mode='REQUIRED')]
+
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=DATA,
+                                       stop_after_first_batch=True)
+
+    dataset = "${record:value(\'/dataset_name\')}"
+    table = "${record:value(\'/table_name\')}"
+    google_bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME, type='destination')
+    google_bigquery.set_attributes(dataset=dataset,
+                                   table_name=table)
+
+    dev_raw_data_source >> google_bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = Dataset(bigquery_client.dataset(dataset_name))
+    cleanup.callback(bigquery_client.delete_dataset, dataset_ref, delete_contents=True)
+
+    # Using Google bigquery client, create dataset, table and data inside table
+    logger.info('Creating dataset %s using Google bigquery client ...', dataset_name)
+    bigquery_client.create_dataset(dataset_ref)
+    logger.info('Creating table %s using Google bigquery client', table_name_1)
+    table1 = bigquery_client.create_table(Table(dataset_ref.table(table_name_1), schema=schema))
+    logger.info('Creating table %s using Google bigquery client', table_name_2)
+    table2 = bigquery_client.create_table(Table(dataset_ref.table(table_name_2), schema=schema))
+
+    # Start pipeline and verify correct rows are received.
+    logger.info('Starting pipeline')
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    cleanup.callback(sdc_executor.stop_pipeline, pipeline, wait=False)
+
+    data_from_bigquery_table_1 = [tuple(row.values()) for row in bigquery_client.list_rows(table1)]
+    data_from_bigquery_table_1.sort()
+
+    assert len(data_from_bigquery_table_1) == len(rows_table_1)
+
+    data_from_bigquery_table_2 = [tuple(row.values()) for row in bigquery_client.list_rows(table2)]
+    data_from_bigquery_table_2.sort()
+
+    assert len(data_from_bigquery_table_2) == len(rows_table_2)
