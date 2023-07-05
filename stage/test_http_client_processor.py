@@ -354,7 +354,7 @@ def test_http_processor_propagate_error_records(sdc_builder, sdc_executor, http_
 @sdc_min_version("5.6.0")
 @pytest.mark.parametrize("one_request_per_batch", [True, False])
 @pytest.mark.parametrize("on_record_error", ['TO_ERROR', 'DISCARD', 'STOP_PIPELINE'])
-def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, http_client, one_request_per_batch, on_record_error):
+def test_http_processor_max_batch_processing_time_not_enough(sdc_builder, sdc_executor, http_client, one_request_per_batch, on_record_error):
     """
         When the Batch Wait Time is not big enough and there is a retry action configured it can be the batch time
         expires before the number of retries is finished yet. In this case the part of the batch that was already
@@ -399,15 +399,14 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
         # because for this case, the url is explicitly set instead of using EL
         resource_url = '${record:value("/url")}' if not one_request_per_batch else f'{http_mock.pretend_url}/{fake_mock_path}'
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
-        http_client_processor.set_attributes(data_format='TEXT', 
+        http_client_processor.set_attributes(data_format='TEXT',
                                              default_request_content_type='application/text',
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
-                                             http_method='GET', 
+                                             http_method='GET',
                                              request_data="${record:value('/text')}",
                                              output_field=f'/result',
                                              resource_url=resource_url,
                                              records_for_remaining_statuses = False,
-                                             batch_wait_time_in_ms = 1000,
                                              multiple_values_behavior = 'ALL_AS_LIST',
                                              per_status_actions = [
                                                  {
@@ -419,6 +418,8 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
                                              ],
                                              on_record_error = on_record_error,
                                              **one_request_per_batch_option)
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = 1000
 
         wiretap = builder.add_wiretap()
 
@@ -475,7 +476,7 @@ def test_http_processor_batch_wait_time_not_enough(sdc_builder, sdc_executor, ht
         {"backoff_interval": 1500, "batch_timeout": 5000, "total_number_of_retries": 3}
     ]
 )
-def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_batch(sdc_builder, sdc_executor, http_client, timeout_params):
+def test_http_processor_max_batch_processing_timeout_retrying_request_one_request_per_batch(sdc_builder, sdc_executor, http_client, timeout_params):
     if Version(sdc_builder.version) < Version("4.4.0"):
         pytest.skip("Test skipped because oneRequestPerBatch option is only available from SDC 4.4.0 version")
 
@@ -497,15 +498,14 @@ def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_batc
 
         resource_url = f'{http_mock.pretend_url}/{mock_path}'
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
-        http_client_processor.set_attributes(data_format='TEXT', 
+        http_client_processor.set_attributes(data_format='TEXT',
                                              default_request_content_type='application/text',
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
-                                             http_method='GET', 
+                                             http_method='GET',
                                              request_data="${record:value('/text')}",
                                              output_field=f'/result',
                                              resource_url=resource_url,
                                              records_for_remaining_statuses = False,
-                                             batch_wait_time_in_ms = timeout_params['batch_timeout'],
                                              multiple_values_behavior = 'ALL_AS_LIST',
                                              per_status_actions = [
                                                  {
@@ -517,6 +517,8 @@ def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_batc
                                              ],
                                              on_record_error = 'STOP_PIPELINE',
                                              one_request_per_batch = True)
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = timeout_params['batch_timeout']
 
         wiretap = builder.add_wiretap()
 
@@ -547,7 +549,7 @@ def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_batc
         {"backoff_interval": 1500, "batch_timeout": 10_000, "total_number_of_requests": 6}  # 3 successful + 3 retries on last record (1s * 3 + 1.5s + 3s + 4.5s)
     ]
 )
-def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_record(sdc_builder, sdc_executor, http_client, timeout_params):
+def test_http_processor_max_batch_processing_timeout_retrying_request_one_request_per_record(sdc_builder, sdc_executor, http_client, timeout_params):
     mock_path_ok = get_random_string(string.ascii_letters, 10)
     mock_path_ko = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
@@ -568,15 +570,14 @@ def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_reco
 
         resource_url = '${record:value("/url")}'
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
-        http_client_processor.set_attributes(data_format='TEXT', 
+        http_client_processor.set_attributes(data_format='TEXT',
                                              default_request_content_type='application/text',
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
-                                             http_method='GET', 
+                                             http_method='GET',
                                              request_data="${record:value('/text')}",
                                              output_field=f'/result',
                                              resource_url=resource_url,
                                              records_for_remaining_statuses = False,
-                                             batch_wait_time_in_ms = timeout_params['batch_timeout'],
                                              multiple_values_behavior = 'ALL_AS_LIST',
                                              per_status_actions = [
                                                  {
@@ -588,6 +589,8 @@ def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_reco
                                              ],
                                              on_record_error = 'STOP_PIPELINE',
                                              one_request_per_batch = False)
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = timeout_params['batch_timeout']
 
         wiretap = builder.add_wiretap()
 
@@ -619,7 +622,7 @@ def test_http_processor_batch_wait_timeout_retrying_request_one_request_per_reco
         {"batch_timeout": 9000, 'response_wait_seconds': 2, 'number_of_records': 10, "total_number_of_requests": 5}
     ]
 )
-def test_http_processor_batch_wait_timeout_on_slow_connections(sdc_builder, sdc_executor, http_client, timeout_params):
+def test_http_processor_max_batch_processing_timeout_on_slow_connections(sdc_builder, sdc_executor, http_client, timeout_params):
     mock_path = get_random_string(string.ascii_letters, 10)
     http_mock = http_client.mock()
     raw_data = ('\n').join([f'{{"url": "{http_mock.pretend_url}/{mock_path}"}}']*timeout_params['number_of_records'])
@@ -633,17 +636,18 @@ def test_http_processor_batch_wait_timeout_on_slow_connections(sdc_builder, sdc_
 
         resource_url = '${record:value("/url")}'
         http_client_processor = builder.add_stage('HTTP Client', type='processor')
-        http_client_processor.set_attributes(data_format='TEXT', 
+        http_client_processor.set_attributes(data_format='TEXT',
                                              default_request_content_type='application/text',
                                              headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
-                                             http_method='GET', 
+                                             http_method='GET',
                                              request_data="${record:value('/text')}",
                                              output_field=f'/result',
                                              resource_url=resource_url,
                                              records_for_remaining_statuses = False,
-                                             batch_wait_time_in_ms = timeout_params['batch_timeout'],
                                              multiple_values_behavior = 'ALL_AS_LIST',
                                              on_record_error = 'STOP_PIPELINE')
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = timeout_params['batch_timeout']
 
         wiretap = builder.add_wiretap()
 
@@ -728,8 +732,8 @@ def test_http_processor_pagination_and_retry_action(sdc_builder, sdc_executor, h
                                              **one_request_per_batch_option)
 
         http_client_processor.records_for_remaining_statuses = False
-        http_client_processor.batch_wait_time_in_ms = 500000
-        http_client_processor.pagination_mode = pagination_option;
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = 500000
+        http_client_processor.pagination_mode = pagination_option
         http_client_processor.per_status_actions = [
             {
                 'statusCode': 404,
@@ -1243,7 +1247,7 @@ def test_http_client_processor_timeout(sdc_builder,
         We get a Connection Timeout using a non-routable IP in resource_url
         We get a Read Timeout using an extremely low read_timeout
         We get a Request Timeout using an extremely low maximum_request_time_in_sec
-        We get a Record Processing Timeout using an extremely low batch_wait_time_in_ms
+        We get a Record Processing Timeout using an extremely low max_batch_processing_time_in_ms
     """
     one_request_per_batch_option = {}
     if Version(sdc_builder.version) < Version("4.4.0"):
@@ -1284,31 +1288,31 @@ def test_http_client_processor_timeout(sdc_builder,
             connect_timeout = short_time
             read_timeout = long_time
             maximum_request_time_in_sec = long_time
-            batch_wait_time_in_ms = long_time
+            max_batch_processing_time_in_ms = long_time
         elif timeout_mode == 'read':
             resource_url = http_mock_url_ok
             connect_timeout = long_time
             read_timeout = short_time
             maximum_request_time_in_sec = long_time
-            batch_wait_time_in_ms = long_time
+            max_batch_processing_time_in_ms = long_time
         elif timeout_mode == 'request':
             resource_url = http_mock_url_ok
             connect_timeout = long_time
             read_timeout = long_time
             maximum_request_time_in_sec = short_time
-            batch_wait_time_in_ms = long_time
+            max_batch_processing_time_in_ms = long_time
         elif timeout_mode == 'record':
             resource_url = http_mock_url_ok
             connect_timeout = long_time
             read_timeout = long_time
             maximum_request_time_in_sec = long_time
-            batch_wait_time_in_ms = short_time  # Forcing a batch timeout (HTTP_67)
+            max_batch_processing_time_in_ms = short_time  # Forcing a batch timeout (HTTP_67)
         else:
             resource_url = http_mock_url_ko
             connect_timeout = no_time
             read_timeout = no_time
             maximum_request_time_in_sec = no_time
-            batch_wait_time_in_ms = no_time
+            max_batch_processing_time_in_ms = no_time
 
         pipeline_name = f'{timeout_mode} - {timeout_action} - {pass_record} - {get_random_string(string.ascii_letters, 10)}'
         pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -1328,7 +1332,6 @@ def test_http_client_processor_timeout(sdc_builder,
                                              connect_timeout=connect_timeout,
                                              read_timeout=read_timeout,
                                              maximum_request_time_in_sec=maximum_request_time_in_sec,
-                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
                                              action_for_timeout=timeout_action,
                                              base_backoff_interval_in_ms=interval,
                                              max_retries=retries,
@@ -1338,6 +1341,7 @@ def test_http_client_processor_timeout(sdc_builder,
                                              on_record_error='TO_ERROR',
                                              **one_request_per_batch_option)
 
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = max_batch_processing_time_in_ms
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -1498,7 +1502,7 @@ def test_http_client_processor_passthrough(sdc_builder,
     connect_timeout = long_time
     read_timeout = long_time
     maximum_request_time_in_sec = long_time
-    batch_wait_time_in_ms = long_time
+    max_batch_processing_time_in_ms = long_time
 
     try:
         pipeline_name = f'{http_status} - {exhausted_action} - {pass_record} - {pass_record_other_status}' \
@@ -1520,11 +1524,12 @@ def test_http_client_processor_passthrough(sdc_builder,
                                              connect_timeout=connect_timeout,
                                              read_timeout=read_timeout,
                                              maximum_request_time_in_sec=maximum_request_time_in_sec,
-                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
                                              action_for_timeout='STAGE_ERROR',
                                              records_for_remaining_statuses=pass_record_other_status,
                                              missing_values_behavior='SEND_TO_ERROR',
                                              **one_request_per_batch_option)
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = max_batch_processing_time_in_ms
 
         http_client_processor.per_status_actions = [{
             'statusCode': 500,
@@ -1710,7 +1715,7 @@ def test_http_client_processor_alternating_status(sdc_builder,
         connect_timeout = long_time
         read_timeout = long_time
         maximum_request_time_in_sec = long_time
-        batch_wait_time_in_ms = long_time
+        max_batch_processing_time_in_ms = long_time
 
         pipeline_name = f'{exhausted_action} - {pass_record} - {pass_record_other_status}' \
                         f' - {get_random_string(string.ascii_letters, 10)}'
@@ -1731,11 +1736,13 @@ def test_http_client_processor_alternating_status(sdc_builder,
                                              connect_timeout=connect_timeout,
                                              read_timeout=read_timeout,
                                              maximum_request_time_in_sec=maximum_request_time_in_sec,
-                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
                                              action_for_timeout='STAGE_ERROR',
                                              records_for_remaining_statuses=pass_record_other_status,
                                              missing_values_behavior='SEND_TO_ERROR',
                                              **one_request_per_batch_option)
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = max_batch_processing_time_in_ms
+
         http_client_processor.per_status_actions = [
             {
                 'statusCode': 404,
@@ -1917,7 +1924,7 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
         connect_timeout = long_time
         read_timeout = short_time
         maximum_request_time_in_sec = long_time
-        batch_wait_time_in_ms = long_time
+        max_batch_processing_time_in_ms = long_time
 
         pipeline_name = f'{exhausted_action} - {pass_record} - {pass_record_other_status}' \
                         f' - {get_random_string(string.ascii_letters, 10)}'
@@ -1938,7 +1945,6 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
                                              connect_timeout=connect_timeout,
                                              read_timeout=read_timeout,
                                              maximum_request_time_in_sec=maximum_request_time_in_sec,
-                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
                                              base_backoff_interval_in_ms=interval,
                                              max_retries=retries,
                                              pass_record=pass_record,
@@ -1946,6 +1952,9 @@ def test_http_client_processor_alternating_status_timeout(sdc_builder,
                                              records_for_remaining_statuses=pass_record_other_status,
                                              missing_values_behavior='SEND_TO_ERROR',
                                              **one_request_per_batch_option)
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = max_batch_processing_time_in_ms
+
         http_client_processor.per_status_actions = [
             {
                 'statusCode': 500,
@@ -2232,7 +2241,7 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
         connect_timeout = long_time
         read_timeout = long_time
         maximum_request_time_in_sec = long_time
-        batch_wait_time_in_ms = long_time
+        max_batch_processing_time_in_ms = long_time
 
         pipeline_name = f'{pagination_mode}' \
                         f' - {get_random_string(string.ascii_letters, 10)}'
@@ -2253,7 +2262,6 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
                                              connect_timeout=connect_timeout,
                                              read_timeout=read_timeout,
                                              maximum_request_time_in_sec=maximum_request_time_in_sec,
-                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
                                              base_backoff_interval_in_ms=interval,
                                              max_retries=retries,
                                              pass_record=False,
@@ -2266,6 +2274,8 @@ def test_http_processor_pagination_with_empty_response(sdc_builder,
                                              next_page_link_field='/next_page',
                                              stop_condition=f'{condition}',
                                              **one_request_per_batch_option)
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = max_batch_processing_time_in_ms
 
         # Must do it like this because the attribute name has the '/' char
         setattr(http_client_processor, 'initial_page/offset', 1)
@@ -2610,7 +2620,7 @@ def test_http_processor_pagination_metrics(sdc_builder, sdc_executor, http_clien
         connect_timeout = long_time
         read_timeout = long_time
         maximum_request_time_in_sec = long_time
-        batch_wait_time_in_ms = long_time
+        max_batch_processing_time_in_ms = long_time
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
 
@@ -2629,7 +2639,6 @@ def test_http_processor_pagination_metrics(sdc_builder, sdc_executor, http_clien
                                              connect_timeout=connect_timeout,
                                              read_timeout=read_timeout,
                                              maximum_request_time_in_sec=maximum_request_time_in_sec,
-                                             batch_wait_time_in_ms=batch_wait_time_in_ms,
                                              base_backoff_interval_in_ms=interval,
                                              max_retries=retries,
                                              pass_record=False,
@@ -2642,6 +2651,8 @@ def test_http_processor_pagination_metrics(sdc_builder, sdc_executor, http_clien
                                              next_page_link_field='/next_page',
                                              stop_condition=f'{condition}',
                                              **one_request_per_batch_option)
+
+        http_client_processor.configuration['conf.basic.maxWaitTime'] = max_batch_processing_time_in_ms
 
         # Must do it like this because the attribute name has the '/' char
         setattr(http_client_processor, 'initial_page/offset', 1)
@@ -3611,7 +3622,6 @@ def test_http_processor_json_list_root_with_pagination(sdc_builder, sdc_executor
         ],
         connect_timeout=long_time,
         maximum_request_time_in_sec=long_time,
-        batch_wait_time_in_ms=long_time,
         # Pagination
         pagination_mode="BY_OFFSET",
         result_field_path="/",
@@ -3621,6 +3631,7 @@ def test_http_processor_json_list_root_with_pagination(sdc_builder, sdc_executor
         data_format="JSON",
         ignore_control_characters=True,
     )
+    http_client_processor.configuration['conf.basic.maxWaitTime'] = long_time
     setattr(http_client_processor, "initial_page/offset", 1)
     # Wiretap and trash
     wiretap = pipeline_builder.add_wiretap()
