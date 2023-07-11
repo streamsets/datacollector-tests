@@ -276,6 +276,9 @@ def test_jdbc_multitable_consumer_origin_configuration_init_query(sdc_builder, s
 @pytest.mark.parametrize('initial_table_order_strategy', ['REFERENTIAL_CONSTRAINTS'])
 def test_jdbc_multitable_consumer_origin_configuration_initial_table_order_strategy(sdc_builder, sdc_executor, database,
                                                                                     initial_table_order_strategy):
+    if database.type == 'Oracle':
+        pytest.skip("This test depends on proper case for column names that Oracle auto-uppers.")
+
     num_batches = 8
     records_per_batch = 2
     table_prefix = get_random_string(string.ascii_lowercase)

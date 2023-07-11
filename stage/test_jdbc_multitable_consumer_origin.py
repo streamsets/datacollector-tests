@@ -1207,7 +1207,7 @@ def test_jdbc_multitable_consumer_table_exclusion(sdc_builder, sdc_executor, dat
                       "TABLE1", "TABLE2", "TABLE3", "TABLE4", "TABLE5"]
     num_tables = len(table_suffixes)
 
-    src_table_prefix = get_random_string(string.ascii_lowercase, 6)
+    src_table_prefix = get_random_string(string.ascii_uppercase, 6)
     table_names = [f'{src_table_prefix}{table_suffix}' for table_suffix in table_suffixes]
     connection = None
 
@@ -1237,13 +1237,13 @@ def test_jdbc_multitable_consumer_table_exclusion(sdc_builder, sdc_executor, dat
         return sqlalchemy.Table(
             table_name,
             sqlalchemy.MetaData(),
-            sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-            sqlalchemy.Column('field1', sqlalchemy.String(32)),
-            sqlalchemy.Column('field2', sqlalchemy.String(32)),
+            sqlalchemy.Column('ID', sqlalchemy.Integer, primary_key=True),
+            sqlalchemy.Column('FIELD1', sqlalchemy.String(32)),
+            sqlalchemy.Column('FIELD2', sqlalchemy.String(32)),
         )
 
     def get_table_data(table):
-        return [{'id': i, 'field1': f'field1_{i}_{table}', 'field2': f'field2_{i}_{table}'}
+        return [{'ID': i, 'FIELD1': f'field1_{i}_{table}', 'FIELD2': f'field2_{i}_{table}'}
                 for i in range(1, no_of_records_per_table + 1)]
 
     tables = [get_table_schema(table_name) for table_name in table_names]
@@ -1265,7 +1265,7 @@ def test_jdbc_multitable_consumer_table_exclusion(sdc_builder, sdc_executor, dat
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-            records = [{'id': record.field['id'], 'field1': record.field['field1'], 'field2': record.field['field2']}
+            records = [{'ID': record.field['ID'], 'FIELD1': record.field['FIELD1'], 'FIELD2': record.field['FIELD2']}
                        for record in wiretap.output_records]
 
             assert len(records) == no_of_records_per_table * total_processed_tables, "Wrong number of total records processed"
