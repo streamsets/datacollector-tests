@@ -209,9 +209,10 @@ def test_jms_consumer_origin_invalid_destination(sdc_builder, sdc_executor, jms)
 
     # Configure the jms_consumer stage
     jms_consumer = pipeline_builder.add_stage('JMS Consumer')
-    destination_name = get_random_string(ascii_letters, 5)
+    destination_name = get_random_string(ascii_letters, 10)
+    invalid_destination_name = 'invalid' + destination_name
     jms_consumer.set_attributes(data_format='TEXT',
-                                jms_destination_name=INVALID_JMS_DESTINATION,
+                                jms_destination_name=invalid_destination_name,
                                 jms_destination_type=JMS_DESTINATION_TYPE,
                                 jms_initial_context_factory=JMS_INITIAL_CONTEXT_FACTORY,
                                 jndi_connection_factory=JNDI_CONNECTION_FACTORY,
