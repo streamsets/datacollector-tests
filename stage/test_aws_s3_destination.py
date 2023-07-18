@@ -412,7 +412,7 @@ def _run_test_s3_destination(sdc_builder, sdc_executor, aws, sse_kms, anonymous,
         bucket_val = (s3_bucket if sdc_builder.version < '2.6.0.1-0002' else '${record:value("/bucket")}')
         s3_destination.set_attributes(bucket=bucket_val, data_format='JSON', partition_prefix=s3_key)
         if Version(sdc_builder.version) >= Version('5.7.0'):
-            s3_destination.set_attributes(acl=acl)
+            s3_destination.set_attributes(object_ownership=acl)
         if sse_kms:
             # Use SSE with KMS
             s3_destination.set_attributes(use_server_side_encryption=True,
