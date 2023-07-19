@@ -27,10 +27,11 @@ from streamsets.testframework.utils import get_random_string
 logger = logging.getLogger(__name__)
 
 @sdc_min_version('5.7.0')
-def test_generate_parquet(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('parquet_schema_location', ['HEADER', 'INLINE'])
+def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location):
     """Basic test to check we are able to save records in a parquet file.
 
-       raw data source >> schema generator >> LocalFS
+       raw data source [>> schema generator] >> LocalFS
 
        We use pyarrow.parquet to check parquet file is properly formatted
     """
@@ -50,18 +51,27 @@ def test_generate_parquet(sdc_builder, sdc_executor):
     dev_raw_data_source.set_attributes(data_format='JSON',
                                        raw_data=raw_data,
                                        stop_after_first_batch=True)
+    stage = dev_raw_data_source
 
-    # schema generator
-    schema_generator = pipeline_builder.add_stage('Schema Generator')
-    schema_generator.set_attributes(schema_name="test_schema",
-                                    header_attribute="avroSchema")
+    if parquet_schema_location == 'HEADER':
+        # schema generator
+        schema_generator = pipeline_builder.add_stage('Schema Generator')
+        schema_generator.set_attributes(schema_name="test_schema",
+                                        header_attribute="avroSchema")
+        dev_raw_data_source >> schema_generator
+        stage = schema_generator
 
     # local FS
     local_fs = pipeline_builder.add_stage('Local FS', type='destination')
     local_fs.set_attributes(data_format='PARQUET',
+                            parquet_schema_location=parquet_schema_location,
                             directory_template=temp_dir)
+    if parquet_schema_location == 'INLINE':
+        local_fs.set_attributes(avro_schema='{ "type" : "record", "name" : "test_schemaa", "doc" : "", '
+                                            + '"fields" : [ { "name" : "id", "type" : "int" }, '
+                                                         + '{ "name" : "text", "type" : "string" } ] }')
 
-    dev_raw_data_source >> schema_generator >> local_fs
+    stage >> local_fs
 
     pipeline = pipeline_builder.build()
 
