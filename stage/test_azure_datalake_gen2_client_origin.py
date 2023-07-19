@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 pytestmark = [azure('datalake'), sdc_min_version('5.5.0')]
 
 STAGE_NAME = 'com_streamsets_pipeline_stage_origin_client_datalake_DataLakeStorageGen2DSource'
+TARGET_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_datalake_gen2_DataLakeGen2DTarget'
 
 TMP = '/tmp/'
 SCHEMA = {
@@ -186,6 +187,76 @@ def test_parse_timestamp_data_lake_origin(sdc_builder, sdc_executor, azure):
 
         assert abs(time_modification_time - time_modification_time_obtained) <= 10
 
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
+
+
+def test_data_lake_origin_offset_continuation_token(sdc_builder, sdc_executor, azure):
+    """ Test for Data Lake origin stage. We do so by creating a file in Azure Data Lake Storage using the
+    STF client, then reading the file using the Data Lake Origin Stage, to assert data ingested by the pipeline
+    is the expected data from the file.
+    The pipeline looks like:
+
+    azure_data_lake_origin >> wiretap
+
+    We stop the pipeline and check the offset worked.
+    """
+    directory_name = get_random_string(string.ascii_letters, 10)
+    path_parts = sorted([get_random_string(string.ascii_letters, 10) for _ in range(0, 100)])
+
+    # Put files in the azure storage file system
+    dl_fs = azure.datalake.file_system
+    try:
+        dl_fs.mkdir(directory_name)
+        for path_part in path_parts[:80]:
+            filepath = os.path.join(directory_name, str(path_part), 'file.txt')
+            dl_fs.touch(filepath)
+            dl_fs.write(filepath, path_part)
+        time.sleep(10)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
+
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        wiretap = builder.add_wiretap()
+        azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
+        azure_data_lake_origin.set_attributes(data_format='TEXT',
+                                              common_path=f'/{directory_name}',
+                                              object_pool_size=10,
+                                              max_results_per_page=5,
+                                              number_of_threads=5)
+
+        finisher = builder.add_stage('Pipeline Finisher Executor')
+        finisher.set_attributes(react_to_events=True)
+
+        azure_data_lake_origin >> wiretap.destination
+        azure_data_lake_origin >= finisher
+
+        data_lake_origin_pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(data_lake_origin_pipeline)
+
+        sdc_executor.start_pipeline(data_lake_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(data_lake_origin_pipeline, 'input_record_count', 10, timeout_sec=120)
+        sdc_executor.stop_pipeline(data_lake_origin_pipeline)
+        output_records_1 = [record.field['text'] for record in wiretap.output_records]
+
+        wiretap.reset()
+        sdc_executor.start_pipeline(data_lake_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(data_lake_origin_pipeline, 'input_record_count', 10, timeout_sec=120)
+        sdc_executor.stop_pipeline(data_lake_origin_pipeline)
+        output_records_2 = [record.field['text'] for record in wiretap.output_records]
+
+        for path_part in path_parts[80:]:
+            filepath = os.path.join(directory_name, str(path_part), 'file.txt')
+            dl_fs.touch(filepath)
+            dl_fs.write(filepath, path_part)
+
+        time.sleep(10)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
+        wiretap.reset()
+        sdc_executor.start_pipeline(data_lake_origin_pipeline).wait_for_finished()
+        output_records_3 = [record.field['text'] for record in wiretap.output_records]
+
+        output_records = output_records_1 + output_records_2 + output_records_3
+        assert path_parts == sorted(output_records)
     finally:
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
         dl_fs.rmdir(directory_name, recursive=True)
@@ -525,6 +596,98 @@ def test_file_postprocessing(sdc_builder, sdc_executor, azure, action):
     finally:
         fs.rmdir(rootdir, recursive=True)
         fs.rmdir(archive_dir, recursive=True)
+
+
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize(
+    'num_records, num_reading_threads, file_processing_delay, batch_wait_time', [
+        (150, 1, 1000, 2000),
+        (300, 10, 10000, 15000),
+        (1000, 10, 10000, 1000),
+        (2000, 10, 3000, 1000)
+    ])
+def test_multithreading_multiple_batches(
+        sdc_builder,
+        sdc_executor,
+        azure,
+        num_records,
+        num_reading_threads,
+        file_processing_delay,
+        batch_wait_time
+):
+    directory_name = get_random_string(string.ascii_letters, 10)
+    dl_fs = azure.datalake.file_system
+
+    builder = sdc_builder.get_pipeline_builder()
+    # Use multiple threads to create the files in the Azure container to try to get files with the same timestamp
+    num_writing_threads = 10
+    writing_batch_size = 1
+    dev_data_generator = builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(
+        fields_to_generate=[{'field': 'id', 'type': 'LONG_SEQUENCE'}],
+        delay_between_batches=0,
+        batch_size=writing_batch_size,
+        records_to_be_generated=num_records,
+        number_of_threads=num_writing_threads
+    )
+
+    azure_data_lake_destination = builder.add_stage(name=TARGET_STAGE_NAME)
+    azure_data_lake_destination.set_attributes(data_format='JSON',
+                                               directory_template=f'/{directory_name}',
+                                               max_records_in_file=1)
+
+    creation_wiretap = builder.add_wiretap()
+
+    dev_data_generator >> [azure_data_lake_destination ,creation_wiretap.destination]
+
+    azure_dest_pipeline = builder.build(
+        title='Multi-threaded Writing Pipeline - Azure destination').configure_for_environment(azure)
+    sdc_executor.add_pipeline(azure_dest_pipeline)
+
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+    azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
+    azure_data_lake_origin.set_attributes(data_format='JSON',
+                                          common_path=f'/{directory_name}',
+                                          path_pattern='sdc**',
+                                          max_batch_size_in_records=100,
+                                          number_of_threads=num_reading_threads,
+                                          file_processing_delay_in_ms=file_processing_delay,
+                                          batch_wait_time_in_ms=batch_wait_time,
+                                          read_order='TIMESTAMP')
+
+    read_wiretap = builder.add_wiretap()
+
+    azure_data_lake_origin >> read_wiretap.destination
+
+    azure_origin_pipeline = builder.build(
+        title='Multi-threaded Reading Pipeline - Azure origin').configure_for_environment(azure)
+    azure_origin_pipeline.configuration['shouldRetry'] = False
+    sdc_executor.add_pipeline(azure_origin_pipeline)
+
+    try:
+        dl_fs.mkdir(directory_name)
+
+        logger.info("Executing the pipeline that creates files in the Azure container ...")
+        sdc_executor.start_pipeline(azure_dest_pipeline)
+
+        logger.info("Executing the pipeline that reads files from the Azure container ...")
+        sdc_executor.start_pipeline(azure_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(azure_origin_pipeline, 'input_record_count', num_records, timeout_sec=500)
+
+        num_records_read = len(read_wiretap.output_records)
+        assert num_records_read == num_records, \
+            f'{num_records} files should have been read from the Azure container, but only {num_records_read} were read'
+
+        records_created = [record.field['id'] for record in creation_wiretap.output_records]
+        records_read = [record.field['id'] for record in read_wiretap.output_records]
+        assert sorted(records_created) == sorted(records_read)
+    finally:
+        if sdc_executor.get_pipeline_status(azure_dest_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(azure_dest_pipeline)
+        if sdc_executor.get_pipeline_status(azure_origin_pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(azure_origin_pipeline)
+        dl_fs.rmdir(directory_name, recursive=True)
 
 
 def _adls_create_file(adls_client, file_content, file_path):
