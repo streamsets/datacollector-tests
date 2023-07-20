@@ -11,6 +11,7 @@ import pytest
 from stage import _clean_up_databricks
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.sdc_api import StartError, RunError
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, azure, deltalake, gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -28,6 +29,21 @@ ROWS_IN_DATABASE = [
      "AUTHOR": "Rick Steves",
      "GENRE": "Travel",
      "PUBLISHER": "Rick Steves"},
+    {"title": "Steve Jobs",
+     "author": "Walter Isaacson",
+     "genre": "Biography",
+     "publisher": "Simon & Schuster"},
+    {"title": "The Spy and the Traitor: The Greatest Espionage Story of the Cold War",
+     "author": "Ben Macintyre",
+     "genre": "Biography True crime",
+     "publisher": "McClelland & Stewart"}
+]
+
+ROWS_IN_DATABASE_PARQUET = [
+    {"title": "Elon Musk: Tesla SpaceX and the Quest for a Fantastic Future",
+     "author": "Ashlee Vance",
+     "genre": "Biography",
+     "publisher": "HarperCollins Publishers"},
     {"title": "Steve Jobs",
      "author": "Walter Isaacson",
      "genre": "Biography",
@@ -88,6 +104,13 @@ ROWS_FOR_DRIFT_EXT_STRING = [
     {'id': 5, 'name': 'Ivan Lendl', 'ranking': '2'},
     {'id': 6, 'name': 'Guillermo Vilas', 'ranking': '12'}
 ]
+
+AVRO_SCHEMA = '{ "type" : "record", "name" : "test_schema", "doc" : "", \
+                 "fields" : [ \
+                     { "name" : "title", "type" : "string" }, \
+                     { "name" : "author", "type" : "string" }, \
+                     { "name" : "genre", "type" : "string" }, \
+                     { "name" : "publisher", "type" : "string" } ] }'
 
 
 @aws('s3')
@@ -214,16 +237,22 @@ def test_with_adls_shared_key_storage(sdc_builder, sdc_executor, deltalake, azur
 
 
 @azure('datalake')
-def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure):
+@pytest.mark.parametrize('staging_file_format', ["CSV", "PARQUET"])
+def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure, staging_file_format):
     """Test for Databricks Delta Lake that uses ADLS Gen2 as storage.
 
     The pipeline looks like this:
         dev_raw_data_source >> databricks_deltalake
     """
+
+    if Version(sdc_builder.version) < Version('5.7.0') and staging_file_format == 'PARQUET':
+        pytest.skip('PARQUET staging introduced in 5.7.0')
+
     table_name = f'stf_{get_random_string()}'
 
     engine = deltalake.engine
-    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
+    rows_in_db = ROWS_IN_DATABASE_PARQUET if staging_file_format == "PARQUET" else ROWS_IN_DATABASE
+    DATA = '\n'.join(json.dumps(rec) for rec in rows_in_db)
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
     # Dev raw data source
@@ -236,10 +265,14 @@ def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure):
     # Databricks Delta lake destination stage
     databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
     databricks_deltalake.set_attributes(staging_location='ADLS_GEN2',
+                                        on_record_error='STOP_PIPELINE',
                                         azure_authentication_method='OAUTH',
                                         stage_file_prefix=files_prefix,
                                         table_name=table_name,
+                                        staging_file_format=staging_file_format,
                                         purge_stage_file_after_ingesting=True)
+    if staging_file_format == "PARQUET":
+        databricks_deltalake.set_attributes(parquet_schema_location='INFER')
 
     dev_raw_data_source >> databricks_deltalake
 
@@ -257,7 +290,7 @@ def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure):
         result = connection.execute(f'select * from {table_name}')
         data_from_database = sorted(result.fetchall())
 
-        expected_data = [tuple(v for v in d.values()) for d in ROWS_IN_DATABASE]
+        expected_data = [tuple(v for v in d.values()) for d in rows_in_db]
 
         assert len(data_from_database) == len(expected_data)
 
