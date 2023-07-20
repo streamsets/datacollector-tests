@@ -1396,6 +1396,108 @@ def test_record_format_header(sdc_builder, sdc_executor, database, record_format
             sdc_executor.stop_pipeline(pipeline)
 
 
+@database('sqlserver')
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('use_table', [True, False])
+def test_include_and_exclude_tables_with_special_names(
+        sdc_builder,
+        sdc_executor,
+        database,
+        keep_data,
+        use_table
+):
+    """
+    Tests that include and exclude patterns work properly even when using tables with special names (reserved names
+    and names with special characters).
+
+    The test uses the following pipeline:
+        SQL Server CDC Origin >> Wiretap
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    included_table_names = [
+        'USER',
+        'TABLE',
+        'PROCEDURE'
+        'Included !@#$%^&*()_+=-?<>',
+    ]
+    excluded_table_names = [
+        'INDEX',
+        'Excluded !@#$%^&*()_+=-?<>',
+    ]
+    table_names = included_table_names + excluded_table_names
+    schema_name = get_random_string(string.ascii_lowercase, 10)
+
+    connection = database.engine.connect()
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('SQL Server CDC Client')
+    origin.set_attributes(
+        fetch_size=1,
+        table_configs=[
+            {
+                'capture_instance': f'{schema_name}_%',
+                'tableExclusionPattern': f'({schema_name}_Excluded\\s(\\S)*_(.)*)|({schema_name}_INDEX_(.)*)'
+            }
+        ],
+        use_direct_table_query=use_table
+    )
+
+    wiretap = builder.add_wiretap()
+
+    origin >> wiretap.destination
+    pipeline = builder.build().configure_for_environment(database)
+
+    try:
+        logger.info(f'Creating schema {schema_name} ...')
+        connection.execute(f'CREATE SCHEMA {schema_name}')
+
+        for table_name in table_names:
+            column_name = f"{table_name}Column"
+            logger.info(f'Creating table {schema_name}.{table_name} ...')
+            connection.execute(f'''
+            CREATE TABLE [{schema_name}].[{table_name}] (
+                [{column_name}] INTEGER NOT NULL IDENTITY,
+                PRIMARY KEY (
+                   [{column_name}]
+                )
+            )''')
+            _enable_cdc(connection, schema_name, table_name)
+            logger.info(f'Adding data into {schema_name}.{table_name} ...')
+            connection.execute(f'SET IDENTITY_INSERT [{schema_name}].[{table_name}] ON')
+            connection.execute(f'INSERT INTO [{schema_name}].[{table_name}] ([{column_name}]) VALUES (1)')
+            connection.execute(f'SET IDENTITY_INSERT [{schema_name}].[{table_name}] OFF')
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(included_table_names))
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = wiretap.output_records
+        assert len(records) == len(included_table_names)
+
+        fields = []
+        for record in records:
+            fields += list(record.field.keys())
+
+        for included_table in included_table_names:
+            column_name = f'"{included_table}Column"' if ' ' in included_table else f'{included_table}Column'
+            assert column_name in fields
+
+    finally:
+        if not keep_data:
+            for table_name in table_names:
+                logger.info(f'Dropping table {schema_name}.{table_name} ...')
+                connection.execute(f"DROP TABLE IF EXISTS {schema_name}.[{table_name}]")
+
+            logger.info(f'Dropping schema {schema_name} ...')
+            connection.execute(f'DROP SCHEMA {schema_name}')
+
+        if connection is not None:
+            connection.close()
+
+
 def _get_record_format_code(record_format):
     if record_format == BASIC_RECORDS:
         return BASIC_RECORDS_CODE
@@ -1422,7 +1524,7 @@ def _enable_cdc(connection, schema_name, table_name, capture_instance=None):
                        f'@source_schema=N\'{schema_name}\', '
                        f'@source_name=N\'{table_name}\','
                        f'@role_name = NULL, '
-                       f'@capture_instance={capture_instance}')
+                       f'@capture_instance=N\'{capture_instance}\'')
 
     _wait_until_is_tracked_by_cdc(connection, table_name, 1)
 
@@ -1434,9 +1536,9 @@ def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
     logger.info('Disabling CDC on %s.%s from table %s...', schema_name, table_name, capture_instance)
     connection.execute(
         f'EXEC sys.sp_cdc_disable_table '
-        f'@source_schema=N\'{schema_name}\', '
-        f'@source_name=N\'{table_name}\','
-        f'@capture_instance={capture_instance}')
+        f'@source_schema=N"{schema_name}", '
+        f'@source_name=N"{table_name}",'
+        f'@capture_instance="{capture_instance}"')
 
     _wait_until_is_tracked_by_cdc(connection, table_name, 0)
 
@@ -1444,7 +1546,7 @@ def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
 def _wait_until_is_tracked_by_cdc(connection, table_name, is_tracked_by_cdc):
     while True:
         cursor = connection.execute(
-            f"select name from sys.tables where is_tracked_by_cdc = {is_tracked_by_cdc} and name = '{table_name}'"
+            f"select name from sys.tables where is_tracked_by_cdc = {is_tracked_by_cdc} and name = \'{table_name}\'"
         )
         if len(cursor.fetchall()) > 0:
             break
