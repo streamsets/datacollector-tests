@@ -334,8 +334,9 @@ def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, databa
                           max_batch_size_in_records=num_records)
 
     processor = pipeline_builder.add_stage('PostgreSQL Metadata')
-    processor.set_attributes(table_name=destination_table_name,
-                             omit_constraints_when_creating_tables=omit_constraints_when_creating_tables)
+    processor.set_attributes(table_name=destination_table_name)
+    # Property omit_constraints_when_creating_tables fails when accesed using set_attributes
+    processor.configuration["conf.omitConstraintsWhenCreatingTables"] = omit_constraints_when_creating_tables
 
     wiretap = pipeline_builder.add_wiretap()
 
