@@ -260,6 +260,7 @@ OBJECT_NAMES_SQLSERVER = [
 ]
 @database('sqlserver')
 @pytest.mark.parametrize('test_name,table_name,offset_name', OBJECT_NAMES_SQLSERVER, ids=[i[0] for i in OBJECT_NAMES_SQLSERVER])
+@pytest.mark.parametrize('use_direct_table_query', [True, False])
 def test_object_names(
         sdc_builder,
         sdc_executor,
@@ -267,6 +268,7 @@ def test_object_names(
         test_name,
         table_name,
         offset_name,
+        use_direct_table_query,
         keep_data
 ):
     if not database.is_cdc_enabled:
@@ -278,6 +280,7 @@ def test_object_names(
     origin = builder.add_stage('SQL Server CDC Client')
     origin.fetch_size = 1
     origin.table_configs = [{'capture_instance': f"{DEFAULT_SCHEMA_NAME}_{table_name}"}]
+    origin.use_direct_table_query = use_direct_table_query
 
     wiretap = builder.add_wiretap()
 
