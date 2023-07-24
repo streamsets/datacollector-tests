@@ -191,7 +191,8 @@ def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, databa
             connection.execute(destination_table.insert(), input_data)
 
         # Run the pipeline
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_batch_count(1)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', num_records)
         sdc_executor.stop_pipeline(pipeline)
 
         # Inspecting the tables
