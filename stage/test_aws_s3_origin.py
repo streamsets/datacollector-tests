@@ -532,9 +532,11 @@ if (state['record-count'] >= 2):
         # Insert objects into S3, process them and add an additional file
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-1', Body=json.dumps(data))
         pipeline_cmd = sdc_executor.start_pipeline(s3_origin_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'data_batch_count', 1, timeout_sec=120)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', records_per_file,
+                                              timeout_sec=120)
         client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-2', Body=json.dumps(data2))
-        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'data_batch_count', 2, timeout_sec=120)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', records_per_file * 2,
+                                              timeout_sec=120)
         pipeline_cmd.wait_for_finished()
         output_records_values = [record.field for record in wiretap.output_records]
         assert len(output_records_values) == 2 * records_per_file
@@ -1759,8 +1761,8 @@ def test_s3_archive_idle_resume(sdc_builder, sdc_executor, aws):
         client.put_object(Bucket=aws.s3_bucket_name, Key=s3_file_name_1,
                           Body='\n'.join(test_data).encode('ascii'))
 
-        start_command = sdc_executor.start_pipeline(s3_origin_pipeline)
-        start_command.wait_for_pipeline_batch_count(1)
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', 1)
         assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == [s3_file_name_1]
         assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
 
@@ -1768,8 +1770,8 @@ def test_s3_archive_idle_resume(sdc_builder, sdc_executor, aws):
         client.put_object(Bucket=aws.s3_bucket_name, Key=s3_file_name_2,
                           Body='\n'.join(test_data).encode('ascii'))
 
-        # wait a few batches
-        start_command.wait_for_pipeline_batch_count(5)
+        # wait for the second file to be processed
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', 2)
         assert [record.field['fileInfo']['filename'] for record in wiretap.output_records] == [s3_file_name_1,
                                                                                                s3_file_name_2]
         assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
@@ -1804,6 +1806,7 @@ def test_s3_archive_JSON(sdc_builder, sdc_executor, aws):
 
     data1 = dict(f1=get_random_string(), f2=get_random_string())
     data2 = dict(f1=get_random_string(), f2=get_random_string())
+    number_of_input_records = 2
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -1834,7 +1837,8 @@ def test_s3_archive_JSON(sdc_builder, sdc_executor, aws):
         client.put_object(Bucket=aws.s3_bucket_name, Key=s3_file_name_2,
                           Body=json.dumps(data2))
 
-        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_pipeline_batch_count(3)
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count',number_of_input_records)
         assert [record.field for record in wiretap.output_records] == [data1, data2]
         assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
 
