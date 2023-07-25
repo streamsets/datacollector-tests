@@ -15,6 +15,7 @@ import pytest
 
 from streamsets.testframework.decorators import stub
 
+JSONP_01_ERROR = "JSONP_01"
 
 def test_field_to_parse(sdc_builder, sdc_executor):
     """
@@ -73,12 +74,56 @@ def test_ignore_control_characters(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
 @pytest.mark.parametrize('stage_attributes', [{'on_record_error': 'DISCARD'},
                                               {'on_record_error': 'STOP_PIPELINE'},
                                               {'on_record_error': 'TO_ERROR'}])
 def test_on_record_error(sdc_builder, sdc_executor, stage_attributes):
-    pass
+    raw_data = """
+        [
+          { "json": "{\\"a\\":\\"A\\"}" },
+          { "json": null },
+          { "json": "{" },
+          { "json": "" }
+        ]
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', json_content='ARRAY_OBJECTS', raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    json_parser = pipeline_builder.add_stage('JSON Parser', type='processor')
+    json_parser.set_attributes(field_to_parse='/json',
+                               target_field='/parsed',
+                               ignore_control_characters=False,
+                               on_record_error=stage_attributes['on_record_error'])
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> json_parser >> wiretap.destination
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        if stage_attributes['on_record_error'] == 'STOP_PIPELINE':
+            with pytest.raises(Exception) as ex:
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert JSONP_01_ERROR in str(ex.value)
+        else:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+            output_records = wiretap.output_records
+            error_records = wiretap.error_records
+            assert len(output_records) == 2
+            assert output_records[0].field['json'] == '{"a":"A"}'
+            assert output_records[0].field['parsed'] == {'a': 'A'}
+            assert output_records[1].field['json'] == ''
+            assert 'parsed' not in output_records[1].field
+
+            if stage_attributes['on_record_error'] == 'DISCARD':
+                assert len(error_records) == 0
+            elif stage_attributes['on_record_error'] == 'TO_ERROR':
+                assert len(error_records) == 2
+                assert error_records[0].field['json'].value is None
+                assert error_records[1].field['json'] == '{'
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
 
 
 @stub
