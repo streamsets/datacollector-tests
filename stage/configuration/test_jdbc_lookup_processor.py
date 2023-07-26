@@ -272,9 +272,36 @@ def test_init_query(sdc_builder, sdc_executor):
     pass
 
 
-@stub
-def test_jdbc_connection_string(sdc_builder, sdc_executor):
-    pass
+@database
+def test_jdbc_connection_string(sdc_builder, sdc_executor, database, credential_store):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    raw_data = LOOKUP_RAW_DATA
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=[])
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> jdbc_lookup >> trash
+    pipeline = pipeline_builder.build(title='JDBC Lookup Connections String').configure_for_environment(database, credential_store)
+    pipeline.stages[1].set_attributes(jdbc_connection_string="bad connection string")
+    sdc_executor.add_pipeline(pipeline)
+
+    with pytest.raises(Exception) as error:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert "JDBC_06" in error.value.message, f'Expected a JDBC_06 error, got "{error.value.message}" instead'
 
 
 @stub
@@ -313,12 +340,56 @@ def test_minimum_idle_connections(sdc_builder, sdc_executor):
     pass
 
 
-@stub
+@database
 @pytest.mark.parametrize('stage_attributes', [{'missing_values_behavior': 'PASS_RECORD_ON'},
                                               {'missing_values_behavior': 'SEND_TO_ERROR'}])
-def test_missing_values_behavior(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_missing_values_behavior(sdc_builder, sdc_executor, database, credential_store, stage_attributes):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_and_populate_lookup_table(table_name, database)
+    raw_data = LOOKUP_RAW_DATA
 
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    if type(database) in [MySqlDatabase, MariaDBDatabase]:
+        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+    else:
+        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = -1   '
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               missing_values_behavior=stage_attributes['missing_values_behavior'],
+                               column_mappings=[])
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> jdbc_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build(title='JDBC Lookup Missing Values').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_records = wiretap.output_records
+        error_records = wiretap.error_records
+        if stage_attributes['missing_values_behavior'] == 'PASS_RECORD_ON':
+            assert len(output_records) == len(raw_data) - 1, 'Wrong numbers of records'
+            assert len(error_records) == 0, 'Wrong numbers of error records'
+        elif stage_attributes['missing_values_behavior'] == 'SEND_TO_ERROR':
+            assert len(output_records) == 0, 'Wrong numbers of records'
+            assert len(error_records) == len(raw_data) - 1, 'Wrong numbers of error records'
+        else:
+            pytest.fail(f'Invalid missing_values_behavior attribute: {stage_attributes["missing_values_behavior"]}')
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
 
 
 @database
@@ -433,10 +504,39 @@ def test_use_credentials(sdc_builder, sdc_executor, stage_attributes):
     pass
 
 
-@stub
+@database
 @pytest.mark.parametrize('stage_attributes', [{'use_credentials': True}])
-def test_username(sdc_builder, sdc_executor, stage_attributes):
-    pass
+def test_username(sdc_builder, sdc_executor, database, credential_store, stage_attributes):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    raw_data = LOOKUP_RAW_DATA
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               use_credentials=stage_attributes['use_credentials'],
+                               column_mappings=[])
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> jdbc_lookup >> trash
+    pipeline = pipeline_builder.build(title='JDBC Lookup Username').configure_for_environment(database, credential_store)
+    pipeline.stages[1].set_attributes(username="foo")
+    pipeline.stages[1].set_attributes(password="bar")
+    sdc_executor.add_pipeline(pipeline)
+
+    with pytest.raises(Exception) as error:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert "JDBC_06" in error.value.message, f'Expected a JDBC_06 error, got "{error.value.message}" instead'
 
 
 def _create_and_populate_lookup_table(name, database):
@@ -494,3 +594,106 @@ def _create_table(table_name, database, schema_name=None, name_type=sqlalchemy.S
     logger.info('Creating table %s in %s database ...', table_name, database.type)
     table.create(database.engine)
     return table
+
+@database
+def test_validation_for_default_value(sdc_builder, sdc_executor, database, credential_store):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    raw_data = LOOKUP_RAW_DATA
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+    column_mappings = [dict(defaultValue='Albert',
+                            columnName="name",
+                            field='/FirstName')]
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=column_mappings)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> jdbc_lookup >> trash
+    pipeline = pipeline_builder.build(title='JDBC Lookup Default Value').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    with pytest.raises(Exception) as error:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert "JDBC_53" in error.value.message, f'Expected a JDBC_53 error, got "{error.value.message}" instead'
+
+
+@database
+def test_worng_data_type_default_value(sdc_builder, sdc_executor, database, credential_store):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    raw_data = LOOKUP_RAW_DATA
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+    column_mappings = [dict(defaultValue='Albert',
+                            dataType='INTEGER',
+                            columnName="name",
+                            field='/FirstName')]
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=column_mappings)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> jdbc_lookup >> trash
+    pipeline = pipeline_builder.build(title='JDBC Lookup Data Type Default Value').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    with pytest.raises(Exception) as error:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert "JDBC_410" in error.value.message, f'Expected a JDBC_410 error, got "{error.value.message}" instead'
+
+
+@database
+def test_validation_for_datetime_default_value(sdc_builder, sdc_executor, database, credential_store):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    raw_data = LOOKUP_RAW_DATA
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+    column_mappings = [dict(defaultValue='1-1-1',
+                            dataType='DATETIME',
+                            columnName="date",
+                            field='/dateField')]
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=column_mappings)
+
+    trash = pipeline_builder.add_stage('Trash')
+    dev_raw_data_source >> jdbc_lookup >> trash
+    pipeline = pipeline_builder.build(title='JDBC Lookup DateTime').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    with pytest.raises(Exception) as error:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert "JDBC_56" in error.value.message, f'Expected a JDBC_56 error, got "{error.value.message}" instead'

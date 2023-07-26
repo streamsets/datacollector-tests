@@ -18,12 +18,30 @@ import string
 import pytest
 import sqlalchemy
 from streamsets.sdk.utils import Version
-from streamsets.testframework.environments.databases import OracleDatabase, MemSqlDatabase
+from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, MySqlDatabase, \
+    MariaDBDatabase, MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 logger = logging.getLogger(__name__)
 
+ROWS_IN_DATABASE = [
+    {'id': 1, 'name': 'Dima'},
+    {'id': 2, 'name': 'Jarcec'},
+    {'id': 3, 'name': 'Arvind'}
+]
+ROWS_TO_UPDATE = [
+    {'id': 2, 'name': 'Eddie'},
+    {'id': 4, 'name': 'Jarcec'}
+]
+LOOKUP_RAW_DATA = ['id'] + [str(row['id']) for row in ROWS_IN_DATABASE]
+RAW_DATA = ['name'] + [row['name'] for row in ROWS_IN_DATABASE]
+
+LOOKUP_TABLE_DATA = [
+    {'id': 1, 'dept': 'mt', 'name': 'Arvind'},
+    {'id': 2, 'dept': 'mt', 'name': 'Girish'},
+    {'id': 3, 'dept': 'extra', 'name': 'Dima'}
+]
 
 # https://docs.oracle.com/cd/B28359_01/server.111/b28318/datatype.htm#CNCPT1821
 # We don't support UriType (requires difficult workaround in JDBC)
@@ -719,3 +737,220 @@ def test_data_format(sdc_builder, sdc_executor, database, keep_data):
 @database
 def test_dataflow_events(sdc_builder, sdc_executor, database, keep_data):
     pytest.skip("JDBC Lookup processor does not support events today")
+
+
+@database
+@pytest.mark.parametrize('raw_data', [LOOKUP_RAW_DATA, ['id', str(ROWS_IN_DATABASE[0]['id'])]])
+def test_validate_single_and_multiple_records(sdc_builder, sdc_executor, database, credential_store, raw_data):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_and_populate_lookup_table(table_name, database)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    if type(database) in [MySqlDatabase, MariaDBDatabase]:
+        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = ${{record:value("/id")}}'
+    else:
+        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = ${{record:value("/id")}}'
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=[])
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> jdbc_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build(title='JDBC Lookup Records').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_records = wiretap.output_records
+        assert len(output_records) == len(raw_data) - 1, 'Wrong numbers of records'
+        for out_record in output_records:
+            id = int(out_record.field["id"].value)
+            name = [record['name'] for record in LOOKUP_TABLE_DATA if record['id'] == id]
+            assert len(name) == 1, 'Wrong record!'
+            assert out_record.field["name"] == name[0], 'Wrong record!'
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
+def test_default_value(sdc_builder, sdc_executor, database, credential_store):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_and_populate_lookup_table(table_name, database)
+    raw_data = LOOKUP_RAW_DATA
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    if type(database) in [MySqlDatabase, MariaDBDatabase]:
+        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = -1'
+    else:
+        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = -1'
+    column_mappings = [dict(defaultValue='Albert',
+                            dataType='STRING',
+                            columnName="name",
+                            field='/FirstName')]
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               column_mappings=column_mappings)
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> jdbc_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build(title='JDBC Lookup Default Value').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_records = wiretap.output_records
+        assert len(output_records) == len(raw_data) - 1, 'Wrong numbers of records'
+        for out_record in output_records:
+            assert out_record.field["FirstName"] == 'Albert', 'Wrong record. Invalid default value!'
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
+@database
+def test_retry_on_cache_miss(sdc_builder, sdc_executor, database, credential_store):
+    """
+    The pipeline looks like:
+        dev_raw_data_source >> jdbc_lookup >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    table = _create_table(table_name, database)
+    raw_data = LOOKUP_RAW_DATA
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='DELIMITED',
+                                       header_line='WITH_HEADER',
+                                       raw_data='\n'.join(raw_data),
+                                       stop_after_first_batch=True)
+
+    jdbc_lookup = pipeline_builder.add_stage('JDBC Lookup')
+    if type(database) in [MySqlDatabase, MariaDBDatabase]:
+        query_str = f'SELECT `name` FROM {table_name} WHERE `id` = ${{record:value("/id")}}'
+    else:
+        query_str = f'SELECT "name" FROM {table_name} WHERE "id" = ${{record:value("/id")}}'
+    column_mappings = [dict(defaultValue='Albert',
+                            dataType='STRING',
+                            field='/name',
+                            columnName="name")]
+
+    jdbc_lookup.set_attributes(sql_query=query_str,
+                               enable_local_caching=True,
+                               retry_on_missing_value=True,
+                               eviction_policy_type='EXPIRE_AFTER_ACCESS',
+                               column_mappings=column_mappings)
+
+    wiretap = pipeline_builder.add_wiretap()
+    dev_raw_data_source >> jdbc_lookup >> wiretap.destination
+    pipeline = pipeline_builder.build(title='JDBC Lookup Cache').configure_for_environment(database, credential_store)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_records = wiretap.output_records
+        assert len(output_records) == len(raw_data) - 1, 'Wrong numbers of records'
+        for out_record in output_records:
+            assert out_record.field["name"] == 'Albert', 'Wrong record. Invalid default value!'
+
+        logger.info('Adding %s rows into %s database ...', len(LOOKUP_TABLE_DATA), database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), LOOKUP_TABLE_DATA)
+        connection.close()
+        wiretap.reset()
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        output_records = wiretap.output_records
+        assert len(output_records) == len(raw_data) - 1, 'Wrong numbers of records'
+        for out_record in output_records:
+            id = int(out_record.field["id"].value)
+            name = [record['name'] for record in LOOKUP_TABLE_DATA if record['id'] == id]
+            assert len(name) == 1, 'Wrong record!'
+            assert out_record.field["name"] == name[0], 'Wrong record!'
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Dropping table %s in %s database...', table_name, database.type)
+        table.drop(database.engine)
+
+
+def _create_and_populate_lookup_table(name, database):
+    """Create common lookup table and fill it with data."""
+    table = sqlalchemy.Table(name,
+                             sqlalchemy.MetaData(),
+                             sqlalchemy.Column('id', sqlalchemy.Integer, quote=True),
+                             sqlalchemy.Column('dept', sqlalchemy.String(32), quote=True),
+                             sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+                             quote=True
+                             )
+    logger.info('Creating table %s in %s database ...', name, database.type)
+    table.create(database.engine)
+
+    logger.info('Adding %s rows into %s database ...', len(LOOKUP_TABLE_DATA), database.type)
+    connection = database.engine.connect()
+    connection.execute(table.insert(), LOOKUP_TABLE_DATA)
+    connection.close()
+
+    return table
+
+
+def _create_table(table_name, database, schema_name=None, name_type=sqlalchemy.String(32)):
+    """Helper function to create a table with two columns: id (int, PK) and name.
+
+    Args:
+        table_name: (:obj:`str`) the name for the new table.
+        database: a :obj:`streamsets.testframework.environment.Database` object.
+        name_type: sqlalchemy type
+        schema_name: (:obj:`str`, optional) when provided, create the new table in a specific schema; otherwise,
+            the default schema for the engine’s database connection is used.
+
+    Return:
+        The new table as a sqlalchemy.Table object.
+
+    """
+    metadata = sqlalchemy.MetaData()
+    # quote=True makes the names case sensitive
+    if type(database) == SQLServerDatabase:
+        table = sqlalchemy.Table(table_name,
+                                 metadata,
+                                 sqlalchemy.Column('name', name_type, quote=True),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True,
+                                                   autoincrement=False, quote=True),
+                                 schema=schema_name,
+                                 quote=True)
+    else:
+        table = sqlalchemy.Table(table_name,
+                                 metadata,
+                                 sqlalchemy.Column('name', name_type, quote=True),
+                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+                                 schema=schema_name,
+                                 quote=True)
+
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table.create(database.engine)
+    return table
