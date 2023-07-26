@@ -20,6 +20,7 @@ import pytest
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from streamsets.testframework.utils import Version
+from streamsets.sdk.sdc_api import StartError
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,54 @@ def test_field_decrypt(sdc_builder, sdc_executor, aws):
 
 
 @aws('kms')
+@sdc_min_version('3.5.0')
+def test_field_decrypt_wrong_input_type(sdc_builder, sdc_executor, aws):
+    """Basic test to verify Encrypt and Decrypt Fields processor puts the record to error when
+        a wrong input type is given.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> wiretap
+    """
+    expected_plaintext = MESSAGE_TEXT.encode()
+
+    ciphertext, _ = aws.encrypt(expected_plaintext)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=json.dumps({'message': base64.b64encode(ciphertext).decode()}),
+                                       stop_after_first_batch=True)
+
+    field_type_converter = pipeline_builder.add_stage('Field Type Converter', type='processor')
+    field_type_converter_configs = [{'fields': ['/message'], 'targetType': 'BYTE_ARRAY'}]
+    field_type_converter.set_attributes(conversion_method='BY_FIELD',
+                                        field_type_converter_configs=field_type_converter_configs)
+
+    base64_decoder = pipeline_builder.add_stage('Base64 Field Decoder', type='processor')
+    if Version(sdc_builder.version) < Version("4.4.0"):
+        base64_decoder.set_attributes(field_to_decode='/message', target_field='/message')
+    else:
+        base64_decoder.set_attributes(
+            fields_to_decode=[{'originFieldPath': '/message', 'resultFieldPath': '/message'}]
+        )
+
+    field_decrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_decrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
+                                 fields=['/'],
+                                 frame_size=4096,
+                                 mode='DECRYPT')
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_type_converter >> base64_decoder >> field_decrypt >> wiretap.destination
+    pipeline = pipeline_builder.build('Field Decryption Pipeline Wrong Input Type').configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+    assert 1 == len(wiretap.error_records)
+
+
+@aws('kms')
 @sdc_min_version('5.5.0')
 def test_field_decrypt_error_records(sdc_builder, sdc_executor, aws):
     """
@@ -115,7 +164,7 @@ def test_field_decrypt_error_records(sdc_builder, sdc_executor, aws):
     wiretap = pipeline_builder.add_wiretap()
 
     dev_data_generator >> field_decrypt >> wiretap.destination
-    pipeline = pipeline_builder.build('Field Decryption Pipeline').configure_for_environment(aws)
+    pipeline = pipeline_builder.build('Field Decryption Pipeline Error Records').configure_for_environment(aws)
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
@@ -157,6 +206,74 @@ def test_field_encrypt(sdc_builder, sdc_executor, aws):
     # Decrypt received value using aws_encryption_sdk for verification purpose.
     actual_value, _ = aws.decrypt(ciphertext_encoded.value)
     assert actual_value == expected_plaintext
+
+
+@aws('kms')
+@sdc_min_version('3.5.0')
+def test_field_encrypt_non_cacheable_cipher(sdc_builder, sdc_executor, aws):
+    """Basic test to verify Encrypt and Decrypt Fields processor throws an Error while using
+        non cacheable cipher with enabled Data Key Caching.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_encrypt >> wiretap
+    """
+    raw_data = json.dumps(dict(message=MESSAGE_TEXT))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    field_encrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_encrypt.set_attributes(cipher='ALG_AES_128_GCM_IV12_TAG16_NO_KDF',
+                                 data_key_caching=True,
+                                 fields=['/message'],
+                                 frame_size=4096,
+                                 mode='ENCRYPT')
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_encrypt >> wiretap.destination
+    pipeline = pipeline_builder.build('Field Encryption Pipeline Non Cacheable Cipher').configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+    with pytest.raises(StartError) as error:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert "CRYPTO_06" in error.value.message, f'Expected a CRYPTO_06 error, got "{error.value.message}" instead'
+
+
+@aws('kms')
+@pytest.mark.parametrize('config_value_and_error', [
+    {'value': '0', 'error': 'CRYPTO_05'},
+    {'value': 'abc', 'error': 'CRYPTO_04'}
+    ]
+)
+@sdc_min_version('3.5.0')
+def test_field_encrypt_out_of_range_config_value(sdc_builder, sdc_executor, aws, config_value_and_error):
+    """Basic test to verify Encrypt and Decrypt Fields processor throws an Error when out of
+        range config values are set.
+
+    The pipeline looks like:
+        dev_raw_data_source >> field_encrypt >> wiretap
+    """
+    raw_data = json.dumps(dict(message=MESSAGE_TEXT))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=raw_data, stop_after_first_batch=True)
+
+    field_encrypt = pipeline_builder.add_stage('Encrypt and Decrypt Fields', type='processor')
+    field_encrypt.set_attributes(cipher='ALG_AES_256_GCM_IV12_TAG16_HKDF_SHA384_ECDSA_P384',
+                                 data_key_caching=True,
+                                 fields=['/message'],
+                                 frame_size=4096,
+                                 mode='ENCRYPT',
+                                 max_bytes_per_data_key=config_value_and_error['value'])
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_encrypt >> wiretap.destination
+    pipeline = pipeline_builder.build('Field Encryption Pipeline Out of Range Config Values').configure_for_environment(aws)
+    sdc_executor.add_pipeline(pipeline)
+    with pytest.raises(StartError) as error:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    assert config_value_and_error['error'] in error.value.message, f'Expected a CRYPTO_06 error, got "{error.value.message}" instead'
 
 
 @sdc_min_version('3.17.0')
