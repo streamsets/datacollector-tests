@@ -146,7 +146,7 @@ class StartMode:
     @staticmethod
     def current_scn(db, cleanup):
         connection = db.engine.connect()
-        cleanup.callback(connection.close)
+        cleanup(connection.close)
         try:
             scn = int(connection.execute("SELECT CURRENT_SCN FROM V$DATABASE").first()[0])
         except Exception as ex:
@@ -165,7 +165,7 @@ class StartMode:
         oracle_date_format = "YYYY-MM-DD HH24:MM:SS"
 
         connection = db.engine.connect()
-        cleanup.callback(connection.close)
+        cleanup(connection.close)
         try:
             instant = connection.execute(f"SELECT TO_CHAR(SYSDATE, '{oracle_date_format}') FROM DUAL").first()[0]
             logger.error(instant)

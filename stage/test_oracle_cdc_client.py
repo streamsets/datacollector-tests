@@ -85,10 +85,10 @@ def _test_template(sdc_builder, sdc_executor, database, database_version, cleanu
     connection = database.engine.connect()
     # The cleanup of resources is deferred right after obtaining them,
     # so no cleanup phase is required at the end
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     # Create the oracle pipeline
     # The handler makes it much quicker to migrate tests to NEXT, it will be deprecated
@@ -124,7 +124,7 @@ def _test_template(sdc_builder, sdc_executor, database, database_version, cleanu
     if precedence != PIPELINE:  # case 1
         populate_table()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     if precedence == PIPELINE:  # case 2
@@ -189,7 +189,7 @@ def test_connection_types(
     if connection_type == "TNS_ALIAS":
         cmd = handler.execute_shell(f"mkdir -p {tns_dir}")
         assert cmd.exit_code == OK_STATUS, f"Failed to create TNS default directory ({tns_dir}): {cmd}"
-        cleanup.callback(handler.execute_shell, f"rm -rf {tns_dir}")  # Defer removal of the directory
+        cleanup(handler.execute_shell, f"rm -rf {tns_dir}")  # Defer removal of the directory
         cmd = handler.execute_shell(f"cat > {tns_file} << EOF\n{tns_file_content}\nEOF\n")
         assert cmd.exit_code == OK_STATUS, f"Failed to create TNS default file ({tns_file}): {cmd}"
 
@@ -330,10 +330,10 @@ def test_start_mode(
     )
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -356,7 +356,7 @@ def test_start_mode(
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     try:
         handler.start_work(work).wait_for_status(work, "RUNNING", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
     except expected_error:
@@ -390,7 +390,7 @@ def test_start_events(sdc_builder, sdc_executor, database, database_version, cle
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
     handler.start_work(work)
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.wait_for_status(work, "RUNNING", timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
 
     # Find the event containing the database state
@@ -478,10 +478,10 @@ def test_basic_operations(
     expected_records = insert_records + update_records + delete_records
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     # Build and start the pipeline.
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
@@ -516,7 +516,7 @@ def test_basic_operations(
     if precedence != PIPELINE:
         populate_table()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     if precedence == PIPELINE:
@@ -599,10 +599,10 @@ def test_rollback(
     expected_records = [final_record]
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     # Build and start the pipeline.
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
@@ -639,7 +639,7 @@ def test_rollback(
     if precedence != PIPELINE:
         populate_table()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     if precedence == PIPELINE:
@@ -675,10 +675,10 @@ def test_long_sql_statements(
     records = [{primary_column: i, varchar_column: f"{i}" * varchar_length} for i in range(record_count)]
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -703,7 +703,7 @@ def test_long_sql_statements(
     if precedence != PIPELINE:
         populate_table()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     if precedence == PIPELINE:
@@ -764,12 +764,12 @@ def test_overlapping_transactions(
     records_2 = [{primary_column: i} for i in range(record_count, record_count * 2)]
 
     connection_1 = database.engine.connect()
-    cleanup.callback(connection_1.close)
+    cleanup(connection_1.close)
     connection_2 = database.engine.connect()
-    cleanup.callback(connection_2.close)
+    cleanup(connection_2.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -808,7 +808,7 @@ def test_overlapping_transactions(
     sleep(wait_time)
     insert_batch_2()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     handler.wait_for_metric(work, "input_record_count", len(records_2), timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
@@ -878,10 +878,10 @@ def test_oracle_cdc_inclusion_and_exclusion_pattern(
 
     for table in tables:
         table.create(database.engine)
-        cleanup.callback(table.drop)
+        cleanup(table.drop)
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     ip = re.compile(include_pattern, re.IGNORECASE)
     included_tables = set(table.name for table in tables if ip.fullmatch(table.name))
@@ -925,7 +925,7 @@ def test_oracle_cdc_inclusion_and_exclusion_pattern(
         connection.execute(table.insert(), record_subset)
     txn.commit()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     handler.wait_for_metric(work, "input_record_count", len(expected_records), timeout_sec=30)
@@ -957,10 +957,10 @@ def test_decimal_attributes(
     records = [{primary_column: 1, decimal_column: 42.42}]
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -985,7 +985,7 @@ def test_decimal_attributes(
     if precedence != PIPELINE:
         populate_table()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     if precedence == PIPELINE:
@@ -1036,10 +1036,10 @@ def test_batch_size(
     )
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -1067,7 +1067,7 @@ def test_batch_size(
     if precedence != PIPELINE:
         populate_table()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     if precedence == PIPELINE:

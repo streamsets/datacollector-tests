@@ -286,7 +286,7 @@ def test_split_records_by_table(sdc_builder, sdc_executor, gcp, cleanup):
 
     bigquery_client = gcp.bigquery_client
     dataset_ref = Dataset(bigquery_client.dataset(dataset_name))
-    cleanup.callback(bigquery_client.delete_dataset, dataset_ref, delete_contents=True)
+    cleanup(bigquery_client.delete_dataset, dataset_ref, delete_contents=True)
 
     # Using Google bigquery client, create dataset, table and data inside table
     logger.info('Creating dataset %s using Google bigquery client ...', dataset_name)
@@ -299,7 +299,7 @@ def test_split_records_by_table(sdc_builder, sdc_executor, gcp, cleanup):
     # Start pipeline and verify correct rows are received.
     logger.info('Starting pipeline')
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    cleanup.callback(sdc_executor.stop_pipeline, pipeline, wait=False)
+    cleanup(sdc_executor.stop_pipeline, pipeline, wait=False)
 
     data_from_bigquery_table_1 = [tuple(row.values()) for row in bigquery_client.list_rows(table1)]
     data_from_bigquery_table_1.sort()

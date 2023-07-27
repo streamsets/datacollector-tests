@@ -24,11 +24,11 @@ def cleanup(request):
     """Provide an ExitStack to manage cleanup function execution.
     Callbacks are executed LIFO when the importing function exits.
     Args and kwargs are passed in the following way:
-    table.drop(table_name, conn=connection) -> cleanup.callback(table.drop, table_name, conn=connection)
+    table.drop(table_name, conn=connection) -> cleanup(table.drop, table_name, conn=connection)
     The standard *args **kwargs way is also valid.
     """
     try:
         with ExitStack() as exit_stack:
-            yield exit_stack
+            yield exit_stack.callback
     except Exception as exception:
         logger.warning(f"Error during cleanup of {request.node.name}: {exception}")

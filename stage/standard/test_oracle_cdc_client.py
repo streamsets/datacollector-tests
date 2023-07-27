@@ -159,10 +159,10 @@ def test_data_types(
         streamsets_value = None
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -180,7 +180,7 @@ def test_data_types(
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     txn = connection.begin()
@@ -230,10 +230,10 @@ def test_object_named_tables(
     )
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -251,7 +251,7 @@ def test_object_named_tables(
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     txn = connection.begin()
@@ -287,10 +287,10 @@ def test_multiple_batches(
     )
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -308,7 +308,7 @@ def test_multiple_batches(
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     txn = connection.begin()
@@ -353,10 +353,10 @@ def test_resume_offset(
     )
 
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
@@ -373,7 +373,7 @@ def test_resume_offset(
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
 
     for iteration in range(iterations):
         handler.start_work(work)
@@ -416,10 +416,10 @@ def test_multithreading(sdc_builder, sdc_executor, database, database_version, c
         sqlalchemy.Column(secondary_column, sqlalchemy.DATE),
     )
     connection = database.engine.connect()
-    cleanup.callback(connection.close)
+    cleanup(connection.close)
 
     table.create(database.engine)
-    cleanup.callback(table.drop, database.engine)
+    cleanup(table.drop, database.engine)
 
     records = [{primary_column: i, secondary_column: base_time + timedelta(days=1) * i} for i in range(record_count)]
 
@@ -443,7 +443,7 @@ def test_multithreading(sdc_builder, sdc_executor, database, database_version, c
     connection.execute(table.insert(), records)
     txn.commit()
 
-    cleanup.callback(handler.stop_work, work)
+    cleanup(handler.stop_work, work)
     handler.start_work(work)
 
     handler.wait_for_metric(work, "input_record_count", len(records), timeout_sec=DEFAULT_TIMEOUT_IN_SEC)
