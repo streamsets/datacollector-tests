@@ -3,14 +3,17 @@
 import json
 import logging
 import pytest
+import re
 from .. import _clean_up_databricks
 
 from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
-from streamsets.testframework.markers import aws, deltalake, sdc_min_version
+from streamsets.testframework.markers import aws, azure, deltalake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
 DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_DatabricksDeltaLakeDTarget'
+MIN_VERSION_UNITY_CATALOG = 11
+REGEX_EXPRESSION_DATABRICKS_VERSION = re.compile(r'\d+')
 
 pytestmark = [deltalake, sdc_min_version('5.5.0')]
 
@@ -266,7 +269,7 @@ def test_decimal_default(sdc_builder, sdc_executor):
 
 
 @aws('s3')
-def test_directory_for_table_location(sdc_builder, sdc_executor, deltalake, aws):
+def test_table_location_path(sdc_builder, sdc_executor, deltalake, aws):
     """Test for Databricks Delta Lake with AWS S3 storage.
     Verifies that the property for table location respects where the table is created
 
@@ -293,7 +296,7 @@ def test_directory_for_table_location(sdc_builder, sdc_executor, deltalake, aws)
                                         stage_file_prefix=s3_key)
     databricks_deltalake.set_attributes(table_name=table_name,
                                         purge_stage_file_after_ingesting=True,
-                                        directory_for_table_location=table_location)
+                                        table_location_path=table_location)
 
     dev_raw_data_source >> databricks_deltalake
 
@@ -456,7 +459,6 @@ def test_cdc_jdbc_header(sdc_builder, sdc_executor, deltalake, aws):
         _clean_up_databricks(deltalake, table_name)
 
 
-
 @aws('s3')
 @pytest.mark.parametrize('newline_character', [" ", "|"])
 def test_new_line_replacement_character(sdc_builder, sdc_executor, deltalake, aws, newline_character):
@@ -521,7 +523,7 @@ def test_new_line_replacement_character(sdc_builder, sdc_executor, deltalake, aw
 
 @aws('s3')
 @pytest.mark.parametrize('null_value', ['\\N', 'stf', ''])
-def test_null_value(sdc_builder, sdc_executor,  deltalake, aws, null_value):
+def test_null_value(sdc_builder, sdc_executor, deltalake, aws, null_value):
     """Test for Databricks Delta Lake with AWS S3 storage.
 
     The pipeline looks like this:
@@ -530,7 +532,7 @@ def test_null_value(sdc_builder, sdc_executor,  deltalake, aws, null_value):
     table_name = f'stf_test_null_value_{get_random_string()}'
 
     rows_data = [{"title": f'{null_value}', "author": "Pepito", "genre": "Comedy",
-                  "publisher": "HarperCollins Publishers"},]
+                  "publisher": "HarperCollins Publishers"}, ]
 
     engine = deltalake.engine
     data = '\n'.join(json.dumps(rec) for rec in rows_data)
@@ -552,11 +554,9 @@ def test_null_value(sdc_builder, sdc_executor,  deltalake, aws, null_value):
                                         purge_stage_file_after_ingesting=True,
                                         column_separator=';')
 
-
     dev_raw_data_source >> databricks_deltalake
 
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
-
 
     try:
         logger.info(f'Creating table {table_name} ...')
@@ -582,7 +582,6 @@ def test_null_value(sdc_builder, sdc_executor,  deltalake, aws, null_value):
 
     finally:
         _clean_up_databricks(deltalake, table_name)
-
 
 
 @aws('s3')
@@ -643,7 +642,6 @@ def test_cdc_null_value(sdc_builder, sdc_executor, deltalake, aws, null_value):
 
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 
-
     try:
         connection = deltalake.connect_engine(engine)
 
@@ -664,10 +662,167 @@ def test_cdc_null_value(sdc_builder, sdc_executor, deltalake, aws, null_value):
         aws.delete_s3_data(aws.s3_bucket_name, s3_key)
         _clean_up_databricks(deltalake, table_name)
 
+@aws('s3')
+@sdc_min_version('5.7.0')
+def test_unity_catalog(sdc_builder, sdc_executor, deltalake, aws):
+    """Test for Databricks Delta Lake with AWS S3 storage.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) < MIN_VERSION_UNITY_CATALOG:
+        pytest.skip('Test only runs against Databricks cluster with Unity Catalog')
+
+    target_catalog = deltalake.workspace_catalog_name
+    target_schema = deltalake.workspace_schema_name
+    table_name = f'{target_catalog}.{target_schema}.stf_unity_catalog_{get_random_string()}'
+    uri_external_location = deltalake.workspace_external_location_path
+
+    rows_data = [{"title": f'Bicycles are for the summer', "author": "Pepito", "genre": "Comedy",
+                  "publisher": "HarperCollins Publishers"}, ]
+
+    engine = deltalake.engine
+    data = '\n'.join(json.dumps(rec) for rec in rows_data)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name=table_name,
+                                        auto_create_table=True,
+                                        table_location_path=uri_external_location,
+                                        purge_stage_file_after_ingesting=True,
+                                        column_separator=';')
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        connection = deltalake.connect_engine(engine)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+        # Assert data from deltalake table is same as what was input.
+        result = connection.execute(f'select * from {table_name}')
+        data_from_database = sorted(result.fetchall())
+
+        assert len(data_from_database) == len(rows_data)
+        assert data_from_database == [(row['title'], row['author'], row['genre'], row['publisher']) for row in
+                                      rows_data]
+        result.close()
+
+        # Assert that we actually purged the staged file
+        assert aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] == 0
+
+    finally:
+        _clean_up_databricks(deltalake, table_name)
+
+
+@aws('s3')
+@sdc_min_version('5.7.0')
+def test_cdc_with_unity_catalog(sdc_builder, sdc_executor, deltalake, aws):
+    """Test for Databricks Delta lake with AWS S3 storage. Using CDC data as input
+
+    The pipeline looks like this:
+        dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> databricks_deltalake
+    """
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) < MIN_VERSION_UNITY_CATALOG:
+        pytest.skip('Test only runs against Databricks cluster with Unity Catalog')
+
+    target_catalog = deltalake.workspace_catalog_name
+    target_schema = deltalake.workspace_schema_name
+    table_name = f'{target_catalog}.{target_schema}.stf_cdc_unity_catalog{get_random_string()}'
+    uri_external_location = deltalake.workspace_external_location_path
+
+    engine = deltalake.engine
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    cdc_rows = [
+        {'OP': 4, 'ID': 1, 'NAME': 'Ronaldo Weasley'},
+        {'OP': 4, 'ID': 2, 'NAME': 'Enric Potter'},
+        {'OP': 4, 'ID': 3, 'NAME': 'Tomas Riddle'}
+    ]
+
+    # Build Dev Raw Data Source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    raw_data = '\n'.join((json.dumps(row) for row in cdc_rows))
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=raw_data,
+                                       stop_after_first_batch=True)
+    # Build Expression Evaluator
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {'attributeToSet': 'sdc.operation.type',
+         'headerAttributeExpression': "${record:value('/OP')}"}
+    ])
+
+    # Build Field Remover
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ['/OP']
+
+    # ADLS gen2 storage destination
+    files_prefix = f'stf-deltalake/{get_random_string()}'
+
+    table_key_columns = [{"keyColumns": ["ID"], "table": table_name}]
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key)
+
+    databricks_deltalake.set_attributes(table_name=table_name,
+                                        purge_stage_file_after_ingesting=True,
+                                        enable_data_drift=True,
+                                        auto_create_table=True,
+                                        merge_cdc_data=True,
+                                        table_location_path=uri_external_location,
+                                        primary_key_location="TABLE",
+                                        table_key_columns=table_key_columns)
+
+    set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        connection = deltalake.connect_engine(engine)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Assert data from deltalake table is same as what was input.
+        result = connection.execute(f'select ID, NAME from {table_name}')
+        data_from_database = sorted(result.fetchall())
+
+        expected_data = [tuple(v for v in d.values()) for d in cdc_rows]
+
+        assert len(data_from_database) == len(expected_data)
+        assert data_from_database == [(row['ID'], row['NAME']) for row in cdc_rows]
+
+        result.close()
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+        _clean_up_databricks(deltalake, table_name)
+
 
 @stub
 def test_numeric_types_default(sdc_builder, sdc_executor):
     pass
+
 
 def _start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
     with pytest.raises(Exception):
@@ -678,19 +833,22 @@ def _start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
     logger.info(f'Pipeline status {status}...')
     assert status in ['RUN_ERROR', 'RUNNING_ERROR'], response
 
+
 def _start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert 6 == len(wiretap.error_records), f'Error records: {wiretap.error_records}'
+
 
 def _start_pipeline_and_check_discard(sdc_executor, pipeline, wiretap):
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
     assert 0 == len(wiretap.error_records), f'Error records: {wiretap.error_records}'
 
+
 @aws('s3')
 @pytest.mark.parametrize("on_record_error, start_and_check",
                          [("STOP_PIPELINE", _start_pipeline_and_check_stopped),
-                          ("TO_ERROR"     , _start_pipeline_and_check_to_error),
-                          ("DISCARD"      , _start_pipeline_and_check_discard)])
+                          ("TO_ERROR", _start_pipeline_and_check_to_error),
+                          ("DISCARD", _start_pipeline_and_check_discard)])
 def test_on_record_error(sdc_builder, sdc_executor, deltalake, aws,
                          on_record_error, start_and_check):
     """Write DB with malformed records and check pipeline behaves as set in 'on_record_error'

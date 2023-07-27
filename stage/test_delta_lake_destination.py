@@ -8,6 +8,7 @@ import string
 import tempfile
 import time
 import pytest
+import re
 from stage import _clean_up_databricks
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.sdc_api import StartError, RunError
@@ -16,6 +17,8 @@ from streamsets.testframework.markers import aws, azure, deltalake, gcp, sdc_min
 from streamsets.testframework.utils import get_random_string
 
 DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_DatabricksDeltaLakeDTarget'
+MIN_VERSION_UNITY_CATALOG = 11
+REGEX_EXPRESSION_DATABRICKS_VERSION = re.compile(r'\d+')
 
 pytestmark = [deltalake, sdc_min_version('5.5.0')]
 logger = logging.getLogger(__name__)
@@ -1388,6 +1391,198 @@ def test_partition_table_without_els(sdc_builder, sdc_executor, deltalake, aws, 
         aws.delete_s3_data(aws.s3_bucket_name, s3_key)
         _clean_up_databricks(deltalake, table_name)
 
+@azure('deltalake')
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('pre_created_table', [True, False])
+@pytest.mark.parametrize('partition_columns', ['Correct',
+                                               'Multiple',
+                                               'MultipleWithSpaces'])
+def test_partition_table_with_unity_catalog(sdc_builder, sdc_executor, deltalake, azure, pre_created_table,
+                                                  partition_columns):
+    """Test for Databricks Delta lake target stage. Data is inserted into Delta Lake using the pipeline.
+
+    Each pipeline look like:
+        dev_raw_data_source  >> databricks_deltalake
+    """
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) < MIN_VERSION_UNITY_CATALOG:
+        pytest.skip('Test only runs against Databricks cluster with Unity Catalog')
+
+    target_catalog = deltalake.workspace_catalog_name
+    target_schema = deltalake.workspace_schema_name
+    table_name = f'{target_catalog}.{target_schema}.stf_unity_catalog_{get_random_string()}'
+    uri_external_location = deltalake.workspace_external_location_path
+
+    partition_information = []
+    if partition_columns == 'Correct' and not pre_created_table:
+        partition_information.append({'tableName': table_name, 'columnName': 'genre'})
+    elif partition_columns == 'Multiple':
+        partition_information.append({'tableName': table_name, 'columnName': 'genre,title'})
+    elif partition_columns == 'MultipleWithSpaces':
+        partition_information.append({'tableName': table_name, 'columnName': 'genre, title'})
+
+    engine = deltalake.engine
+    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=DATA, stop_after_first_batch=True)
+
+    # ADLS gen2 storage destination
+    files_prefix = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='ADLS_GEN2',
+                                        stage_file_prefix=files_prefix,
+                                        table_name=table_name,
+                                        purge_stage_file_after_ingesting=True)
+
+    databricks_deltalake.set_attributes(table_name=table_name,
+                                        purge_stage_file_after_ingesting=True,
+                                        enable_data_drift=True,
+                                        auto_create_table=True,
+                                        partition_table=True,
+                                        table_location_path=uri_external_location,
+                                        partition_columns=partition_information)
+
+    set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, azure)
+    sdc_executor.add_pipeline(pipeline)
+    connection = deltalake.connect_engine(engine)
+    try:
+        if partition_columns in ['Correct', 'Multiple', 'MultipleWithSpaces']:
+            if pre_created_table:
+                if partition_columns == 'Correct':
+                    create_table_query = f"CREATE TABLE {table_name} (title STRING, author STRING, genre STRING, " \
+                                         f"publisher STRING) USING DELTA PARTITIONED BY (genre)"
+                elif partition_columns in ['Multiple', 'MultipleWithSpaces']:
+                    create_table_query = f"CREATE TABLE {table_name} (title STRING, author STRING, genre STRING, " \
+                                         f"publisher STRING) USING DELTA PARTITIONED BY (genre, title)"
+                connection.execute(create_table_query)
+
+            sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+            # Assert data from deltalake table is same as what was input.
+            result = connection.execute(f'select * from {table_name}')
+            data_from_database = sorted(result.fetchall())
+
+            expected_data = [tuple(v for v in d.values()) for d in ROWS_IN_DATABASE]
+            assert len(data_from_database) == len(expected_data)
+            assert expected_data == [(record['title'], record['author'], record['genre'], record['publisher'])
+                                     for record in data_from_database]
+
+            # Assert that the table was properly created
+            table_def = connection.execute(f'Describe {table_name}')
+            if partition_columns == 'Correct':
+                assert [column in table_def.fetchall() for column in
+                        [('title', 'string', None),
+                         ('author', 'string', None),
+                         ('genre', 'string', None),
+                         ('publisher', 'string', None),
+                         ('# Partition Information', '', ''),
+                         ('# col_name', 'data_type', 'comment'),
+                         ('genre', 'string', None)]]
+            elif partition_columns in ['Multiple', 'MultipleWithSpaces']:
+                assert [column in table_def.fetchall() for column in
+                        [('title', 'string', None),
+                         ('author', 'string', None),
+                         ('genre', 'string', None),
+                         ('publisher', 'string', None),
+                         ('# Partition Information', '', ''),
+                         ('# col_name', 'data_type', 'comment'),
+                         ('genre', 'string', None),
+                         ('title', 'string', None)]]
+
+            table_def.close()
+
+    finally:
+        _clean_up_databricks(deltalake, table_name)
+
+@azure('deltalake')
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('pre_created_table', [True, False])
+@pytest.mark.parametrize('partition_columns', ['Empty',
+                                               'Incorrect',
+                                               'MultipleWithWrongColumns',
+                                               'Wildcard'])
+def test_partition_table_with_unity_catalog_error(sdc_builder, sdc_executor, deltalake, azure,
+                                                          pre_created_table, partition_columns):
+    """Test for Databricks Delta lake target stage. Data is inserted into Delta Lake using the pipeline.
+
+    Each pipeline look like:
+        dev_raw_data_source  >> databricks_deltalake
+    """
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) < MIN_VERSION_UNITY_CATALOG:
+        pytest.skip('Test only runs against Databricks cluster with Unity Catalog')
+
+    target_catalog = deltalake.workspace_catalog_name
+    target_schema = deltalake.workspace_schema_name
+    table_name = f'{target_catalog}.{target_schema}.stf_unity_catalog_{get_random_string()}'
+    uri_external_location = deltalake.workspace_external_location_path
+
+    partition_information = []
+    if partition_columns == 'Incorrect':
+        partition_information.append({'tableName': 'Not the table name', 'columnName': 'genre'})
+    elif partition_columns == 'MultipleWithWrongColumns':
+        partition_information.append({'tableName': table_name, 'columnName': 'genre, Alex'})
+    elif partition_columns == 'Wildcard':
+        partition_information.append({'tableName': '*', 'columnName': 'genre'})
+
+    engine = deltalake.engine
+    DATA = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=DATA, stop_after_first_batch=True)
+
+    # ADLS gen2 storage destination
+    files_prefix = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='ADLS_GEN2',
+                                        stage_file_prefix=files_prefix,
+                                        table_name=table_name,
+                                        purge_stage_file_after_ingesting=True)
+
+    databricks_deltalake.set_attributes(table_name=table_name,
+                                        purge_stage_file_after_ingesting=True,
+                                        enable_data_drift=True,
+                                        auto_create_table=True,
+                                        partition_table=True,
+                                        table_location_path=uri_external_location,
+                                        partition_columns=partition_information)
+
+    set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, azure)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        if partition_columns in ['Incorrect', 'Wildcard']:
+            try:
+                sdc_executor.start_pipeline(pipeline)
+            except StartError as e:
+                assert 'DELTA_LAKE_41' in str(e.args[0])
+        elif partition_columns == 'Empty':
+            try:
+                sdc_executor.start_pipeline(pipeline)
+            except StartError as e:
+                assert 'DELTA_LAKE_40' in str(e.args[0])
+        elif partition_columns == 'MultipleWithWrongColumns':
+            try:
+                sdc_executor.start_pipeline(pipeline)
+            except RunError as e:
+                assert 'DELTA_LAKE_42' in str(e.args[0])
+    finally:
+        _clean_up_databricks(deltalake, table_name)
+
 
 @aws('s3')
 @pytest.mark.parametrize('partition_columns', ['EL', 'Wildcard', 'Override', 'Empty', 'MissingColumn'])
@@ -1513,7 +1708,7 @@ def test_partition_table_with_el(sdc_builder, sdc_executor, deltalake, aws, part
 
 
 @aws('s3')
-def test_directory_for_table_location_with_partition(sdc_builder, sdc_executor, deltalake, aws):
+def test_table_location_path_with_partition(sdc_builder, sdc_executor, deltalake, aws):
     """Test for Databricks Delta Lake with AWS S3 storage.
     Verifies that the property for table location respects where the table is created
 
@@ -1540,7 +1735,7 @@ def test_directory_for_table_location_with_partition(sdc_builder, sdc_executor, 
                                         stage_file_prefix=s3_key,
                                         table_name=table_name,
                                         purge_stage_file_after_ingesting=True,
-                                        directory_for_table_location=table_location,
+                                        table_location_path=table_location,
                                         enable_data_drift=True,
                                         auto_create_table=True,
                                         partition_table=True,
@@ -1766,3 +1961,285 @@ def _create_pipeline(sdc_builder, deltalake, aws, table_name, rows_to_insert, au
                                         create_new_columns_as_string=create_new_columns_string)
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
     return pipeline, s3_key
+
+
+@aws('s3')
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('pre_create_table', [True, False])
+def test_unity_catalog_with_el_expression_table_name(sdc_builder, sdc_executor, deltalake, aws, pre_create_table):
+    """Test for Databricks Delta Lake with AWS S3 storage.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) < MIN_VERSION_UNITY_CATALOG:
+        pytest.skip('Test only runs against Databricks cluster with Unity Catalog')
+
+    target_catalog = deltalake.workspace_catalog_name
+    target_schema = deltalake.workspace_schema_name
+    table_name_1 = f'{target_catalog}.{target_schema}.stf_unity_catalog_{get_random_string()}'
+    table_name_2 = f'{target_catalog}.{target_schema}.stf_unity_catalog_{get_random_string()}'
+    uri_external_location = deltalake.workspace_external_location_path
+
+    rows_data = [{"title": f'Bicycles are for the summer', "author": "Pepito", "genre": "Comedy",
+                  "publisher": "HarperCollins Publishers", "table_name": f"{table_name_1}"},
+                 {"title": f'Bicycles are for the summer', "author": "Pepito", "genre": "Comedy",
+                  "publisher": "HarperCollins Publishers", "table_name": f"{table_name_2}"},
+                 ]
+
+    engine = deltalake.engine
+    data = '\n'.join(json.dumps(rec) for rec in rows_data)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name="${record:value('/table_name')}",
+                                        table_location_path=uri_external_location,
+                                        purge_stage_file_after_ingesting=True,
+                                        column_separator=';')
+    if pre_create_table:
+        databricks_deltalake.set_attributes(auto_create_table=False,
+                                            enable_data_drift=False)
+    else:
+        databricks_deltalake.set_attributes(auto_create_table=True,
+                                            enable_data_drift=True)
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        connection = deltalake.connect_engine(engine)
+        if pre_create_table:
+            logger.info(f'Creating table {table_name_1} ...')
+            query = f'create table {table_name_1} (title string, author string, genre string, publisher string) using ' \
+                    f"DELTA LOCATION '{uri_external_location}/{table_name_1}'"
+            connection.execute(query)
+            logger.info(f'Creating table {table_name_2} ...')
+            query = f'create table {table_name_2} (title string, author string, genre string, publisher string)' \
+                    f"using DELTA LOCATION '{uri_external_location}/{table_name_2}'"
+            connection.execute(query)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+        # Assert data from deltalake table is same as what was input.
+        result = connection.execute(f'select * from {table_name_1}')
+        data_from_database_1 = sorted(result.fetchall())
+        result = connection.execute(f'select * from {table_name_2}')
+        data_from_database_2 = sorted(result.fetchall())
+
+        assert len(data_from_database_1) == 1
+        assert [(data['title'], data['author'], data['genre'], data['publisher']) for data in data_from_database_1] == \
+               [(rows_data[0]['title'], rows_data[0]['author'], rows_data[0]['genre'], rows_data[0]['publisher'])]
+
+        assert len(data_from_database_2) == 1
+        assert [(data['title'], data['author'], data['genre'], data['publisher']) for data in data_from_database_2] \
+               == [(rows_data[1]['title'], rows_data[1]['author'], rows_data[1]['genre'], rows_data[1]['publisher'])]
+
+        result.close()
+
+        # Assert that we actually purged the staged file
+        assert aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] == 0
+
+    finally:
+        _clean_up_databricks(deltalake, table_name_1)
+        _clean_up_databricks(deltalake, table_name_2)
+
+
+@aws('s3')
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('pre_create_table', [True, False])
+def test_unity_catalog_with_constant_parameter_location(sdc_builder, sdc_executor, deltalake, aws, pre_create_table):
+    """Test for Databricks Delta Lake with AWS S3 storage.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) < MIN_VERSION_UNITY_CATALOG:
+        pytest.skip('Test only runs against Databricks cluster with Unity Catalog')
+
+    target_catalog = deltalake.workspace_catalog_name
+    target_schema = deltalake.workspace_schema_name
+    table_name = f'{target_catalog}.{target_schema}.stf_unity_catalog_{get_random_string()}'
+    uri_external_location = deltalake.workspace_external_location_path
+
+    rows_data = [{"title": f'Bicycles are for the summer', "author": "Pepito", "genre": "Comedy",
+                  "publisher": "HarperCollins Publishers"},
+                 {"title": f"Harry potter and the philosopher's stone", "author": "JK.Rowling", "genre": "Fantasy",
+                  "publisher": "HarperCollins Publishers"},
+                 ]
+
+    engine = deltalake.engine
+    data = '\n'.join(json.dumps(rec) for rec in rows_data)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name=table_name,
+                                        table_location_path="${unity_catalog_location}",
+                                        purge_stage_file_after_ingesting=True,
+                                        column_separator=';')
+    if pre_create_table:
+        databricks_deltalake.set_attributes(auto_create_table=False,
+                                            enable_data_drift=False)
+    else:
+        databricks_deltalake.set_attributes(auto_create_table=True,
+                                            enable_data_drift=True)
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+    pipeline.add_parameters(unity_catalog_location=uri_external_location)
+
+    try:
+        connection = deltalake.connect_engine(engine)
+        if pre_create_table:
+            logger.info(f'Creating table {table_name} ...')
+            query = f'create table {table_name} (title string, author string, genre string, publisher string) using ' \
+                    f"DELTA LOCATION '{uri_external_location}/{table_name}'"
+            connection.execute(query)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+
+        # Assert data from deltalake table is same as what was input.
+        result = connection.execute(f'select * from {table_name}')
+        data_from_database = sorted(result.fetchall())
+
+        assert len(data_from_database) == len(rows_data)
+        assert [(data['title'], data['author'], data['genre'], data['publisher']) for data in data_from_database] == \
+               [(row['title'], row['author'], row['genre'], row['publisher']) for row in rows_data]
+
+        result.close()
+
+        # Assert that we actually purged the staged file
+        assert aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)['KeyCount'] == 0
+
+    finally:
+        _clean_up_databricks(deltalake, table_name)
+
+@aws('s3')
+@sdc_min_version('5.7.0')
+def test_unity_catalog_with_incorrect_table_name(sdc_builder, sdc_executor, deltalake, aws):
+    """Test for Databricks Delta Lake with AWS S3 storage.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) < MIN_VERSION_UNITY_CATALOG:
+        pytest.skip('Test only runs against Databricks cluster with Unity Catalog')
+
+    table_name = f'stf_sdc_{get_random_string()}'
+    uri_external_location = deltalake.workspace_external_location_path
+
+    rows_data = [{"title": f'Bicycles are for the summer', "author": "Pepito", "genre": "Comedy",
+                  "publisher": "HarperCollins Publishers"},
+                 {"title": f"Harry potter and the philosopher's stone", "author": "JK.Rowling", "genre": "Fantasy",
+                  "publisher": "HarperCollins Publishers"},
+                 ]
+
+    data = '\n'.join(json.dumps(rec) for rec in rows_data)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name=table_name,
+                                        table_location_path=uri_external_location,
+                                        purge_stage_file_after_ingesting=True,
+                                        auto_create_table=True,
+                                        enable_data_drift=True,
+                                        column_separator=';')
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+    except StartError as e:
+        assert 'DELTA_LAKE_46' in str(e.args[0])
+
+@aws('s3')
+@sdc_min_version('5.7.0')
+def test_unity_catalog_with_el_expression_table_name_incorrect(sdc_builder, sdc_executor, deltalake, aws):
+    """Test for Databricks Delta Lake with AWS S3 storage.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> databricks_deltalake
+    """
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) < MIN_VERSION_UNITY_CATALOG:
+        pytest.skip('Test only runs against Databricks cluster with Unity Catalog')
+
+    table_name = f'stf_sdc_{get_random_string()}'
+    uri_external_location = deltalake.workspace_external_location_path
+
+    rows_data = [{"title": f'Bicycles are for the summer', "author": "Pepito", "genre": "Comedy",
+                  "publisher": "HarperCollins Publishers", "table_name": f"{table_name}"},
+                 {"title": f"Harry potter and the philosopher's stone", "author": "JK.Rowling", "genre": "Fantasy",
+                  "publisher": "HarperCollins Publishers", "table_name": f"{table_name}"}
+                 ]
+
+    data = '\n'.join(json.dumps(rec) for rec in rows_data)
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=data, stop_after_first_batch=True)
+
+    # AWS S3 destination
+    s3_key = f'stf-deltalake/{get_random_string()}'
+
+    # Databricks Delta lake destination stage
+    databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    databricks_deltalake.set_attributes(staging_location='AWS_S3',
+                                        stage_file_prefix=s3_key,
+                                        table_name="${record:value('/table_name')}",
+                                        table_location_path=uri_external_location,
+                                        purge_stage_file_after_ingesting=True,
+                                        auto_create_table=True,
+                                        enable_data_drift=True,
+                                        column_separator=';')
+
+    dev_raw_data_source >> databricks_deltalake
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=120)
+        history = sdc_executor.get_pipeline_history(pipeline)
+
+        assert history.latest.metrics._data['counters']['stage.DatabricksDeltaLake_01.errorRecords.counter']['count']\
+               == 2
+
+    finally:
+        _clean_up_databricks(deltalake, table_name)
