@@ -27,9 +27,14 @@ from streamsets.testframework.utils import get_random_string, Version
 
 DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_bigquery_enterprise_destination_BigQueryDTarget'
 
+logger = logging.getLogger(__name__)
+
 pytestmark = [gcp, sdc_min_version('5.3.0'), pytest.mark.category('nonstandard')]
 
-logger = logging.getLogger(__name__)
+# from CommonDatabaseHeader.java
+PRIMARY_KEY_COLUMN_OLD_VALUE = 'jdbc.primaryKey.before'
+PRIMARY_KEY_COLUMN_NEW_VALUE = 'jdbc.primaryKey.after'
+PRIMARY_KEY_SPECIFICATION = 'jdbc.primaryKeySpecification'
 
 SCHEMA = [SchemaField('title', 'STRING'),
           SchemaField('author', 'STRING'),
@@ -249,6 +254,98 @@ DATA_TYPES = {
     'TIMESTAMP': ('TIME', '2019-02-05 23:59:59',  datetime.datetime(2019, 2, 5, 23, 59, 59, tzinfo=pytz.utc)),
     'STRING': ('STRING', 'gcp standard test 123', 'gcp standard test 123'),
 }
+
+CDC_PK_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY_HEADER = [
+    {
+        'sdc.operation.type': 1,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 1,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 2,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 2,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit - Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 3,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit - Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 3,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 4,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit, Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'
+    }, {
+        'sdc.operation.type': 3,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID': 4,
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID': 4,
+        f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE': 'Hobbit, Fallohide',
+        f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE': 'Hobbit, Fallohide'
+    }
+]
+
+CDC_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY = [
+    {
+        'TYPE': 'Hobbit',
+        'ID': 1,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 0'
+    }, {
+        'TYPE': 'Fallohide',
+        'ID': 1,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 1'
+    }, {
+        'TYPE': 'Fallohide',
+        'ID': 2,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 2'
+    }, {
+        'TYPE': 'Hobbit - Fallohide',
+        'ID': 3,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 3'
+    }, {
+        'TYPE': 'Hobbit, Fallohide',
+        'ID': 3,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 4'
+    }, {
+        'TYPE': 'Hobbit, Fallohide',
+        'ID': 4,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 5'
+    }, {
+        'TYPE': 'Hobbit, Fallohide',
+        'ID': 4,
+        'NAME': 'Bilbo',
+        'SURNAME': 'Baggins',
+        'ADDRESS': 'Bag End 6'
+    }
+]
 
 
 @pytest.mark.parametrize('file_format', ['CSV', 'AVRO', 'JSON'])
@@ -715,6 +812,7 @@ def test_cdc_merge(sdc_builder, sdc_executor, gcp, file_format):
                             merge_cdc_data=True,
                             quote_character="|",
                             column_separator=":",
+                            primary_key_location="TABLE",
                             key_columns=[{
                                 "keyColumns": [
                                     "NAME"
@@ -746,6 +844,96 @@ def test_cdc_merge(sdc_builder, sdc_executor, gcp, file_format):
 
         assert len(data_from_bigquery) == len(expected_data)
         assert data_from_bigquery == expected_data
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@sdc_min_version('5.7.0')
+def test_cdc_merge_header_pk(sdc_builder, sdc_executor, gcp):
+    """We will set up the headers the same way JDBC origins do. We will have the primary keys and
+    pk values updates as well.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> expression_evaluator >> field_remover >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'STF_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'STF_{get_random_string(ascii_lowercase, 10)}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    rows = CDC_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY
+    for row, header in zip(rows, CDC_PK_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY_HEADER):
+        row['HEADER'] = header
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       json_content='ARRAY_OBJECTS',
+                                       raw_data=json.dumps(rows),
+                                       stop_after_first_batch=True)
+    # Build Expression Evaluator
+    expression_evaluator = pipeline_builder.add_stage('Expression Evaluator')
+    expression_evaluator.set_attributes(header_attribute_expressions=[
+        {
+            'attributeToSet': 'sdc.operation.type',
+            'headerAttributeExpression': "${record:value('/HEADER/sdc.operation.type')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.ID',
+            'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_OLD_VALUE + ".ID')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.ID',
+            'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_NEW_VALUE + ".ID')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_COLUMN_OLD_VALUE}.TYPE',
+            'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_OLD_VALUE + ".TYPE')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_COLUMN_NEW_VALUE}.TYPE',
+            'headerAttributeExpression': "${record:value('/HEADER/" + PRIMARY_KEY_COLUMN_NEW_VALUE + ".TYPE')}"
+        }, {
+            'attributeToSet': f'{PRIMARY_KEY_SPECIFICATION}',
+            'headerAttributeExpression': '{\"ID\":{}, \"TYPE\":{}}'
+        }
+    ])
+
+    # Build Field Remover
+    field_remover = pipeline_builder.add_stage('Field Remover')
+    field_remover.fields = ['/OP', '/HEADER']
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            create_table=True,
+                            create_dataset=True,
+                            purge_stage_file_after_ingesting=True,
+                            merge_cdc_data=True)
+
+    dev_raw_data_source >> expression_evaluator >> field_remover >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        # We retrieve the table after the pipeline has automatically created it
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = rows[6]
+        assert data_from_bigquery == [(expected_data['TYPE'], expected_data['ID'],
+                                       expected_data['NAME'], expected_data['SURNAME'], expected_data['ADDRESS'])]
     finally:
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
@@ -852,6 +1040,7 @@ def test_cdc_merge_with_special_quoting(sdc_builder, sdc_executor, gcp):
                             merge_cdc_data=True,
                             quote_character="|",
                             column_separator=":",
+                            primary_key_location="TABLE",
                             key_columns=[{
                                 "keyColumns": [
                                     "NAME"
