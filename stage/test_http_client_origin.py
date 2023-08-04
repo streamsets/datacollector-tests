@@ -24,6 +24,7 @@ import pytest
 
 from pretenders.common.constants import FOREVER
 from streamsets.sdk.sdc_api import RunError, RunningError
+from streamsets.sdk.utils import Version
 from streamsets.testframework.constants import (CREDENTIAL_STORE_EXPRESSION, CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION,
                                                 STF_TESTCONFIG_DIR)
 from streamsets.testframework.credential_stores.jks import JKSCredentialStore
@@ -557,6 +558,78 @@ def test_http_client_retry_limit(sdc_builder, sdc_executor, exhausted_action, ht
 
     finally:
         http_mock.delete_mock()
+
+
+RESPONSES = [
+    {'number': 2, 'last_response': {'data': []}},       # OK
+    {'number': 2, 'last_response': {'data': None}},     # HTTP_08
+    {'number': 1, 'last_response': {}},                 # HTTP_12
+    {'number': 2, 'last_response': {}},                 # OK if SDC>=5.7.0 else HTTP_12
+]
+@http
+@pytest.mark.parametrize('response', RESPONSES)
+def test_http_client_origin_pagination_data_last_response(
+        sdc_builder,
+        sdc_executor,
+        response,
+        http_client
+):
+    """ Test that for SDC Version >= 5.7.0, the pipeline do not throw HTTP_12 error when response has no Result Field
+    in Http Client using pagination.
+    Also, double checks that for the other cases it still works as expected.
+
+    http_source >> wiretap.destination
+    """
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    NUM_DATA = 2
+    data = [{'id': i, 'name': f"name{i}"} for i in range(NUM_DATA)]
+
+    # Prepare server requests
+    for resp in range(response['number']):
+        data_array = {'data': data}
+        if resp >= response['number'] - 1:
+            data_array = response['last_response']
+        expected_data = json.dumps(data_array)
+        http_mock.when(f'GET /{mock_path}').reply(body=expected_data,
+                                                  status=200,
+                                                  times=1)
+
+    try:
+        builder = sdc_builder.get_pipeline_builder()
+        http_source = builder.add_stage('HTTP Client', type='origin')
+        http_source.set_attributes(data_format='JSON', http_method='GET',
+                                   resource_url=f'{http_mock.pretend_url}/{mock_path}',
+                                   mode='BATCH',
+                                   pagination_mode='BY_OFFSET',
+                                   initial_page_or_offset=0,
+                                   result_field_path="/data",
+                                   keep_all_fields=True)
+        wiretap = builder.add_wiretap()
+
+        http_source >> wiretap.destination
+
+        pipeline = builder.build(title='HTTP Client Origin Keep All Fields not repeating records when writing LocalFS')
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        # Stops automatically because of 'BATCH' mode on HTTP Client Origin
+        if response == RESPONSES[0] or (response == RESPONSES[3] and Version(sdc_executor.version) >= Version('5.7.0')):
+            assert len(wiretap.output_records) == NUM_DATA
+        else:
+            assert False, "It shouldn't reach this point, something is not well configured."
+
+    except (RunningError, RunError) as ex:
+        if response == RESPONSES[1]:
+            assert 'HTTP_08' in str(ex.args[0]), f"Expecting to fail by HTTP_08, not by: {ex}"
+        elif response == RESPONSES[2] or (response == RESPONSES[3] and Version(sdc_executor.version) < Version('5.7.0')):
+            assert 'HTTP_12' in str(ex.args[0]), f"Expecting to fail by HTTP_12, not by: {ex}"
+        else:
+            assert False, f"It shouldn't reach this point. Error {ex}"
+    finally:
+        http_mock.delete_mock()
+        if pipeline is not None:
+            sdc_executor.remove_pipeline(pipeline)
 
 
 def _get_metrics(history, run_mode):
