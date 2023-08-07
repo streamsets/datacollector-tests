@@ -614,3 +614,67 @@ def test_salesforce_origin_timeout(sdc_builder, sdc_executor, salesforce, timeou
 
     finally:
         clean_up(sdc_executor, pipeline, client, [record_id], hard_delete=True)
+
+
+@salesforce
+@sdc_min_version('5.7.0')
+def test_salesforce_origin_nested_fields(sdc_builder, sdc_executor, salesforce):
+    # This test creates a Salesforce object with other child Salesforce objects and checks that all the data can be recovered
+
+    run_name = 'sale_bulk2_origin_nested_fields_' + get_random_string(string.ascii_lowercase, 10)
+    account_name = run_name + '_account'
+    contact_name = run_name + '_contact'
+    asset_name = run_name + '_asset'
+    client = salesforce.client
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Salesforce Bulk API 2.0', type='origin')
+    query = ("SELECT Id, Name, Contact.Id, Contact.Name, Contact.Account.Id, Contact.Account.Name FROM Asset "
+                 "WHERE Id > '000000000000000' AND "
+                 f"Name = '{asset_name}'"
+                 " ORDER BY Id")
+    origin.set_attributes(soql_query=query,
+                          incremental_mode=False)
+
+    wiretap = builder.add_wiretap()
+
+    origin >> wiretap.destination
+
+    origin >= builder.add_stage("Pipeline Finisher Executor")
+
+    pipeline = builder.build().configure_for_environment(salesforce)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        logger.info('Adding an Asset into Salesforce with child objects...')
+
+        account = client.Account.create({
+            'Name': account_name
+        })
+
+        contact = client.Contact.create({
+            'LastName': contact_name,
+            'AccountId': account['id']
+        })
+
+        asset = client.Asset.create({
+            'Name': asset_name,
+            'ContactId': contact['id']
+        })
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert len(wiretap.output_records) == 1
+        record = wiretap.output_records[0]
+        assert record.field['Id'] == asset['id']
+        assert record.field['Name'] == asset_name
+        assert record.field['Contact']['Id'] == contact['id']
+        assert record.field['Contact']['Name'] == contact_name
+        assert record.field['Contact']['Account']['Id'] == account['id']
+        assert record.field['Contact']['Account']['Name'] == account_name
+
+    finally:
+        clean_up(sdc_executor, pipeline, client, [{'Id': account['id']}], hard_delete=True, object_name='Account')
+        clean_up(sdc_executor, pipeline, client, [{'Id': contact['id']}], hard_delete=True)
+        clean_up(sdc_executor, pipeline, client, [{'Id': asset['id']}], hard_delete=True, object_name='Asset')
