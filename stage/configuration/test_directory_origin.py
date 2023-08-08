@@ -174,7 +174,8 @@ def test_directory_origin_configuration_archive_directory(sdc_builder, sdc_execu
                                  process_subdirectories=True,
                                  files_directory=base_directory,
                                  file_name_pattern=FILE_NAME,
-                                 file_post_processing=file_post_processing)
+                                 file_post_processing=file_post_processing,
+                                 batch_wait_time_in_secs=1)
         wiretap = pipeline_builder.add_wiretap()
         directory >> wiretap.destination
         pipeline = pipeline_builder.build()
@@ -934,7 +935,7 @@ def test_directory_origin_configuration_file_name_pattern_mode(sdc_builder, sdc_
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 2)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
 
         text_fields = [record.field['text'] for record in wiretap.output_records]
@@ -1051,7 +1052,7 @@ def test_directory_origin_configuration_first_file_to_process(sdc_builder, sdc_e
 
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
-        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 2)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'data_batch_count', 1)
         sdc_executor.stop_pipeline(pipeline)
         assert len(wiretap.output_records) == 1
         assert wiretap.output_records[0].field == OrderedDict({'text': FIRST_FILE_CONTENTS})
@@ -2405,6 +2406,8 @@ def test_directory_no_read_permissions(sdc_builder, sdc_executor, shell_executor
         mkdir {file_path}
         chmod -R 000 {file_path}
     """)
+
+    time.sleep(10)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory')
