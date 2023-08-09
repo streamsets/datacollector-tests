@@ -137,8 +137,21 @@ def test_basic_azure_sas_token(sdc_builder, sdc_executor, snowflake):
     """
     _run_test_basic(sdc_builder, sdc_executor, snowflake, 'AZURE', sas_token=True)
 
+@snowflake
+@sdc_min_version('5.7.0')
+def test_basic_parquet(sdc_builder, sdc_executor, snowflake):
+    """Test for Snowflake destination target stage using Parquet data format. Data is inserted into Snowflake using the
+    pipeline. After pipeline is run, data is read from Snowflake using Snowflake sqlalchemy client.
+    We assert the data from the client to what has been ingested by the Snowflake pipeline.
 
-def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_kms=False, sas_token=False):
+    The pipeline looks like:
+    Snowflake pipeline:
+        dev_raw_data_source  >> snowflake_destination
+    """
+    _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location='INTERNAL', data_format='PARQUET')
+
+
+def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_kms=False, sas_token=False, data_format='CSV'):
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -163,6 +176,10 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
                                          purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name)
+    if data_format == 'PARQUET':
+        snowflake_destination.set_attributes(parquet_schema_location='INFER',
+                                             data_format=data_format,
+                                             compressed_file=False)
     if sse_kms:
         # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
         snowflake_destination.set_attributes(s3_encryption='KMS')
