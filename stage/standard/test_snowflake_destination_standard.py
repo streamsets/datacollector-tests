@@ -17,6 +17,8 @@ import json
 import logging
 import string
 import pytest
+
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import snowflake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -567,10 +569,8 @@ def test_multiple_batches(sdc_builder, sdc_executor, snowflake):
     dev_data_source >> snowflake_destination
     dev_raw_generator >> wiretap
     """
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
-    engine = snowflake.engine
 
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.

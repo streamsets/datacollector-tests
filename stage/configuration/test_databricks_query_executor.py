@@ -40,22 +40,55 @@ AWS_STORAGE_LOCATION = 'AWS_S3'
 AZURE_STORAGE_LOCATION = 'ADLS_GEN2'
 DEFAULT_STORAGE_LOCATION = 'NONE'
 ADLS_GEN2_DEFAULT_AUTH_METHOD = 'SHARED_KEY'
-ADLS_GEN2_OAUTH_AUTH_METHOD = 'OAUTH'
+ADLS_GEN2_CLIENT_AUTH_METHOD = 'CLIENT'
+ADLS_GEN2_AUTH_METHOD_CONFIG = 'config.adlsGen2Connection.authMethod'
+
+AZURE_AUTH_METHOD_CONFIG = {
+    # OAUTH got renamed to CLIENT
+    ADLS_GEN2_CLIENT_AUTH_METHOD: 'OAUTH',
+    ADLS_GEN2_DEFAULT_AUTH_METHOD: 'SHARED_KEY',
+}
+
+
+def get_auth_method_config(sdc_builder, config):
+    if Version(sdc_builder.version) >= Version("5.7.0"):
+        return AZURE_AUTH_METHOD_CONFIG.get(config)
+    return config
+
+
+def set_sdc_stage_config(deltalake, config, value):
+    # There is this stf issue that sets up 2 configs are named the same, both configs are set up
+    # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
+    # This acts as a workaround to only set that specific config
+    deltalake.sdc_stage_configurations[EXECUTOR_STAGE_NAME][config] = value
 
 
 @category('basic')
 @azure('datalake')
-@pytest.mark.parametrize('stage_attributes', [{'azure_authentication_method': 'SHARED_KEY',
-                                               'storage_location': 'ADLS_GEN2'}])
-def test_account_fqdn(sdc_builder, sdc_executor, stage_attributes, deltalake, azure):
+@pytest.mark.parametrize('authentication_method', ['SHARED_KEY'])
+@pytest.mark.parametrize('stage_attributes', [{'storage_location': 'ADLS_GEN2'}])
+def test_account_fqdn(sdc_builder, sdc_executor, deltalake, azure, authentication_method, stage_attributes):
+    authentication_method = get_auth_method_config(sdc_builder, authentication_method)
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        stage_attributes['azure_authentication_method'] = authentication_method
+    else:
+        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
 
 
 @category('basic')
 @azure('datalake')
-@pytest.mark.parametrize('stage_attributes', [{'azure_authentication_method': 'SHARED_KEY',
-                                               'storage_location': 'ADLS_GEN2'}])
-def test_account_shared_key(sdc_builder, sdc_executor, stage_attributes, deltalake, azure):
+@pytest.mark.parametrize('authentication_method', ['SHARED_KEY'])
+@pytest.mark.parametrize('stage_attributes', [{'storage_location': 'ADLS_GEN2'}])
+def test_account_shared_key(sdc_builder, sdc_executor, deltalake, azure, authentication_method, stage_attributes):
+    authentication_method = get_auth_method_config(sdc_builder, authentication_method)
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        stage_attributes['azure_authentication_method'] = authentication_method
+    else:
+        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        stage_attributes['endpoint_type'] = 'URL'
+
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
 
 
@@ -67,25 +100,46 @@ def test_additional_jdbc_configuration_properties(sdc_builder, sdc_executor):
 
 @category('basic')
 @azure('datalake')
-@pytest.mark.parametrize('stage_attributes', [{'azure_authentication_method': 'OAUTH',
-                                               'storage_location': 'ADLS_GEN2'}])
-def test_application_id(sdc_builder, sdc_executor, stage_attributes, deltalake, azure):
+@pytest.mark.parametrize('authentication_method', ['CLIENT'])
+@pytest.mark.parametrize('stage_attributes', [{'storage_location': 'ADLS_GEN2'}])
+def test_application_id(sdc_builder, sdc_executor, deltalake, azure, authentication_method, stage_attributes):
+    authentication_method = get_auth_method_config(sdc_builder, authentication_method)
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        stage_attributes['azure_authentication_method'] = authentication_method
+    else:
+        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        stage_attributes['endpoint_type'] = 'URL'
+
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
 
 
 @category('basic')
 @azure('datalake')
-@pytest.mark.parametrize('stage_attributes', [{'azure_authentication_method': 'OAUTH',
-                                               'storage_location': 'ADLS_GEN2'}])
-def test_application_key(sdc_builder, sdc_executor, stage_attributes, deltalake, azure):
+@pytest.mark.parametrize('authentication_method', ['CLIENT'])
+@pytest.mark.parametrize('stage_attributes', [{'storage_location': 'ADLS_GEN2'}])
+def test_application_key(sdc_builder, sdc_executor, deltalake, azure, authentication_method, stage_attributes):
+    authentication_method = get_auth_method_config(sdc_builder, authentication_method)
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        stage_attributes['azure_authentication_method'] = authentication_method
+    else:
+        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        stage_attributes['endpoint_type'] = 'URL'
+
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
 
 
 @category('basic')
 @azure('datalake')
-@pytest.mark.parametrize('stage_attributes', [{'azure_authentication_method': 'OAUTH',
-                                               'storage_location': 'ADLS_GEN2'}])
-def test_auth_token_endpoint(sdc_builder, sdc_executor, stage_attributes, deltalake, azure):
+@pytest.mark.parametrize('authentication_method', ['CLIENT'])
+@pytest.mark.parametrize('stage_attributes', [{'storage_location': 'ADLS_GEN2'}])
+def test_auth_token_endpoint(sdc_builder, sdc_executor, deltalake, azure, authentication_method, stage_attributes):
+    authentication_method = get_auth_method_config(sdc_builder, authentication_method)
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        stage_attributes['azure_authentication_method'] = authentication_method
+    else:
+        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        stage_attributes['endpoint_type'] = 'URL'
+
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
 
 
@@ -105,10 +159,16 @@ def test_aws_secret_key(sdc_builder, sdc_executor, stage_attributes, deltalake, 
 
 @category('basic')
 @azure('datalake')
-@pytest.mark.parametrize('stage_attributes', [{'azure_authentication_method': 'OAUTH', 'storage_location': 'ADLS_GEN2'},
-                                              {'azure_authentication_method': 'SHARED_KEY',
-                                               'storage_location': 'ADLS_GEN2'}])
-def test_azure_authentication_method(sdc_builder, sdc_executor, stage_attributes, deltalake, azure):
+@pytest.mark.parametrize('authentication_method', ['CLIENT', 'SHARED_KEY'])
+@pytest.mark.parametrize('stage_attributes', [{'storage_location': 'ADLS_GEN2'}])
+def test_authentication_method(sdc_builder, sdc_executor, deltalake, azure, authentication_method, stage_attributes):
+    authentication_method = get_auth_method_config(sdc_builder, authentication_method)
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        stage_attributes['azure_authentication_method'] = authentication_method
+    else:
+        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        stage_attributes['endpoint_type'] = 'URL'
+
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
 
 
@@ -207,8 +267,10 @@ def test_storage_location(sdc_builder, sdc_executor, stage_attributes, deltalake
         _test_with_no_storage(sdc_builder, sdc_executor, deltalake,
                               stage_attributes={'storage_location': DEFAULT_STORAGE_LOCATION})
     elif stage_attributes['storage_location'] == 'ADLS_GEN2':
-        stage_attributes.update({'azure_authentication_method': 'SHARED_KEY'})
-        _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
+        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, 'SHARED_KEY')
+        if Version(sdc_builder.version) >= Version("5.7.0"):
+            stage_attributes['endpoint_type'] = 'URL'
+        _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, )
     elif stage_attributes['storage_location'] == 'AWS_S3':
         _test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, stage_attributes)
 

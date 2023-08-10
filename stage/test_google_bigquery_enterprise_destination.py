@@ -1677,8 +1677,12 @@ def test_multithreaded_multiple_tables_date_types(sdc_builder, sdc_executor, gcp
                             bucket=bucket_name,
                             enable_data_drift=True,
                             create_table=True,
-                            purge_stage_file_after_ingesting=True,
-                            connection_pool_size=number_of_threads_and_tables)
+                            purge_stage_file_after_ingesting=True)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        bigquery.set_attributes(connection_pool_size=number_of_threads_and_tables)
+    else:
+        bigquery.set_attributes(maximum_connection_threads=number_of_threads_and_tables)
 
     wiretap = pipeline_builder.add_wiretap()
 

@@ -18,6 +18,7 @@ import string
 
 import pytest
 import sqlalchemy
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import snowflake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -45,6 +46,14 @@ CDC_OPERATIONS = {
 
 # AWS S3 bucket in case of AWS or Azure blob storage container in case of Azure.
 STORAGE_BUCKET_CONTAINER = 'snowflake'
+
+NEW_STAGE_LOCATIONS = {'AZURE': 'BLOB_STORAGE'}
+
+
+def get_stage_location(sdc_builder, stage_location):
+    if Version(sdc_builder.version) >= Version("5.7.0"):
+        return NEW_STAGE_LOCATIONS.get(stage_location)
+    return stage_location
 
 
 CDC_TEST_CASES = [
@@ -359,7 +368,7 @@ def test_cdc_snowflake_multiple_tables_and_ops(sdc_builder, sdc_executor, snowfl
     Snowflake pipeline:
         dev_raw_data_source  >>  Expression Evaluator >> Field Remover >> snowflake_destination
     """
-
+    stage_location = get_stage_location(sdc_builder, stage_location)
     table_name_1 = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     table_name_2 = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     table_names = [table_name_1, table_name_2]

@@ -98,7 +98,7 @@ def drop_table(engine, table_name):
     engine.execute(f'DROP TABLE IF EXISTS "{table_name}"')
 
 
-@pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "GCS", "AZURE"])
+@pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "GCS", "BLOB_STORAGE"])
 @pytest.mark.parametrize('compressed_file', [True, False])
 def test_basic(sdc_builder, sdc_executor, snowflake, stage_location, compressed_file):
     """
@@ -459,7 +459,7 @@ def test_table_included_in_multiple_table_config_rows(sdc_builder, sdc_executor,
         engine.dispose()
 
 
-@pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "GCS", "AZURE"])
+@pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "GCS", "BLOB_STORAGE"])
 @pytest.mark.parametrize('num_tables, num_records, batch_size', [(1, 500_000, 10000), (3, 100_000, 3333)])
 def test_big_amounts_of_records(sdc_builder, sdc_executor, snowflake, stage_location, num_tables, num_records,
                                 batch_size):

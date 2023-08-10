@@ -279,7 +279,7 @@ def test_object_names(sdc_builder, sdc_executor, snowflake, database_name_catego
         engine.dispose()
 
 
-@pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "GCS", "AZURE"])
+@pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "GCS", "BLOB_STORAGE"])
 @pytest.mark.parametrize('compressed_file', [True, False])
 def test_empty_table(sdc_builder, sdc_executor, snowflake, stage_location, compressed_file):
     """

@@ -16,6 +16,7 @@ import logging
 import string
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import snowflake
 from streamsets.testframework.utils import get_random_string
 
@@ -33,9 +34,9 @@ def sdc_common_hook():
     return hook
 
 
+@snowflake
 @pytest.mark.parametrize('number_of_threads_and_tables', [1, 2, 4, 8])
 @pytest.mark.parametrize('batch_size', [20_000, 100_000])
-@snowflake
 def test_multithreaded_batch_sizes(sdc_builder, sdc_executor, snowflake, number_of_threads_and_tables, batch_size):
     """Benchmark Snowflake destination with different thread and batch size combinations"""
 
@@ -63,11 +64,17 @@ def test_multithreaded_batch_sizes(sdc_builder, sdc_executor, snowflake, number_
                                          ignore_missing_fields=True,
                                          table_auto_create=True,
                                          table="STF_TABLE_${record:value('/ID') % " + str(number_of_threads_and_tables)
-                                               + '}_' + random_table_suffix,
-                                         connection_pool_size=number_of_threads_and_tables)
+                                               + '}_' + random_table_suffix)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(connection_pool_size=number_of_threads_and_tables)
+    else:
+        snowflake_destination.set_attributes(maximum_connection_threads=number_of_threads_and_tables)
+
     benchmark_stages = pipeline_builder.add_benchmark_stages()
     benchmark_stages.origin.set_attributes(number_of_threads=number_of_threads_and_tables,
                                            batch_size_in_recs=batch_size)
+
     benchmark_stages.origin >> snowflake_destination
 
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
@@ -110,8 +117,13 @@ def test_multithreaded_batch_sizes_internal_user_stage(sdc_builder, sdc_executor
                                          ignore_missing_fields=True,
                                          table_auto_create=True,
                                          table="STF_TABLE_${record:value('/ID') % " + str(number_of_threads_and_tables)
-                                               + '}_' + random_table_suffix,
-                                         connection_pool_size=number_of_threads_and_tables)
+                                               + '}_' + random_table_suffix)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(connection_pool_size=number_of_threads_and_tables)
+    else:
+        snowflake_destination.set_attributes(maximum_connection_threads=number_of_threads_and_tables)
+
     benchmark_stages = pipeline_builder.add_benchmark_stages()
     benchmark_stages.origin.set_attributes(number_of_threads=number_of_threads_and_tables,
                                            batch_size_in_recs=batch_size)

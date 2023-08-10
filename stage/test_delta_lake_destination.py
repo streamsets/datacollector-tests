@@ -113,6 +113,13 @@ AVRO_SCHEMA = '{ "type" : "record", "name" : "test_schema", "doc" : "", \
                      { "name" : "publisher", "type" : "string" } ] }'
 
 
+def set_sdc_stage_config(deltalake, config, value):
+    # There is this stf issue that sets up 2 configs are named the same, both configs are set up
+    # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
+    # This acts as a workaround to only set that specific config
+    deltalake.sdc_stage_configurations[DESTINATION_STAGE_NAME][config] = value
+
+
 @aws('s3')
 @pytest.mark.parametrize('specify_region', [False, True])
 @pytest.mark.parametrize('use_instance_profile', [False, True])
@@ -143,16 +150,25 @@ def test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, use_inst
                                         purge_stage_file_after_ingesting=True)
 
     if specify_region:
-        databricks_deltalake.set_attributes(specify_aws_region=specify_region,
-                                            aws_region=aws.region.upper().replace('-', '_'))
+        if Version(sdc_builder.version) < Version("5.7.0"):
+            databricks_deltalake.set_attributes(specify_aws_region=specify_region,
+                                                aws_region=aws.region.upper().replace('-', '_'))
+        else:
+            databricks_deltalake.set_attributes(use_specific_region=specify_region,
+                                                region=aws.region.upper().replace('-', '_'))
+
+    # In case of Instance Profile we set it to True and set keys to blank
+    if use_instance_profile:
+        if Version(sdc_builder.version) < Version("5.7.0"):
+            databricks_deltalake.set_attributes(use_instance_profile=True, access_key_id="", secret_access_key="")
+        else:
+            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
+            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsAccessKeyId', '')
+            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsSecretAccessKey', '')
 
     dev_raw_data_source >> databricks_deltalake
 
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
-
-    # In case of Instance Profile we set it to True and set keys to blank
-    if use_instance_profile:
-        databricks_deltalake.set_attributes(use_instance_profile=True, access_key_id="", secret_access_key="")
 
     try:
         logger.info(f'Creating table {table_name} ...')
@@ -204,10 +220,14 @@ def test_with_adls_shared_key_storage(sdc_builder, sdc_executor, deltalake, azur
     # Databricks Delta lake destination stage
     databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
     databricks_deltalake.set_attributes(staging_location='ADLS_GEN2',
-                                        azure_authentication_method='SHARED_KEY',
                                         stage_file_prefix=files_prefix,
                                         table_name=table_name,
                                         purge_stage_file_after_ingesting=True)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        databricks_deltalake.set_attributes(azure_authentication_method='SHARED_KEY')
+    else:
+        set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
 
     dev_raw_data_source >> databricks_deltalake
 
@@ -265,14 +285,17 @@ def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure, st
     # Databricks Delta lake destination stage
     databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
     databricks_deltalake.set_attributes(staging_location='ADLS_GEN2',
+                                        endpoint_type='URL',
                                         on_record_error='STOP_PIPELINE',
-                                        azure_authentication_method='OAUTH',
                                         stage_file_prefix=files_prefix,
                                         table_name=table_name,
                                         staging_file_format=staging_file_format,
                                         purge_stage_file_after_ingesting=True)
-    if staging_file_format == "PARQUET":
-        databricks_deltalake.set_attributes(parquet_schema_location='INFER')
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        databricks_deltalake.set_attributes(azure_authentication_method='OAUTH')
+    else:
+        set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'CLIENT')
 
     dev_raw_data_source >> databricks_deltalake
 
@@ -928,10 +951,14 @@ def test_table_el_eval_multiple_threads(sdc_builder, sdc_executor, deltalake, aw
     databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
     databricks_deltalake.set_attributes(staging_location='AWS_S3',
                                         stage_file_prefix=s3_key,
-                                        connection_pool_size=5,
                                         table_name="${record:value('/table')}",
                                         purge_stage_file_after_ingesting=True,
                                         replace_newlines=True)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        databricks_deltalake.set_attributes(connection_pool_size=5)
+    else:
+        databricks_deltalake.set_attributes(maximum_connection_threads=5)
 
     directory >> databricks_deltalake
     directory >= file_finished_finisher

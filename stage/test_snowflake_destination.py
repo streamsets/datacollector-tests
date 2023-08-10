@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 pytestmark = [snowflake, sdc_min_version('5.4.0')]
 
+NEW_STAGE_LOCATIONS = {'AZURE': 'BLOB_STORAGE'}
+
 # from CommonDatabaseHeader.java
 PRIMARY_KEY_COLUMN_OLD_VALUE = 'jdbc.primaryKey.before'
 PRIMARY_KEY_COLUMN_NEW_VALUE = 'jdbc.primaryKey.after'
@@ -93,6 +95,12 @@ CDC_ROWS_IN_DATABASE_COMPOSITE_KEY = [
 STORAGE_BUCKET_CONTAINER = 'snowflake'
 
 
+def get_stage_location(sdc_builder, stage_location):
+    if Version(sdc_builder.version) >= Version("5.7.0"):
+        return NEW_STAGE_LOCATIONS.get(stage_location)
+    return stage_location
+
+
 @snowflake
 @sdc_min_version('3.7.0')
 @pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "AZURE", "GCS"])
@@ -106,7 +114,7 @@ def test_basic(sdc_builder, sdc_executor, snowflake, stage_location):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location)
+    _run_test_basic(sdc_builder, sdc_executor, snowflake, get_stage_location(sdc_builder, stage_location))
 
 
 @snowflake
@@ -121,7 +129,7 @@ def test_basic_aws_sse_kms(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    _run_test_basic(sdc_builder, sdc_executor, snowflake, 'AWS_S3', sse_kms=True)
+    _run_test_basic(sdc_builder, sdc_executor, snowflake, get_stage_location(sdc_builder, 'AWS_S3'), sse_kms=True)
 
 
 @snowflake
@@ -135,7 +143,8 @@ def test_basic_azure_sas_token(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    _run_test_basic(sdc_builder, sdc_executor, snowflake, 'AZURE', sas_token=True)
+    _run_test_basic(sdc_builder, sdc_executor, snowflake, get_stage_location(sdc_builder, 'AZURE'), sas_token=True)
+
 
 @snowflake
 @sdc_min_version('5.7.0')
@@ -148,10 +157,12 @@ def test_basic_parquet(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
-    _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location='INTERNAL', data_format='PARQUET')
+    _run_test_basic(sdc_builder, sdc_executor, snowflake, get_stage_location(sdc_builder, 'INTERNAL'),
+                    data_format='PARQUET')
 
 
-def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_kms=False, sas_token=False, data_format='CSV'):
+def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_kms=False, sas_token=False,
+                    data_format='CSV'):
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -209,9 +220,9 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
 
 @snowflake
 @sdc_min_version('5.7.0')
-@pytest.mark.parametrize('stage_location', ["AWS_S3"])
 @pytest.mark.parametrize('tags_size', [5, 20])
-def test_tags(sdc_builder, sdc_executor, snowflake, stage_location, tags_size):
+def test_s3_staging_tags(sdc_builder, sdc_executor, snowflake, tags_size):
+    stage_location = get_stage_location(sdc_builder, 'AWS_S3')
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -264,19 +275,19 @@ def test_tags(sdc_builder, sdc_executor, snowflake, stage_location, tags_size):
             s3_bucket = snowflake.aws_s3_stage.aws_s3_bucket_name
             s3_key_prefix = f'{snowflake.aws_s3_stage.aws_s3_key_prefix}/{storage_path}'
             s3_bucket_objects = client.list_objects_v2(Bucket=s3_bucket, Prefix=s3_key_prefix)
-            if not 'Contents' in s3_bucket_objects:
+            if 'Contents' not in s3_bucket_objects:
                 pytest.fail(f'Contents not found in response: {s3_bucket_objects}')
             keys = [k['Key'] for k in s3_bucket_objects['Contents']]
             if not any(keys):
                 pytest.fail(f'keys not found in Contents response: {s3_bucket_objects["Contents"]}')
             for key in keys:
                 response = client.get_object_tagging(Bucket=s3_bucket, Key=key)
-                if not 'TagSet' in response:
+                if 'TagSet' not in response:
                     pytest.fail(f'TagSet not found in response: {response}')
                 response_tags = sorted(response['TagSet'], key=itemgetter('Key'))
                 assert len(response_tags) == len(s3_tags), "number of tags differ!"
                 diff = [(x, y) for x, y in zip(s3_tags, response_tags) if x['key'] != y['Key'] or x['value'] != y['Value']]
-                assert not any(diff), f'tags do not match!'
+                assert not any(diff), 'tags do not match!'
 
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
@@ -1242,10 +1253,15 @@ def test_snowflake_multitable_volume_multithread(sdc_builder, sdc_executor, snow
     snowflake_destination.set_attributes(snowflake_stage_name=stage_name,
                                          table="${record:value('/ITEM_TYPE')}",
                                          row_field='/', column_fields_to_ignore='ITEM_TYPE',
-                                         table_auto_create=True,
-                                         connection_pool_size=5)
+                                         table_auto_create=True)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(connection_pool_size=5)
+    else:
+        snowflake_destination.set_attributes(maximum_connection_threads=5)
 
     dev_data_generator >> expression_evaluator >> field_remover >> snowflake_destination
+
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     sdc_executor.add_pipeline(pipeline)
     try:
@@ -1574,10 +1590,14 @@ def test_table_el_eval_snowflake(sdc_builder, sdc_executor, snowflake):
     # Build Snowflake stage.
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
-                                         connection_pool_size=5,
                                          snowflake_stage_name=stage_name,
                                          table="${record:value('/TABLE')}",
                                          row_field='/')
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(connection_pool_size=5)
+    else:
+        snowflake_destination.set_attributes(maximum_connection_threads=5)
 
     directory >> snowflake_destination
     directory >= file_finished_finisher
@@ -1652,6 +1672,7 @@ def test_instance_profile_credentials(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
+    stage_location = get_stage_location(sdc_builder, 'AWS_S3')
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -1660,7 +1681,7 @@ def test_instance_profile_credentials(sdc_builder, sdc_executor, snowflake):
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
-    snowflake.create_stage(stage_name, storage_path, stage_location="AWS_S3")
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
 
     # Build the pipeline with created Snowflake entities.
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -1675,7 +1696,7 @@ def test_instance_profile_credentials(sdc_builder, sdc_executor, snowflake):
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
-                                         stage_location="AWS_S3",
+                                         stage_location=stage_location,
                                          use_instance_profile=True)
 
     dev_raw_data_source >> snowflake_destination
@@ -2975,8 +2996,12 @@ def test_multithreaded_multiple_tables(sdc_builder, sdc_executor, snowflake, num
                                          data_drift_enabled=True,
                                          ignore_missing_fields=True,
                                          table="STF_TABLE_${record:value('/ID') % " + str(number_of_threads_and_tables)
-                                               + '}_' + random_table_suffix,
-                                         connection_pool_size=number_of_threads_and_tables)
+                                               + '}_' + random_table_suffix)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(connection_pool_size=number_of_threads_and_tables)
+    else:
+        snowflake_destination.set_attributes(maximum_connection_threads=number_of_threads_and_tables)
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -3071,8 +3096,12 @@ def test_multithreaded_multiple_tables_date_types(sdc_builder, sdc_executor, sno
                                          table_auto_create=True,
                                          table="STF_TABLE_${record:value('/ID') % "
                                                + str(number_of_threads_and_tables)
-                                               + '}_' + random_table_suffix,
-                                         connection_pool_size=number_of_threads_and_tables)
+                                               + '}_' + random_table_suffix)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(connection_pool_size=number_of_threads_and_tables)
+    else:
+        snowflake_destination.set_attributes(maximum_connection_threads=number_of_threads_and_tables)
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -3124,6 +3153,7 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
     Snowflake pipeline:
         dev_raw_data_source  >> snowflake_destination
     """
+    stage_location = get_stage_location(sdc_builder, 'AWS_S3')
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -3132,7 +3162,7 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
     # The following is path inside a bucket in case of AWS S3 or
     # path inside container in case of Azure Blob Storage container.
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
-    snowflake.create_stage(stage_name, storage_path, stage_location='AWS_S3')
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
 
     # Build the pipeline with created Snowflake entities.
     pipeline_builder = sdc_builder.get_pipeline_builder()
@@ -3144,7 +3174,7 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
                                        stop_after_first_batch=True)
 
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
-    snowflake_destination.set_attributes(stage_location='AWS_S3',
+    snowflake_destination.set_attributes(stage_location=stage_location,
                                          purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
@@ -3171,41 +3201,19 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
         table.drop(engine)
         engine.dispose()
 
-def _start_pipeline_and_check_stopped(sdc_executor, pipeline, wiretap):
-    with pytest.raises(Exception):
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        sdc_executor.stop_pipeline()
-    response = sdc_executor.get_pipeline_status(pipeline).response.json()
-    status = response.get('status')
-    logger.info('Pipeline status %s ...', status)
-    assert status in ['RUNNING_ERROR', 'RUN_ERROR'], response
-
-def _start_pipeline_and_check_to_error(sdc_executor, pipeline, wiretap):
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert 2 == len(wiretap.error_records)
-
-def _start_pipeline_and_check_discard(sdc_executor, pipeline, wiretap):
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert 0 == len(wiretap.error_records)
-
 
 @snowflake
 @sdc_min_version('3.7.0')
 @sdc_enterprise_lib_min_version({'snowflake': '1.13.0'})
-@pytest.mark.parametrize("on_error_record, start_and_check",
-                         [("STOP_PIPELINE", _start_pipeline_and_check_stopped),
-                          ("DISCARD"      , _start_pipeline_and_check_discard),
-                          ("TO_ERROR"     , _start_pipeline_and_check_to_error)])
-def test_snowflake_write_records_on_error(sdc_builder, sdc_executor, snowflake,
-                                          on_error_record, start_and_check):
+@pytest.mark.parametrize("on_error_record", ["STOP_PIPELINE", "DISCARD", "TO_ERROR"])
+def test_snowflake_write_records_on_error(sdc_builder, sdc_executor, snowflake, on_error_record):
     """
     Write DB with malformed records and check pipeline behaves as set in 'on_record_error'
     dev_raw_data_source >> Snowflake
     """
-
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
-    stage_location = "INTERNAL"
+    stage_location = get_stage_location(sdc_builder, 'INTERNAL')
 
     # Create a table and stage in Snowflake.
     table = snowflake.create_table(table_name.lower())
@@ -3234,12 +3242,28 @@ def test_snowflake_write_records_on_error(sdc_builder, sdc_executor, snowflake,
 
     # Build pipeline.
     dev_raw_data_source >> [snowflake_destination, wiretap.destination]
+
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        start_and_check(sdc_executor, pipeline, wiretap)
+        if on_error_record == "STOP_PIPELINE":
+            with pytest.raises(Exception):
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
+                sdc_executor.stop_pipeline()
+            response = sdc_executor.get_pipeline_status(pipeline).response.json()
+            status = response.get('status')
+            logger.info('Pipeline status %s ...', status)
+            assert status in ['RUNNING_ERROR', 'RUN_ERROR'], response
+        elif on_error_record == "DISCARD":
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert 2 == len(wiretap.error_records)
+        elif on_error_record == "TO_ERROR":
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert 0 == len(wiretap.error_records)
+        else:
+            pytest.fail("Should not reach here")
     finally:
         logger.debug('Staged files will be deleted from %s ...', storage_path)
         snowflake.delete_staged_files(storage_path)
@@ -3456,7 +3480,7 @@ def test_cdc_snowflake_array_columns_default_value(sdc_builder, sdc_executor, sn
 @sdc_min_version('5.7.0')
 def test_primary_key(sdc_builder, sdc_executor, snowflake):
     records_to_be_generated = 10
-    stage_location = "INTERNAL"
+    stage_location = get_stage_location(sdc_builder, 'INTERNAL')
     pk = "ID"
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
@@ -3569,7 +3593,7 @@ def test_type_conversion_error_contains_helpful_information(
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
     storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
-    stage_location = "INTERNAL"
+    stage_location = get_stage_location(sdc_builder, 'INTERNAL')
     snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
 
     # Build the pipeline with created Snowflake entities.

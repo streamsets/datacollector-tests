@@ -4,6 +4,8 @@ import json
 import logging
 import pytest
 from .. import _clean_up_databricks
+
+from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import aws, deltalake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -156,6 +158,13 @@ CDC_UPDATES_ROWS_IN_DATABASE_COMPOSITE_KEY = [
         'ADDRESS': 'Bag End 6'
     }
 ]
+
+
+def set_sdc_stage_config(deltalake, config, value):
+    # There is this stf issue that sets up 2 configs are named the same, both configs are set up
+    # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
+    # This acts as a workaround to only set that specific config
+    deltalake.sdc_stage_configurations[DESTINATION_STAGE_NAME][config] = value
 
 
 @stub
@@ -1059,11 +1068,16 @@ def test_use_iam_roles(sdc_builder, sdc_executor, deltalake, aws, use_instance_p
 
     dev_raw_data_source >> databricks_deltalake
 
-    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
-
     # In case of IAM Roles we set it to True and set keys to blank
     if use_instance_profile:
-        databricks_deltalake.set_attributes(use_instance_profile=True, access_key_id="", secret_access_key="")
+        if Version(sdc_builder.version) < Version("5.7.0"):
+            databricks_deltalake.set_attributes(use_instance_profile=True, access_key_id="", secret_access_key="")
+        else:
+            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
+            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsAccessKeyId', '')
+            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsSecretAccessKey', '')
+
+    pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 
     try:
         logger.info(f'Creating table {table_name} ...')
