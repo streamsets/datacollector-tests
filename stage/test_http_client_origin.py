@@ -610,7 +610,7 @@ def test_http_client_origin_pagination_data_last_response(
 
         http_source >> wiretap.destination
 
-        pipeline = builder.build(title='HTTP Client Origin Keep All Fields not repeating records when writing LocalFS')
+        pipeline = builder.build(title='test_http_client_origin_pagination_data_last_response pipeline')
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         # Stops automatically because of 'BATCH' mode on HTTP Client Origin
@@ -630,6 +630,100 @@ def test_http_client_origin_pagination_data_last_response(
         http_mock.delete_mock()
         if pipeline is not None:
             sdc_executor.remove_pipeline(pipeline)
+
+
+@http
+@sdc_min_version("5.7.0")
+@pytest.mark.parametrize('illegal_character',
+                         [
+                             {'unsafe_character': ' ', 'encoded_value': '%20'},
+                             {'unsafe_character': '"', 'encoded_value': '%22'},
+                             {'unsafe_character': '<', 'encoded_value': '%3C'},
+                             {'unsafe_character': '>', 'encoded_value': '%3E'},
+                             {'unsafe_character': '%', 'encoded_value': '%25'},
+                             {'unsafe_character': '|', 'encoded_value': '%7C'}
+                             # May want to add others
+                         ])
+def test_http_client_origin_pagination_response_url_with_illegal_character(
+        sdc_builder,
+        sdc_executor,
+        illegal_character,
+        http_client
+):
+    """HTTP Client Origin using pagination where the response url contains illegal characters.
+     This tests the issue on ESC-2220"""
+    mock_path = get_random_string(string.ascii_letters, 10)
+    http_mock = http_client.mock()
+
+    NUM_DATA = 6
+    data = [{'id': i, 'name': f"name{i}"} for i in range(NUM_DATA)]
+
+    # First server request
+    next_page = f"{http_mock.pretend_url}/{mock_path}{illegal_character['unsafe_character']}more_text#fragmnt1#fragmnt2"
+    assert next_page.__contains__(illegal_character['unsafe_character'])
+    data_array = {
+        'metadata': 'Example',
+        'next_page': next_page,
+        'data': data[0:2]
+    }
+    expected_data = json.dumps(data_array)
+    http_mock.when(f'GET /{mock_path}').reply(body=expected_data,
+                                              status=200,
+                                              times=1)
+    # Second server request
+    next_page1 = next_page + \
+                 f"?$filter=MODIFIED_DATE{illegal_character['unsafe_character']}" \
+                 f"gt{illegal_character['unsafe_character']}datetime'2023-05-14T00:00:00'&$top=1&$skiptoken=1"
+    assert next_page1.__contains__(illegal_character['unsafe_character'])
+    data_array1 = {
+        'metadata': 'Example',
+        'next_page': next_page1,
+        'data': data[2:4]
+    }
+    expected_data1 = json.dumps(data_array1)
+    http_mock.when(f'GET /{mock_path}').reply(body=expected_data1,
+                                              status=200,
+                                              times=1)
+    # Third server request
+    data_array2 = {
+        'metadata': 'Example',
+        'next_page': None,
+        'data': data[4:6]
+    }
+    expected_data2 = json.dumps(data_array2)
+    http_mock.when(f'GET /{mock_path}').reply(body=expected_data2,
+                                              status=200,
+                                              times=1)
+
+    try:
+        builder = sdc_builder.get_pipeline_builder()
+        http_source = builder.add_stage('HTTP Client', type='origin')
+        http_source.set_attributes(data_format='JSON', http_method='GET',
+                                   resource_url=f'{http_mock.pretend_url}/{mock_path}',
+                                   mode='BATCH',
+                                   pagination_mode='LINK_FIELD',
+                                   next_page_link_field="/next_page",
+                                   stop_condition="${record:value('/next_page') == null }",
+                                   result_field_path="/data",
+                                   keep_all_fields=True)
+        wiretap = builder.add_wiretap()
+
+        http_source >> wiretap.destination
+
+        pipeline = builder.build(title='test_http_client_origin_pagination_response_url_with_illegal_character pipeline')
+        sdc_executor.add_pipeline(pipeline)
+
+        # Run pipeline
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        assert len(wiretap.output_records) == NUM_DATA,\
+            f"Records mismatch: {len(wiretap.output_records)} records present when {NUM_DATA} where expected."
+    except RunError as e:
+        assert False, f'RunError - Illegal character in next page url: {e}'
+    finally:
+        http_mock.delete_mock()
+        if pipeline is not None:
+           sdc_executor.remove_pipeline(pipeline)
 
 
 def _get_metrics(history, run_mode):
