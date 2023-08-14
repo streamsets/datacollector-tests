@@ -16,6 +16,9 @@ import copy
 import json
 import logging
 import time
+import string
+import random
+import datetime
 from string import ascii_letters
 
 import pytest
@@ -203,7 +206,7 @@ def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
     database_name = get_random_string(ascii_letters, 5)
     collection1 = get_random_string(ascii_letters, 10)
     collection2 = get_random_string(ascii_letters, 10)
-    logger.debug('database_name: %s, collection1: %s, collection2: %s' , database_name, collection1, collection2)
+    logger.debug('database_name: %s, collection1: %s, collection2: %s', database_name, collection1, collection2)
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     pipeline_builder.add_error_stage('Discard')
@@ -224,13 +227,13 @@ def test_mongodb_origin_DBRef_type(sdc_builder, sdc_executor, mongodb):
         mongodb_database = mongodb.engine[database_name]
         mongodb_collection1 = mongodb_database[collection1]
         insert_list = [mongodb_collection1.insert_one(doc) for doc in docs_in_database]
-        num_of_records  = len(insert_list)
+        num_of_records = len(insert_list)
         logger.info('Added %i documents into %s collection', num_of_records, collection1)
 
         # Step 2. Generate test documents with DBRef datatype and insert to collection #2
         logger.info('Adding test documents into %s collection...', collection2)
         mongodb_collection2 = mongodb_database[collection2]
-        docs_in_col1 = [] # This will be used to compare the result
+        docs_in_col1 = []  # This will be used to compare the result
         # Obtain sample document's _id from collection #1 and assign it to test document as inserting into collection #2
         for doc in mongodb_collection1.find().sort('_id', 1):
             # Sort by _id so that we can compare the result easily later
@@ -358,7 +361,8 @@ def test_mongodb_origin_simple_with_decimal(sdc_builder, sdc_executor, mongodb):
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(docs_in_database))
         sdc_executor.stop_pipeline(pipeline)
 
-        assert [{'data': decimal128.Decimal128(str(record.field['data']))} for record in wiretap.output_records] == ORIG_BINARY_DOCS
+        assert [{'data': decimal128.Decimal128(str(record.field['data']))} for record in
+                wiretap.output_records] == ORIG_BINARY_DOCS
     finally:
         logger.info('Dropping %s database...', mongodb_origin.database)
         mongodb.engine.drop_database(mongodb_origin.database)
@@ -616,7 +620,7 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
     pipeline_builder.add_error_stage('Discard')
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    lookup_data = ['name,state'] + ['{},{}'.format(row['name'],row['location']['state']) for row in NESTED_DOCS]
+    lookup_data = ['name,state'] + ['{},{}'.format(row['name'], row['location']['state']) for row in NESTED_DOCS]
     dev_raw_data_source.set_attributes(data_format='DELIMITED',
                                        header_line='WITH_HEADER',
                                        raw_data='\n'.join(lookup_data),
@@ -656,7 +660,7 @@ def test_mongodb_lookup_processor_nested_lookup(sdc_builder, sdc_executor, mongo
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         for record, actual in zip(wiretap.output_records, NESTED_DOCS):
-            assert record.get_field_data('/result/location/city')  == actual['location']['city']
+            assert record.get_field_data('/result/location/city') == actual['location']['city']
 
     finally:
         logger.info('Dropping %s database...', mongodb_lookup.database)
@@ -774,3 +778,74 @@ def test_mongodb_destination_update_on_nested_key(sdc_builder, sdc_executor, mon
     finally:
         logger.info('Dropping %s database...', mongodb_dest.database)
         mongodb.engine.drop_database(mongodb_dest.database)
+
+
+@mongodb('legacy')
+@pytest.mark.parametrize('batch_size', [
+    2,
+    6,
+    11
+])
+def test_mongodb_origin_duplicate_dates(sdc_builder, sdc_executor, mongodb, batch_size):
+    """Ensure that an having duplicates values in the offset field don't force the no-more-data event and stops the
+    pipeline before reading all the documents stored in MongoDB.
+    The pipeline looks like:
+
+        mongodb_origin >> wiretap.destination
+        mongodb_origin >= finisher
+    """
+    collection_name = get_random_string(ascii_letters, 5)
+    database_name = get_random_string(ascii_letters, 5)
+
+    try:
+        number_records = 500
+        data_input = []
+        for i in range(number_records):
+            year = f'20{random.randint(0, 9)}{random.randint(1, 9)}'
+            data_input.append(dict(pk=i,
+                                   updatedOn=datetime.datetime(int(year), 3, 24, 13, 0),
+                                   text='b' + get_random_string(string.ascii_letters, 4)))
+
+        docs_in_database = copy.deepcopy(data_input)
+        mongodb_database = mongodb.engine[database_name]
+        mongodb_collection = mongodb_database[collection_name]
+        insert_list = [mongodb_collection.insert_one(doc) for doc in docs_in_database]
+        assert len(insert_list) == len(docs_in_database)
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        pipeline_builder.add_error_stage('Discard')
+
+        mongodb_origin = pipeline_builder.add_stage('MongoDB', type='origin')
+        mongodb_origin.set_attributes(capped_collection=False,
+                                      database=database_name,
+                                      collection=collection_name,
+                                      offset_field_type='DATE',
+                                      initial_offset='2000-01-01 00:00:00',
+                                      offset_field='updatedOn',
+                                      batch_size_in_records=batch_size)
+
+        wiretap = pipeline_builder.add_wiretap()
+
+        finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+        mongodb_origin >> wiretap.destination
+        mongodb_origin >= finisher
+
+        pipeline = pipeline_builder.build(title=f'Test MongoDB Origin Duplicate Date - {batch_size} records') \
+            .configure_for_environment(mongodb)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        assert len(records) == number_records
+        output_records = [dict(pk=record.get_field_data('pk'),
+                               updatedOn=record.get_field_data('updatedOn'),
+                               text=record.get_field_data('text'))
+                          for record in records]
+        assert sorted(output_records, key=lambda d: (d['pk'])) == data_input
+
+    finally:
+        logger.info('Dropping %s database...', database_name)
+        mongodb.engine.drop_database(database_name)
