@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 import json
 import pytest
 import time
@@ -38,10 +39,10 @@ pytestmark = [aerospike, sdc_min_version('5.6.0')]
     ('MAP', {'a': 10}, dict, {'a': 10}),
     ('LIST_MAP', {'a': 10}, dict, {'a': 10}),
     ('LIST', [1,2,3], list, [1,2,3]),
-    ('DECIMAL', 100, float, 100.0),  # no lo soportamos
-    ('DATE', '2020-01-01 10:00:00', str, 'Wed Jan 01 10:00:00 CET 2020'),
-    ('DATETIME', '2020-01-01 10:00:00', str, 'Wed Jan 01 10:00:00 CET 2020'),
-    ('TIME', '2020-01-01 10:00:00', str, 'Wed Jan 01 10:00:00 CET 2020'),
+    ('DECIMAL', 100, float, 100.0),
+    ('DATE', '2020-01-01 10:00:00', str, 'Wed Jan 01 10:00:00 [A-Z]{3,4} 2020'),
+    ('DATETIME', '2020-01-01 10:00:00', str, 'Wed Jan 01 10:00:00 [A-Z]{3,4} 2020'),
+    ('TIME', '2020-01-01 10:00:00', str, 'Wed Jan 01 10:00:00 [A-Z]{3,4} 2020'),
     ('ZONED_DATETIME', "2020-01-01T10:00:00+00:00", str, "2020-01-01T10:00:00Z"),
 ])
 def test_data_types(sdc_builder, sdc_executor, aerospike, sdc_type, input_value, expected_type, expected_value):
@@ -82,6 +83,8 @@ def test_data_types(sdc_builder, sdc_executor, aerospike, sdc_type, input_value,
         assert type(bins['value']) == expected_type
         if expected_type == float:
             assert round(bins['value'], 2) == round(expected_value, 2)
+        elif expected_type == str:
+            assert re.search(expected_value, bins['value']) != None
         else:
             assert bins['value'] == expected_value
     finally:
