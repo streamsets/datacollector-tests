@@ -812,13 +812,15 @@ def test_cdc_merge(sdc_builder, sdc_executor, gcp, file_format):
                             merge_cdc_data=True,
                             quote_character="|",
                             column_separator=":",
-                            primary_key_location="TABLE",
                             key_columns=[{
                                 "keyColumns": [
                                     "NAME"
                                 ],
                                 "table": table_name
                             }])
+
+    if Version(sdc_builder.version) >= Version("5.7.0"):
+        bigquery.primary_key_location = "TABLE"
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> bigquery
 
@@ -1040,13 +1042,15 @@ def test_cdc_merge_with_special_quoting(sdc_builder, sdc_executor, gcp):
                             merge_cdc_data=True,
                             quote_character="|",
                             column_separator=":",
-                            primary_key_location="TABLE",
                             key_columns=[{
                                 "keyColumns": [
                                     "NAME"
                                 ],
                                 "table": table_name
                             }])
+
+    if Version(sdc_builder.version) >= Version("5.7.0"):
+        bigquery.primary_key_location = "TABLE"
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> bigquery
 
