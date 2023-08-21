@@ -1622,6 +1622,106 @@ def test_multithreading(sdc_builder, sdc_executor, gcp, eval_value):
         _clean_up_gcs(gcp, bucket, bucket_name)
 
 
+@sdc_min_version('5.6.1')
+@pytest.mark.parametrize('number_of_threads_and_tables', [15])
+@pytest.mark.parametrize('number_of_records', [100_000])
+@pytest.mark.parametrize('batch_size', [10_000])
+def test_multithreaded_multiple_tables_date_types(sdc_builder, sdc_executor, gcp, number_of_threads_and_tables,
+                                                  number_of_records, batch_size):
+    """
+        Similar to test_multithreaded_multiple_tables in Snowflake destination, ensuring multiple tables work
+        for DATE/DATETIME types. The creation of these types is not always thread safe, so we need to make sure.
+    """
+
+    fields_to_generate = [{'type': 'LONG_SEQUENCE', 'field': 'ID'},
+                          {'type': 'DATE', 'field': 'DATE'},
+                          {'type': 'DATETIME', 'field': 'DATETIME'},
+                          {'type': 'TIME', 'field': 'TIME'}]
+
+    def convert(field, field_type):
+        if field_type == 'LONG_SEQUENCE':
+            field = str(field)
+        elif field_type == 'DATE':
+            field = field.date()
+        elif field_type == 'TIME':
+            field = field.time()
+        return field
+
+    # We generate the number of tables we need
+    random_table_suffix = get_random_string(ascii_lowercase, 5)
+    table_names = [f'STF_TABLE_{idx}_{random_table_suffix}' for idx in range(number_of_threads_and_tables)]
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    dev_data_generator = pipeline_builder.add_stage('Dev Data Generator')
+    dev_data_generator.set_attributes(
+        records_to_be_generated=number_of_records, batch_size=batch_size,
+        number_of_threads=number_of_threads_and_tables, delay_between_batches=10,
+        fields_to_generate=fields_to_generate
+    )
+
+    # We need to deduplicate records as dev_generator might create the same record in multiple threads
+    record_deduplicator = pipeline_builder.add_stage('Record Deduplicator')
+    record_deduplicator.set_attributes(compare="SPECIFIED_FIELDS", fields_to_compare=['/ID'])
+    trash = pipeline_builder.add_stage('Trash')
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table="STF_TABLE_${record:value('/ID') % "
+                                  + str(number_of_threads_and_tables)
+                                  + '}_' + random_table_suffix,
+                            bucket=bucket_name,
+                            enable_data_drift=True,
+                            create_table=True,
+                            purge_stage_file_after_ingesting=True)
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_data_generator >> record_deduplicator >> [bigquery, wiretap.destination]
+    record_deduplicator >> trash
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+        bigquery_client.create_dataset(dataset_ref)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished(timeout_sec=1800)
+
+        # We collect the data received in wiretap and create an array for each table
+        expected_data_per_table = {table_name: [] for table_name in table_names}
+        for record in wiretap.output_records:
+            record_table_name = \
+                f'STF_TABLE_{int(str(record.field["ID"])) % number_of_threads_and_tables}_{random_table_suffix}'
+            expected_record = ()
+            for field in fields_to_generate:
+                expected_record = expected_record + (convert(record.field[field['field']].value, field['type']),)
+            expected_data_per_table[record_table_name].append(expected_record)
+
+        # And then for each table, we check what we received in wiretap matches
+        for table_name in table_names:
+            # Order by id per table to compare
+            table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+            rows = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+            sorted_data_from_database = sorted(rows, key=lambda x: x[0])
+            sorted_expected_data = sorted(expected_data_per_table[table_name], key=lambda x: x[0])
+            # And compare sorted data per table
+            assert sorted_data_from_database == sorted_expected_data, \
+                'Data read from BigQuery should have been the same as the data captured in wiretap.'
+    finally:
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
+
 def test_allow_quoted_newlines(sdc_builder, sdc_executor, gcp):
     """Test for Google BigQuery with Google Cloud Storage staging. Purpose of the test is the Allow Quoted Newlines
     config, with a quoted newline character in the inserted data.
