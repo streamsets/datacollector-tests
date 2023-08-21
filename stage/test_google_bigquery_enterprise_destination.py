@@ -1677,7 +1677,8 @@ def test_multithreaded_multiple_tables_date_types(sdc_builder, sdc_executor, gcp
                             bucket=bucket_name,
                             enable_data_drift=True,
                             create_table=True,
-                            purge_stage_file_after_ingesting=True)
+                            purge_stage_file_after_ingesting=True,
+                            connection_pool_size=number_of_threads_and_tables)
 
     wiretap = pipeline_builder.add_wiretap()
 

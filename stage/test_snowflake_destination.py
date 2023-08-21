@@ -3071,7 +3071,8 @@ def test_multithreaded_multiple_tables_date_types(sdc_builder, sdc_executor, sno
                                          table_auto_create=True,
                                          table="STF_TABLE_${record:value('/ID') % "
                                                + str(number_of_threads_and_tables)
-                                               + '}_' + random_table_suffix)
+                                               + '}_' + random_table_suffix,
+                                         connection_pool_size=number_of_threads_and_tables)
 
     wiretap = pipeline_builder.add_wiretap()
 
