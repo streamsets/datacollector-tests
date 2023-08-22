@@ -219,11 +219,13 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
                                      data_format=data_format,
                                      prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
                                      number_of_threads=number_of_threads,
+                                     file_processing_delay_in_ms=0,
                                      read_order=read_order)
         elif number_of_threads == 1:
             s3_origin.set_attributes(bucket=s3_bucket,
                                      data_format=data_format,
                                      prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
+                                     file_processing_delay_in_ms=0,
                                      read_order=read_order)
         else:
             pytest.skip("Multithreaded features are supported in S3 origin only for SDC Versions >= 3.7.0")
