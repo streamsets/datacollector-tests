@@ -15,9 +15,16 @@
 import os
 import string
 import tempfile
+import avro
+import io
+import tarfile
+import base64
+import datetime
 
 import pytest
+import pyarrow.parquet as pq
 
+from avro.datafile import DataFileWriter
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -128,3 +135,79 @@ def test_parquet_to_s3(sdc_builder, sdc_executor, aws):
         delete_keys = {'Objects': [{'Key': k['Key']}
                                    for k in client.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=tmp_prefix)['Contents']]}
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
+
+
+def test_datetime_ms(sdc_builder, sdc_executor):
+    """ This test ensures that when an avro file is transfored to Parquet, the date fields maintains the milliseconds 
+    and not ignored as spotted in INT-2361 """
+
+    if getattr(sdc_executor, 'container', None) == None:
+        pytest.fail('As for now this tests only can be executed when running SDC along with STF using the '
+                    '--sdc-version flag. The reason is that did not find a way to copy binary data into the '
+                    'executor end (use an auxiliar pipeline seems like a bad practise) apart from using the docker '
+                    '`put_archive` utility.')
+    milliseconds = 54
+    test_data = {"some_date": datetime.datetime.fromtimestamp((1600668873000 + milliseconds)/1000).astimezone()}
+
+    """ Write Avro file to SDC end so that the pipeline can read it """
+    avro_schema = """
+    { 
+        "type" : "record", 
+        "name" : "SampleRecord", 
+        "namespace" : "avropoc.example", 
+        "fields" : [ {"name" : "some_date", "type":{"type":"long","logicalType":"timestamp-millis"}} ]
+    }
+    """
+
+    bytes_writer = io.BytesIO()
+    writer2 = DataFileWriter(bytes_writer, avro.io.DatumWriter(), avro.schema.parse(avro_schema))
+    writer2.append(test_data)
+    writer2.flush()
+
+    tar_fileobj = io.BytesIO()   
+    with tarfile.open(fileobj=tar_fileobj, mode="w|") as tar:
+        tf = tarfile.TarInfo('test_datetime.avro')
+        tf.size = len(bytes_writer.getvalue())
+        bytes_writer.seek(0)
+        tar.addfile(tf, bytes_writer)  
+    tar_fileobj.seek(0) 
+
+    sdc_executor.docker_client.put_archive(container=sdc_executor.container.id, 
+                                           path='/tmp',
+                                           data=tar_fileobj)
+
+    """ And read avro file from a pipeline to convert it to parquet """
+    builder = sdc_builder.get_pipeline_builder()
+
+    directory = builder.add_stage('Directory', type='origin')
+    directory.set_attributes(files_directory='/tmp', 
+                             file_name_pattern='test_datetime.avro',
+                             data_format='WHOLE_FILE')
+    whole_file_transformer = builder.add_stage('Whole File Transformer')
+    whole_file_transformer.job_type = 'AVRO_PARQUET'
+
+    local_fs = builder.add_stage('Local FS', type='destination')
+    local_fs.set_attributes(directory_template='/tmp',
+                            data_format='WHOLE_FILE',
+                            file_name_expression='test_datetime.parquet',
+                            files_prefix='')
+
+
+    directory >> whole_file_transformer >> local_fs
+    pipeline = builder.build(title='Avro to Parquet datetime test')
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        with tempfile.NamedTemporaryFile() as tmp:
+             base64_parquet = sdc_executor.execute_shell('cat /tmp/test_datetime.parquet | openssl base64 -A').stdout
+             tmp.write(base64.b64decode(base64_parquet))
+             tmp.flush()
+             parquet = pq.read_table(tmp)
+
+        assert int(str(parquet.to_pylist()[0]['some_date'].timestamp())[-3:]) == milliseconds
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
