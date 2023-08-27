@@ -57,7 +57,7 @@ def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location):
         # schema generator
         schema_generator = pipeline_builder.add_stage('Schema Generator')
         schema_generator.set_attributes(schema_name="test_schema",
-                                        header_attribute="avroSchema")
+                                        schema_type="PARQUET")
         dev_raw_data_source >> schema_generator
         stage = schema_generator
 
@@ -67,9 +67,7 @@ def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location):
                             parquet_schema_location=parquet_schema_location,
                             directory_template=temp_dir)
     if parquet_schema_location == 'INLINE':
-        local_fs.set_attributes(avro_schema='{ "type" : "record", "name" : "test_schemaa", "doc" : "", '
-                                            + '"fields" : [ { "name" : "id", "type" : "int" }, '
-                                                         + '{ "name" : "text", "type" : "string" } ] }')
+        local_fs.set_attributes(parquet_schema='message test_schema { required int32 id; required binary text (UTF8); }')
 
     stage >> local_fs
 
