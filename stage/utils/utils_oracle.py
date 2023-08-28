@@ -276,10 +276,11 @@ class DefaultStartParameters(Parameters):
         self.database = db
 
     def as_dict(self):
-        return {
-            "start_mode": "CHANGE",
-            "initial_system_change_number": StartMode.current_scn(self.database, ExitStack()),
-        }
+        with ExitStack() as exit_stack:
+            return {
+                "start_mode": "CHANGE",
+                "initial_system_change_number": StartMode.current_scn(self.database, exit_stack.callback),
+            }
 
 
 class DefaultWaitParameters(Parameters):
