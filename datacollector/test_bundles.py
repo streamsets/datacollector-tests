@@ -206,3 +206,13 @@ def test_validate_redaction(pipeline, sdc_executor):
                 assert config['value'][0]['key'] == 'password', 'header attributes must contain a password'
                 assert config['value'][0]['value'] == 'REDACTED', 'header password must be redacted'
                 break
+
+
+def test_validate_histogram(sdc_executor):
+    bundle = sdc_executor.get_bundle()
+
+    bundle_file_root = 'com.streamsets.datacollector.bundles.content.SdcInfoContentGenerator'
+
+    assert f'{bundle_file_root}/runtime/classHistogram.txt' in bundle.namelist()
+    with bundle.open(f'{bundle_file_root}/runtime/classHistogram.txt') as raw:
+        raw.readline().decode() == " num     #instances         #bytes  class name (module)\n"
