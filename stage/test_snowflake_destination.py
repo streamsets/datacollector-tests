@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 pytestmark = [snowflake, sdc_min_version('5.4.0')]
 
+STAGE_NAME = 'com_streamsets_pipeline_stage_destination_snowflake_SnowflakeDTarget'
+
 NEW_STAGE_LOCATIONS = {'AZURE': 'BLOB_STORAGE'}
 
 # from CommonDatabaseHeader.java
@@ -93,6 +95,13 @@ CDC_ROWS_IN_DATABASE_COMPOSITE_KEY = [
 
 # AWS S3 bucket in case of AWS or Azure blob storage container in case of Azure.
 STORAGE_BUCKET_CONTAINER = 'snowflake'
+
+
+def set_sdc_stage_config(deltalake, config, value):
+    # There is this stf issue that sets up 2 configs are named the same, both configs are set up
+    # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
+    # This acts as a workaround to only set that specific config
+    deltalake.sdc_stage_configurations[STAGE_NAME][config] = value
 
 
 def get_stage_location(sdc_builder, stage_location):
@@ -191,12 +200,21 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
         snowflake_destination.set_attributes(parquet_schema_location='INFER',
                                              data_format=data_format,
                                              compressed_file=False)
-    if sse_kms:
-        # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
-        snowflake_destination.set_attributes(s3_encryption='KMS')
-    if sas_token:
-        # Use Azure SAS Token to authenticate
-        snowflake_destination.set_attributes(azure_authentication='SAS_TOKEN')
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        if sse_kms:
+            # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
+            snowflake_destination.set_attributes(s3_encryption='KMS')
+        if sas_token:
+            # Use Azure SAS Token to authenticate
+            snowflake_destination.set_attributes(azure_authentication='SAS_TOKEN')
+    else:
+        if sse_kms:
+            # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
+            snowflake_destination.set_attributes(encryption='KMS')
+        if sas_token:
+            # Use Azure SAS Token to authenticate
+            set_sdc_stage_config(snowflake, 'config.blobStorageStage.connection.authMethod', 'SAS_TOKEN')
 
     dev_raw_data_source >> snowflake_destination
 
@@ -255,7 +273,7 @@ def test_s3_staging_tags(sdc_builder, sdc_executor, snowflake, tags_size):
                                          purge_stage_file_after_ingesting=False,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
-                                         s3_tags=s3_tags)
+                                         tags=s3_tags)
 
     dev_raw_data_source >> snowflake_destination
 
@@ -3177,10 +3195,16 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
     snowflake_destination.set_attributes(stage_location=stage_location,
                                          purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
-                                         table=table_name,
-                                         s3_connection_timeout=600,
-                                         s3_socket_timeout=600,
-                                         s3_max_error_retry=50)
+                                         table=table_name)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(s3_connection_timeout=600,
+                                             s3_socket_timeout=600,
+                                             s3_max_error_retry=50)
+    else:
+        snowflake_destination.set_attributes(connection_timeout=600,
+                                             socket_timeout=600,
+                                             max_error_retry=50)
 
     dev_raw_data_source >> snowflake_destination
 
