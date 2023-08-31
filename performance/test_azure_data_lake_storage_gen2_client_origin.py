@@ -14,6 +14,7 @@
 
 import logging
 import os
+import time
 
 import pytest
 from streamsets.testframework.markers import azure, sdc_min_version
@@ -59,6 +60,7 @@ def test_data_lake_origin(sdc_builder, sdc_executor, azure, threads, keep_data):
                         raise RuntimeError(f'Could not create file: {file_path}')
                 except Exception as e:
                     logger.error("Could not create file: %s: %s", file_path, str(e))
+        time.sleep(15)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
 
         sdc_executor.benchmark_pipeline(pipeline, record_count=1000)
 

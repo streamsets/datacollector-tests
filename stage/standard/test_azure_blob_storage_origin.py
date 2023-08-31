@@ -77,7 +77,9 @@ def test_object_names(sdc_builder, sdc_executor, azure, test_name, object_name):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                             common_path=f'/{directory_name}')
+                                             common_path=f'/{directory_name}',
+                                             file_processing_delay_in_ms=1000)
+
     wiretap = pipeline_builder.add_wiretap()
 
     azure_blob_storage_origin >> wiretap.destination
@@ -89,6 +91,7 @@ def test_object_names(sdc_builder, sdc_executor, azure, test_name, object_name):
         fs.mkdir(directory_name)
         fs.touch(f'{directory_name}/{test_name}/{object_name}')
         fs.write(f'{directory_name}/{test_name}/{object_name}', '\n'.join(msg for msg in data))
+        time.sleep(5)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
 
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
@@ -121,7 +124,9 @@ def test_dataflow_events(sdc_builder, sdc_executor, azure):
 
     azure_blob_storage_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
-                                             common_path=f'/{directory_name}')
+                                             common_path=f'/{directory_name}',
+                                             file_processing_delay_in_ms=1000)
+
     wiretap = pipeline_builder.add_wiretap()
     trash = pipeline_builder.add_stage("Trash")
 
@@ -136,6 +141,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, azure):
         fs.mkdir(directory_name)
         fs.touch(f'{directory_name}/{object_name}')
         fs.write(f'{directory_name}/{object_name}', '\n'.join(msg for msg in data))
+        time.sleep(5)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
 
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 10)
@@ -170,7 +176,9 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure):
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
                                              common_path=f'/{directory_name}',
                                              batch_wait_time_in_ms=20_000,
-                                             max_batch_size_in_records=max_batch_size)
+                                             max_batch_size_in_records=max_batch_size,
+                                             file_processing_delay_in_ms=1000)
+
     wiretap = pipeline_builder.add_wiretap()
 
     azure_blob_storage_origin >> wiretap.destination
@@ -182,6 +190,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure):
         fs.mkdir(directory_name)
         fs.touch(f'{directory_name}/{object_name}')
         fs.write(f'{directory_name}/{object_name}', '\n'.join(msg for msg in data))
+        time.sleep(5)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
 
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', max_batch_size * number_of_batches)
@@ -284,13 +293,15 @@ def test_multithreading(sdc_builder, sdc_executor, azure, threads):
                 fs.touch(filepath)
                 fs.write(filepath, filepath + data)
                 expected_output += [filepath + data]
+        time.sleep(5)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
 
         # Build the pipeline.
         builder = sdc_builder.get_pipeline_builder()
         azure_blob_storage_origin = builder.add_stage(name=STAGE_NAME)
         azure_blob_storage_origin.set_attributes(data_format='TEXT',
                                                  common_path=f'/{rootdir}',
-                                                 number_of_threads=threads)
+                                                 number_of_threads=threads,
+                                                 file_processing_delay_in_ms=1000)
         wiretap = builder.add_wiretap()
 
         azure_blob_storage_origin >> wiretap.destination
@@ -331,7 +342,8 @@ def test_resume_offset(sdc_builder, sdc_executor, azure):
     azure_blob_storage_origin.set_attributes(data_format='TEXT',
                                              common_path=f'/{directory_name}',
                                              batch_wait_time_in_ms=20_000,
-                                             max_batch_size_in_records=max_batch_size)
+                                             max_batch_size_in_records=max_batch_size,
+                                             file_processing_delay_in_ms=1000)
     wiretap = pipeline_builder.add_wiretap()
     azure_blob_storage_origin >> wiretap.destination
 
@@ -343,6 +355,7 @@ def test_resume_offset(sdc_builder, sdc_executor, azure):
         fs.mkdir(directory_name)
         fs.touch(f'{directory_name}/{object_name}')
         fs.write(f'{directory_name}/{object_name}', '\n'.join(msg for msg in data1))
+        time.sleep(5)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
 
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', max_batch_size * half_batches)
