@@ -1215,7 +1215,8 @@ def test_directory_origin_read_different_file_type(sdc_builder, sdc_executor):
                              file_post_processing='DELETE',
                              files_directory=tmp_directory,
                              error_directory=tmp_directory,
-                             read_order='LEXICOGRAPHICAL')
+                             read_order='LEXICOGRAPHICAL',
+                             batch_wait_time_in_secs=1)
 
     pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'])
