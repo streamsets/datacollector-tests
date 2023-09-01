@@ -9,6 +9,7 @@ import tempfile
 import time
 import pytest
 import re
+from operator import itemgetter
 from stage import _clean_up_databricks
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.sdc_api import StartError, RunError
@@ -747,11 +748,43 @@ def test_data_drift(sdc_builder, sdc_executor, deltalake, aws, auto_create_table
     table_name = f'stf_{get_random_string()}'
     engine = deltalake.engine
 
-    pipeline, s3_key_1 = _create_pipeline(sdc_builder, deltalake, aws, table_name, ROWS_FOR_DRIFT,
-                                          auto_create_table)
+    def _create_pipeline(rows_to_insert):
+        """ Auxiliar function that creates a pipeline with a dev_raw_data_source with rows_to_insert
+            connected to a databricks_deltalake connector.
+            The sdc_builder is used to build the pipeline, the deltalake and aws are used to configure environment.
+            enable_drift parameter allows to configure enable_data_drift attribute for deltalake connector.
+            auto_create parameter allows to configure auto_create_table in TRUE, when enable_drift is enabled.
+            The function also returns the S3_key generated.
+        """
 
-    pipeline_2, s3_key_2 = _create_pipeline(sdc_builder, deltalake, aws, table_name, ROWS_FOR_DRIFT_EXT,
-                                            auto_create_table, create_new_columns_string)
+        DATA = '\n'.join(json.dumps(rec) for rec in rows_to_insert)
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        # Dev raw data source
+        dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+        dev_raw_data_source.set_attributes(data_format='JSON', raw_data=DATA, stop_after_first_batch=True)
+
+        # AWS S3 destination
+        s3_key = f'stf-deltalake/{get_random_string()}'
+
+        # Databricks Delta lake destination stage
+        databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+        databricks_deltalake.set_attributes(staging_location="AWS_S3",
+                                            stage_file_prefix=s3_key)
+
+        dev_raw_data_source >> databricks_deltalake
+
+        databricks_deltalake.set_attributes(table_name=table_name,
+                                            purge_stage_file_after_ingesting=True,
+                                            enable_data_drift=True,
+                                            auto_create_table=auto_create_table,
+                                            create_new_columns_as_string=create_new_columns_string)
+        created_pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
+        return created_pipeline, s3_key
+
+    pipeline, s3_key_1 = _create_pipeline(ROWS_FOR_DRIFT)
+
+    pipeline_2, s3_key_2 = _create_pipeline(ROWS_FOR_DRIFT_EXT)
 
     if staging_format == 'AVRO - INFER':
         pipeline.stages.get_all()[1].set_attributes(staging_file_format='AVRO',
@@ -1927,40 +1960,77 @@ def test_with_gcs_storage(sdc_builder, sdc_executor, deltalake, gcp):
         _clean_up_databricks(deltalake, table_name)
 
 
-def _create_pipeline(sdc_builder, deltalake, aws, table_name, rows_to_insert, auto_create=False,
-                     create_new_columns_string=False):
-    """ Auxiliar function that creates a pipeline with a dev_raw_data_source with rows_to_insert
-        connected to a databricks_deltalake connector.
-        The sdc_builder is used to build the pipeline, the deltalake and aws are used to configure environment.
-        enable_drift parameter allows to configure enable_data_drift attribute for deltalake connector.
-        auto_create parameter allows to configure auto_create_table in TRUE, when enable_drift is enabled.
-        The function also returns the S3_key generated.
-    """
+@aws('s3')
+@pytest.mark.parametrize('tags_size', [5, 20])
+@sdc_min_version('5.7.0')
+def test_s3_tags(sdc_builder, sdc_executor, deltalake, aws, tags_size):
+    """Ensure the library works properly using s3 tags"""
 
-    DATA = '\n'.join(json.dumps(rec) for rec in rows_to_insert)
+    tags = {}
+    for _ in range(tags_size):
+        tags[get_random_string()] = get_random_string()
+    s3_tags = []
+    for key, value in tags.items():
+        s3_tags.append({"key": key, "value": value})
+    s3_tags = sorted(s3_tags, key=itemgetter('key'))
+
     pipeline_builder = sdc_builder.get_pipeline_builder()
 
-    # Dev raw data source
-    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
-    dev_raw_data_source.set_attributes(data_format='JSON', raw_data=DATA, stop_after_first_batch=True)
-
-    # AWS S3 destination
-    s3_key = f'stf-deltalake/{get_random_string()}'
-
-    # Databricks Delta lake destination stage
+    dev_data_generator = pipeline_builder.add_stage("Dev Data Generator")
     databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
-    databricks_deltalake.set_attributes(staging_location="AWS_S3",
-                                        stage_file_prefix=s3_key)
 
-    dev_raw_data_source >> databricks_deltalake
+    dev_data_generator.set_attributes(
+        records_to_be_generated=1,
+        batch_size=1,
+        fields_to_generate=[{"type": "LONG_SEQUENCE", "field": "seq"}]
+    )
 
-    databricks_deltalake.set_attributes(table_name=table_name,
-                                        purge_stage_file_after_ingesting=True,
-                                        enable_data_drift=True,
-                                        auto_create_table=auto_create,
-                                        create_new_columns_as_string=create_new_columns_string)
+    table_name = f"test_s3_tags_{get_random_string()}"
+    s3_key = f"stf-deltalake/{get_random_string()}"
+    databricks_deltalake.set_attributes(
+        staging_location="AWS_S3",
+        stage_file_prefix=s3_key,
+        table_name=table_name,
+        tags=s3_tags)
+
+    dev_data_generator >> databricks_deltalake
+
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
-    return pipeline, s3_key
+    databricks_deltalake.purge_stage_file_after_ingesting = False  # configure_for_environment() sets it to True!
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        # Create table
+        connection = deltalake.connect_engine(deltalake.engine)
+        connection.execute(
+            f"create table {table_name} (seq INT) using delta location '/deltalake/{table_name}_{get_random_string()}'"
+        )
+
+        if len(tags) > 10:
+            with pytest.raises(Exception) as error:
+                sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+            assert "AWS_02" in error.value.message, f'Expected a AWS_02 error, got "{error.value.message}" instead'
+        else:
+            sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+            s3_bucket_objects = aws.s3.list_objects_v2(Bucket=aws.s3_bucket_name, Prefix=s3_key)
+            assert 'Contents' in s3_bucket_objects, f'Contents not found in response: {s3_bucket_objects}'
+            keys = [k['Key'] for k in s3_bucket_objects['Contents']]
+            assert any(keys), f'keys not found in Contents response: {s3_bucket_objects["Contents"]}'
+            for key in keys:
+                response = aws.s3.get_object_tagging(Bucket=aws.s3_bucket_name, Key=key)
+                assert 'TagSet' in response, f'TagSet not found in response: {response}'
+                response_tags = sorted(response['TagSet'], key=itemgetter('Key'))
+                assert len(response_tags) == len(s3_tags), "number of tags differ!"
+                diff = [(x, y) for x, y in zip(s3_tags, response_tags) if x['key'] != y['Key'] or x['value'] != y['Value']]
+                assert not any(diff), f'tags do not match!'
+
+    finally:
+        aws.delete_s3_data(aws.s3_bucket_name, s3_key)
+        try:
+            deltalake.delete_table(table_name)
+        except Exception as ex:
+            logger.error(f"Error encountered while deleting Databricks Delta Lake table = {table_name} as {ex}")
 
 
 @aws('s3')
@@ -2137,6 +2207,7 @@ def test_unity_catalog_with_constant_parameter_location(sdc_builder, sdc_executo
     finally:
         _clean_up_databricks(deltalake, table_name)
 
+
 @aws('s3')
 @sdc_min_version('5.7.0')
 def test_unity_catalog_with_incorrect_table_name(sdc_builder, sdc_executor, deltalake, aws):
@@ -2187,6 +2258,7 @@ def test_unity_catalog_with_incorrect_table_name(sdc_builder, sdc_executor, delt
         sdc_executor.start_pipeline(pipeline)
     except StartError as e:
         assert 'DELTA_LAKE_46' in str(e.args[0])
+
 
 @aws('s3')
 @sdc_min_version('5.7.0')

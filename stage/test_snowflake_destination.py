@@ -105,9 +105,11 @@ def set_sdc_stage_config(deltalake, config, value):
 
 
 def get_stage_location(sdc_builder, stage_location):
-    if Version(sdc_builder.version) >= Version("5.7.0"):
-        return NEW_STAGE_LOCATIONS.get(stage_location)
-    return stage_location
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        return stage_location
+    else:
+        new_stage_location = NEW_STAGE_LOCATIONS.get(stage_location)
+        return new_stage_location if new_stage_location else stage_location
 
 
 @snowflake
@@ -2624,9 +2626,13 @@ def test_internal_snowflake_tmp_files(sdc_builder, sdc_executor, snowflake):
 
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
-                                         local_file_prefix=file_prefix,
                                          snowflake_stage_name='~',
                                          table=table_name)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(local_file_prefix=file_prefix)
+    else:
+        snowflake_destination.set_attributes(file_prefix=file_prefix)
 
     delay = pipeline_builder.add_stage('Delay')
     # milliseconds to delay between batches, so as we get time to count the files
@@ -2686,11 +2692,15 @@ def test_snowflake_use_custom_role(sdc_builder, sdc_executor, snowflake, role):
 
     snowflake_destination = pipeline_builder.add_stage('Snowflake', type='destination')
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
-                                         local_file_prefix=file_prefix,
                                          snowflake_stage_name='~',
                                          table=table_name,
                                          use_snowflake_role=True,
                                          snowflake_role_name=role)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(local_file_prefix=file_prefix)
+    else:
+        snowflake_destination.set_attributes(file_prefix=file_prefix)
 
     dev_raw_data_source >> snowflake_destination
 

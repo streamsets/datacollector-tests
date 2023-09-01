@@ -51,9 +51,11 @@ NEW_STAGE_LOCATIONS = {'AZURE': 'BLOB_STORAGE'}
 
 
 def get_stage_location(sdc_builder, stage_location):
-    if Version(sdc_builder.version) >= Version("5.7.0"):
-        return NEW_STAGE_LOCATIONS.get(stage_location)
-    return stage_location
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        return stage_location
+    else:
+        new_stage_location = NEW_STAGE_LOCATIONS.get(stage_location)
+        return new_stage_location if new_stage_location else stage_location
 
 
 CDC_TEST_CASES = [
@@ -510,7 +512,6 @@ def generate_snowflake_cdc_pipeline(pipeline_builder, snowflake, stage_name, tab
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
                                          column_fields_to_ignore=column_fields_to_ignore,
-                                         s3_encryption="S3",
                                          processing_cdc_data=True,
                                          table_auto_create=True,
                                          primary_key_location=primary_key_location)
