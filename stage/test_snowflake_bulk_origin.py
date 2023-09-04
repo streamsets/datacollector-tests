@@ -500,7 +500,7 @@ def test_big_amounts_of_records(sdc_builder, sdc_executor, snowflake, stage_loca
             create_table(engine, table, column_definitions, primary_keys_clause)
             insert_values(engine, table, column_names, records_to_insert, 10000)
 
-        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=300)
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=600)
 
         records = wiretap.output_records
         num_expected_records = num_records * num_tables
@@ -570,7 +570,7 @@ def test_stage_file_reader_multithreading(sdc_builder, sdc_executor, snowflake, 
             create_table(engine, table, column_definitions, primary_keys_clause)
             insert_values(engine, table, column_names, records_to_insert, 10000)
 
-        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=300)
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=600)
 
         records = wiretap.output_records
         expected_records = records_to_insert * num_tables

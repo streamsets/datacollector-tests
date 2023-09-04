@@ -1716,8 +1716,12 @@ def test_instance_profile_credentials(sdc_builder, sdc_executor, snowflake):
     snowflake_destination.set_attributes(purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name,
-                                         stage_location=stage_location,
-                                         use_instance_profile=True)
+                                         stage_location=stage_location)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(use_instance_profile=True)
+    else:
+        set_sdc_stage_config(snowflake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
 
     dev_raw_data_source >> snowflake_destination
 
@@ -2632,7 +2636,7 @@ def test_internal_snowflake_tmp_files(sdc_builder, sdc_executor, snowflake):
     if Version(sdc_builder.version) < Version("5.7.0"):
         snowflake_destination.set_attributes(local_file_prefix=file_prefix)
     else:
-        snowflake_destination.set_attributes(file_prefix=file_prefix)
+        snowflake_destination.set_attributes(stage_file_prefix=file_prefix)
 
     delay = pipeline_builder.add_stage('Delay')
     # milliseconds to delay between batches, so as we get time to count the files
@@ -2700,7 +2704,7 @@ def test_snowflake_use_custom_role(sdc_builder, sdc_executor, snowflake, role):
     if Version(sdc_builder.version) < Version("5.7.0"):
         snowflake_destination.set_attributes(local_file_prefix=file_prefix)
     else:
-        snowflake_destination.set_attributes(file_prefix=file_prefix)
+        snowflake_destination.set_attributes(stage_file_prefix=file_prefix)
 
     dev_raw_data_source >> snowflake_destination
 
@@ -3214,7 +3218,7 @@ def test_aws_configuration_values(sdc_builder, sdc_executor, snowflake):
     else:
         snowflake_destination.set_attributes(connection_timeout=600,
                                              socket_timeout=600,
-                                             max_error_retry=50)
+                                             retry_count=50)
 
     dev_raw_data_source >> snowflake_destination
 
@@ -3292,10 +3296,10 @@ def test_snowflake_write_records_on_error(sdc_builder, sdc_executor, snowflake, 
             assert status in ['RUNNING_ERROR', 'RUN_ERROR'], response
         elif on_error_record == "DISCARD":
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
-            assert 2 == len(wiretap.error_records)
+            assert 0 == len(wiretap.error_records)
         elif on_error_record == "TO_ERROR":
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
-            assert 0 == len(wiretap.error_records)
+            assert 2 == len(wiretap.error_records)
         else:
             pytest.fail("Should not reach here")
     finally:
