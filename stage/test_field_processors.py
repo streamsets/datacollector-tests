@@ -19,7 +19,7 @@ import pytest
 import time
 from datetime import datetime
 from decimal import Decimal
-from collections import OrderedDict
+from collections import ChainMap, OrderedDict
 
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
@@ -2028,6 +2028,7 @@ def test_field_mapper_gather_paths_with_predicate(sdc_builder, sdc_executor):
     assert daves[1]['/first/firstSub2/two/name2'] == 'Dave Johnson'
     assert daves[2]['/second/secondSub/Dave'] == 'Richardson'
 
+
 @sdc_min_version('3.8.0')
 def test_field_mapper_sanitize_names(sdc_builder, sdc_executor):
     """
@@ -2191,3 +2192,134 @@ def test_field_mapper_operate_on_values(sdc_builder, sdc_executor):
     assert output_record.get_field_data('/someData/subData/value4') == 1
     assert output_record.get_field_data('/moreData/value5') == 19885
     assert output_record.get_field_data('/moreData/value6') == 0
+
+
+@sdc_min_version('5.8.0')
+@pytest.mark.parametrize('function, aggregation_expression', [
+    ('previousPath', '${asFields(map(fields, previousPath()))}'),
+    ('fieldByPreviousPath', '${map(fields, fieldByPreviousPath())}')
+])
+def test_field_mapper_aggregate_expressions_field_mapping(
+        sdc_builder,
+        sdc_executor,
+        function,
+        aggregation_expression
+):
+    """
+    Tests the Field Mapper processor aggregate expressions for field mapping when having fields with the same values and
+    when dealing with complex structures such as lists and maps.
+
+    The pipeline used by the test is:
+        Dev Raw Data Source >> Field Mapper >> Wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    basic_data_1 = 'Hello World! :D'
+    basic_data_2 = 1
+    array_1 = [1, 2]
+    array_2 = [5]
+    map_1 = {"a": "1", "b": "2"}
+    raw_map_1 = '{"a": "1", "b": "2"}'
+    map_2 = {}
+
+    string_field = 'basic_data'
+    array_field = 'data_in_a_list'
+    map_field = 'data_in_a_map'
+    mapping_field = 'Data'
+
+    raw_data = f"""{{
+      "{string_field}": {{
+        "a": "{basic_data_1}",
+        "b": "{basic_data_1}",
+        "c": {basic_data_2},
+        "d": "{basic_data_1}"
+      }},
+      "{array_field}": {{
+        "a": {array_1},
+        "b": {array_1},
+        "c": {array_2}
+      }},
+      "{map_field}": {{
+        "a": {raw_map_1},
+        "b": {raw_map_1},
+        "c": {map_2}
+      }}
+    }}"""
+
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(
+        data_format='JSON',
+        raw_data=raw_data,
+        stop_after_first_batch=True
+    )
+
+    field_mapper = pipeline_builder.add_stage('Field Mapper', type='processor')
+    field_mapper.set_attributes(
+      operate_on='FIELD_PATHS',
+      conditional_expression='',
+      mapping_expression=f'/{mapping_field}',
+      aggregation_expression=aggregation_expression,
+      maintain_original_paths=False
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    dev_raw_data_source >> field_mapper >> wiretap.destination
+
+    pipeline = pipeline_builder.build()
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        output_records = wiretap.output_records
+        assert len(output_records) == 1
+        assert len(wiretap.error_records) == 0
+
+        record = output_records[0]
+
+        assert mapping_field in record.field
+        fields = record.field[mapping_field]
+
+        if function == 'fieldByPreviousPath':
+            # fields is a list of maps where each map contains the field path and field value, so we create a map
+            # containing all the values from the maps to check the results with more ease
+            fields_map = dict(ChainMap(*fields))
+
+            assert fields_map[f'/{string_field}/a'] == basic_data_1
+            assert fields_map[f'/{string_field}/b'] == basic_data_1
+            assert fields_map[f'/{string_field}/c'] == basic_data_2
+            assert fields_map[f'/{string_field}/d'] == basic_data_1
+
+            assert fields_map[f'/{array_field}/a[0]'] == array_1[0]
+            assert fields_map[f'/{array_field}/a[1]'] == array_1[1]
+            assert fields_map[f'/{array_field}/b[0]'] == array_1[0]
+            assert fields_map[f'/{array_field}/b[1]'] == array_1[1]
+            assert fields_map[f'/{array_field}/c[0]'] == array_2[0]
+
+            assert fields_map[f'/{map_field}/a/a'] == map_1["a"]
+            assert fields_map[f'/{map_field}/a/b'] == map_1["b"]
+            assert fields_map[f'/{map_field}/b/a'] == map_1["a"]
+            assert fields_map[f'/{map_field}/b/b'] == map_1["b"]
+            assert f'/{map_field}/c' not in fields_map, \
+                f"The field {mapping_field}/{map_field}/c is an empty map, so no entries should have appeared"
+        else:
+            assert fields == [
+                f'/{string_field}/a',
+                f'/{string_field}/b',
+                f'/{string_field}/c',
+                f'/{string_field}/d',
+                f'/{array_field}/a[0]',
+                f'/{array_field}/a[1]',
+                f'/{array_field}/b[0]',
+                f'/{array_field}/b[1]',
+                f'/{array_field}/c[0]',
+                f'/{map_field}/a/a',
+                f'/{map_field}/a/b',
+                f'/{map_field}/b/a',
+                f'/{map_field}/b/b'
+            ]
+
+    finally:
+        if pipeline and (sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING'):
+            sdc_executor.stop_pipeline(pipeline)
