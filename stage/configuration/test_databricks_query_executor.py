@@ -52,10 +52,10 @@ AZURE_AUTH_METHOD_CONFIG = {
 
 def get_auth_method_config(sdc_builder, config):
     if Version(sdc_builder.version) < Version("5.7.0"):
-        return config
+        legacy_config = AZURE_AUTH_METHOD_CONFIG.get(config)
+        return legacy_config if legacy_config else config
     else:
-        new_config = AZURE_AUTH_METHOD_CONFIG.get(config)
-        return new_config if new_config else config
+        return config
 
 
 def set_sdc_stage_config(deltalake, config, value):

@@ -300,6 +300,7 @@ def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure, st
         databricks_deltalake.set_attributes(azure_authentication_method='OAUTH')
     else:
         set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'CLIENT')
+        databricks_deltalake.set_attributes(parquet_schema_location='INFER')
 
     dev_raw_data_source >> databricks_deltalake
 
@@ -748,7 +749,7 @@ def test_data_drift(sdc_builder, sdc_executor, deltalake, aws, auto_create_table
     table_name = f'stf_{get_random_string()}'
     engine = deltalake.engine
 
-    def _create_pipeline(rows_to_insert):
+    def _create_pipeline(rows_to_insert, create_new_columns_as_string):
         """ Auxiliar function that creates a pipeline with a dev_raw_data_source with rows_to_insert
             connected to a databricks_deltalake connector.
             The sdc_builder is used to build the pipeline, the deltalake and aws are used to configure environment.
@@ -778,13 +779,13 @@ def test_data_drift(sdc_builder, sdc_executor, deltalake, aws, auto_create_table
                                             purge_stage_file_after_ingesting=True,
                                             enable_data_drift=True,
                                             auto_create_table=auto_create_table,
-                                            create_new_columns_as_string=create_new_columns_string)
+                                            create_new_columns_as_string=create_new_columns_as_string)
         created_pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
         return created_pipeline, s3_key
 
-    pipeline, s3_key_1 = _create_pipeline(ROWS_FOR_DRIFT)
+    pipeline, s3_key_1 = _create_pipeline(ROWS_FOR_DRIFT, create_new_columns_as_string=False)
 
-    pipeline_2, s3_key_2 = _create_pipeline(ROWS_FOR_DRIFT_EXT)
+    pipeline_2, s3_key_2 = _create_pipeline(ROWS_FOR_DRIFT_EXT, create_new_columns_as_string=create_new_columns_string)
 
     if staging_format == 'AVRO - INFER':
         pipeline.stages.get_all()[1].set_attributes(staging_file_format='AVRO',
