@@ -137,6 +137,7 @@ def test_parquet_to_s3(sdc_builder, sdc_executor, aws):
         client.delete_objects(Bucket=aws.s3_bucket_name, Delete=delete_keys)
 
 
+@sdc_min_version('5.7.0')
 def test_datetime_ms(sdc_builder, sdc_executor):
     """ This test ensures that when an avro file is transfored to Parquet, the date fields maintains the milliseconds 
     and not ignored as spotted in INT-2361 """

@@ -598,6 +598,7 @@ def test_field_renamer_simple_and_complex_type(sdc_builder, sdc_executor):
         sdc_executor.remove_pipeline(pipeline)
 
 
+@sdc_min_version('5.7.0')
 @pytest.mark.parametrize('fromFieldExpression,toFieldExpression', [
     (["/listOfInts[0]","/listOfInts[1]","/listOfInts[2]"],["/nonExisting0","/nonExisting1","/nonExisting2"]),
     (["/listOfInts[(0)]","/listOfInts[(1)]","/listOfInts[(2)]"],["/nonExisting$1","/nonExisting$1","/nonExisting$1"]),
