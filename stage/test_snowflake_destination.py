@@ -1727,7 +1727,11 @@ def test_instance_profile_credentials(sdc_builder, sdc_executor, snowflake):
 
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
 
-    snowflake_destination.set_attributes(aws_access_key_id="", aws_secret_key_id="")
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(aws_access_key_id="", aws_secret_key_id="")
+    else:
+        snowflake_destination.set_attributes(access_key_id="", secret_access_key="")
+        
     sdc_executor.add_pipeline(pipeline)
 
     engine = snowflake.engine
