@@ -208,6 +208,7 @@ def test_validate_redaction(pipeline, sdc_executor):
                 break
 
 
+@sdc_min_version('5.7.0')
 def test_validate_histogram(sdc_executor):
     bundle = sdc_executor.get_bundle()
 
