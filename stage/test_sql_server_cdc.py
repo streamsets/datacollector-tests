@@ -1536,9 +1536,9 @@ def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
     logger.info('Disabling CDC on %s.%s from table %s...', schema_name, table_name, capture_instance)
     connection.execute(
         f'EXEC sys.sp_cdc_disable_table '
-        f'@source_schema=N"{schema_name}", '
-        f'@source_name=N"{table_name}",'
-        f'@capture_instance="{capture_instance}"')
+        f'@source_schema=N\'{schema_name}\', '
+        f'@source_name=N\'{table_name}\','
+        f'@capture_instance={capture_instance}')
 
     _wait_until_is_tracked_by_cdc(connection, table_name, 0)
 
@@ -1546,7 +1546,7 @@ def _disable_cdc(connection, schema_name, table_name, capture_instance=None):
 def _wait_until_is_tracked_by_cdc(connection, table_name, is_tracked_by_cdc):
     while True:
         cursor = connection.execute(
-            f"select name from sys.tables where is_tracked_by_cdc = {is_tracked_by_cdc} and name = \'{table_name}\'"
+            f"select name from sys.tables where is_tracked_by_cdc = {is_tracked_by_cdc} and name = '{table_name}'"
         )
         if len(cursor.fetchall()) > 0:
             break
