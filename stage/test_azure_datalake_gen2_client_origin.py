@@ -23,6 +23,7 @@ import avro.schema
 import pytest
 from avro.datafile import DataFileWriter
 from avro.io import DatumWriter
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -78,8 +79,10 @@ def test_data_lake_origin(sdc_builder, sdc_executor, azure, read_order):
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
                                               common_path=f'/{directory_name}',
-                                              read_order=read_order,
-                                              file_processing_delay_in_ms=1000)
+                                              read_order=read_order)
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
         azure_data_lake_origin >> wiretap.destination
 
@@ -129,8 +132,10 @@ def test_data_lake_origin_with_avro(sdc_builder, sdc_executor, azure):
         origin = builder.add_stage(name=STAGE_NAME)
         origin.set_attributes(data_format='AVRO',
                               avro_schema_location='SOURCE',
-                              common_path=f'/{directory_name}',
-                              file_processing_delay_in_ms=1000)
+                              common_path=f'/{directory_name}')
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            origin.file_processing_delay_in_ms = 1000
 
         wiretap = builder.add_wiretap()
         origin >> wiretap.destination
@@ -180,8 +185,10 @@ def test_parse_timestamp_data_lake_origin(sdc_builder, sdc_executor, azure):
         wiretap = builder.add_wiretap()
         azure_data_lake_origin.set_attributes(data_format='TEXT',
                                               common_path=f'/{directory_name}',
-                                              include_metadata=True,
-                                              file_processing_delay_in_ms=1000)
+                                              include_metadata=True)
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
         azure_data_lake_origin >> wiretap.destination
 
@@ -233,8 +240,10 @@ def test_data_lake_origin_offset_continuation_token(sdc_builder, sdc_executor, a
                                               common_path=f'/{directory_name}',
                                               object_pool_size=10,
                                               max_results_per_page=5,
-                                              number_of_threads=5,
-                                              file_processing_delay_in_ms=1000)
+                                              number_of_threads=5)
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
         finisher = builder.add_stage('Pipeline Finisher Executor')
         finisher.set_attributes(react_to_events=True)
@@ -301,8 +310,10 @@ def test_data_lake_origin_stop_go(sdc_builder, sdc_executor, azure):
         wiretap = builder.add_wiretap()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_path=f'/{directory_name}',
-                                              file_processing_delay_in_ms=1000)
+                                              common_path=f'/{directory_name}')
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
         azure_data_lake_origin >> wiretap.destination
 
@@ -372,8 +383,10 @@ def test_data_lake_origin_events(sdc_builder, sdc_executor, azure):
         wiretap_events = builder.add_wiretap()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_path=f'/{directory_name}',
-                                              file_processing_delay_in_ms=1000)
+                                              common_path=f'/{directory_name}')
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
         pipeline_finisher_executor = builder.add_stage('Pipeline Finisher Executor')
         pipeline_finisher_executor.set_attributes(
@@ -433,8 +446,10 @@ def test_data_lake_origin_resume_offset(sdc_builder, sdc_executor, azure):
         wiretap = builder.add_wiretap()
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                              common_path=f'/{directory_name}',
-                                              file_processing_delay_in_ms=1000)
+                                              common_path=f'/{directory_name}')
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
         azure_data_lake_origin >> wiretap.destination
 
@@ -529,8 +544,10 @@ def test_data_lake_origin_path_pattern(sdc_builder, sdc_executor, azure, path_pa
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
                                               common_path=f'/{rootdir}',
-                                              path_pattern=path_pattern,
-                                              file_processing_delay_in_ms=1000)
+                                              path_pattern=path_pattern)
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
         wiretap = builder.add_wiretap()
 
@@ -594,8 +611,11 @@ def test_file_postprocessing(sdc_builder, sdc_executor, azure, action):
                                               common_path=f'/{rootdir}',
                                               post_processing_option=action,
                                               post_processing_path=f'/{archive_dir}',
-                                              error_handling_option='DELETE',
-                                              file_processing_delay_in_ms=1000)
+                                              error_handling_option='DELETE')
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
+
         trash = builder.add_stage('Trash')
         azure_data_lake_origin >> trash
 

@@ -18,6 +18,7 @@ import string
 import time
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -77,8 +78,10 @@ def test_object_names(sdc_builder, sdc_executor, azure, test_name, object_name):
 
     azure_data_lake_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                          common_path=f'/{directory_name}',
-                                          file_processing_delay_in_ms=1000)
+                                          common_path=f'/{directory_name}')
+
+    if Version(sdc_builder.version) >= Version('5.7.0'):
+        azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -124,8 +127,10 @@ def test_dataflow_events(sdc_builder, sdc_executor, azure):
 
     azure_data_lake_origin = pipeline_builder.add_stage(name=STAGE_NAME)
     azure_data_lake_origin.set_attributes(data_format='TEXT',
-                                          common_path=f'/{directory_name}',
-                                          file_processing_delay_in_ms=1000)
+                                          common_path=f'/{directory_name}')
+
+    if Version(sdc_builder.version) >= Version('5.7.0'):
+        azure_data_lake_origin.file_processing_delay_in_ms = 1000
 
     wiretap = pipeline_builder.add_wiretap()
     trash = pipeline_builder.add_stage("Trash")
@@ -177,8 +182,11 @@ def test_multiple_batches(sdc_builder, sdc_executor, azure):
     azure_data_lake_origin.set_attributes(data_format='TEXT',
                                           common_path=f'/{directory_name}',
                                           batch_wait_time_in_ms=20_000,
-                                          max_batch_size_in_records=max_batch_size,
-                                          file_processing_delay_in_ms=1000)
+                                          max_batch_size_in_records=max_batch_size)
+
+    if Version(sdc_builder.version) >= Version('5.7.0'):
+        azure_data_lake_origin.file_processing_delay_in_ms = 1000
+
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -301,8 +309,11 @@ def test_multithreading(sdc_builder, sdc_executor, azure, threads):
         azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
         azure_data_lake_origin.set_attributes(data_format='TEXT',
                                               common_path=f'/{directory_name}',
-                                              number_of_threads=threads,
-                                              file_processing_delay_in_ms=1000)
+                                              number_of_threads=threads)
+
+        if Version(sdc_builder.version) >= Version('5.7.0'):
+            azure_data_lake_origin.file_processing_delay_in_ms = 1000
+
         wiretap = builder.add_wiretap()
 
         azure_data_lake_origin >> wiretap.destination
@@ -343,8 +354,11 @@ def test_resume_offset(sdc_builder, sdc_executor, azure):
     azure_data_lake_origin.set_attributes(data_format='TEXT',
                                           common_path=f'/{directory_name}',
                                           batch_wait_time_in_ms=20_000,
-                                          max_batch_size_in_records=max_batch_size,
-                                          file_processing_delay_in_ms=1000)
+                                          max_batch_size_in_records=max_batch_size)
+
+    if Version(sdc_builder.version) >= Version('5.7.0'):
+        azure_data_lake_origin.file_processing_delay_in_ms = 1000
+
     wiretap = pipeline_builder.add_wiretap()
     azure_data_lake_origin >> wiretap.destination
 
