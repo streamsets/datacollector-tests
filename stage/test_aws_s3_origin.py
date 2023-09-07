@@ -20,7 +20,6 @@ import time
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
 
-import docker
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version, large
 from streamsets.testframework.utils import get_random_string, Version
@@ -219,13 +218,11 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
                                      data_format=data_format,
                                      prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
                                      number_of_threads=number_of_threads,
-                                     file_processing_delay_in_ms=0,
                                      read_order=read_order)
         elif number_of_threads == 1:
             s3_origin.set_attributes(bucket=s3_bucket,
                                      data_format=data_format,
                                      prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
-                                     file_processing_delay_in_ms=0,
                                      read_order=read_order)
         else:
             pytest.skip("Multithreaded features are supported in S3 origin only for SDC Versions >= 3.7.0")
@@ -257,6 +254,9 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         # Insert objects into S3.
         for i in range(s3_obj_count):
             client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=json.dumps(json_data), ACL=acl)
+
+        # In SDC versions from 5.7.0 onwards, the S3 origin will not process files created less than 10 seconds ago
+        time.sleep(10)
 
         if number_of_threads == SINGLETHREADED:
             sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
