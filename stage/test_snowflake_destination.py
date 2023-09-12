@@ -2655,11 +2655,10 @@ def test_internal_snowflake_tmp_files(sdc_builder, sdc_executor, snowflake):
     try:
         sdc_executor.start_pipeline(pipeline_snowflake)
 
-        dir_response = sdc_executor.execute_shell(
-            f'find {local_tmp_directory} -type d -name \"{snowflake_destination.local_file_prefix}*\"').stdout.rstrip()
+        dir_response = f'{local_tmp_directory}/{file_prefix}*'
         time.sleep(5)
         count_files_first = int(sdc_executor.execute_shell(f'ls {dir_response}| wc -l').stdout)
-        time.sleep(30)
+        time.sleep(10)
         count_files_second = int(sdc_executor.execute_shell(f'ls {dir_response}| wc -l').stdout)
         sdc_executor.stop_pipeline(pipeline_snowflake)
 
