@@ -272,7 +272,7 @@ def test_storage_location(sdc_builder, sdc_executor, stage_attributes, deltalake
         set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, 'SHARED_KEY')
         if Version(sdc_builder.version) >= Version("5.7.0"):
             stage_attributes['endpoint_type'] = 'URL'
-        _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, )
+        _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
     elif stage_attributes['storage_location'] == 'AWS_S3':
         _test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, stage_attributes)
 
@@ -288,38 +288,29 @@ def test_transaction_isolation(sdc_builder, sdc_executor, stage_attributes, delt
     pass
 
 
-@category('advanced')
-# @pytest.mark.parametrize('stage_attributes', [{'use_credentials': False}, {'use_credentials': True}])
-@pytest.mark.parametrize('stage_attributes', [{'use_credentials': False}])
-def test_use_credentials(sdc_builder, sdc_executor, stage_attributes, deltalake):
-    if stage_attributes['use_credentials']:
-        _test_with_use_credentials_true(sdc_builder, sdc_executor, deltalake, stage_attributes)
-    else:
-        stage_attributes.update({'storage_location': DEFAULT_STORAGE_LOCATION})
-        _test_with_no_storage(sdc_builder, sdc_executor, deltalake, stage_attributes)
+@category('basic')
+def test_without_credentials(sdc_builder, sdc_executor, deltalake):
+    stage_attributes = {'storage_location': DEFAULT_STORAGE_LOCATION}
+    if Version(sdc_builder.version) < Version('5.7.0'):
+        stage_attributes.update({'use_credentials': False})
+    _test_with_no_storage(sdc_builder, sdc_executor, deltalake, stage_attributes)
 
 
 @category('basic')
-@pytest.mark.parametrize('stage_attributes', [{'use_credentials': True}])
-def test_user_token(sdc_builder, sdc_executor, stage_attributes, deltalake):
-    _test_with_use_credentials_true(sdc_builder, sdc_executor, deltalake, stage_attributes)
-
-
-@category('basic')
-@pytest.mark.parametrize('stage_attributes', [{'use_credentials': True}])
-def test_username(sdc_builder, sdc_executor, stage_attributes, deltalake):
-    _test_with_use_credentials_true(sdc_builder, sdc_executor, deltalake, stage_attributes)
+def test_user_token(sdc_builder, sdc_executor, deltalake):
+    _test_with_use_credentials_true(sdc_builder, sdc_executor, deltalake)
 
 
 def _test_with_use_credentials_true(sdc_builder, sdc_executor, deltalake, stage_attributes={}):
     if Version(sdc_builder.version) < Version('5.7.0'):
-        stage_attributes.update({'jdbc_connection_string': deltalake.jdbc_connection_string.split('UID')[0]})
+        stage_attributes.update({'jdbc_connection_string': deltalake.jdbc_connection_string.split('UID')[0],
+                                 'username': deltalake.user,
+                                 'user_token': deltalake.password})
     else:
-        stage_attributes.update({'jdbc_url': deltalake.jdbc_connection_string.split('UID')[0]})
+        stage_attributes.update({'jdbc_url': deltalake.jdbc_connection_string.split('UID')[0],
+                                 'token': deltalake.password})
 
-    stage_attributes.update({'username': deltalake.user,
-                            'user_token': deltalake.password,
-                             'storage_location': DEFAULT_STORAGE_LOCATION})
+    stage_attributes.update({'storage_location': DEFAULT_STORAGE_LOCATION})
 
     _test_with_no_storage(sdc_builder, sdc_executor, deltalake, stage_attributes,
                           apply_configure_for_environment=False)
