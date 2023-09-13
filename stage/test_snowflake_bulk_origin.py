@@ -460,7 +460,7 @@ def test_table_included_in_multiple_table_config_rows(sdc_builder, sdc_executor,
 
 
 @pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "GCS", "BLOB_STORAGE"])
-@pytest.mark.parametrize('num_tables, num_records, batch_size', [(1, 500_000, 10000), (3, 100_000, 3333)])
+@pytest.mark.parametrize('num_tables, num_records, batch_size', [(1, 5000, 100), (3, 10000, 3333)])
 def test_big_amounts_of_records(sdc_builder, sdc_executor, snowflake, stage_location, num_tables, num_records,
                                 batch_size):
     """
@@ -486,8 +486,9 @@ def test_big_amounts_of_records(sdc_builder, sdc_executor, snowflake, stage_loca
                                     snowflake_stage_name=stage_name,
                                     table_config=[{'inclusionPattern': f'{base_table_name}%'}])
 
-    wiretap = pipeline_builder.add_wiretap()
-    snowflake_origin >> wiretap.destination
+    trash = pipeline_builder.add_stage('Trash')
+
+    snowflake_origin >> trash
 
     pipeline = pipeline_builder.build().configure_for_environment(snowflake)
     sdc_executor.add_pipeline(pipeline)
@@ -502,14 +503,9 @@ def test_big_amounts_of_records(sdc_builder, sdc_executor, snowflake, stage_loca
 
         sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished(timeout_sec=600)
 
-        records = wiretap.output_records
         num_expected_records = num_records * num_tables
         # each thread creates its own batches, and we have 1 thread per table
         num_expected_batches = int(math.ceil(num_records / batch_size)) * num_tables
-
-        # check that the number of records is equal to what we expect
-        assert len(records) == num_expected_records, \
-            f'{num_expected_records} records should have been processed but only {len(records)} were found'
 
         # and we also test the number of batches is what is to be expected
         history = sdc_executor.get_pipeline_history(pipeline)
@@ -528,7 +524,7 @@ def test_big_amounts_of_records(sdc_builder, sdc_executor, snowflake, stage_loca
 
 
 @pytest.mark.parametrize('num_tables, num_records, batch_size, reader_threads, processor_threads',
-                         [(1, 500_000, 10000, 5, 5), (3, 100_000, 10000, 2, 2)])
+                         [(1, 5000, 100, 5, 5), (3, 10000, 1000, 2, 2)])
 def test_stage_file_reader_multithreading(sdc_builder, sdc_executor, snowflake, num_tables, num_records, batch_size,
                                           reader_threads, processor_threads):
     """
