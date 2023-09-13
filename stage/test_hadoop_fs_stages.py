@@ -535,7 +535,8 @@ def test_hadoop_fs_origin_standalone_multi_thread(sdc_builder, sdc_executor, clu
 
     hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
     hadoop_fs.set_attributes(data_format='DELIMITED', files_directory=hadoop_fs_folder,
-                             file_name_pattern='*', number_of_threads=hdfs_number_of_threads)
+                             file_name_pattern='*', number_of_threads=hdfs_number_of_threads,
+                             batch_wait_time_in_secs=1)
 
     field_renamer = builder.add_stage('Field Renamer')
     field_renamer.fields_to_rename = [{'fromFieldExpression': '/(.*)',
@@ -757,7 +758,7 @@ def test_hadoop_fs_origin_standalone_simple_ordering(sdc_builder, sdc_executor, 
 
     hadoop_fs = builder.add_stage('Hadoop FS Standalone', type='origin')
     hadoop_fs.set_attributes(data_format='TEXT', files_directory=hadoop_fs_folder,
-                             file_name_pattern='*', read_order=read_order)
+                             file_name_pattern='*', read_order=read_order, batch_wait_time_in_secs=1)
 
     trash = builder.add_stage('Trash')
 

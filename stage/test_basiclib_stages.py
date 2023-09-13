@@ -274,7 +274,8 @@ def test_pipeline_finisher_react_to_events(sdc_builder, sdc_executor):
         file_name_pattern_mode='GLOB',
         file_post_processing='DELETE',
         files_directory=file_path,
-        batch_size_in_recs=100
+        batch_size_in_recs=100,
+        batch_wait_time_in_secs=1
     )
 
     pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
@@ -327,7 +328,8 @@ def test_pipeline_finisher_react_to_events_unexpected_event(sdc_builder, sdc_exe
         file_name_pattern_mode='GLOB',
         file_post_processing='DELETE',
         files_directory=file_path,
-        batch_size_in_recs=100
+        batch_size_in_recs=100,
+        batch_wait_time_in_secs=1
     )
 
     pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
