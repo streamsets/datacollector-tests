@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import string
-import tempfile
 
 import avro
 import avro.schema
@@ -115,6 +114,56 @@ def test_ftp_origin_text_delete_subdirectory(sdc_builder, sdc_executor, ftp):
         # Delete the tmp folder.
         client.cwd('/')
         client.rmd(ftp_dir_name)
+        client.quit()
+
+
+@ftp
+@sdc_min_version('5.8.0')
+def test_ftp_origin_binary(sdc_builder, sdc_executor, ftp):
+    """
+    Test FTP origin, message is in format BINARY. We first create a file on FTP server
+    and have the FTP origin stage read it.
+    We then assert the data from the wiretap. The pipeline looks like:
+        sftp_ftp_client >> wiretap
+    """
+
+    ftp_file_name = get_random_string(string.ascii_letters, 10)
+    ftp_dir_name = get_random_string(string.ascii_letters, 10)
+    raw_text_data = get_random_string(string.ascii_letters, 50)
+    expected = (raw_text_data + "\r\n").encode('utf-8')
+    file_path = f'{ftp_dir_name}/{ftp_file_name}'
+
+    client = ftp.client
+    client.cwd('/')
+    client.mkd(ftp_dir_name)
+    ftp.put_string(file_path, raw_text_data)
+
+    builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_client = builder.add_stage(name=FTP_ORIGIN_CLIENT_NAME)
+    sftp_ftp_client.set_attributes(file_name_pattern=ftp_file_name, process_subdirectories=True, data_format='BINARY')
+
+    wiretap = builder.add_wiretap()
+
+    sftp_ftp_client >> wiretap.destination
+    sftp_ftp_client_pipeline = builder.build('FTP Origin Pipeline BINARY').configure_for_environment(ftp)
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    try:
+        sdc_executor.start_pipeline(sftp_ftp_client_pipeline)
+        sdc_executor.wait_for_pipeline_metric(sftp_ftp_client_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+
+        output_records = wiretap.output_records
+        assert len(output_records) == 1
+        assert output_records[0].field == expected
+        assert f'/{file_path}' == wiretap.output_records[0].header.values['file']
+        assert ftp_file_name == wiretap.output_records[0].header.values['filename']
+
+    finally:
+        # Delete the test FTP origin file we created
+        client = ftp.client
+        client.delete(f'/{file_path}')
+        client.rmd(f'/{ftp_dir_name}')
         client.quit()
 
 

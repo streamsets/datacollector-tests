@@ -346,3 +346,46 @@ def test_sftp_validation_authentication(sdc_builder, sdc_executor, sftp):
         assert '(notAPrivateKey) does not exist or is not accessible' in \
                error.issues['stageIssues']['SFTPFTPFTPSClient_01'][0][
                    'message']
+
+
+@sftp
+@sdc_min_version('5.8.0')
+def test_sftp_origin_binary_data_format(sdc_builder, sdc_executor, sftp):
+    """
+    We first create a file on SFTP server and have the SFTP origin stage read it.
+    We then assert the ingested data using wiretap. The pipeline looks like:
+        sftp_ftp_client >> wiretap
+    """
+    sftp_file_name = get_random_string(string.ascii_letters, 10)
+    raw_text_data = get_random_string(string.ascii_letters, 50)
+    sftp.put_string(os.path.join(sftp.path, sftp_file_name), raw_text_data)
+
+    builder = sdc_builder.get_pipeline_builder()
+    sftp_ftp_client = builder.add_stage(name='com_streamsets_pipeline_stage_origin_remote_RemoteDownloadDSource')
+    sftp_ftp_client.file_name_pattern = sftp_file_name
+    sftp_ftp_client.data_format = 'BINARY'
+
+    wiretap = builder.add_wiretap()
+
+    sftp_ftp_client >> wiretap.destination
+
+    sftp_ftp_client_pipeline = builder.build('SFTP Origin Binary Data Pipeline').configure_for_environment(sftp)
+    sdc_executor.add_pipeline(sftp_ftp_client_pipeline)
+
+    try:
+        sdc_executor.start_pipeline(sftp_ftp_client_pipeline)
+        sdc_executor.wait_for_pipeline_metric(sftp_ftp_client_pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(sftp_ftp_client_pipeline)
+
+        output_records = wiretap.output_records
+        assert len(output_records) == 1
+        assert output_records[0].field == raw_text_data.encode('utf-8')
+
+        # Delete the test SFTP origin file we created
+        transport, client = sftp.client
+        client.remove(os.path.join(sftp.path, sftp_file_name))
+
+    finally:
+        client.close()
+        transport.close()
+        sdc_executor.remove_pipeline(sftp_ftp_client_pipeline)
