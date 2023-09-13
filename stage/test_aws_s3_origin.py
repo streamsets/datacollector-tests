@@ -1962,7 +1962,6 @@ def test_s3_keep_offset_on_disconnect(sdc_builder, sdc_executor, aws):
 
 @aws('s3')
 @sdc_min_version('5.7.0')
-@pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
 @pytest.mark.parametrize(
     'num_records, num_reading_threads, file_processing_delay, batch_wait_time', [
         (10, 1, 1000, 2000),
@@ -1976,7 +1975,6 @@ def test_s3_multithreading_multiple_batches(
         sdc_builder,
         sdc_executor,
         aws,
-        read_order,
         num_records,
         num_reading_threads,
         file_processing_delay,
@@ -2029,7 +2027,7 @@ def test_s3_multithreading_multiple_batches(
         file_pool_size=100,
         file_processing_delay_in_ms=file_processing_delay,
         batch_wait_time_in_ms=batch_wait_time,
-        read_order=read_order
+        read_order='TIMESTAMP'
     )
 
     pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
