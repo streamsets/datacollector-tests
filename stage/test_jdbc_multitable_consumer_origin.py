@@ -25,6 +25,8 @@ import uuid
 
 import pytest
 import sqlalchemy
+
+from sqlalchemy import Numeric, Date
 from streamsets.sdk.utils import Version
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.sdc_api import StartError
@@ -46,9 +48,9 @@ from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METAD
 logger = logging.getLogger(__name__)
 
 ROWS_IN_DATABASE = [
-    {'id': 1, 'name': 'Dima'},
-    {'id': 2, 'name': 'Jarcec'},
-    {'id': 3, 'name': 'Arvind'}
+    {'id': 1, 'name': 'Dima', 'leaves': '4.5', 'doj': '2012-09-09', 'age': '1'},
+    {'id': 2, 'name': 'Jarcec', 'leaves': '5.5', 'doj': '2016-10-12', 'age': '100'},
+    {'id': 3, 'name': 'Arvind', 'leaves': '5.0', 'doj': '2018-01-02', 'age': '2'}
 ]
 ROWS_TO_UPDATE = [
     {'id': 2, 'name': 'Eddie'},
@@ -261,9 +263,27 @@ def test_jdbc_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_exe
 
 @database
 @sdc_min_version('5.7.0')
-def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('offset_column, initial_offset, last_offset',
+                         [
+                             ('age', '2', '100'),
+                             ('id', '2', '1'),
+                             ('id', '2', '-5'),
+                             ('leaves', '5.5', '5.0'),
+                             ('leaves', '1.0', '-5.5'),
+                             ('doj', '1378987751000', '1284293351000'),
+                             ('doj', '1284293351000', '-1284111351000')
+                         ]
+)
+def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_executor, database,
+                                                               offset_column, initial_offset, last_offset):
     """
     Set last offset less than initial offset and verify that a StartError occurs.
+    Should not test with a String offset value as it is non-partitionable.
+    More info about it here : -> https://docs.streamsets.com/portal/platform-datacollector/latest/datacollector/UserGuide/Origins/MultiTableJDBCConsumer.html#concept_gvy_yws_p1b
+    Tested over String just to verify that it throws an error when invalid offset values are given,
+    even though the last offset would not be considered while fetching the records from the database.
+    The pipeline looks like :
+            jdbc_multitable_consumer >> trash
     """
     table_name = get_random_string(string.ascii_lowercase, 10)
     connection = None
@@ -274,17 +294,17 @@ def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_
     jdbc_multitable_consumer.table_configs = [{
         "tablePattern": table_name,
         "overrideDefaultOffsetColumns": True,
-        "offsetColumns": ["id"],
+        "offsetColumns": [offset_column],
         "partitioningMode": "BEST_EFFORT",
         "maxNumActivePartitions": -1,
-        "partitionSize": "2",
+        "partitionSize": "5",
         "offsetColumnToInitialOffsetValue": [{
-            "key": "id",
-            "value": "2"
+            "key": offset_column,
+            "value": initial_offset
         }],
         "offsetColumnToLastOffsetValue": [{
-            "key": "id",
-            "value": "1"
+            "key": offset_column,
+            "value": last_offset
         }]
     }]
 
@@ -299,7 +319,10 @@ def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_
         table_name,
         metadata,
         sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
-        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True)
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+        sqlalchemy.Column('leaves', Numeric(precision=10, scale=2), quote=True),
+        sqlalchemy.Column('doj', Date, quote=True),
+        sqlalchemy.Column('age', sqlalchemy.String(32), quote=True)
     )
     try:
         logger.info('Creating table %s in %s database ...', table_name, database.type)
@@ -321,6 +344,104 @@ def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_
             table.drop(database.engine)
         if connection is not None:
             connection.close()
+        sdc_executor.remove_pipeline(pipeline)
+
+
+@database
+@sdc_min_version('5.7.0')
+@pytest.mark.parametrize('offset_column, initial_offset, last_offset, partition_size',
+                         [
+                             ('age', '100', '2', '5'),
+                             ('id', '1', '2', '5'),
+                             ('id', '3', '100', '5'),
+                             ('id', '-5', '2', '5'),
+                             ('leaves', '4.5', '5.0', '5'),
+                             ('leaves', '5.5', '100.0', '5'),
+                             ('leaves', '-20.0', '5.0', '5'),
+                             ('doj', '1347192551000', '1476274151000', '31556926000'),
+                             ('doj', '1514894951000', '1914894951000', '31556926000'),
+                             ('doj', '-1284111351000', '1476274151000', '31556926000')
+                         ]
+)
+def test_jdbc_multitable_consumer_valid_offset_configuration(sdc_builder, sdc_executor, database, offset_column,
+                                                             initial_offset, last_offset, partition_size):
+    """
+    Set initial offset less than last offset and verify that correct number of records are read.
+    Should not test with a String offset value as it is non-partitionable.
+    More info about it here : -> https://docs.streamsets.com/portal/platform-datacollector/latest/datacollector/UserGuide/Origins/MultiTableJDBCConsumer.html#concept_gvy_yws_p1b
+    Tested over String just to verify that it doesn't throw error when valid offset values are given,
+    even though the last offset would not be considered while fetching the records from the database.
+    The pipeline looks like :
+            jdbc_multitable_consumer >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+    connection = None
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.table_configs = [{
+        "tablePattern": table_name,
+        "overrideDefaultOffsetColumns": True,
+        "offsetColumns": [offset_column],
+        "partitioningMode": "BEST_EFFORT",
+        "maxNumActivePartitions": -1,
+        "partitionSize": partition_size,
+        "offsetColumnToInitialOffsetValue": [{
+            "key": offset_column,
+            "value": initial_offset
+        }],
+        "offsetColumnToLastOffsetValue": [{
+            "key": offset_column,
+            "value": last_offset
+        }]
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+        sqlalchemy.Column('leaves', Numeric(precision=10, scale=2), quote=True),
+        sqlalchemy.Column('doj', Date, quote=True),
+        sqlalchemy.Column('age', sqlalchemy.String(32), quote=True)
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+
+        # We simply wait for the records to be read
+        time.sleep(5)
+
+        sdc_executor.stop_pipeline(pipeline)
+
+        # There must be 1 record read
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+
+    finally:
+
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
+        sdc_executor.remove_pipeline(pipeline)
 
 
 @database
@@ -328,6 +449,10 @@ def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_
 def test_jdbc_multitable_consumer_invalid_last_offset(sdc_builder, sdc_executor, database):
     """
     Set last invalid offset and verify error is thrown
+    Should not test with a String offset value as it is non-partitionable.
+    More info about it here : -> https://docs.streamsets.com/portal/platform-datacollector/latest/datacollector/UserGuide/Origins/MultiTableJDBCConsumer.html#concept_gvy_yws_p1b
+    The pipeline looks like :
+            jdbc_multitable_consumer >> trash
     """
     table_name = get_random_string(string.ascii_lowercase, 10)
     connection = None
@@ -377,13 +502,29 @@ def test_jdbc_multitable_consumer_invalid_last_offset(sdc_builder, sdc_executor,
             table.drop(database.engine)
         if connection is not None:
             connection.close()
+        sdc_executor.remove_pipeline(pipeline)
 
 
 @database
 @sdc_min_version('5.7.0')
-def test_jdbc_multitable_consumer_last_offset_at_the_start(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('offset_column, last_offset, partition_size',
+                         [
+                             ('id', '1', '5'),
+                             ('id', '-1', '5'),
+                             ('leaves', '4.5', '5'),
+                             ('leaves', '-4.5', '5'),
+                             ('doj', '1347148800000', '31556926000'),
+                             ('doj', '-1347148800000', '31556926000')
+                         ]
+)
+def test_jdbc_multitable_consumer_last_offset_at_the_start(sdc_builder, sdc_executor, database,
+                                                           offset_column, last_offset, partition_size):
     """
     Set last offset at the first record and verify that no records are read.
+    Should not test with a String offset value as it is non-partitionable.
+    More info about it here : -> https://docs.streamsets.com/portal/platform-datacollector/latest/datacollector/UserGuide/Origins/MultiTableJDBCConsumer.html#concept_gvy_yws_p1b
+    The pipeline looks like :
+            jdbc_multitable_consumer >> trash
     """
     table_name = get_random_string(string.ascii_lowercase, 10)
     connection = None
@@ -394,13 +535,13 @@ def test_jdbc_multitable_consumer_last_offset_at_the_start(sdc_builder, sdc_exec
     jdbc_multitable_consumer.table_configs = [{
         "tablePattern": table_name,
         "overrideDefaultOffsetColumns": True,
-        "offsetColumns": ["id"],
+        "offsetColumns": [offset_column],
         "partitioningMode": "BEST_EFFORT",
         "maxNumActivePartitions": -1,
-        "partitionSize": "2",
+        "partitionSize": partition_size,
         "offsetColumnToLastOffsetValue": [{
-            "key": "id",
-            "value": "1"
+            "key": offset_column,
+            "value": last_offset
         }]
     }]
 
@@ -415,7 +556,9 @@ def test_jdbc_multitable_consumer_last_offset_at_the_start(sdc_builder, sdc_exec
         table_name,
         metadata,
         sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
-        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True)
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+        sqlalchemy.Column('leaves', Numeric(precision=10, scale=2), quote=True),
+        sqlalchemy.Column('doj', Date, quote=True)
     )
     try:
         logger.info('Creating table %s in %s database ...', table_name, database.type)
@@ -444,13 +587,32 @@ def test_jdbc_multitable_consumer_last_offset_at_the_start(sdc_builder, sdc_exec
             table.drop(database.engine)
         if connection is not None:
             connection.close()
+        sdc_executor.remove_pipeline(pipeline)
 
 
 @database
 @sdc_min_version('5.7.0')
-def test_jdbc_multitable_consumer_last_offset_configuration(sdc_builder, sdc_executor, database):
+@pytest.mark.parametrize('offset_column, last_offset, expected_count, partition_size',
+                         [
+                             ('id', '3', 2, '5'),
+                             ('id', '100', 3, '5'),
+                             ('id', '-5', 0, '5'),
+                             ('leaves', '5.5', 2, '5'),
+                             ('leaves', '100.0', 3, '5'),
+                             ('leaves', '-10.0', 0, '5'),
+                             ('doj', '1514851200000', 2, '31556926000'),
+                             ('doj', '1914894951000', 3, '31556926000'),
+                             ('doj', '-1547148800000', 0, '31556926000')
+                         ]
+)
+def test_jdbc_multitable_consumer_last_offset_configuration(sdc_builder, sdc_executor, database, offset_column,
+                                                            last_offset, expected_count, partition_size):
     """
     Set valid last offset and verify that records are read properly.
+    Should not test with a String offset value as it is non-partitionable.
+    More info about it here : -> https://docs.streamsets.com/portal/platform-datacollector/latest/datacollector/UserGuide/Origins/MultiTableJDBCConsumer.html#concept_gvy_yws_p1b
+    The pipeline looks like :
+            jdbc_multitable_consumer >> trash
     """
     table_name = get_random_string(string.ascii_lowercase, 10)
     connection = None
@@ -461,13 +623,13 @@ def test_jdbc_multitable_consumer_last_offset_configuration(sdc_builder, sdc_exe
     jdbc_multitable_consumer.table_configs = [{
         "tablePattern": table_name,
         "overrideDefaultOffsetColumns": True,
-        "offsetColumns": ["id"],
+        "offsetColumns": [offset_column],
         "partitioningMode": "BEST_EFFORT",
         "maxNumActivePartitions": -1,
-        "partitionSize": "2",
+        "partitionSize": partition_size,
         "offsetColumnToLastOffsetValue": [{
-            "key": "id",
-            "value": "3"
+            "key": offset_column,
+            "value": last_offset
         }]
     }]
 
@@ -482,7 +644,9 @@ def test_jdbc_multitable_consumer_last_offset_configuration(sdc_builder, sdc_exe
         table_name,
         metadata,
         sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
-        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True)
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+        sqlalchemy.Column('leaves', Numeric(precision=10, scale=2), quote=True),
+        sqlalchemy.Column('doj', Date, quote=True)
     )
     try:
         logger.info('Creating table %s in %s database ...', table_name, database.type)
@@ -495,15 +659,14 @@ def test_jdbc_multitable_consumer_last_offset_configuration(sdc_builder, sdc_exe
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline)
 
-        # Since the pipeline is not meant to read anything, we 'simply' wait
+        # We simply wait for the records to be read
         time.sleep(5)
 
         sdc_executor.stop_pipeline(pipeline)
 
-        # There must be no records read
         history = sdc_executor.get_pipeline_history(pipeline)
-        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 2
-        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 2
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == expected_count
+        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == expected_count
 
     finally:
         if table is not None:
@@ -511,6 +674,7 @@ def test_jdbc_multitable_consumer_last_offset_configuration(sdc_builder, sdc_exe
             table.drop(database.engine)
         if connection is not None:
             connection.close()
+        sdc_executor.remove_pipeline(pipeline)
 
 
 # SDC-11324: JDBC MultiTable origin can create duplicate offsets
