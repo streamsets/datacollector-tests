@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from streamsets.testframework.markers import syslog
+from streamsets.testframework.markers import syslog, sdc_min_version
 
 
 @syslog
+@sdc_min_version('4.0.0')
 def test_syslog_write_single_record_udp(sdc_builder, sdc_executor):
     """Writes a single record to syslog destination.To achieve testing this, we have two pipelines. The 1st one will
     write data to syslog destination using UDP protocol at port 514 and 2nd will read the data using UDP Source origin
@@ -90,6 +91,7 @@ def test_syslog_write_single_record_udp(sdc_builder, sdc_executor):
 
 
 @syslog
+@sdc_min_version('5.7.0')
 def test_syslog_write_single_record_ssl(sdc_builder, sdc_executor, syslog):
     """
     Writes a single record to syslog destination using SSL.To achieve testing this, we have a pipeline which
@@ -145,6 +147,7 @@ def test_syslog_write_single_record_ssl(sdc_builder, sdc_executor, syslog):
 
 
 @syslog
+@sdc_min_version('5.7.0')
 def test_syslog_write_single_record_tls(sdc_builder, sdc_executor, syslog):
     """
     Writes a single record to syslog destination using TLS.To achieve testing this, we have a pipeline which
@@ -202,6 +205,7 @@ def test_syslog_write_single_record_tls(sdc_builder, sdc_executor, syslog):
 
 
 @syslog
+@sdc_min_version('5.7.0')
 def test_syslog_write_single_record_mtls(sdc_builder, sdc_executor, syslog):
     """
     Writes a single record to syslog destination using Mutual TLS.To achieve testing this, we have a pipeline which
