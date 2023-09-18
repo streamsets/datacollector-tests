@@ -295,8 +295,12 @@ def test_table_location_path(sdc_builder, sdc_executor, deltalake, aws):
     databricks_deltalake.set_attributes(staging_location='AWS_S3',
                                         stage_file_prefix=s3_key)
     databricks_deltalake.set_attributes(table_name=table_name,
-                                        purge_stage_file_after_ingesting=True,
-                                        table_location_path=table_location)
+                                        purge_stage_file_after_ingesting=True)
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        databricks_deltalake.table_location_path = table_location
+    else:
+        databricks_deltalake.directory_for_table_location = table_location
 
     dev_raw_data_source >> databricks_deltalake
 

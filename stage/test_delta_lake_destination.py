@@ -1769,11 +1769,15 @@ def test_table_location_path_with_partition(sdc_builder, sdc_executor, deltalake
                                         stage_file_prefix=s3_key,
                                         table_name=table_name,
                                         purge_stage_file_after_ingesting=True,
-                                        table_location_path=table_location,
                                         enable_data_drift=True,
                                         auto_create_table=True,
                                         partition_table=True,
                                         partition_columns=[{'tableName': table_name, 'columnName': 'genre'}])
+
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        databricks_deltalake.table_location_path = table_location
+    else:
+        databricks_deltalake.directory_for_table_location = table_location
 
     dev_raw_data_source >> databricks_deltalake
 
