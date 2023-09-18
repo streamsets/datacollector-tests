@@ -289,7 +289,6 @@ def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure, st
     # Databricks Delta lake destination stage
     databricks_deltalake = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
     databricks_deltalake.set_attributes(staging_location='ADLS_GEN2',
-                                        endpoint_type='URL',
                                         on_record_error='STOP_PIPELINE',
                                         stage_file_prefix=files_prefix,
                                         table_name=table_name,
@@ -300,7 +299,8 @@ def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure, st
         databricks_deltalake.set_attributes(azure_authentication_method='OAUTH')
     else:
         set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'CLIENT')
-        databricks_deltalake.set_attributes(parquet_schema_location='INFER')
+        databricks_deltalake.set_attributes(parquet_schema_location='INFER',
+                                            endpoint_type='URL')
 
     dev_raw_data_source >> databricks_deltalake
 
