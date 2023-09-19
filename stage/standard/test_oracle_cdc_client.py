@@ -18,10 +18,8 @@ import os
 import re
 import pytest
 import sqlalchemy
-from sqlalchemy.dialects import oracle
-from sqlalchemy.dialects.oracle.base import ischema_names as oracle_names
-
 from datetime import datetime, timedelta, timezone
+from sqlalchemy.dialects import oracle
 
 from streamsets.testframework.markers import database, sdc_min_version
 
@@ -31,19 +29,17 @@ from stage.utils.utils_oracle import (
     DefaultConnectionParameters,
     DefaultStartParameters,
     DefaultTableParameters,
+    MIN_ORACLE_VERSION,
+    RECORD_FORMATS,
+    RELEASE_VERSION,
     database_version,
     oracle_stage_name,
     table_name,
     test_name,
     util_setup,
-    RECORD_FORMATS,
 )
 
-
-RELEASE_VERSION = "5.4.0"
-MIN_ORACLE_VERSION = 18
 DEFAULT_TIMEOUT_IN_SEC = 120
-
 # These variables need to be loaded only once and will not change from test to test
 SERVICE_NAME = ""  # The value will be assigned during setup
 SYSTEM_IDENTIFIER = ""  # The value will be assigned during setup

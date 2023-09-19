@@ -20,7 +20,7 @@ import sqlalchemy
 import string
 
 from contextlib import ExitStack
-from json import JSONDecodeError
+from requests.exceptions import JSONDecodeError
 from time import sleep
 
 from streamsets.sdk.exceptions import ValidationError
@@ -33,12 +33,12 @@ from stage.utils.utils_migration import LegacyHandler as PipelineHandler
 from stage.utils.utils_oracle import (
     DefaultConnectionParameters,
     DefaultTableParameters,
-    DefaultThreadingParameters,
     DefaultStartParameters,
     DefaultWaitParameters,
-    ConditionalParameters,
     FETCH_PARAMETERS,
     FEAT_VER_FETCH_STRATEGY,
+    MIN_ORACLE_VERSION,
+    RELEASE_VERSION,
     NoError,
     StartMode,
     database_version,
@@ -51,17 +51,12 @@ from stage.utils.utils_oracle import (
 )
 
 
-RELEASE_VERSION = "5.4.0"
-MIN_ORACLE_VERSION = 18
 TRASH = "Trash"
 DEFAULT_TIMEOUT_IN_SEC = 120
 
 # precedence determines what happens first: pipeline start or table operations
 PIPELINE, TABLE = "PIPELINE", "TABLE"
 PRECEDENCES = [PIPELINE, TABLE]
-
-OK_STATUS = "0"
-STAGE_ISSUES = "stageIssues"
 
 logger = logging.getLogger(__name__)
 pytestmark = [database("oracle"), sdc_min_version(RELEASE_VERSION)]
@@ -98,8 +93,8 @@ def _test_template(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
-    oracle_cdc_origin.set_attributes(
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
         **DefaultConnectionParameters(database)  # Default parameters to connect to the DB
         | DefaultTableParameters(table_name)  # Default parameters to include a specific table
         | DefaultStartParameters(database)  # Default parameters to start from the current SCN
@@ -107,7 +102,7 @@ def _test_template(
 
     wiretap = pipeline_builder.add_wiretap()
 
-    oracle_cdc_origin >> wiretap.destination
+    oracle_cdc >> wiretap.destination
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
@@ -191,10 +186,11 @@ def test_connection_types(
     # Create the tnsnames.ora file required for TNS_ALIAS
     if connection_type == "TNS_ALIAS":
         cmd = handler.execute_shell(f"mkdir -p {tns_dir}")
-        assert cmd.exit_code == OK_STATUS, f"Failed to create TNS default directory ({tns_dir}): {cmd}"
+        ok_code = "0"
+        assert cmd.exit_code == ok_code, f"Failed to create TNS default directory ({tns_dir}): {cmd}"
         cleanup(handler.execute_shell, f"rm -rf {tns_dir}")  # Defer removal of the directory
         cmd = handler.execute_shell(f"cat > {tns_file} << EOF\n{tns_file_content}\nEOF\n")
-        assert cmd.exit_code == OK_STATUS, f"Failed to create TNS default file ({tns_file}): {cmd}"
+        assert cmd.exit_code == ok_code, f"Failed to create TNS default file ({tns_file}): {cmd}"
 
     # Every connection type will use the shared parameters
     shared_parameters = {"username": username, "password": password}
@@ -228,9 +224,9 @@ def test_connection_types(
 
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
     # fmt: off
-    oracle_cdc_origin.set_attributes(
+    oracle_cdc.set_attributes(
         connection_type=connection_type,
         **parameters
     )
@@ -238,7 +234,7 @@ def test_connection_types(
 
     trash = pipeline_builder.add_stage(TRASH)
 
-    oracle_cdc_origin >> trash
+    oracle_cdc >> trash
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     handler.add_pipeline(pipeline)
@@ -250,7 +246,7 @@ def test_connection_types(
         # as ValidationError and others as JSONDecodeError
         with pytest.raises((ValidationError, JSONDecodeError)) as err:
             handler.validate_pipeline(pipeline)
-        assert type(err.value) == JSONDecodeError or expected_error in err.value.issues[STAGE_ISSUES]
+        assert type(err.value) == JSONDecodeError or expected_error in err.value.issues["stageIssues"]
 
 
 @pytest.mark.parametrize(
@@ -282,9 +278,9 @@ def test_buffer_size(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
     # fmt: off
-    oracle_cdc_origin.set_attributes(
+    oracle_cdc.set_attributes(
         buffer_size=buffer_size,
         **DefaultConnectionParameters(database)
     )
@@ -292,7 +288,7 @@ def test_buffer_size(
 
     trash = pipeline_builder.add_stage(TRASH)
 
-    oracle_cdc_origin >> trash
+    oracle_cdc >> trash
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     handler.add_pipeline(pipeline)
@@ -349,21 +345,21 @@ def test_start_mode(
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
 
     # fmt: off
-    oracle_cdc_origin.set_attributes(
+    oracle_cdc.set_attributes(
         start_mode=start_mode,
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name)
     )
     if initial_parameter is not None:
-        oracle_cdc_origin.set_attributes(**{
+        oracle_cdc.set_attributes(**{
             initial_parameter: initial_parameter_function(database, cleanup)
         })
     # fmt: on
     trash = pipeline_builder.add_stage(TRASH)
 
-    oracle_cdc_origin >> trash
+    oracle_cdc >> trash
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
@@ -388,15 +384,15 @@ def test_start_events(sdc_builder, sdc_executor, database, database_version, ora
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
-    oracle_cdc_origin.set_attributes(**DefaultConnectionParameters(database))
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(**DefaultConnectionParameters(database))
 
     trash = pipeline_builder.add_stage(TRASH)
 
     event_wiretap = pipeline_builder.add_wiretap()
 
-    oracle_cdc_origin >> trash
-    oracle_cdc_origin >= event_wiretap.destination
+    oracle_cdc >> trash
+    oracle_cdc >= event_wiretap.destination
 
     # Build and start the pipeline
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
@@ -445,11 +441,7 @@ def test_basic_operations(
     rows,
     columns,
     session_wait_time,
-    fetch_strategy=None,  # unused by default
-    fetch_overflow=None,  # unused by default
-    wait_time_before_session_start_in_ms=None,  # unused by default
-    wait_time_after_session_start_in_ms=None,  # unused by default
-    wait_time_after_session_end_in_ms=None,  # unused by default
+    **kwargs,
 ):
     """Insert, update and delete n=@rows rows into a table and verify that each operation produces
     a record with the correct values."""
@@ -501,17 +493,14 @@ def test_basic_operations(
     pipeline_builder = handler.get_pipeline_builder()
     oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc.set_attributes(
+        wait_time_before_session_start_in_ms=session_wait_time,
+        wait_time_after_session_start_in_ms=session_wait_time,
+        wait_time_after_session_end_in_ms=session_wait_time,
         **DefaultConnectionParameters(database)
         | DefaultTableParameters(table_name)
         | DefaultStartParameters(database)
-        | DefaultWaitParameters(session_wait_time)
-        | ConditionalParameters()
-        .add_if(fetch_strategy is not None, fetch_strategy=fetch_strategy)
-        .add_if(fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None, fetch_overflow=fetch_overflow)
-        .add_if(wait_time_before_session_start_in_ms is not None, wait_time_before_session_start_in_ms=wait_time_before_session_start_in_ms)
-        .add_if(wait_time_after_session_start_in_ms is not None, wait_time_after_session_start_in_ms=wait_time_after_session_start_in_ms)
-        .add_if(wait_time_after_session_end_in_ms is not None, wait_time_after_session_end_in_ms=wait_time_after_session_end_in_ms)
     )
+    oracle_cdc.set_attributes(**kwargs)
 
     wiretap = pipeline_builder.add_wiretap()
     oracle_cdc >> wiretap.destination
@@ -564,11 +553,7 @@ def test_rollback(
     precedence,
     rows,
     columns,
-    fetch_strategy=None,  # unused by default
-    fetch_overflow=None,  # unused by default
-    wait_time_before_session_start_in_ms=None,  # unused by default
-    wait_time_after_session_start_in_ms=None,  # unused by default
-    wait_time_after_session_end_in_ms=None,  # unused by default
+    **kwargs,
 ):
     """Ensure no records are produced from transactions that were rolled back."""
 
@@ -626,15 +611,9 @@ def test_rollback(
         **DefaultConnectionParameters(database)
         | DefaultTableParameters(table_name)
         | DefaultStartParameters(database)
-        | DefaultWaitParameters(0)
-        | DefaultThreadingParameters()
-        | ConditionalParameters()
-        .add_if(fetch_strategy is not None, fetch_strategy=fetch_strategy)
-        .add_if(fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None, fetch_overflow=fetch_overflow)
-        .add_if(wait_time_before_session_start_in_ms is not None, wait_time_before_session_start_in_ms=wait_time_before_session_start_in_ms)
-        .add_if(wait_time_after_session_start_in_ms is not None, wait_time_after_session_start_in_ms=wait_time_after_session_start_in_ms)
-        .add_if(wait_time_after_session_end_in_ms is not None, wait_time_after_session_end_in_ms=wait_time_after_session_end_in_ms)
+        | DefaultWaitParameters()
     )
+    oracle_cdc.set_attributes(**kwargs)
 
     wiretap = pipeline_builder.add_wiretap()
     oracle_cdc >> wiretap.destination
@@ -697,14 +676,14 @@ def test_long_sql_statements(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
-    oracle_cdc_origin.set_attributes(
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database)
     )
 
     wiretap = pipeline_builder.add_wiretap()
 
-    oracle_cdc_origin >> wiretap.destination
+    oracle_cdc >> wiretap.destination
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
@@ -742,17 +721,7 @@ def test_mixed_workload(
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
 def test_overlapping_transactions(
-    sdc_builder,
-    sdc_executor,
-    database,
-    database_version,
-    oracle_stage_name,
-    cleanup,
-    table_name,
-    test_name,
-    precedence,
-    fetch_strategy=None,  # unused by default
-    fetch_overflow=None,  # unused by default
+    sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, table_name, test_name, precedence
 ):
     """Test the stage produces a correct output when transactions overlap. This test will:
     1. Start the pipeline
@@ -789,19 +758,14 @@ def test_overlapping_transactions(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
-    oracle_cdc_origin.set_attributes(
-        **DefaultConnectionParameters(database)
-        | DefaultTableParameters(table_name)
-        | DefaultStartParameters(database)
-        | ConditionalParameters()
-        .add_if(fetch_strategy is not None, fetch_strategy=fetch_strategy)
-        .add_if(fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None, fetch_overflow=fetch_overflow)
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database)
     )
 
     wiretap = pipeline_builder.add_wiretap()
 
-    oracle_cdc_origin >> wiretap.destination
+    oracle_cdc >> wiretap.destination
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
@@ -911,20 +875,15 @@ def test_oracle_cdc_inclusion_and_exclusion_pattern(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
-    oracle_cdc_origin.set_attributes(
-        **DefaultConnectionParameters(database)
-        | DefaultStartParameters(database)
-        | DefaultWaitParameters(0)
-        | DefaultThreadingParameters()
-    )
-    oracle_cdc_origin.set_attributes(
-        tables_filter=[{"tablesInclusionPattern": include_pattern, "tablesExclusionPattern": exclude_pattern}]
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
+        tables_filter=[{"tablesInclusionPattern": include_pattern, "tablesExclusionPattern": exclude_pattern}],
+        **DefaultConnectionParameters(database) | DefaultStartParameters(database) | DefaultWaitParameters(),
     )
 
     wiretap = pipeline_builder.add_wiretap()
 
-    oracle_cdc_origin >> wiretap.destination
+    oracle_cdc >> wiretap.destination
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
@@ -980,14 +939,14 @@ def test_decimal_attributes(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
-    oracle_cdc_origin.set_attributes(
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database)
     )
 
     wiretap = pipeline_builder.add_wiretap()
 
-    oracle_cdc_origin >> wiretap.destination
+    oracle_cdc >> wiretap.destination
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
@@ -1060,8 +1019,8 @@ def test_batch_size(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
-    oracle_cdc_origin.set_attributes(
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
+    oracle_cdc.set_attributes(
         max_batch_size_in_records=max_batch_size,
         max_batch_wait_time_in_ms=-1,
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database),
@@ -1069,7 +1028,7 @@ def test_batch_size(
 
     wiretap = pipeline_builder.add_wiretap()
 
-    oracle_cdc_origin >> wiretap.destination
+    oracle_cdc >> wiretap.destination
 
     pipeline = pipeline_builder.build(test_name).configure_for_environment(database)
     work = handler.add_pipeline(pipeline)
@@ -1099,7 +1058,7 @@ def test_batch_size(
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
 @pytest.mark.parametrize("fetch_strategy, fetch_overflow", FETCH_PARAMETERS)
-@pytest.mark.parametrize("wait_time", [0, 1000])
+@pytest.mark.parametrize("session_wait_time", [0, 1000])
 def test_fetch_strategy(
     sdc_builder,
     sdc_executor,
@@ -1111,7 +1070,7 @@ def test_fetch_strategy(
     precedence,
     fetch_strategy,
     fetch_overflow,
-    wait_time,
+    session_wait_time,
 ):
     """Run some existing tests with different fetch strategies and ensure they are unaffected"""
 
@@ -1125,18 +1084,19 @@ def test_fetch_strategy(
             sdc_executor,
             database,
             database_version,
-            cleanup,
+            oracle_stage_name,
+            cleanup.callback,
             table_name + "A",
             test_name + "with_basic_operations",
             precedence,
-            rows=400,
-            columns=5,
-            session_wait_time=0,
+            400,  # rows
+            5,    # columns
+            session_wait_time,
             fetch_strategy=fetch_strategy,
             fetch_overflow=fetch_overflow,
-            wait_time_before_session_start_in_ms=wait_time,
-            wait_time_after_session_start_in_ms=wait_time,
-            wait_time_after_session_end_in_ms=wait_time,
+            wait_time_before_session_start_in_ms=session_wait_time,
+            wait_time_after_session_start_in_ms=session_wait_time,
+            wait_time_after_session_end_in_ms=session_wait_time,
         )
 
     logger.info("Run 'test_rollback'")
@@ -1146,17 +1106,18 @@ def test_fetch_strategy(
             sdc_executor,
             database,
             database_version,
-            cleanup,
+            oracle_stage_name,
+            cleanup.callback,
             table_name + "B",
             test_name + "with_rollback",
             precedence,
-            rows=400,
-            columns=5,
+            400,  # rows
+            5,    # columns
             fetch_strategy=fetch_strategy,
             fetch_overflow=fetch_overflow,
-            wait_time_before_session_start_in_ms=wait_time,
-            wait_time_after_session_start_in_ms=wait_time,
-            wait_time_after_session_end_in_ms=wait_time,
+            wait_time_before_session_start_in_ms=session_wait_time,
+            wait_time_after_session_start_in_ms=session_wait_time,
+            wait_time_after_session_end_in_ms=session_wait_time,
         )
 
     # Commented out to speed up the test

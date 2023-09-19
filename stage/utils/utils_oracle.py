@@ -17,9 +17,12 @@ from abc import ABC, abstractmethod
 from contextlib import ExitStack
 from datetime import datetime, timedelta
 import logging
+from typing import Callable
+
 import pytest
 import string
 
+from streamsets.testframework.environment import Database
 from streamsets.testframework.markers import database
 from streamsets.testframework.utils import get_random_string, Version
 
@@ -33,6 +36,7 @@ DB_VERSION = 0  # The value will be assigned during setup
 
 # Versions
 FEAT_VER_FETCH_STRATEGY = Version("5.6.0")
+RELEASE_VERSION = "5.4.0"
 MIN_ORACLE_VERSION = 18
 
 # Test parameters
@@ -49,7 +53,7 @@ RECORD_FORMATS = ["BASIC", "RICH"]
 
 
 @pytest.fixture
-def oracle_stage_name(sdc_builder):
+def oracle_stage_name(sdc_builder) -> str:
     # The stage name had a type until this version
     if Version(sdc_builder.version) < Version("5.7.0"):
         return "com_streamsets_pipeline_stage_origin_jdbc_cdc_descriptiopn_OracleCDCDOrigin"
@@ -59,11 +63,10 @@ def oracle_stage_name(sdc_builder):
 
 class NoError(Exception):
     """An exception that will never be raised as it is not implemented in SDC."""
-
     pass
 
 
-def _get_single_context_parameter(database, parameter):
+def _get_single_context_parameter(database: Database, parameter: str) -> str:
     """Retrieve the value of a context parameter from the database,
     e.g. SERVICE_NAME or INSTANCE_NAME. The parameter must have one single value."""
     with ExitStack() as exit_stack:
@@ -85,15 +88,15 @@ def _get_single_context_parameter(database, parameter):
         return result_values[0][0]
 
 
-def _get_service_name(db):
+def _get_service_name(db: Database) -> str:
     return _get_single_context_parameter(db, "SERVICE_NAME")
 
 
-def _get_system_identifier(db):
+def _get_system_identifier(db: Database) -> str:
     return _get_single_context_parameter(db, "INSTANCE_NAME")
 
 
-def _get_database_version(db):
+def _get_database_version(db: Database) -> int:
     with ExitStack() as exit_stack:
         connection = db.engine.connect()
         exit_stack.callback(connection.close)
@@ -104,13 +107,13 @@ def _get_database_version(db):
 
 
 @pytest.fixture()
-def table_name():
+def table_name() -> str:
     """Returns a random table name"""
     return get_random_string(string.ascii_uppercase, 10)
 
 
 @pytest.fixture()
-def test_name(request):
+def test_name(request) -> str:
     """Returns the parametrized name of the test requesting the fixture."""
     return f"{request.node.name}"
 
@@ -132,19 +135,19 @@ def util_setup(database):
 
 
 @pytest.fixture()
-def service_name(util_setup):
+def service_name(util_setup) -> str:
     """Requires importing util_setup."""
     return SERVICE_NAME
 
 
 @pytest.fixture()
-def system_identifier(util_setup):
+def system_identifier(util_setup) -> str:
     """Requires importing util_setup."""
     return SYSTEM_IDENTIFIER
 
 
 @pytest.fixture()
-def database_version(util_setup):
+def database_version(util_setup) -> int:
     """Requires importing util_setup."""
     return DB_VERSION
 
@@ -153,7 +156,7 @@ class StartMode:
     """Class grouping together static methods that calculate start modes."""
 
     @staticmethod
-    def current_scn(db, cleanup):
+    def current_scn(db: Database, cleanup: Callable) -> int:
         connection = db.engine.connect()
         cleanup(connection.close)
         try:
@@ -163,14 +166,14 @@ class StartMode:
         return scn
 
     @staticmethod
-    def future_scn(db, cleanup):
+    def future_scn(db: Database, cleanup: Callable) -> int:
         # Use a considerably greater SCN to ensure the database SCN doesn't catch up while
         # the test is running
         future_scn = StartMode.current_scn(db, cleanup) + 100
         return future_scn
 
     @staticmethod
-    def current_instant(db, cleanup):
+    def current_instant(db: Database, cleanup: Callable) -> str:
         oracle_date_format = "YYYY-MM-DD HH24:MM:SS"
 
         connection = db.engine.connect()
@@ -183,7 +186,7 @@ class StartMode:
         return instant
 
     @staticmethod
-    def future_instant(db, cleanup):
+    def future_instant(db: Database, cleanup: Callable) -> str:
         python_date_format = "%Y-%m-%d %H:%M:%S"
 
         current_instant = StartMode.current_instant(db, cleanup)
@@ -197,7 +200,7 @@ class Parameters(ABC):
     """A set of parameters set as Oracle CDC Origin attributes."""
 
     @abstractmethod
-    def as_dict(self):
+    def as_dict(self) -> dict:
         pass
 
     def __add__(self, other):
@@ -223,21 +226,6 @@ class Parameters(ABC):
         return self.as_dict().keys()
 
 
-class ConditionalParameters(Parameters):
-    """Stores parameters only if their bound condition is true."""
-
-    def __init__(self):
-        self.parameter_dict = {}
-
-    def add_if(self, condition, **kwargs):
-        if condition:
-            self.parameter_dict.update(**kwargs)
-        return self
-
-    def as_dict(self):
-        return self.parameter_dict
-
-
 class RawParameters(Parameters):
     """Empty canvas to fill with any dictionary."""
 
@@ -253,7 +241,7 @@ class DefaultConnectionParameters(Parameters):
 
     service_name = None
 
-    def __init__(self, db):
+    def __init__(self, db: Database):
         self.database = db
         if self.service_name is None:
             self.service_name = _get_service_name(self.database)
@@ -271,7 +259,7 @@ class DefaultConnectionParameters(Parameters):
 class DefaultTableParameters(Parameters):
     """Filter a single table."""
 
-    def __init__(self, table_name):
+    def __init__(self, table_name: str):
         self.table_name = table_name
 
     def as_dict(self):
@@ -281,7 +269,7 @@ class DefaultTableParameters(Parameters):
 class DefaultStartParameters(Parameters):
     """Start with the last SCN at the moment of evaluating these parameters."""
 
-    def __init__(self, db):
+    def __init__(self, db: Database):
         self.database = db
 
     def as_dict(self):
@@ -295,29 +283,9 @@ class DefaultStartParameters(Parameters):
 class DefaultWaitParameters(Parameters):
     """Session wait times"""
 
-    def __init__(self, wait_time):
-        try:
-            wait_time = int(wait_time)
-            if wait_time < 0:
-                raise ValueError()
-        except ValueError:
-            raise ValueError("Wait time must be an integer greater or equal to 0")
-
-        self.wait_time = wait_time
-
     def as_dict(self):
         return {
-            "wait_time_before_session_start_in_ms": self.wait_time,
-            "wait_time_after_session_start_in_ms": self.wait_time,
-            "wait_time_after_session_end_in_ms": self.wait_time,
+            "wait_time_before_session_start_in_ms": 0,
+            "wait_time_after_session_start_in_ms": 0,
+            "wait_time_after_session_end_in_ms": 0,
         }
-
-
-class DefaultThreadingParameters(Parameters):
-    """Run with all available cores"""
-
-    def __int__(self):
-        pass
-
-    def as_dict(self):
-        return {"sql_parser_threads": 0}
