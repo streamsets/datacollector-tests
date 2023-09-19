@@ -1006,7 +1006,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
                                                           maximum_transaction_length="${1 * MINUTES}",
                                                           src_table_name=src_table_name,
                                                           initial_change="SCN",
-                                                          start_scn=start_scn)
+                                                          start_scn=start_scn,
+                                                          batch_wait_time_in_secs=30)
         set_session_wait_times(sdc_builder, oracle_cdc_client)
         wiretap = pipeline_builder.add_wiretap()
         oracle_cdc_client >> wiretap.destination
@@ -1026,7 +1027,8 @@ def test_oracle_cdc_client_preview_and_run(sdc_builder, sdc_executor, database, 
                                                     timeout=300000).preview
         assert preview is not None, 'Got no preview instance in preview mode 1'
         assert preview.issues.issues_count == 0, 'Unexpected issues in preview mode 1'
-        preview_records = [batch[oracle_cdc_client.instance_name].output[0] for batch in preview.preview_batches]
+        preview_records = [batch[oracle_cdc_client.instance_name].output[0] for batch in preview.preview_batches
+                           if len(batch[oracle_cdc_client.instance_name].output) == 1]
         assert len(preview_records) == len(rows), 'Wrong number of records in preview mode 1'
 
         row_index = 0
