@@ -32,6 +32,7 @@ from stage.utils.utils_oracle import (
     DefaultStartParameters,
     DefaultTableParameters,
     database_version,
+    oracle_stage_name,
     table_name,
     test_name,
     util_setup,
@@ -41,7 +42,6 @@ from stage.utils.utils_oracle import (
 
 RELEASE_VERSION = "5.4.0"
 MIN_ORACLE_VERSION = 18
-ORACLE_CDC_ORIGIN = "Oracle CDC"
 DEFAULT_TIMEOUT_IN_SEC = 120
 
 # These variables need to be loaded only once and will not change from test to test
@@ -129,6 +129,7 @@ def test_data_types(
     sdc_executor,
     database,
     database_version,
+    oracle_stage_name,
     cleanup,
     table_name,
     test_name,
@@ -167,7 +168,7 @@ def test_data_types(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         missing_columns="FORWARD",
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database),
@@ -210,7 +211,15 @@ def test_data_types(
     ],
 )
 def test_object_named_tables(
-    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, object_name
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    oracle_stage_name,
+    cleanup,
+    table_name,
+    test_name,
+    object_name,
 ):
     """Test the stage treats table names correctly even if they contain reserved keywords or
     characters that could otherwise break queries. """
@@ -238,7 +247,7 @@ def test_object_named_tables(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         null_columns="FORWARD",
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database),
@@ -269,7 +278,16 @@ def test_object_named_tables(
 @pytest.mark.parametrize("batches", [1, 10])
 @pytest.mark.parametrize("max_batch_size", [1, 10, 1000])
 def test_multiple_batches(
-    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, batches, max_batch_size
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    oracle_stage_name,
+    cleanup,
+    table_name,
+    test_name,
+    batches,
+    max_batch_size,
 ):
     """Test the stage produces the expected number of batches with the expected size."""
 
@@ -295,7 +313,7 @@ def test_multiple_batches(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         max_batch_size_in_records=max_batch_size,
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database),
@@ -331,7 +349,7 @@ def test_data_format(sdc_builder, sdc_executor, database):
 
 @pytest.mark.parametrize("iterations", [5])
 def test_resume_offset(
-    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, iterations
+    sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, table_name, test_name, iterations
 ):
     """Test the stage resumes from the expected offset so it does"""
 
@@ -361,7 +379,7 @@ def test_resume_offset(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database)
     )
@@ -398,7 +416,9 @@ def test_resume_offset(
 
 
 @pytest.mark.parametrize("threads", [1, 4, 8])
-def test_multithreading(sdc_builder, sdc_executor, database, database_version, cleanup, test_name, table_name, threads):
+def test_multithreading(
+    sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, test_name, table_name, threads
+):
     """Ensure the behaviour of the stage does not change with the number of parser threads."""
 
     if database_version < MIN_ORACLE_VERSION:
@@ -426,7 +446,7 @@ def test_multithreading(sdc_builder, sdc_executor, database, database_version, c
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database)
     )

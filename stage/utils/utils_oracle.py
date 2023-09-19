@@ -48,6 +48,15 @@ FETCH_PARAMETERS = (
 RECORD_FORMATS = ["BASIC", "RICH"]
 
 
+@pytest.fixture
+def oracle_stage_name(sdc_builder):
+    # The stage name had a type until this version
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        return "com_streamsets_pipeline_stage_origin_jdbc_cdc_descriptiopn_OracleCDCDOrigin"
+    else:
+        return "com_streamsets_pipeline_stage_origin_jdbc_cdc_description_OracleCDCDOrigin"
+
+
 class NoError(Exception):
     """An exception that will never be raised as it is not implemented in SDC."""
 

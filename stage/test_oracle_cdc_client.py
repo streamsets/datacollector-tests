@@ -42,6 +42,7 @@ from stage.utils.utils_oracle import (
     NoError,
     StartMode,
     database_version,
+    oracle_stage_name,
     service_name,
     system_identifier,
     table_name,
@@ -52,7 +53,6 @@ from stage.utils.utils_oracle import (
 
 RELEASE_VERSION = "5.4.0"
 MIN_ORACLE_VERSION = 18
-ORACLE_CDC_ORIGIN = "Oracle CDC"
 TRASH = "Trash"
 DEFAULT_TIMEOUT_IN_SEC = 120
 
@@ -68,7 +68,9 @@ pytestmark = [database("oracle"), sdc_min_version(RELEASE_VERSION)]
 
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
-def _test_template(sdc_builder, sdc_executor, database, database_version, cleanup, test_name, table_name, precedence):
+def _test_template(
+    sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, test_name, table_name, precedence
+):
     """This test provides a template to follow for tests. Following it is not compulsory, as some
     specific cases may have caveats that make it impractical to do so. It is however very useful
     to understand tests at a glance as well as keeping them simple.
@@ -96,7 +98,7 @@ def _test_template(sdc_builder, sdc_executor, database, database_version, cleanu
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         **DefaultConnectionParameters(database)  # Default parameters to connect to the DB
         | DefaultTableParameters(table_name)  # Default parameters to include a specific table
@@ -155,6 +157,7 @@ def test_connection_types(
     sdc_executor,
     database,
     database_version,
+    oracle_stage_name,
     cleanup,
     test_name,
     service_name,
@@ -225,7 +228,7 @@ def test_connection_types(
 
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     # fmt: off
     oracle_cdc_origin.set_attributes(
         connection_type=connection_type,
@@ -261,7 +264,15 @@ def test_connection_types(
     # fmt: on
 )
 def test_buffer_size(
-    sdc_builder, sdc_executor, database, database_version, cleanup, test_name, buffer_size, expected_error
+    sdc_builder,
+    sdc_executor,
+    database,
+    database_version,
+    oracle_stage_name,
+    cleanup,
+    test_name,
+    buffer_size,
+    expected_error,
 ):
     """Check that the ring size is a multiple of 2."""
 
@@ -271,7 +282,7 @@ def test_buffer_size(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     # fmt: off
     oracle_cdc_origin.set_attributes(
         buffer_size=buffer_size,
@@ -311,6 +322,7 @@ def test_start_mode(
     sdc_executor,
     database,
     database_version,
+    oracle_stage_name,
     cleanup,
     test_name,
     table_name,
@@ -337,7 +349,7 @@ def test_start_mode(
 
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
 
     # fmt: off
     oracle_cdc_origin.set_attributes(
@@ -363,7 +375,7 @@ def test_start_mode(
         pass
 
 
-def test_start_events(sdc_builder, sdc_executor, database, database_version, cleanup, test_name):
+def test_start_events(sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, test_name):
     """Check that incarnation, instant and SCN values are sent in events when a pipeline with the
     Oracle CDC Origin stage is started."""
 
@@ -376,7 +388,7 @@ def test_start_events(sdc_builder, sdc_executor, database, database_version, cle
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(**DefaultConnectionParameters(database))
 
     trash = pipeline_builder.add_stage(TRASH)
@@ -425,6 +437,7 @@ def test_basic_operations(
     sdc_executor,
     database,
     database_version,
+    oracle_stage_name,
     cleanup,
     table_name,
     test_name,
@@ -486,7 +499,7 @@ def test_basic_operations(
     # Build and start the pipeline.
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
-    oracle_cdc = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc.set_attributes(
         **DefaultConnectionParameters(database)
         | DefaultTableParameters(table_name)
@@ -544,6 +557,7 @@ def test_rollback(
     sdc_executor,
     database,
     database_version,
+    oracle_stage_name,
     cleanup,
     table_name,
     test_name,
@@ -607,7 +621,7 @@ def test_rollback(
     # Build and start the pipeline.
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
-    oracle_cdc = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc.set_attributes(
         **DefaultConnectionParameters(database)
         | DefaultTableParameters(table_name)
@@ -654,7 +668,7 @@ def test_rollback(
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
 def test_long_sql_statements(
-    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence
+    sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, table_name, test_name, precedence
 ):
     """Test SQL statements that contain a large amount of characters."""
 
@@ -683,7 +697,7 @@ def test_long_sql_statements(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database)
     )
@@ -717,7 +731,7 @@ def test_long_sql_statements(
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
 def test_mixed_workload(
-    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence
+    sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, table_name, test_name, precedence
 ):
 
     if database_version < MIN_ORACLE_VERSION:
@@ -732,6 +746,7 @@ def test_overlapping_transactions(
     sdc_executor,
     database,
     database_version,
+    oracle_stage_name,
     cleanup,
     table_name,
     test_name,
@@ -774,7 +789,7 @@ def test_overlapping_transactions(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         **DefaultConnectionParameters(database)
         | DefaultTableParameters(table_name)
@@ -843,7 +858,7 @@ def test_overlapping_transactions(
     # fmt: on
 )
 def test_oracle_cdc_inclusion_and_exclusion_pattern(
-    sdc_builder, sdc_executor, database, database_version, cleanup, test_name, pattern, action
+    sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, test_name, pattern, action
 ):
     """Test patterns are included and excluded as expected.
 
@@ -896,7 +911,7 @@ def test_oracle_cdc_inclusion_and_exclusion_pattern(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         **DefaultConnectionParameters(database)
         | DefaultStartParameters(database)
@@ -937,7 +952,7 @@ def test_oracle_cdc_inclusion_and_exclusion_pattern(
 
 @pytest.mark.parametrize("precedence", PRECEDENCES)
 def test_decimal_attributes(
-    sdc_builder, sdc_executor, database, database_version, cleanup, table_name, test_name, precedence
+    sdc_builder, sdc_executor, database, database_version, oracle_stage_name, cleanup, table_name, test_name, precedence
 ):
     """Test the precision and scale attributes of the decimal type."""
 
@@ -965,7 +980,7 @@ def test_decimal_attributes(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         **DefaultConnectionParameters(database) | DefaultTableParameters(table_name) | DefaultStartParameters(database)
     )
@@ -1017,6 +1032,7 @@ def test_batch_size(
     sdc_executor,
     database,
     database_version,
+    oracle_stage_name,
     cleanup,
     table_name,
     test_name,
@@ -1044,7 +1060,7 @@ def test_batch_size(
     handler = PipelineHandler(sdc_builder, sdc_executor, database, cleanup, test_name, logger)
     pipeline_builder = handler.get_pipeline_builder()
 
-    oracle_cdc_origin = pipeline_builder.add_stage(ORACLE_CDC_ORIGIN)
+    oracle_cdc_origin = pipeline_builder.add_stage(name=oracle_stage_name)
     oracle_cdc_origin.set_attributes(
         max_batch_size_in_records=max_batch_size,
         max_batch_wait_time_in_ms=-1,
@@ -1089,6 +1105,7 @@ def test_fetch_strategy(
     sdc_executor,
     database,
     database_version,
+    oracle_stage_name,
     table_name,
     test_name,
     precedence,
