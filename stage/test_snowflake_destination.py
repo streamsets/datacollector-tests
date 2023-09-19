@@ -169,11 +169,11 @@ def test_basic_parquet(sdc_builder, sdc_executor, snowflake):
         dev_raw_data_source  >> snowflake_destination
     """
     _run_test_basic(sdc_builder, sdc_executor, snowflake, get_stage_location(sdc_builder, 'INTERNAL'),
-                    data_format='PARQUET')
+                    staging_file_format='PARQUET')
 
 
 def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_kms=False, sas_token=False,
-                    data_format='CSV'):
+                    staging_file_format='CSV'):
     table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
     stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
 
@@ -198,12 +198,12 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
                                          purge_stage_file_after_ingesting=True,
                                          snowflake_stage_name=stage_name,
                                          table=table_name)
-    if data_format == 'PARQUET':
+    if staging_file_format == 'PARQUET':
         snowflake_destination.set_attributes(parquet_schema_location='INFER',
-                                             data_format=data_format,
                                              compressed_file=False)
 
     if Version(sdc_builder.version) < Version("5.7.0"):
+        snowflake_destination.set_attributes(data_format=staging_file_format)
         if sse_kms:
             # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
             snowflake_destination.set_attributes(s3_encryption='KMS')
@@ -211,6 +211,7 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
             # Use Azure SAS Token to authenticate
             snowflake_destination.set_attributes(azure_authentication='SAS_TOKEN')
     else:
+        snowflake_destination.set_attributes(staging_file_format=staging_file_format)
         if sse_kms:
             # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
             snowflake_destination.set_attributes(encryption='KMS')
