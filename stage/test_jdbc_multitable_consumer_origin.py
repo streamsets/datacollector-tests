@@ -48,9 +48,9 @@ from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METAD
 logger = logging.getLogger(__name__)
 
 ROWS_IN_DATABASE = [
-    {'id': 1, 'name': 'Dima', 'leaves': '4.5', 'doj': '2012-09-09', 'age': '1'},
-    {'id': 2, 'name': 'Jarcec', 'leaves': '5.5', 'doj': '2016-10-12', 'age': '100'},
-    {'id': 3, 'name': 'Arvind', 'leaves': '5.0', 'doj': '2018-01-02', 'age': '2'}
+    {'id': 1, 'name': 'Dima', 'leaves': 4.5, 'doj': datetime.date(2012, 9, 9), 'age': '1'},
+    {'id': 2, 'name': 'Jarcec', 'leaves': 5.5, 'doj': datetime.date(2016, 10, 12), 'age': '100'},
+    {'id': 3, 'name': 'Arvind', 'leaves': 5.0, 'doj': datetime.date(2018, 1, 2), 'age': '2'}
 ]
 ROWS_TO_UPDATE = [
     {'id': 2, 'name': 'Eddie'},
