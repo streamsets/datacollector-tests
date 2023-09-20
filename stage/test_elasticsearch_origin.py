@@ -76,6 +76,8 @@ def test_elasticsearch_origin_cursor_expired(sdc_builder, sdc_executor, elastics
     Elasticsearch error pipeline:
         origin >> delay >> wiretap.destination
     """
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        pytest.skip("The test only runs with ElasticSearch 8")
     index = get_random_string(string.ascii_lowercase, 10)
     number_records = 10
     batch_record_size = 1

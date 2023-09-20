@@ -210,6 +210,8 @@ def test_elasticsearch_destination_time_driver_now(sdc_builder, sdc_executor, el
     Elasticsearch error pipeline:
         dev_raw_data_source >> target
     """
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        pytest.skip("The test only runs with ElasticSearch 8")
 
     # Test static
     index = datetime.date.today().year
@@ -267,6 +269,9 @@ def test_elasticsearch_destination_upsert(sdc_builder, sdc_executor, elasticsear
     Elasticsearch error pipeline:
         dev_raw_data_source >> target
     """
+    if elasticsearch.major_version < ELASTICSEARCH_VERSION_8:
+        pytest.skip("The test only runs with ElasticSearch 8")
+
     # Test static
     index = get_random_string(string.ascii_letters, 10).lower()
     mapping = get_random_string(string.ascii_letters, 10)
