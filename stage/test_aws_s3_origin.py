@@ -19,6 +19,8 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 import pytest
 from streamsets.testframework.markers import aws, sdc_min_version, large
@@ -118,9 +120,11 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
 
 
 @aws('s3')
-@pytest.mark.parametrize('data_format', ['JSON', 'WHOLE_FILE', 'TEXT'])
+@pytest.mark.parametrize('data_format', ['JSON', 'WHOLE_FILE', 'TEXT', 'PARQUET'])
 def test_s3_origin_data_formats(sdc_builder, sdc_executor, aws, data_format):
     """Tests that S3 origin can handle different data formats in a single threaded scenario"""
+    if Version(sdc_builder.version) < Version('5.8.0') and data_format == 'PARQUET':
+        pytest.skip('PARQUET data format introduced in 5.8.0')
     base_s3_origin(sdc_builder, sdc_executor, aws, DEFAULT_READ_ORDER, data_format, SINGLETHREADED,
                    DEFAULT_NUMBER_OF_RECORDS)
 
@@ -251,9 +255,26 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         client = aws.s3
         acl = 'public-read' if anonymous else 'private'
 
+        if data_format == 'PARQUET':
+            # build parquet data
+            schema = pa.schema([('f1', pa.string()), ('f2', pa.string())])
+            batch = pa.RecordBatch.from_arrays(
+                [pa.array([json_data[key]]) for key in json_data.keys()],
+                names=schema.names
+            )
+            table = pa.Table.from_batches([batch])
+            # load parquet binary data into body variable
+            with tempfile.NamedTemporaryFile(mode='r+b') as fd:
+                pq.write_table(table, fd.name)
+                fd.flush()
+                fd.seek(0)
+                body = fd.read()
+        else:
+            body = json.dumps(json_data)
+
         # Insert objects into S3.
         for i in range(s3_obj_count):
-            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=json.dumps(json_data), ACL=acl)
+            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=body, ACL=acl)
 
         # In SDC versions from 5.7.0 onwards, the S3 origin will not process files created less than 10 seconds ago
         time.sleep(10)
@@ -280,7 +301,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
 def verify_data_formats(output_records, raw_str, data_format):
     # Verify the data from the different records depending on the data format used.
-    if data_format == 'JSON':
+    if data_format == 'JSON' or data_format == 'PARQUET':
         assert str(output_records[0]['f1']) in raw_str
         assert str(output_records[0]['f2']) in raw_str
     elif data_format == 'WHOLE_FILE':
