@@ -202,7 +202,7 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
         snowflake_destination.set_attributes(parquet_schema_location='INFER',
                                              compressed_file=False)
 
-    if Version(sdc_builder.version) < Version("5.7.0"):
+    if Version(sdc_builder.version) < Version("5.8.0"):
         snowflake_destination.set_attributes(data_format=staging_file_format)
         if sse_kms:
             # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
