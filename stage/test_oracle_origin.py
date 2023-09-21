@@ -5,6 +5,7 @@ import string
 
 import pytest
 import sqlalchemy
+from streamsets.sdk import sdc_api
 from streamsets.testframework.markers import database, sdc_min_version, sdc_enterprise_lib_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -19,6 +20,7 @@ ROWS_IN_DATABASE = [{'ID': 1, 'NAME': 'Tucu'}, {'ID': 2, 'NAME': 'Martin'}, {'ID
 ROWS_IN_DATABASE2 = [{'NUM': 1, 'NICKNAME': 'Tucu'}, {'NUM': 2, 'NICKNAME': 'Martin'}, {'NUM': 3, 'NICKNAME': 'Xavi'},
                      {'NUM': 4, 'NICKNAME': 'Alex'}, {'NUM': 5, 'NICKNAME': 'Danilo'}, {'NUM': 6, 'NICKNAME': 'Mel'},
                      {'NUM': 7, 'NICKNAME': 'Joan'}, {'NUM': 8, 'NICKNAME': 'Hugo'}, {'NUM': 9, 'NICKNAME': 'Toni'}]
+
 
 @database('oracle')
 @sdc_min_version('5.6.0')
@@ -54,7 +56,7 @@ def test_oracle_consumer_single_table_single_thread(sdc_builder, sdc_executor, d
 @sdc_min_version('5.6.0')
 @pytest.mark.parametrize('case_sensitive', [True, False])
 def test_oracle_consumer_read_empty_table(sdc_builder, sdc_executor, database, case_sensitive):
-    """ Create an empty table in Oracle Database and verify that it can be processed without error
+    """ Create an empty table in Oracle Database and verify that the connector reacts accordingly
     The pipeline looks like this:
         oracle_consumer >> wiretap
     """
@@ -82,13 +84,10 @@ def test_oracle_consumer_read_empty_table(sdc_builder, sdc_executor, database, c
 
     try:
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline=pipeline, wait_for_statuses=['FINISHED'], timeout_sec=30)
+        with pytest.raises(sdc_api.RunError) as exception:
+            sdc_executor.start_pipeline(pipeline=pipeline, wait_for_statuses=['FINISHED'], timeout_sec=30)
 
-        history = sdc_executor.get_pipeline_history(pipeline)
-        input_record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        output_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-
-        assert input_record_count == output_record_count == 0
+        assert 'ORACLE_02' in f'{exception.value}'
     finally:
         logger.info(f'Dropping table {table_name} in Oracle...')
         table.drop(database.engine)
