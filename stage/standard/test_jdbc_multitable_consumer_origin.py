@@ -18,6 +18,7 @@ import time
 
 import pytest
 import sqlalchemy
+from ..utils.utils_postgresql import compare_database_server_version
 from streamsets.sdk.utils import Version
 from streamsets.testframework.environments.databases import MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
@@ -410,7 +411,7 @@ DATA_TYPES_POSTGRESQL = [
     ('inet', "'127.0.0.1/16'", 'STRING', '127.0.0.1/16'),
     ('cidr', "'127.0.0.0/16'", 'STRING', '127.0.0.0/16'),
     ('macaddr', "'08:00:2b:01:02:03'", 'STRING', '08:00:2b:01:02:03'),
-#    ('macaddr8', "'08:00:2b:01:02:03'", 'STRING', '08:00:2b:ff:fe:01:02:03'), # Not supported
+    ('macaddr8', "'08:00:2b:01:02:03'", 'STRING', '08:00:2b:ff:fe:01:02:03'),
 #    ('bit(8)', "b'10101010'", 'BYTE_ARRAY', '08:00:2b:ff:fe:01:02:03'), # Doesn't work at all today
     ('bit varying(3)', "b'101'", 'STRING', '101'),
     ('uuid', "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", 'STRING', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'),
@@ -433,6 +434,13 @@ DATA_TYPES_POSTGRESQL = [
 @database('postgresql')
 @pytest.mark.parametrize('sql_type,insert_fragment,expected_type,expected_value', DATA_TYPES_POSTGRESQL, ids=[i[0] for i in DATA_TYPES_POSTGRESQL])
 def test_data_types_postgresql(sdc_builder, sdc_executor, database, sql_type, insert_fragment, expected_type, expected_value, keep_data):
+
+    if sql_type == 'macaddr8' and compare_database_server_version(database.database_server_version, version_2_major=10,
+                                                                  version_2_minor=0, version_2_patch=0) < 0:
+        _version = database.database_server_version
+        pytest.skip(f"PostgreSQL Database Version ({_version.major}.{_version.minor}.{_version.patch}) "
+                    f"doesn't support macaddr8 datatype.")
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
     try:
