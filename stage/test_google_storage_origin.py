@@ -15,7 +15,10 @@
 import logging
 import time
 from string import ascii_letters, ascii_lowercase
+import tempfile
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from streamsets.testframework.markers import gcp, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -70,6 +73,73 @@ def test_google_storage_origin(sdc_builder, sdc_executor, gcp):
         assert len(data) == len(rows_from_wiretap)
         assert rows_from_wiretap == data
     finally:
+        logger.info('Deleting bucket %s ...', created_bucket.name)
+        gcp.retry_429(created_bucket.delete)(force=True)
+
+
+@gcp
+@sdc_min_version('5.8.0')
+def test_google_storage_origin_with_parquet(sdc_builder, sdc_executor, gcp):
+    """
+    Write parquet data to Google cloud storage using Storage Client
+    and then check if Google Storage Origin receives them using wiretap.
+
+    The pipeline looks like:
+        google_cloud_storage_origin >> wiretap
+    """
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    bucket_name = get_random_string(ascii_lowercase, 10)
+
+    storage_client = gcp.storage_client
+
+    total_records = 1000
+    # create raw data
+    data = []
+    for id in range(total_records):
+        data.append({"id": id, "text": get_random_string()})
+    # build parquet data
+    schema = pa.schema([('id', pa.uint32()), ('text', pa.string())])
+    batch = pa.RecordBatch.from_arrays(
+        [pa.array([record[key] for record in data]) for key in data[0].keys()],
+        names=schema.names
+    )
+    table = pa.Table.from_batches([batch])
+
+    google_cloud_storage = pipeline_builder.add_stage('Google Cloud Storage', type='origin')
+
+    google_cloud_storage.set_attributes(bucket=bucket_name,
+                                        common_prefix='gcs-test',
+                                        prefix_pattern='**/*.parquet',
+                                        data_format='PARQUET')
+    wiretap = pipeline_builder.add_wiretap()
+
+    google_cloud_storage >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+    sdc_executor.add_pipeline(pipeline)
+
+    created_bucket = gcp.retry_429(storage_client.create_bucket)(bucket_name)
+    try:
+        blob = created_bucket.blob('gcs-test/a/b/c/d/e/sdc-test.parquet')
+        # write parquet data to file and upload to google storage
+        with tempfile.NamedTemporaryFile(mode='r+b') as fd:
+            pq.write_table(table, fd.name)
+            fd.flush()
+            fd.seek(0)
+            blob.upload_from_file(fd)
+
+        logger.info('Starting GCS Origin pipeline and wait until the information is read ...')
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', total_records, timeout_sec=60)
+        output_records = wiretap.output_records
+        assert len(output_records) == len(data), 'Wrong number of records!'
+        for out_record, record in zip(output_records, data):
+            assert out_record.field == record, 'Wrong record!'
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting bucket %s ...', created_bucket.name)
         gcp.retry_429(created_bucket.delete)(force=True)
 
