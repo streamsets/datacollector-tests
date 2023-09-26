@@ -429,8 +429,9 @@ def test_oracle_cdc_client_basic(
 @database('oracle')
 @pytest.mark.parametrize('buffer_locally', [True, False])
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
+@pytest.mark.parametrize('max_connection_lifetime', [True, False])
 def test_oracle_cdc_client_bulk(
-    sdc_builder, sdc_executor, database, buffer_locally, buffer_location, fetch_strategy=None, fetch_overflow=None
+    sdc_builder, sdc_executor, database, buffer_locally, buffer_location, max_connection_lifetime, fetch_strategy=None, fetch_overflow=None
 ):
     """Test that reads inserts/updates/deletes to an Oracle table with bulk sentences,
     and verifies that no record is lost .
@@ -441,6 +442,9 @@ def test_oracle_cdc_client_bulk(
     if buffer_location == 'ON_DISK':
         if Version('4.1.0') <= Version(sdc_builder.version) < Version('5.0.0'):
             pytest.skip('Local buffering on disk will fail in this SDC version')
+
+    if Version(sdc_builder.version) < Version('5.8.0') and max_connection_lifetime:
+        pytest.skip('Setting the max connection lifetime to 0 is not supported in this SDC version')
 
     source_table = None
     target_table = None
@@ -519,6 +523,8 @@ def test_oracle_cdc_client_bulk(
             oracle_cdc_client.set_attributes(fetch_strategy=fetch_strategy)
             if fetch_strategy == "MEMORY_OVERFLOW_DISK" and fetch_overflow is not None:
                 oracle_cdc_client.set_attributes(fetch_overflow=fetch_overflow)
+        if Version(sdc_builder.version) >= Version('5.8.0') and max_connection_lifetime:
+            oracle_cdc_client.set_attributes(max_connection_lifetime_in_seconds=0)
 
         set_session_wait_times(sdc_builder, oracle_cdc_client)
         wiretap = pipeline_builder.add_wiretap()
