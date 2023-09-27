@@ -228,6 +228,7 @@ def test_http_destination_oauth2_token_retry(sdc_builder, sdc_executor, http_cli
                                           records_to_be_generated=10)
         http_client_destination = builder.add_stage('HTTP Client', type='destination')
         http_client_destination.set_attributes(data_format='JSON',
+                                               on_record_error='STOP_PIPELINE',
                                                headers=[{'key': 'content-length', 'value': f'{len(raw_data)}'}],
                                                http_method='POST',
                                                resource_url=mock_uri,
@@ -244,7 +245,8 @@ def test_http_destination_oauth2_token_retry(sdc_builder, sdc_executor, http_cli
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         pytest.fail('Test should have raised an Exception with HTTP_32 - HTTP_38 exception, but did not')
     except RunError as e:
-        assert 'HTTP_38' in e.message
+        assert 'HTTP_41' in e.message
+        assert 'HTTP_38' in str(sdc_executor.get_logs())
     finally:
         http_mock.delete_mock()
         oauth_http_mock.delete_mock()
