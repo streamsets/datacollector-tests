@@ -19,6 +19,7 @@ import json
 
 import pytest
 import sqlalchemy
+from ..utils.utils_postgresql import compare_database_server_version
 from streamsets.testframework.environments.databases import MySqlDatabase, MariaDBDatabase, OracleDatabase, MemSqlDatabase
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
@@ -619,7 +620,48 @@ DATA_TYPES_POSTGRESQL = [
     ('{"a": "b"}', 'STRING', 'jsonb', {'a': 'b'}),
     # Byte array
     ('string', 'BYTE_ARRAY', 'bytea', b'string'),
+    # Inet
+    ('127.0.0.1/16', 'STRING', 'inet', '127.0.0.1/16'),
+    ('127.0/16', 'STRING', 'inet', '127.0.0.0/16'),
+    ('127.0.0.0/32', 'STRING', 'inet', '127.0.0.0'),
+    ('127.0.0.0', 'STRING', 'inet', '127.0.0.0'),
+    ('10.1.2/8', 'STRING', 'inet', '10.1.2.0/8'),
+    ('2001:0db8:85a3:0000:0000:8a2e:0370:7334/128', 'STRING', 'inet', '2001:db8:85a3::8a2e:370:7334'),
+    ('2001:0db8:85a3:0000:0000:8a2e:0370:7334', 'STRING', 'inet', '2001:db8:85a3::8a2e:370:7334'),
+    # Cidr
+    ('127.0.0.0/16', 'STRING', 'cidr', '127.0.0.0/16'),
+    ('127.0/16', 'STRING', 'cidr', '127.0.0.0/16'),
+    ('127.0.0', 'STRING', 'cidr', '127.0.0.0/24'),
+    ('127.0', 'STRING', 'cidr', '127.0.0.0/16'),
+    ('127', 'STRING', 'cidr', '127.0.0.0/8'),
+    ('128', 'STRING', 'cidr', '128.0.0.0/16'),
+    ('192.168/24', 'STRING', 'cidr', '192.168.0.0/24'),
+    ('192.168.1', 'STRING', 'cidr', '192.168.1.0/24'),
+    ('10.1.2', 'STRING', 'cidr', '10.1.2.0/24'),
+    ('10', 'STRING', 'cidr', '10.0.0.0/8'),
+    ('10.1.2.3/32', 'STRING', 'cidr', '10.1.2.3/32'),
+    ('::ffff:1.2.3.0/128', 'STRING', 'cidr', '::ffff:1.2.3.0/128'),
+    # Macaddr
+    ('08:00:2b:01:02:03', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('08-00-2b-01-02-03', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('08002b:010203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('08002b-010203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('0800.2b01.0203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('0800-2b01-0203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('08002b010203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    # Macaddr8
+    ('08:00:2b:01:02:03', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08-00-2b-01-02-03', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08002b:010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08002b-010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('0800.2b01.0203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('0800-2b01-0203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08:00:2b:01:02:03', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08002b010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08002bff:fe010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03')
 ]
+
+
 @database('postgresql')
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_POSTGRESQL, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_POSTGRESQL])
 def test_data_types_postgresql(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
@@ -796,6 +838,13 @@ def test_data_types_sqlserver(sdc_builder, sdc_executor, input, converter_type, 
     _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data)
 
 def _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
+
+    if database_type == 'macaddr8' and compare_database_server_version(database.database_server_version, version_2_major=10,
+                                                                       version_2_minor=0, version_2_patch=0) < 0:
+        _version = database.database_server_version
+        pytest.skip(f"PostgreSQL Database Version ({_version.major}.{_version.minor}.{_version.patch}) "
+                    f"doesn't support macaddr8 datatype.")
+
     table_name = get_random_string(string.ascii_lowercase, 20)
     connection = database.engine.connect()
     if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
