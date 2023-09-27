@@ -17,12 +17,15 @@ import logging
 import os
 import string
 import time
+import tempfile
 
 import avro
 import avro.schema
 import pytest
 from avro.datafile import DataFileWriter
 from avro.io import DatumWriter
+import pyarrow as pa
+import pyarrow.parquet as pq
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -145,6 +148,68 @@ def test_data_lake_origin_with_avro(sdc_builder, sdc_executor, azure):
         assert len(wiretap.output_records) == 1
         assert wiretap.output_records[0].field['name'] == 'Joaquin Bo'
     finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
+
+
+def test_data_lake_origin_with_parquet(sdc_builder, sdc_executor, azure):
+    """Ensure that the origin can properly read Parquet document."""
+    directory_name = get_random_string(string.ascii_letters, 10)
+    file_name = get_random_string(string.ascii_letters, 10)
+    file = f'{directory_name}/{file_name}.parquet'
+    total_records = 1000
+
+    # create raw data
+    data = []
+    for id in range(total_records):
+        data.append({"id": id, "text": get_random_string()})
+
+    # build parquet data
+    schema = pa.schema([('id', pa.uint32()), ('text', pa.string())])
+    batch = pa.RecordBatch.from_arrays(
+        [pa.array([record[key] for record in data]) for key in data[0].keys()],
+        names=schema.names
+    )
+    table = pa.Table.from_batches([batch])
+
+    dl_fs = azure.datalake.file_system
+    try:
+        # write parquet data to file and upload to ADLS
+        dl_fs.mkdir(directory_name)
+        dl_fs.touch(file)
+        with tempfile.NamedTemporaryFile(mode='r+b') as fd:
+            pq.write_table(table, fd.name)
+            fd.flush()
+            fd.seek(0)
+            dl_fs.write(file, fd.read(), content_type='application/octet-stream')
+
+        time.sleep(15)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
+
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage(name=STAGE_NAME)
+        origin.set_attributes(data_format='PARQUET',
+                              common_path=f'/{directory_name}')
+
+        wiretap = builder.add_wiretap()
+        origin >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', total_records, timeout_sec=60)
+        output_records = wiretap.output_records
+        assert len(output_records) == len(data), 'Wrong number of records!'
+        for out_record, record in zip(output_records, data):
+            assert out_record.field == record, 'Wrong record!'
+
+    finally:
+        if pipeline:
+            if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+                sdc_executor.stop_pipeline(pipeline)
+            sdc_executor.remove_pipeline(pipeline)
         logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
         dl_fs.rmdir(directory_name, recursive=True)
 
