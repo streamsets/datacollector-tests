@@ -220,6 +220,82 @@ def test_data_types(sdc_builder, sdc_executor, snowflake, read_values_as_string)
         engine.dispose()
 
 
+@pytest.mark.parametrize('read_values_as_string', [True, False])
+def test_data_types_null_values(sdc_builder, sdc_executor, snowflake, read_values_as_string):
+    """
+    Similar to test_data_types, but making every inserted data type be null. Ensure data is read properly.
+    Uses Snowflake Bulk Origin to read from the table using the same stage.
+    """
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # ID column is so that commenting all types except one still works
+    columns = [{'name': 'ID', 'type': 'NUMBER'}]
+    not_null_column_name = ['ID']
+    not_null_inserted_record = '[(1)]'
+    if read_values_as_string:
+        expected_record = [('1', 'STRING')]
+    else:
+        expected_record = [(1, 'LONG')]
+
+    for i in range(0, len(DATA_TYPES_SNOWFLAKE)):
+        db_type = DATA_TYPES_SNOWFLAKE[i][0]
+        expected_data = None
+        if read_values_as_string:
+            expected_type = 'STRING'
+        else:
+            expected_type = DATA_TYPES_SNOWFLAKE[i][2]
+        columns.append({'name': f'VALUE_{i}', 'type': f'{db_type}'})
+        expected_record.append((expected_data, expected_type))
+
+    column_names, column_definitions, primary_keys_clause = get_columns_information(columns)
+    create_table(engine, table_name, column_definitions, primary_keys_clause)
+    insert_values(engine, table_name, not_null_column_name, not_null_inserted_record)
+
+    # The following is path inside a bucket in case of AWS S3 or
+    # path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location='INTERNAL')
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(stage_location='INTERNAL',
+                                    snowflake_stage_name=stage_name,
+                                    read_values_as_string=read_values_as_string,
+                                    table_config=[{'inclusionPattern': table_name}])
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+
+        # check that the number of records is equal to what we expect
+        assert len(records) == 1, f'{1} record should have been processed but {len(records)} were found'
+
+        record = records[0]
+        for i in range(0, len(column_names)):
+            # assert that the value contained is what we expect
+            assert expected_record[i][0] == record.field[column_names[i]], \
+                f'The value of the field {column_names[i]} should have been {expected_record[i][0]},' \
+                f' but it is {record.field[column_names[i]]}'
+            # and that the type is what we expect
+            assert expected_record[i][1] == record.field[column_names[i]].type, \
+                f'The type of the field {column_names[i]} should have been {expected_record[i][1]},' \
+                f' but it is {record.field[column_names[i]].type}'
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_table(engine, table_name)
+        engine.dispose()
+
+
 @pytest.mark.parametrize('database_name_category,table_name', DATABASE_OBJECTS_NAMES,
                          ids=[i[0] for i in DATABASE_OBJECTS_NAMES])
 def test_object_names(sdc_builder, sdc_executor, snowflake, database_name_category, table_name):
