@@ -161,6 +161,7 @@ def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc
     # Pipeline error configured to google pub sub topic and project
     write_to_google_pub_sub = pipeline_builder.add_error_stage('Write to Google Pub Sub')
     write_to_google_pub_sub.set_attributes(topic_id=topic_name,
+                                           limit_exceeded_behaviour='IGNORE',
                                            project_id=project_id)
 
     dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
@@ -185,6 +186,7 @@ def test_google_storage_destination_error_output_google_sub_pub(sdc_builder, sdc
 
     write_to_google_pub_sub = pipeline_builder.add_error_stage('Write to Google Pub Sub')
     write_to_google_pub_sub.set_attributes(topic_id=topic_name,
+                                           limit_exceeded_behaviour='IGNORE',
                                            project_id=project_id)
 
     pipeline = pipeline_builder.build().configure_for_environment(gcp)
