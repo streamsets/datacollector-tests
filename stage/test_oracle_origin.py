@@ -87,7 +87,7 @@ def test_oracle_consumer_read_empty_table(sdc_builder, sdc_executor, database, c
         with pytest.raises(sdc_api.RunError) as exception:
             sdc_executor.start_pipeline(pipeline=pipeline, wait_for_statuses=['FINISHED'], timeout_sec=30)
 
-        assert 'ORACLE_02' in f'{exception.value}'
+        assert 'ORACLE_01' in f'{exception.value}'
     finally:
         logger.info(f'Dropping table {table_name} in Oracle...')
         table.drop(database.engine)
