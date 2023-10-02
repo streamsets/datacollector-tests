@@ -202,8 +202,7 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
         snowflake_destination.set_attributes(parquet_schema_location='INFER',
                                              compressed_file=False)
 
-    if Version(sdc_builder.version) < Version("5.8.0"):
-        snowflake_destination.set_attributes(data_format=staging_file_format)
+    if Version(sdc_builder.version) < Version("5.7.0"):
         if sse_kms:
             # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
             snowflake_destination.set_attributes(s3_encryption='KMS')
@@ -211,13 +210,17 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
             # Use Azure SAS Token to authenticate
             snowflake_destination.set_attributes(azure_authentication='SAS_TOKEN')
     else:
-        snowflake_destination.set_attributes(staging_file_format=staging_file_format)
         if sse_kms:
             # Use SSE with KMS (other necessary SSE-KMS configs set by snowflake environment)
             snowflake_destination.set_attributes(encryption='KMS')
         if sas_token:
             # Use Azure SAS Token to authenticate
             set_sdc_stage_config(snowflake, 'config.blobStorageStage.connection.authMethod', 'SAS_TOKEN')
+
+    if Version(sdc_builder.version) < Version("5.8.0"):
+        snowflake_destination.set_attributes(data_format=staging_file_format)
+    else:
+        snowflake_destination.set_attributes(staging_file_format=staging_file_format)
 
     dev_raw_data_source >> snowflake_destination
 
@@ -1387,6 +1390,7 @@ def test_snowflake_multitable_auto_create_pipe(sdc_builder, sdc_executor, snowfl
                                          table_auto_create=True,
                                          use_snowpipe=True,
                                          snowpipe_auto_create=True,
+                                         purge_stage_file_after_ingesting=False,
                                          pipe_prefix='stfpipe')
 
     dev_data_generator >> expression_evaluator >> field_remover >> snowflake_destination

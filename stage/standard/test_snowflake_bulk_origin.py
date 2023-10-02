@@ -451,8 +451,7 @@ def test_null_values(sdc_builder, sdc_executor, snowflake, read_values_as_string
 
         records = wiretap.output_records
         # we expect the records we insert and a NULL value in the last one
-        DEFAULT_NULL_VALUE = '\\N'
-        expected_records = [inserted_records[0] + (DEFAULT_NULL_VALUE,)]
+        expected_records = [inserted_records[0] + (None,)]
 
         # Check that the number of records is equal to what we expect
         assert len(records) == len(expected_records), \

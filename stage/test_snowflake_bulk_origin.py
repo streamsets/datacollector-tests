@@ -17,6 +17,7 @@ import pytest
 import logging
 import string
 
+from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import snowflake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -291,6 +292,14 @@ def test_exclusion_pattern(sdc_builder, sdc_executor, snowflake, number_of_table
         for record in records:
             assert excluded_tables_mark not in record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME], \
                 f'The table {record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME]} should have been excluded'
+    except StartError as e:
+        if number_of_tables == number_of_excluded_tables:
+            response = sdc_executor.get_pipeline_status(pipeline).response.json()
+            status = response.get('status')
+            logger.info('Pipeline status %s ...', status)
+            assert 'SNOWFLAKE_85' in e.message
+        else:
+            raise e
     finally:
         snowflake.delete_staged_files(storage_path)
         snowflake.drop_entities(stage_name=stage_name)
