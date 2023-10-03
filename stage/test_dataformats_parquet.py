@@ -23,11 +23,12 @@ import pyarrow.parquet as pq
 
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
+from streamsets.sdk.utils import Version
 
 logger = logging.getLogger(__name__)
 
 @sdc_min_version('5.7.0')
-@pytest.mark.parametrize('parquet_schema_location', ['HEADER', 'INLINE'])
+@pytest.mark.parametrize('parquet_schema_location', ['HEADER', 'INLINE', 'INFER'])
 def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location):
     """Basic test to check we are able to save records in a parquet file.
 
@@ -75,18 +76,24 @@ def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location):
 
     try:
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        with tempfile.NamedTemporaryFile() as tmp:
-             base64_parquet = sdc_executor.execute_shell(f'cat {temp_dir}/* | openssl base64 -A').stdout
-             tmp.write(base64.b64decode(base64_parquet))
-             tmp.flush()
-             parquet = pq.read_table(tmp)
+        if parquet_schema_location == 'INFER' and Version(sdc_executor.version) < Version("5.8.0"):
+            with pytest.raises(Exception) as error:
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert "DATA_FORMAT_305" in error.value.message, f'Expected a DATA_FORMAT_305 error, got "{error.value.message}" instead'
+        else:
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        assert parquet.num_rows == len(data), 'Wrong number of records!'
-        assert parquet.num_columns == len(data[0].keys()), 'Wrong number of fields!'
-        for parquet_record, record in zip(parquet.to_pylist(), data):
-            assert parquet_record == record, f'Wrong record found: "{parquet_record}"'
+            with tempfile.NamedTemporaryFile() as tmp:
+                 base64_parquet = sdc_executor.execute_shell(f'cat {temp_dir}/* | openssl base64 -A').stdout
+                 tmp.write(base64.b64decode(base64_parquet))
+                 tmp.flush()
+                 parquet = pq.read_table(tmp)
+
+            assert parquet.num_rows == len(data), 'Wrong number of records!'
+            assert parquet.num_columns == len(data[0].keys()), 'Wrong number of fields!'
+            for parquet_record, record in zip(parquet.to_pylist(), data):
+                assert parquet_record == record, f'Wrong record found: "{parquet_record}"'
 
     finally:
         sdc_executor.execute_shell(f'rm -rf {temp_dir}')
