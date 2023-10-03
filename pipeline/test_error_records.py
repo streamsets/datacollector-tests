@@ -19,6 +19,7 @@ import tempfile
 
 import pytest
 from streamsets.sdk import sdc_api
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -222,7 +223,8 @@ def test_error_record_policy_stage_record(policy_write_builder, policy_read_buil
         sdc_executor.stop_pipeline(write_pipeline)
 
 
-def test_write_to_file_error_records(sdc_builder, sdc_executor):
+@pytest.mark.parametrize('error_directory_exists', [False, True])
+def test_write_to_file_error_records(sdc_builder, sdc_executor, error_directory_exists):
     """Test Write to File Error records. To achieve testing this, we have two pipelines. The 1st one will
     write required errors to a file using Error stage and 2nd will read those files using Directory origin. We then
     use wiretap on the 2nd pipeline to assert error data. The pipelines looks like:
@@ -233,6 +235,7 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     """
     raw_data = 'Hello!'
     directory_to_write = tempfile.gettempdir()
+    directory_to_write += "" if error_directory_exists else "/" + get_random_string()
     files_prefix = 'sdc-{}'.format(get_random_string(string.ascii_letters, 6))
     # with below setting, there should only be one file generated
     file_wait_time_in_secs = "300"
@@ -263,19 +266,25 @@ def test_write_to_file_error_records(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(directory_pipeline)
 
     # run error stage pipeline and wait till some errors are generated
-    sdc_executor.start_pipeline(err_stage_pipeline)
-    sdc_executor.stop_pipeline(err_stage_pipeline)
+    if error_directory_exists or Version(sdc_executor.version) >= Version("5.8.0"):
+        sdc_executor.start_pipeline(err_stage_pipeline)
+        sdc_executor.stop_pipeline(err_stage_pipeline)
 
-    # read from directory origin for the errors which were written
-    sdc_executor.start_pipeline(directory_pipeline)
-    sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 10)
-    sdc_executor.stop_pipeline(directory_pipeline)
+        # read from directory origin for the errors which were written
+        sdc_executor.start_pipeline(directory_pipeline)
+        sdc_executor.wait_for_pipeline_metric(directory_pipeline, 'input_record_count', 10)
+        sdc_executor.stop_pipeline(directory_pipeline)
 
-    # assert file content's error data has our raw_data
-    record = wiretap.output_records[0].field['text'].value
-    # remove special ASCII characters in the output. Note: 1st record of Error file has special ASCII character.
-    record_json = json.loads(record.encode('ascii', 'ignore').decode())
-    assert raw_data == record_json['value']['value']['text']['value']
+        # assert file content's error data has our raw_data
+        record = wiretap.output_records[0].field['text'].value
+        # remove special ASCII characters in the output. Note: 1st record of Error file has special ASCII character.
+        record_json = json.loads(record.encode('ascii', 'ignore').decode())
+        assert raw_data == record_json['value']['value']['text']['value']
+
+    else:
+        with pytest.raises(Exception) as error:
+            sdc_executor.start_pipeline(err_stage_pipeline).wait_for_finished()
+        assert "RECORDFS_01" in error.value.message, f'Expected a RECORDFS_01 error, got "{error.value.message}" instead'
 
 
 def test_write_to_file_error_records_time_rotation(sdc_builder, sdc_executor):
