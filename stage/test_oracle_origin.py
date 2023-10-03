@@ -6,6 +6,7 @@ import string
 import pytest
 import sqlalchemy
 from streamsets.sdk import sdc_api
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version, sdc_enterprise_lib_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -87,7 +88,11 @@ def test_oracle_consumer_read_empty_table(sdc_builder, sdc_executor, database, c
         with pytest.raises(sdc_api.RunError) as exception:
             sdc_executor.start_pipeline(pipeline=pipeline, wait_for_statuses=['FINISHED'], timeout_sec=30)
 
-        assert 'ORACLE_01' in f'{exception.value}'
+        if Version(sdc_builder.version) < Version('5.8.0'):
+            expected_error = 'ORACLE_02'
+        else:
+            expected_error = 'ORACLE_01'
+        assert expected_error in f'{exception.value}'
     finally:
         logger.info(f'Dropping table {table_name} in Oracle...')
         table.drop(database.engine)
