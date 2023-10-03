@@ -359,8 +359,8 @@ def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_
                              ('leaves', '5.5', '100.0', '5'),
                              ('leaves', '-20.0', '5.0', '5'),
                              ('doj', '1347192551000', '1476274151000', '31556926000'),
-                             ('doj', '1514894951000', '1914894951000', '31556926000'),
-                             ('doj', '-1284111351000', '1476274151000', '31556926000')
+                             ('doj', '1514764800000', '1914894951000', '31556926000'),
+                             ('doj', '-1284111351000', '1476144000000', '31556926000')
                          ]
 )
 def test_jdbc_multitable_consumer_valid_offset_configuration(sdc_builder, sdc_executor, database, offset_column,
