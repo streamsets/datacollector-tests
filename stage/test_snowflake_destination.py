@@ -217,7 +217,10 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
             # Use Azure SAS Token to authenticate
             set_sdc_stage_config(snowflake, 'config.blobStorageStage.connection.authMethod', 'SAS_TOKEN')
 
-    if Version(sdc_builder.version) < Version("5.8.0"):
+    if Version(sdc_builder.version) < Version("5.7.0"):
+        # do nothing, property didn't exist
+        pass
+    elif Version(sdc_builder.version) < Version("5.8.0"):
         snowflake_destination.set_attributes(data_format=staging_file_format)
     else:
         snowflake_destination.set_attributes(staging_file_format=staging_file_format)
