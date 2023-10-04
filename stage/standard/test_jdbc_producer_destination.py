@@ -612,6 +612,11 @@ DATA_TYPES_POSTGRESQL = [
     ('120', 'STRING', 'char(5)', '120  '),
     ('120', 'STRING', 'varchar(5)', '120'),
     ('120', 'STRING', 'text', '120'),
+    ("1 years 0 mons 0 days 0 hours 0 mins 0.0 secs", 'STRING', 'interval', datetime.timedelta(days=365)),
+    ('1 years 2 mons 10 days 10 hours 0 mins 0.0 secs', 'STRING', 'interval', datetime.timedelta(days=435, hours=10)),
+    ('0 years -6 mons 0 days 0 hours 0 mins 0.0 secs', 'STRING', 'interval', datetime.timedelta(days=-180)),
+    # It treats 1 year - 1 month as 11 months & then 11months * 30 days = 330 days. (Not like 365days - 30 days)
+    ('1 years -1 mons 0 days 6 hours 0 mins 0.0 secs', 'STRING', 'interval', datetime.timedelta(days=330, seconds=21600)),
     ('2003-04-12 04:05:06', 'STRING', 'timestamp', datetime.datetime(2003, 4, 12, 4, 5, 6)),
     ('2020-01-01', 'STRING', 'date', datetime.date(2020, 1, 1)),
     ('10:00:00', 'STRING', 'time', datetime.time(10, 0)),
