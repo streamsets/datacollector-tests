@@ -621,8 +621,6 @@ DATA_TYPES_POSTGRESQL = [
     ('2020-01-01', 'STRING', 'date', datetime.date(2020, 1, 1)),
     ('10:00:00', 'STRING', 'time', datetime.time(10, 0)),
     ('true', 'STRING', 'boolean', True),
-    ('{"a": "b"}', 'STRING', 'json', {'a': 'b'}),
-    ('{"a": "b"}', 'STRING', 'jsonb', {'a': 'b'}),
     # Byte array
     ('string', 'BYTE_ARRAY', 'bytea', b'string'),
     # Inet
@@ -663,7 +661,17 @@ DATA_TYPES_POSTGRESQL = [
     ('0800-2b01-0203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
     ('08:00:2b:01:02:03', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
     ('08002b010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
-    ('08002bff:fe010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03')
+    ('08002bff:fe010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    # JSON
+    ("{\"a\":\"b\"}", 'STRING', 'json', {"a": "b"}),
+    ('{"a":"b"}', 'STRING', 'json', {"a": "b"}),
+    ("{\"jobId1\":{\"id\":\"id1\",\"jobId\":\"jobId1\"},\"jobId2\":{\"id\": \"id2\",\"jobId\":\"jobId2\"}}", 'STRING', 'json', {"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2": {"id":"id2","jobId":"jobId2"}}),
+    ('{"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2":{"id": "id2","jobId":"jobId2"}}', 'STRING', 'json', {"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2": {"id":"id2","jobId":"jobId2"}}),
+    # JSONB
+    ("{\"a\":\"b\"}", 'STRING', 'jsonb', {"a": "b"}),
+    ('{"a":"b"}', 'STRING', 'jsonb', {"a": "b"}),
+    ("{\"jobId1\":{\"id\":\"id1\",\"jobId\":\"jobId1\"},\"jobId2\":{\"id\": \"id2\",\"jobId\":\"jobId2\"}}", 'STRING', 'jsonb', {"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2": {"id":"id2","jobId":"jobId2"}}),
+    ('{"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2":{"id": "id2","jobId":"jobId2"}}', 'STRING', 'jsonb', {"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2": {"id":"id2","jobId":"jobId2"}})
 ]
 
 

@@ -136,10 +136,57 @@ DATA_TYPES_POSTGRESQL = [
     ('2020-01-01', 'STRING', 'date', datetime.date(2020, 1, 1)),
     ('10:00:00', 'STRING', 'time', datetime.time(10, 0)),
     ('true', 'STRING', 'boolean', True),
-    ('{"a": "b"}', 'STRING', 'json', {'a': 'b'}),
-    ('{"a": "b"}', 'STRING', 'jsonb', {'a': 'b'}),
     # Byte array
     ('string', 'BYTE_ARRAY', 'bytea', b'string'),
+    # Inet
+    ('127.0.0.1/16', 'STRING', 'inet', '127.0.0.1/16'),
+    ('127.0/16', 'STRING', 'inet', '127.0.0.0/16'),
+    ('127.0.0.0/32', 'STRING', 'inet', '127.0.0.0'),
+    ('127.0.0.0', 'STRING', 'inet', '127.0.0.0'),
+    ('10.1.2/8', 'STRING', 'inet', '10.1.2.0/8'),
+    ('2001:0db8:85a3:0000:0000:8a2e:0370:7334/128', 'STRING', 'inet', '2001:db8:85a3::8a2e:370:7334'),
+    ('2001:0db8:85a3:0000:0000:8a2e:0370:7334', 'STRING', 'inet', '2001:db8:85a3::8a2e:370:7334'),
+    # Cidr
+    ('127.0.0.0/16', 'STRING', 'cidr', '127.0.0.0/16'),
+    ('127.0/16', 'STRING', 'cidr', '127.0.0.0/16'),
+    ('127.0.0', 'STRING', 'cidr', '127.0.0.0/24'),
+    ('127.0', 'STRING', 'cidr', '127.0.0.0/16'),
+    ('127', 'STRING', 'cidr', '127.0.0.0/8'),
+    ('128', 'STRING', 'cidr', '128.0.0.0/16'),
+    ('192.168/24', 'STRING', 'cidr', '192.168.0.0/24'),
+    ('192.168.1', 'STRING', 'cidr', '192.168.1.0/24'),
+    ('10.1.2', 'STRING', 'cidr', '10.1.2.0/24'),
+    ('10', 'STRING', 'cidr', '10.0.0.0/8'),
+    ('10.1.2.3/32', 'STRING', 'cidr', '10.1.2.3/32'),
+    ('::ffff:1.2.3.0/128', 'STRING', 'cidr', '::ffff:1.2.3.0/128'),
+    # Macaddr
+    ('08:00:2b:01:02:03', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('08-00-2b-01-02-03', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('08002b:010203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('08002b-010203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('0800.2b01.0203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('0800-2b01-0203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    ('08002b010203', 'STRING', 'macaddr', '08:00:2b:01:02:03'),
+    # Macaddr8
+    ('08:00:2b:01:02:03', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08-00-2b-01-02-03', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08002b:010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08002b-010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('0800.2b01.0203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('0800-2b01-0203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08:00:2b:01:02:03', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08002b010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    ('08002bff:fe010203', 'STRING', 'macaddr8', '08:00:2b:ff:fe:01:02:03'),
+    # JSON
+    ("{\"a\":\"b\"}", 'STRING', 'json', {"a": "b"}),
+    ('{"a":"b"}', 'STRING', 'json', {"a": "b"}),
+    ("{\"jobId1\":{\"id\":\"id1\",\"jobId\":\"jobId1\"},\"jobId2\":{\"id\": \"id2\",\"jobId\":\"jobId2\"}}", 'STRING', 'json', {"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2": {"id":"id2","jobId":"jobId2"}}),
+    ('{"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2":{"id": "id2","jobId":"jobId2"}}', 'STRING', 'json', {"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2": {"id":"id2","jobId":"jobId2"}}),
+    # JSONB
+    ("{\"a\":\"b\"}", 'STRING', 'jsonb', {"a": "b"}),
+    ('{"a":"b"}', 'STRING', 'jsonb', {"a": "b"}),
+    ("{\"jobId1\":{\"id\":\"id1\",\"jobId\":\"jobId1\"},\"jobId2\":{\"id\": \"id2\",\"jobId\":\"jobId2\"}}", 'STRING', 'jsonb', {"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2": {"id":"id2","jobId":"jobId2"}}),
+    ('{"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2":{"id": "id2","jobId":"jobId2"}}', 'STRING', 'jsonb', {"jobId1":{"id":"id1","jobId":"jobId1"},"jobId2": {"id":"id2","jobId":"jobId2"}})
 ]
 @pytest.mark.parametrize('input,converter_type,database_type,expected', DATA_TYPES_POSTGRESQL, ids=[f"{i[1]}-{i[2]}" for i in DATA_TYPES_POSTGRESQL])
 def test_data_types_postgresql(sdc_builder, sdc_executor, input, converter_type, database_type, expected, database, keep_data):
