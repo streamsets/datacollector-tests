@@ -536,7 +536,7 @@ def test_username(sdc_builder, sdc_executor, database, credential_store, stage_a
 
     with pytest.raises(Exception) as error:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert "JDBC_06" in error.value.message, f'Expected a JDBC_06 error, got "{error.value.message}" instead'
+    assert "JDBC_INIT_01" in error.value.message, f'Expected a JDBC_INIT_01 error, got "{error.value.message}" instead'
 
 
 def _create_and_populate_lookup_table(name, database):
