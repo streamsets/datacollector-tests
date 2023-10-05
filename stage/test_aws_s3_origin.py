@@ -62,7 +62,8 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
         s3_origin >> wiretap
         s3_origin >= pipeline_finished_executor
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     data = dict(f1=get_random_string(), f2=get_random_string())
 
@@ -76,7 +77,7 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format=DEFAULT_DATA_FORMAT,
-                             prefix_pattern=f'{s3_key}/*', number_of_threads=MULTITHREADED,
+                             prefix_pattern=f'**/{pattern}*', common_prefix=f'{s3_key}', number_of_threads=MULTITHREADED,
                              read_order=DEFAULT_READ_ORDER)
 
     wiretap = builder.add_wiretap()
@@ -98,7 +99,7 @@ def test_s3_origin_multithread_start_stop(sdc_builder, sdc_executor, aws):
             wiretap.reset()
             # Insert objects into S3.
             for i in range(s3_obj_count):
-                client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{iteration}-{i}', Body=json.dumps(data))
+                client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{iteration}-{i}', Body=json.dumps(data))
 
             # In case of multithreaded pipeline we want to verify the amount of records.
             sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
@@ -205,7 +206,8 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         else:
             s3_bucket = aws.s3_bucket_name
 
-        s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+        s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+        pattern = 'sdc'
 
         json_data = dict(f1=get_random_string(), f2=get_random_string())
 
@@ -220,13 +222,15 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         if Version(sdc_builder.version) >= Version('3.7.0'):
             s3_origin.set_attributes(bucket=s3_bucket,
                                      data_format=data_format,
-                                     prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
+                                     prefix_pattern=f'**/{pattern}*',
+                                     common_prefix=f'{s3_key}' if allow_list else f'{s3_key}/0',
                                      number_of_threads=number_of_threads,
                                      read_order=read_order)
         elif number_of_threads == 1:
             s3_origin.set_attributes(bucket=s3_bucket,
                                      data_format=data_format,
-                                     prefix_pattern=f'{s3_key}/*' if allow_list else f'{s3_key}/0',
+                                     prefix_pattern=f'**/{pattern}*',
+                                     common_prefix=f'{s3_key}' if allow_list else f'{s3_key}/0',
                                      read_order=read_order)
         else:
             pytest.skip("Multithreaded features are supported in S3 origin only for SDC Versions >= 3.7.0")
@@ -239,7 +243,8 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
         wiretap = builder.add_wiretap()
 
         pipeline_finished_executor = builder.add_stage('Pipeline Finisher Executor')
-        pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+        pipeline_finished_executor.set_attributes(
+            stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
 
         s3_origin >> wiretap.destination
         s3_origin >= pipeline_finished_executor
@@ -274,7 +279,7 @@ def base_s3_origin(sdc_builder, sdc_executor, aws, read_order, data_format, numb
 
         # Insert objects into S3.
         for i in range(s3_obj_count):
-            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{i}', Body=body, ACL=acl)
+            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}-{i}', Body=body, ACL=acl)
 
         # In SDC versions from 5.7.0 onwards, the S3 origin will not process files created less than 10 seconds ago
         time.sleep(10)
@@ -319,7 +324,8 @@ def test_s3_origin_empty_bucket(sdc_builder, sdc_executor, aws):
         s3_origin >> trash
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
     s3_obj_count = 0
 
     # Build pipeline.
@@ -328,7 +334,8 @@ def test_s3_origin_empty_bucket(sdc_builder, sdc_executor, aws):
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
-    s3_origin.set_attributes(bucket=s3_bucket, data_format=DEFAULT_DATA_FORMAT, prefix_pattern=f'{s3_key}*')
+    s3_origin.set_attributes(bucket=s3_bucket, data_format=DEFAULT_DATA_FORMAT, prefix_pattern=f'**/{pattern}*',
+                             common_prefix=f'{s3_key}')
 
     trash = builder.add_stage('Trash')
 
@@ -413,7 +420,8 @@ def test_invalid_configs_diff_bucket_same_prefix(sdc_builder, sdc_executor, aws)
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, common_prefix=prefix, error_handling_option='ARCHIVE',
                              archiving_option='MOVE_TO_BUCKET', error_prefix=prefix, error_bucket=aws.s3_bucket_name,
                              post_processing_option='ARCHIVE', post_process_prefix=prefix,
-                             post_process_bucket='post-process-bucket-qwertyuiopasdfhklhkjlzxcv', data_format=DEFAULT_DATA_FORMAT,
+                             post_process_bucket='post-process-bucket-qwertyuiopasdfhklhkjlzxcv',
+                             data_format=DEFAULT_DATA_FORMAT,
                              prefix_pattern=f'{s3_key}*')
 
     trash = builder.add_stage('Trash')
@@ -448,7 +456,8 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
             s3_origin >= pipeline_finished_executor
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(10)]
 
@@ -461,7 +470,7 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
     s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON',
-                             json_content='ARRAY_OBJECTS', prefix_pattern=f'{s3_key}*')
+                             json_content='ARRAY_OBJECTS', common_prefix=f'{s3_key}', prefix_pattern=f'**/{pattern}*')
 
     wiretap = builder.add_wiretap()
 
@@ -479,7 +488,7 @@ def test_s3_event_finisher(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}', Body=json.dumps(data))
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}', Body=json.dumps(data))
 
         sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
         output_records_values = [record.field for record in wiretap.output_records]
@@ -507,7 +516,8 @@ def test_s3_event_finisher_multiple_events(sdc_builder, sdc_executor, aws):
         jython_evaluator >= pipeline_finished_executor
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
     records_per_file = 10
 
     data = [dict(f1=get_random_string(), f2=get_random_string()) for _ in range(records_per_file)]
@@ -520,7 +530,7 @@ def test_s3_event_finisher_multiple_events(sdc_builder, sdc_executor, aws):
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
     s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON',
-                             json_content='ARRAY_OBJECTS', prefix_pattern=f'{s3_key}*')
+                             json_content='ARRAY_OBJECTS', prefix_pattern=f'**/{pattern}*', common_prefix=f'{s3_key}')
 
     wiretap = builder.add_wiretap()
     trash = builder.add_stage('Trash')
@@ -553,11 +563,11 @@ if (state['record-count'] >= 2):
     client = aws.s3
     try:
         # Insert objects into S3, process them and add an additional file
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-1', Body=json.dumps(data))
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}-1', Body=json.dumps(data))
         pipeline_cmd = sdc_executor.start_pipeline(s3_origin_pipeline)
         sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', records_per_file,
                                               timeout_sec=120)
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}-2', Body=json.dumps(data2))
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}-2', Body=json.dumps(data2))
         sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', records_per_file * 2,
                                               timeout_sec=120)
         pipeline_cmd.wait_for_finished()
@@ -585,7 +595,8 @@ def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
     S3_OBJ_COUNT = 5
 
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+    pattern = 'sdc'
 
     data = [dict(id=get_random_string()) for _ in range(50)]
     total_data = []
@@ -599,7 +610,8 @@ def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
     s3_origin.set_attributes(bucket=s3_bucket,
                              data_format='JSON',
                              json_content='ARRAY_OBJECTS',
-                             prefix_pattern=f'{s3_key}*',
+                             prefix_pattern=f'**/{pattern}*',
+                             common_prefix=f'{s3_key}',
                              max_batch_size_in_records=50)
 
     wiretap = builder.add_wiretap()
@@ -621,7 +633,7 @@ def test_s3_multiple_records_in_object(sdc_builder, sdc_executor, aws):
     try:
         # Insert objects into S3.
         for i in range(S3_OBJ_COUNT):
-            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}{i}', Body=json.dumps(data))
+            client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}-{i}', Body=json.dumps(data))
             total_data = total_data + data
 
         sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
@@ -642,7 +654,8 @@ def test_offset_upgrade(sdc_builder, sdc_executor, aws):
        from the source bucket.
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string(string.ascii_letters, 10)}'
+    pattern = 'sdc'
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
@@ -650,7 +663,8 @@ def test_offset_upgrade(sdc_builder, sdc_executor, aws):
     s3_origin = builder.add_stage('Amazon S3', type='origin')
     s3_origin.set_attributes(bucket=s3_bucket,
                              data_format='TEXT',
-                             prefix_pattern=f'{s3_key}*')
+                             prefix_pattern=f'**/{pattern}*',
+                             common_prefix=f'{s3_key}')
 
     trash = builder.add_stage('Trash')
 
@@ -675,7 +689,7 @@ def test_offset_upgrade(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert object into S3
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}input1', Body='Input Line')
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}-input1', Body='Input Line')
 
         # Finally run the pipeline (until it's end)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -691,7 +705,7 @@ def test_offset_upgrade(sdc_builder, sdc_executor, aws):
         assert '$com.streamsets.datacollector.pollsource.offset$' not in offset['offsets']
 
         # Insert another object into S3 and run the pipeline second time
-        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}input2', Body='Input Line')
+        client.put_object(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}-input2', Body='Input Line')
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # But it should read only the second file (rather then reading from the begging)
@@ -714,7 +728,8 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
         s3_origin >> wiretap.destination
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     s3_obj_count = 1
 
@@ -742,7 +757,8 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
 
     s3_origin.set_attributes(bucket=s3_bucket,
                              data_format='EXCEL',
-                             prefix_pattern=f'{s3_key}*',
+                             prefix_pattern=f'**/{pattern}*',
+                             common_prefix=f'{s3_key}',
                              excel_header_option="NO_HEADER")
 
     wiretap = builder.add_wiretap()
@@ -761,7 +777,7 @@ def test_s3_excel_offset(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}{s3_obj_count}', Fileobj=file_excel)
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}-{s3_obj_count}', Fileobj=file_excel)
 
         sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
 
@@ -789,7 +805,8 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
     s3_bucket = aws.s3_bucket_name
     directory_to_write = tempfile.gettempdir()
 
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     zip_file_name = get_random_string()
     json1_file_name = get_random_string()
@@ -823,7 +840,8 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
                              compression_format='ARCHIVE',
                              file_name_pattern_within_compressed_directory='*.json',
                              json_content='MULTIPLE_OBJECTS',
-                             prefix_pattern=f'{s3_key}/*')
+                             prefix_pattern=f'**/{pattern}*',
+                             common_prefix=f'{s3_key}')
 
     wiretap = builder.add_wiretap()
 
@@ -841,7 +859,7 @@ def test_s3_compressed_file_offset(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.upload_file(Bucket=s3_bucket, Key=f'{s3_key}/{zip_file_name}.zip',
+        client.upload_file(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}-{zip_file_name}.zip',
                            Filename=f'{zip_file_name}.zip')
 
         sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
@@ -871,7 +889,8 @@ def test_s3_origin_timestamp_last_file_offset(sdc_builder, sdc_executor, aws, re
         s3_origin >> trash
         s3_origin >= pipeline_finished_executor
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     # Create test data files
     data_file_first_filename = 'data-file-first.txt'
@@ -886,7 +905,8 @@ def test_s3_origin_timestamp_last_file_offset(sdc_builder, sdc_executor, aws, re
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format='TEXT',
-                             prefix_pattern=f'{s3_key}/*',
+                             prefix_pattern=f'**/{pattern}*',
+                             common_prefix=f'{s3_key}',
                              max_batch_size_in_records=1000,
                              read_order='TIMESTAMP')
     trash = builder.add_stage('Trash')
@@ -904,9 +924,9 @@ def test_s3_origin_timestamp_last_file_offset(sdc_builder, sdc_executor, aws, re
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_first_filename}',
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{data_file_first_filename}',
                           Body='\n'.join(test_data_first).encode('ascii'))
-        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_second_filename}',
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{data_file_second_filename}',
                           Body='\n'.join(test_data_second).encode('ascii'))
 
         # Read files once
@@ -934,7 +954,8 @@ def test_s3_origin_timestamp_last_file_offset(sdc_builder, sdc_executor, aws, re
 @aws('s3')
 @pytest.mark.parametrize('read_order', ['LEXICOGRAPHICAL', 'TIMESTAMP'])
 def test_s3_restart_with_file_offset(sdc_builder, sdc_executor, aws, read_order):
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
     records_per_file = 100_000
 
     # Create test data files
@@ -947,7 +968,8 @@ def test_s3_restart_with_file_offset(sdc_builder, sdc_executor, aws, read_order)
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format='TEXT',
-                             prefix_pattern=f'{s3_key}/*',
+                             prefix_pattern=f'**/{pattern}*',
+                             common_prefix=f'{s3_key}',
                              read_order=read_order,
                              max_batch_size_in_records=100)
     trash = builder.add_stage('Trash')
@@ -965,7 +987,7 @@ def test_s3_restart_with_file_offset(sdc_builder, sdc_executor, aws, read_order)
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_filename}',
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{data_file_filename}',
                           Body='\n'.join(test_data).encode('ascii'))
 
         # Read 2 batches & stop the pipeline halfway through the file
@@ -1001,7 +1023,8 @@ def test_s3_restart_with_file_offset(sdc_builder, sdc_executor, aws, read_order)
 def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheets):
     """Ensure that configuring subset of sheets to import properly works."""
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     # Create the Excel file on the fly
     file_excel = io.BytesIO()
@@ -1022,7 +1045,8 @@ def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheet
     s3_origin = builder.add_stage('Amazon S3', type='origin')
     s3_origin.bucket = s3_bucket
     s3_origin.data_format = 'EXCEL'
-    s3_origin.prefix_pattern = f'{s3_key}*'
+    s3_origin.prefix_pattern = f'**/{pattern}*'
+    s3_origin.common_prefix = f'{s3_key}'
     s3_origin.excel_header_option = 'WITH_HEADER'
     s3_origin.read_all_sheets = read_all_sheets
     s3_origin.import_sheets = ['A']
@@ -1037,7 +1061,7 @@ def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheet
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}', Fileobj=file_excel)
 
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
@@ -1066,7 +1090,8 @@ def test_s3_excel_sheet_selection(sdc_builder, sdc_executor, aws, read_all_sheet
 def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip):
     """Ensure that configuration option skip cells with missing header works properly."""
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     # Create the Excel file on the fly
     file_excel = io.BytesIO()
@@ -1085,7 +1110,8 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
     s3_origin = builder.add_stage('Amazon S3', type='origin')
     s3_origin.bucket = s3_bucket
     s3_origin.data_format = 'EXCEL'
-    s3_origin.prefix_pattern = f'{s3_key}*'
+    s3_origin.prefix_pattern = f'**/{pattern}*'
+    s3_origin.common_prefix = f'{s3_key}'
     s3_origin.excel_header_option = 'WITH_HEADER'
     s3_origin.skip_cells_with_no_header = skip
 
@@ -1099,7 +1125,7 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}', Fileobj=file_excel)
 
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
@@ -1128,7 +1154,8 @@ def test_s3_excel_skip_cells_missing_header(sdc_builder, sdc_executor, aws, skip
 def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
     """Ensure that incomplete header won't cause pipeline failure."""
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     # Create the Excel file on the fly
     file_excel = io.BytesIO()
@@ -1150,7 +1177,8 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
     s3_origin = builder.add_stage('Amazon S3', type='origin')
     s3_origin.bucket = s3_bucket
     s3_origin.data_format = 'EXCEL'
-    s3_origin.prefix_pattern = f'{s3_key}*'
+    s3_origin.prefix_pattern = f'**/{pattern}*'
+    s3_origin.common_prefix = f'{s3_key}'
     s3_origin.excel_header_option = 'WITH_HEADER'
 
     wiretap = builder.add_wiretap()
@@ -1163,7 +1191,7 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}', Fileobj=file_excel)
 
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
@@ -1186,15 +1214,16 @@ def test_s3_excel_parsing_incomplete_header(sdc_builder, sdc_executor, aws):
 def test_s3_excel_last_sheet_empty(sdc_builder, sdc_executor, aws):
     """Ensure that when the last sheet have only header line but no data, no errors will be generated."""
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     # Create the Excel file on the fly
     file_excel = io.BytesIO()
     workbook = Workbook()
-    sheet = workbook.add_sheet('A') # First sheet contains header row and one data row
+    sheet = workbook.add_sheet('A')  # First sheet contains header row and one data row
     sheet.write(0, 0, 'A')
     sheet.write(1, 0, 'a')
-    sheet = workbook.add_sheet('B') # Second sheet only contains header row
+    sheet = workbook.add_sheet('B')  # Second sheet only contains header row
     sheet.write(0, 0, 'B')
     workbook.save(file_excel)
     file_excel.seek(0)
@@ -1206,7 +1235,8 @@ def test_s3_excel_last_sheet_empty(sdc_builder, sdc_executor, aws):
     origin = builder.add_stage('Amazon S3', type='origin')
     origin.bucket = s3_bucket
     origin.data_format = 'EXCEL'
-    origin.prefix_pattern = f'{s3_key}*'
+    origin.prefix_pattern = f'**/{pattern}*'
+    origin.common_prefix = f'{s3_key}'
     origin.excel_header_option = 'WITH_HEADER'
 
     wiretap = builder.add_wiretap()
@@ -1222,7 +1252,7 @@ def test_s3_excel_last_sheet_empty(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}', Fileobj=file_excel)
+        client.upload_fileobj(Bucket=s3_bucket, Key=f'{s3_key}/{pattern}', Fileobj=file_excel)
 
         # Read the file off the bucket
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
@@ -1257,6 +1287,8 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
     origin >= [file_finished_finisher, no_more_data_finisher, events_wiretap]
     """
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
+
     records_per_file = 3
     batch_size = 10
     data_file = 'data-file.txt'
@@ -1268,7 +1300,8 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
 
     origin = builder.add_stage('Amazon S3', type='origin')
     origin.set_attributes(bucket=aws.s3_bucket_name, data_format='TEXT',
-                          prefix_pattern=f'{s3_key}/*',
+                          prefix_pattern=f'**/{pattern}*',
+                          common_prefix=f'{s3_key}',
                           max_batch_size_in_records=batch_size)
 
     records_wiretap = builder.add_wiretap()
@@ -1290,7 +1323,7 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file}',
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{data_file}',
                           Body='\n'.join(test_data).encode('ascii'))
 
         # Run until finished-file
@@ -1305,11 +1338,11 @@ def test_s3_origin_events(sdc_builder, sdc_executor, aws):
         # Assert that first event is of type new-file and contains the correct filepath
         assert 2 == len(events_wiretap.output_records)
         assert 'new-file' == events_wiretap.output_records[0].header.values['sdc.event.type']
-        assert f'{s3_key}/{data_file}' == events_wiretap.output_records[0].field['filepath']
+        assert f'{s3_key}/{pattern}-{data_file}' == events_wiretap.output_records[0].field['filepath']
 
         # Assert that second event is of type finished-file and contains the correct filepath, recordCount & errorCount
         assert 'finished-file' == events_wiretap.output_records[1].header.values['sdc.event.type']
-        assert f'{s3_key}/{data_file}' == events_wiretap.output_records[1].field['filepath']
+        assert f'{s3_key}/{pattern}-{data_file}' == events_wiretap.output_records[1].field['filepath']
         assert 3 == events_wiretap.output_records[1].field['record-count']
         assert 0 == events_wiretap.output_records[1].field['error-count']
 
@@ -1392,7 +1425,7 @@ def test_s3_single_file_in_directory_no_wildcards(sdc_builder, sdc_executor, aws
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
     s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern=s3_file_name,
-                            common_prefix = s3_common_prefix)
+                             common_prefix=s3_common_prefix)
 
     wiretap = builder.add_wiretap()
     finisher = builder.add_stage('Pipeline Finisher Executor')
@@ -1401,7 +1434,8 @@ def test_s3_single_file_in_directory_no_wildcards(sdc_builder, sdc_executor, aws
     s3_origin >> wiretap.destination
     s3_origin >= finisher
 
-    s3_origin_pipeline = builder.build(title=f'S3 single file - File Exist {file_exists}').configure_for_environment(aws)
+    s3_origin_pipeline = builder.build(title=f'S3 single file - File Exist {file_exists}').configure_for_environment(
+        aws)
     sdc_executor.add_pipeline(s3_origin_pipeline)
 
     client = aws.s3
@@ -1441,7 +1475,8 @@ def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_execut
         It checks that no stage error happens after the pipeline is restarted with an offset halfway in the file.
             s3_origin >> trash
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
     records_in_file = 10_000
 
     # Create test data files
@@ -1463,14 +1498,15 @@ def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_execut
     s3_origin = builder.add_stage('Amazon S3', type='origin')
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format='XML',
                              delimiter_element='/root/records/record',
-                             prefix_pattern=f'{s3_key}/*.xml',
+                             prefix_pattern=f'{pattern}*.xml',
+                             common_prefix=f'{s3_key}',
                              read_order=read_order,
                              max_batch_size_in_records=10)
     trash = builder.add_stage('Trash')
 
     s3_origin >> trash
 
-    s3_origin_pipeline = builder.build(title='Amazon S3 origin restart pipeline with XML data format')\
+    s3_origin_pipeline = builder.build(title='Amazon S3 origin restart pipeline with XML data format') \
         .configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(s3_origin_pipeline)
@@ -1478,7 +1514,7 @@ def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_execut
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_filename}',
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{data_file_filename}',
                           Body=test_data)
 
         # Read 2 batches & stop the pipeline halfway through the file
@@ -1489,8 +1525,8 @@ def test_s3_restart_with_file_offset_and_xml_data_format(sdc_builder, sdc_execut
         input_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
 
         # Restart the pipeline and wait until it reads all data
-        sdc_executor.start_pipeline(s3_origin_pipeline)\
-            .wait_for_pipeline_batch_count((records_in_file - input_records)/10)
+        sdc_executor.start_pipeline(s3_origin_pipeline) \
+            .wait_for_pipeline_batch_count((records_in_file - input_records) / 10)
 
         # Assert no stage errors have happened
         assert 0 == len(sdc_executor.get_stage_errors(s3_origin_pipeline, s3_origin))
@@ -1512,7 +1548,8 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
         It checks that no stage error happens after the pipeline is restarted with an offset halfway in the file.
             s3_origin >> trash
     """
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
     n_files = 10
     records_in_file = 1000
 
@@ -1527,7 +1564,8 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
     s3_origin = builder.add_stage('Amazon S3', type='origin')
     s3_origin.set_attributes(bucket=aws.s3_bucket_name, data_format='TEXT',
                              delimiter_element='/root/records/record',
-                             prefix_pattern=f'{s3_key}/*.txt',
+                             prefix_pattern=f'{pattern}*.txt',
+                             common_prefix=f'{s3_key}',
                              read_order=read_order,
                              max_batch_size_in_records=10)
 
@@ -1548,7 +1586,7 @@ def test_s3_restart_pipeline_with_changed_common_prefix(sdc_builder, sdc_executo
     try:
         # Insert objects into S3.
         for i in range(n_files):
-            client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{data_file_filename.format(i)}',
+            client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/{pattern}-{data_file_filename.format(i)}',
                               Body='\n'.join(records).encode('ascii'))
 
         # Start and stop the pipeline to have an offset different than -1 in an existing file
@@ -1585,7 +1623,8 @@ def test_s3_whole_file_empty_directory(sdc_builder, sdc_executor, aws):
         s3_origin >> trash
     """
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+
     # File Name starts with B. Directory AAAAAA comes first.
     s3_directory_name = f'{s3_key}/AAAAAA/'
     s3_file_name = f'{s3_key}/B{get_random_string()}.txt'
@@ -1596,8 +1635,8 @@ def test_s3_whole_file_empty_directory(sdc_builder, sdc_executor, aws):
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
-    s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern=f'**/*',
-                             read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/')
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern='**/*',
+                             read_order='LEXICOGRAPHICAL', common_prefix=f'{s3_key}')
 
     wiretap = builder.add_wiretap()
     finisher = builder.add_stage('Pipeline Finisher Executor')
@@ -1651,8 +1690,8 @@ def test_s3_stop_resume_file_not_found(sdc_builder, sdc_executor, aws):
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
-    s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern=f'**/*',
-                             read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/')
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern='**/*',
+                             read_order='LEXICOGRAPHICAL', common_prefix=f'{s3_key}')
 
     wiretap = builder.add_wiretap()
     finisher = builder.add_stage('Pipeline Finisher Executor')
@@ -1705,8 +1744,8 @@ def test_s3_continue_processing_after_file_error(sdc_builder, sdc_executor, aws)
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Amazon S3', type='origin')
-    origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern=f'**/*',
-                          read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/')
+    origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern='**/*',
+                          read_order='LEXICOGRAPHICAL', common_prefix=f'{s3_key}')
 
     wiretap = builder.add_wiretap()
 
@@ -1763,11 +1802,11 @@ def test_s3_archive_idle_resume(sdc_builder, sdc_executor, aws):
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
     s3_origin.set_attributes(bucket=s3_bucket, data_format='WHOLE_FILE', prefix_pattern=f'*',
-                             read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/',
-                             post_processing_option='ARCHIVE', archiving_option = 'MOVE_TO_PREFIX',
-                             post_process_prefix =f'/{s3_key_post_process}/',
+                             read_order='LEXICOGRAPHICAL', common_prefix=f'/{s3_key}/',
+                             post_processing_option='ARCHIVE', archiving_option='MOVE_TO_PREFIX',
+                             post_process_prefix=f'/{s3_key_post_process}/',
                              error_handling_option='ARCHIVE')
-    s3_origin.configuration.update({'s3ConfigBean.errorConfig.archivingOption':'MOVE_TO_PREFIX',
+    s3_origin.configuration.update({'s3ConfigBean.errorConfig.archivingOption': 'MOVE_TO_PREFIX',
                                     's3ConfigBean.errorConfig.errorPrefix': f'/{s3_key_post_process}/'})
 
     wiretap = builder.add_wiretap()
@@ -1837,12 +1876,12 @@ def test_s3_archive_JSON(sdc_builder, sdc_executor, aws):
 
     s3_origin = builder.add_stage('Amazon S3', type='origin')
 
-    s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern=f'*',
-                             read_order='LEXICOGRAPHICAL', common_prefix = f'/{s3_key}/',
-                             post_processing_option='ARCHIVE', archiving_option = 'MOVE_TO_PREFIX',
-                             post_process_prefix =f'/{s3_key_post_process}/',
+    s3_origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern='*',
+                             read_order='LEXICOGRAPHICAL', common_prefix=f'/{s3_key}/',
+                             post_processing_option='ARCHIVE', archiving_option='MOVE_TO_PREFIX',
+                             post_process_prefix=f'/{s3_key_post_process}/',
                              error_handling_option='ARCHIVE')
-    s3_origin.configuration.update({'s3ConfigBean.errorConfig.archivingOption':'MOVE_TO_PREFIX',
+    s3_origin.configuration.update({'s3ConfigBean.errorConfig.archivingOption': 'MOVE_TO_PREFIX',
                                     's3ConfigBean.errorConfig.errorPrefix': f'/{s3_key_post_process}/'})
 
     wiretap = builder.add_wiretap()
@@ -1861,7 +1900,7 @@ def test_s3_archive_JSON(sdc_builder, sdc_executor, aws):
                           Body=json.dumps(data2))
 
         sdc_executor.start_pipeline(s3_origin_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count',number_of_input_records)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', number_of_input_records)
         assert [record.field for record in wiretap.output_records] == [data1, data2]
         assert sdc_executor.get_pipeline_status(s3_origin_pipeline).response.json().get('status') != 'RUN_ERROR'
 
@@ -1876,15 +1915,13 @@ def test_s3_archive_JSON(sdc_builder, sdc_executor, aws):
 
 @aws('s3')
 def test_whole_file_with_empty_files(sdc_builder, sdc_executor, aws, keep_data):
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
 
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Amazon S3', type='origin')
-    origin.bucket = aws.s3_bucket_name
-    origin.data_format = 'WHOLE_FILE'
-    origin.prefix_pattern=f'{s3_key}/*'
-    origin.read_order='LEXICOGRAPHICAL'
+    origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE', prefix_pattern='*',
+                          read_order='LEXICOGRAPHICAL', common_prefix=f'{s3_key}')
 
     wiretap = builder.add_wiretap()
 
@@ -1926,7 +1963,7 @@ def test_s3_keep_offset_on_disconnect(sdc_builder, sdc_executor, aws):
     """Ensure that the origin saves the current offset if the connection to AWS S3 is lost, and that it continues
     from that offset upon restoring connectivity."""
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
 
     num_objects = 1500
     rate_limit = 100
@@ -1937,7 +1974,7 @@ def test_s3_keep_offset_on_disconnect(sdc_builder, sdc_executor, aws):
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Amazon S3', type='origin')
-    origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern=f'**/*',
+    origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern='**/*',
                           read_order='LEXICOGRAPHICAL', common_prefix=f'/{s3_key}/',
                           max_batch_size_in_records=1500)
 
@@ -2030,7 +2067,7 @@ def test_s3_multithreading_multiple_batches(
 
     dev_data_generator >> s3_destination
 
-    s3_dest_pipeline = builder.build(title='Multi-threaded Writing Pipeline - Amazon S3 destination')\
+    s3_dest_pipeline = builder.build(title='Multi-threaded Writing Pipeline - Amazon S3 destination') \
         .configure_for_environment(aws)
     sdc_executor.add_pipeline(s3_dest_pipeline)
 
@@ -2042,7 +2079,8 @@ def test_s3_multithreading_multiple_batches(
     s3_origin.set_attributes(
         bucket=s3_bucket,
         data_format='JSON',
-        prefix_pattern=f"{s3_key}/*",
+        prefix_pattern="*",
+        common_prefix=f"{s3_key}",
         max_batch_size_in_records=100,
         number_of_threads=num_reading_threads,
         file_pool_size=100,
@@ -2059,7 +2097,7 @@ def test_s3_multithreading_multiple_batches(
     s3_origin >> wiretap.destination
     s3_origin >= pipeline_finisher
 
-    s3_origin_pipeline = builder.build(title='Multi-threaded Reading Pipeline - Amazon S3 origin')\
+    s3_origin_pipeline = builder.build(title='Multi-threaded Reading Pipeline - Amazon S3 origin') \
         .configure_for_environment(aws)
     s3_origin_pipeline.configuration['shouldRetry'] = False
     sdc_executor.add_pipeline(s3_origin_pipeline)
