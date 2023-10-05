@@ -301,7 +301,7 @@ def test_jdbc_connection_string(sdc_builder, sdc_executor, database, credential_
 
     with pytest.raises(Exception) as error:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert "JDBC_06" in error.value.message, f'Expected a JDBC_06 error, got "{error.value.message}" instead'
+    assert "JDBC_INIT_00" in error.value.message, f'Expected a JDBC_INIT_00 error, got "{error.value.message}" instead'
 
 
 @stub
