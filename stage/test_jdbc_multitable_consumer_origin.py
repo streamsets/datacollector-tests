@@ -1679,7 +1679,7 @@ def test_jdbc_multitable_consumer_table_exclusion(sdc_builder, sdc_executor, dat
         if total_processed_tables == 0:  # exclude everything
             with pytest.raises(Exception) as error:
                 sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-            assert "JDBC_66" in error.value.message, f'Expected a JDBC_66 error, got "{error.value.message}" instead'
+            assert "JDBC_INIT_04" in error.value.message, f'Expected a JDBC_INIT_04 error, got "{error.value.message}" instead'
 
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
