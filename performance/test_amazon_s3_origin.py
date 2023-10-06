@@ -31,7 +31,8 @@ def test_multithreaded(sdc_builder, sdc_executor, aws, datasets, number_of_threa
     amazon_s3.set_attributes(bucket=aws.s3_bucket_name,
                              data_format=DATA_FORMAT,
                              avro_schema_location='SOURCE',
-                             prefix_pattern=f'datasets/{datasets.default.name}/{DATA_FORMAT}/*',
+                             common_prefix=f'datasets/{datasets.default.name}',
+                             prefix_pattern=f'{DATA_FORMAT}/*',
                              number_of_threads=number_of_threads,
                              read_order='LEXICOGRAPHICAL')
 

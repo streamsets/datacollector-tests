@@ -1738,13 +1738,14 @@ def test_s3_stop_resume_file_not_found(sdc_builder, sdc_executor, aws):
 def test_s3_continue_processing_after_file_error(sdc_builder, sdc_executor, aws):
     """Ensure that the origin continues processing data after one of the input files error-ed out."""
     s3_bucket = aws.s3_bucket_name
-    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc'
+    s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
+    pattern = 'sdc'
 
     # Build pipeline.
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('Amazon S3', type='origin')
-    origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern='**/*',
+    origin.set_attributes(bucket=s3_bucket, data_format='JSON', prefix_pattern=f'{pattern}*',
                           read_order='LEXICOGRAPHICAL', common_prefix=f'{s3_key}')
 
     wiretap = builder.add_wiretap()
@@ -1761,9 +1762,9 @@ def test_s3_continue_processing_after_file_error(sdc_builder, sdc_executor, aws)
     client = aws.s3
     try:
         # Insert objects into S3.
-        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/a.json", Body='{"id": 1}'.encode('ascii'))
-        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/b.json", Body='Not JSON'.encode('ascii'))
-        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/c.json", Body='{"id": 2}'.encode('ascii'))
+        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/{pattern}-a.json", Body='{"id": 1}'.encode('ascii'))
+        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/{pattern}-b.json", Body='Not JSON'.encode('ascii'))
+        client.put_object(Bucket=s3_bucket, Key=f"{s3_key}/{pattern}-c.json", Body='{"id": 2}'.encode('ascii'))
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 

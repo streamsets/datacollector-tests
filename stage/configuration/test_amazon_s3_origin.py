@@ -226,7 +226,8 @@ def test_configurations_data_format_log(sdc_executor, sdc_builder, aws, data_for
     client = aws.s3
     s3_key = f'{S3_SANDBOX_PREFIX}/{get_random_string()}'
     attributes = {'bucket': aws.s3_bucket_name,
-                  'prefix_pattern': f'{s3_key}/*',
+                  'prefix_pattern': '**/*',
+                  'common_prefix': f'{s3_key}',
                   'read_order': 'LEXICOGRAPHICAL',
                   'data_format': data_format,
                   'log_format': log_format,
@@ -264,13 +265,15 @@ def test_configuration_delimited_max_record_length_in_chars(sdc_builder, sdc_exe
 
     attributes = {'bucket': aws.s3_bucket_name,
                   'data_format': data_format,
-                  'prefix_pattern': f'{s3_key}/{file_name}',
+                  'prefix_pattern': f'{file_name}',
+                  'common_prefix': f'{s3_key}',
                   'max_record_length_in_chars': max_record_length_in_chars}
     pipeline, wiretap = get_aws_origin_to_trash_pipeline(sdc_builder, attributes, aws)
     amazon_s3_origin = pipeline.origin_stage
     client = aws.s3
     try:
-        client.put_object(Bucket=aws.s3_bucket_name, Key=amazon_s3_origin.prefix_pattern, Body=file_content)
+        client.put_object(Bucket=aws.s3_bucket_name,
+                          Key=f'{amazon_s3_origin.common_prefix}/{amazon_s3_origin.prefix_pattern}', Body=file_content)
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         output_records = [record.field for record in wiretap.output_records]

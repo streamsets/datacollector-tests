@@ -43,7 +43,7 @@ def test_s3_whole_file_transfer_existing_file(sdc_builder, sdc_executor, aws):
 
     origin = builder.add_stage('Amazon S3', type='origin')
     origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
-                          prefix_pattern=f'{s3_key}/*',
+                          prefix_pattern='**/*', common_prefix=f'{s3_key}',
                           max_batch_size_in_records=100)
 
     target = builder.add_stage('Amazon S3', type='destination')
@@ -139,7 +139,8 @@ def _run_test_s3_error_destination(sdc_builder, sdc_executor, aws, anonymous):
         s3_origin.set_attributes(
             bucket=s3_bucket,
             data_format='SDC_JSON',
-            prefix_pattern=f'{s3_key}*',
+            prefix_pattern='**/*',
+            common_prefix=f'{s3_key}',
             max_batch_size_in_records=100
         )
         if anonymous:
@@ -189,7 +190,7 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
 
     origin = builder.add_stage('Amazon S3', type='origin')
     origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
-                          prefix_pattern=f'{s3_key}/*',
+                          prefix_pattern='**/*', common_prefix=f'{s3_key}',
                           max_batch_size_in_records=100)
 
     target = builder.add_stage('Amazon S3', type='destination')
@@ -207,7 +208,7 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
 
     client = aws.s3
     try:
-        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt', Body=data.encode('ascii'))
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}input.txt', Body=data.encode('ascii'))
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
 
@@ -234,6 +235,7 @@ def test_s3_whole_file_transfer(sdc_builder, sdc_executor, aws):
         logger.info('Deleting output S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_dest_key)
         aws.delete_s3_data(aws.s3_bucket_name, s3_dest_key)
 
+
 @aws('s3')
 def test_s3_whole_file_writes_with_checksum(sdc_builder, sdc_executor, aws):
     """Test simple scenario of moving files from source to target using WHOLE_FILE_FORMAT with checksum"""
@@ -246,7 +248,7 @@ def test_s3_whole_file_writes_with_checksum(sdc_builder, sdc_executor, aws):
 
     origin = builder.add_stage('Amazon S3', type='origin')
     origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
-                          prefix_pattern=f'{s3_key}/*',
+                          prefix_pattern='**/*', common_prefix=f'{s3_key}',
                           verify_checksum=True,
                           max_batch_size_in_records=100)
 
@@ -269,7 +271,7 @@ def test_s3_whole_file_writes_with_checksum(sdc_builder, sdc_executor, aws):
 
     client = aws.s3
     try:
-        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt')
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}input.txt')
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
 
@@ -626,7 +628,7 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
 
     origin = builder.add_stage('Amazon S3', type='origin')
     origin.set_attributes(bucket=aws.s3_bucket_name, data_format='WHOLE_FILE',
-                          prefix_pattern=f'{s3_key}/*',
+                          prefix_pattern='**/*', common_prefix=f'{s3_key}',
                           max_batch_size_in_records=100)
 
     target = builder.add_stage('Amazon S3', type='destination')
@@ -644,7 +646,7 @@ def test_s3_whole_file_transfer_with_tags(sdc_builder, sdc_executor, aws):
 
     client = aws.s3
     try:
-        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}/input.txt', Body=data.encode('ascii'))
+        client.put_object(Bucket=aws.s3_bucket_name, Key=f'{s3_key}input.txt', Body=data.encode('ascii'))
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'output_record_count', 1, timeout_sec=120)
 
@@ -853,6 +855,7 @@ def test_s3_destination_write_text_data_with_prefix_suffix_and_partition(sdc_bui
             sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting input S3 data from bucket %s with location %s ...', aws.s3_bucket_name, s3_prefix)
         aws.delete_s3_data(aws.s3_bucket_name, s3_prefix)
+
 
 @aws('s3')
 @sdc_min_version('5.7.0')
