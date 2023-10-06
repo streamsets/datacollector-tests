@@ -1498,6 +1498,135 @@ def test_include_and_exclude_tables_with_special_names(
             connection.close()
 
 
+@database('sqlserver')
+@sdc_min_version('5.8.0')
+@pytest.mark.parametrize('enable_schema_changes_event', [False,True])
+@pytest.mark.parametrize('num_of_schema', [1,2])
+@pytest.mark.parametrize('num_of_tables', [1,2,3])
+def test_enable_schema_changes_event(
+        sdc_builder,
+        sdc_executor,
+        database,
+        enable_schema_changes_event,
+        num_of_schema,
+        num_of_tables
+):
+    """Test for SQL Server CDC origin stage 'Enable Schema Changes Event' parameter with varying number of schema
+    and table combinations.
+    Create table(s) and enable CDC on it, then add some data and change the table schema. If the parameter is true,
+    we should receive an extra event indicating the schema has changed.
+    The pipeline looks like:
+        sql_server_cdc_origin >> wiretap
+    And for events:
+        sql_server_cdc_origin >= wiretap
+    """
+    total_count = num_of_schema * num_of_tables
+    schema_names = [DEFAULT_SCHEMA_NAME]
+    for i in range(1, num_of_schema):
+        schema_name = get_random_string(string.ascii_lowercase, 10)
+        schema_names.append(schema_name)
+    table_prefix = get_random_string(string.ascii_lowercase, 10)
+    table_names = []
+    for i in range(0, num_of_tables):
+        table_name = f"{table_prefix}_{get_random_string(string.ascii_lowercase, 10)}"
+        table_names.append(table_name)
+
+    builder = sdc_builder.get_pipeline_builder()
+    origin = builder.add_stage('SQL Server CDC Client')
+    origin.enable_schema_changes_event = enable_schema_changes_event
+    origin.table_configs = [{'capture_instance': f'%_{table_prefix}_%'}]
+
+    wiretap_out = builder.add_wiretap()
+    wiretap_event = builder.add_wiretap()
+
+    origin >> wiretap_out.destination
+    origin >= wiretap_event.destination
+
+    pipeline = builder.build().configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline)
+
+    connection = database.engine.connect()
+    try:
+        # Since schema_names[0] is DEFAULT_SCHEMA dbo already present, hence range starting from 1
+        for i in range(1, num_of_schema):
+            schema_name = schema_names[i]
+            connection.execute(f'CREATE SCHEMA {schema_name}')
+
+        for i in range(0, num_of_schema):
+          for j in range(0, num_of_tables):
+              schema_name = schema_names[i]
+              table_name = table_names[j]
+              connection.execute(f"CREATE TABLE {schema_name}.{table_name}(id INT, PRIMARY KEY (id))")
+              _enable_cdc(connection, schema_name, table_name)
+              connection.execute(f"INSERT INTO {schema_name}.{table_name} VALUES(1)")
+
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_count)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records = wiretap_out.output_records
+        assert len(records) == total_count
+        for i in range(0, total_count):
+            assert records[i].field['id'] == 1
+
+        # Reset record accumulation
+        wiretap_out.reset()
+        wiretap_event.reset()
+
+        # Add a new column to the tables
+        for i in range(0, num_of_schema):
+          for j in range(0, num_of_tables):
+              schema_name = schema_names[i]
+              table_name = table_names[j]
+              logger.info('Adding the column new_column varchar(10) on %s.%s...', schema_name, table_name)
+              connection.execute(f'ALTER TABLE {schema_name}.{table_name} ADD new_column INT')
+              logger.info("Inserting new row into %s", table_name)
+              connection.execute(f"INSERT INTO {schema_name}.{table_name} VALUES(2, {i})")
+
+
+        logger.info("Waiting on pipeline to finish processing all records")
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', total_count)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Check that the insert was read and the number of times the schema change event was recorded
+        records = wiretap_out.output_records
+        events = wiretap_event.output_records
+
+        assert len(records) == total_count
+        for i in range(0, total_count):
+           assert records[i].field['id'] == 2
+
+        changes = 0
+        event_message = ['capture-instance-name']
+        for i in range(0, len(events)):
+            if any(substring in str(events[i]) for substring in event_message):
+                changes += 1
+
+        # If 'enable_schema_changes_event' is true, the event should be registered once, otherwise it should not appear
+        if enable_schema_changes_event:
+            assert changes == total_count
+        else:
+            assert changes == 0
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.remove_pipeline(pipeline)
+        for i in range(0, num_of_schema):
+          for j in range(0, num_of_tables):
+              schema_name = schema_names[i]
+              table_name = table_names[j]
+              _disable_cdc(connection, schema_name, table_name)
+              logger.info('Dropping table %s in %s database...', f"{schema_name}.{table_name}", database.type)
+              connection.execute(f"DROP TABLE {schema_name}.{table_name}")
+        # Do not delete DEFAULT_SCHEMA-dbo, hence range starting from 1
+        for i in range(1, num_of_schema):
+           schema_name = schema_names[i]
+           logger.info(f'Dropping schema {schema_name} ...')
+           connection.execute(f'DROP SCHEMA {schema_name}')
+
+
 def _get_record_format_code(record_format):
     if record_format == BASIC_RECORDS:
         return BASIC_RECORDS_CODE
