@@ -20,6 +20,7 @@ import sqlalchemy
 from sqlalchemy.dialects import postgresql
 
 from streamsets import sdk
+from streamsets.sdk.utils import Version
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments.databases import OracleDatabase, SQLServerDatabase, MySqlDatabase, \
     MariaDBDatabase
@@ -301,7 +302,10 @@ def test_jdbc_connection_string(sdc_builder, sdc_executor, database, credential_
 
     with pytest.raises(Exception) as error:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert "JDBC_INIT_00" in error.value.message, f'Expected a JDBC_INIT_00 error, got "{error.value.message}" instead'
+    if Version(sdc_executor.version) >= Version('5.8.0'):
+        assert "JDBC_INIT_00" in error.value.message, f'Expected a JDBC_INIT_00 error, got "{error.value.message}" instead'
+    else:
+        assert "JDBC_06" in error.value.message, f'Expected a JDBC_06 error, got "{error.value.message}" instead'
 
 
 @stub
@@ -536,7 +540,10 @@ def test_username(sdc_builder, sdc_executor, database, credential_store, stage_a
 
     with pytest.raises(Exception) as error:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert "JDBC_INIT_01" in error.value.message, f'Expected a JDBC_INIT_01 error, got "{error.value.message}" instead'
+    if Version(sdc_executor.version) >= Version('5.8.0'):
+        assert "JDBC_INIT_01" in error.value.message, f'Expected a JDBC_INIT_01 error, got "{error.value.message}" instead'
+    else:
+        assert "JDBC_06" in error.value.message, f'Expected a JDBC_06 error, got "{error.value.message}" instead'
 
 
 def _create_and_populate_lookup_table(name, database):
