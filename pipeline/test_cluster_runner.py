@@ -15,7 +15,7 @@
 import pytest
 
 from streamsets.testframework.markers import sdc_min_version
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError
 
 
 @pytest.fixture(scope='module')

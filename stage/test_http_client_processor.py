@@ -29,7 +29,7 @@ import pytest
 from collections import namedtuple
 from pretenders.common.constants import FOREVER
 from requests_gssapi import HTTPSPNEGOAuth
-from streamsets.sdk.sdc_api import RunError
+from streamsets.sdk.exceptions import RunError
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.constants import (CREDENTIAL_STORE_EXPRESSION, CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION,

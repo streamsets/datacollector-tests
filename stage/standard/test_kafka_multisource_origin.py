@@ -24,7 +24,7 @@ import time
 
 import avro, avro.datafile
 import pytest
-from streamsets.sdk.sdc_api import RunError
+from streamsets.sdk.exceptions import RunError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.environments import cloudera
 from streamsets.testframework.environments.cloudera import ClouderaManagerCluster

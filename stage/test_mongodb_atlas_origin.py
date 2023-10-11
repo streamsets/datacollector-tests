@@ -21,7 +21,7 @@ import pytest
 from bson import binary, DBRef, decimal128
 import datetime
 import bson
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError
 from streamsets.testframework.markers import mongodb, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 

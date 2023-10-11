@@ -14,7 +14,7 @@
 import json
 
 import pytest
-from streamsets.sdk.sdc_api import RunError
+from streamsets.sdk.exceptions import RunError
 from streamsets.testframework.utils import Version
 
 

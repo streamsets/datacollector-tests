@@ -23,8 +23,7 @@ import time
 from collections import OrderedDict
 
 import pytest
-from streamsets.sdk.sdc_api import StartError
-from streamsets.sdk.exceptions import ValidationError
+from streamsets.sdk.exceptions import StartError, ValidationError
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from stage.utils.utils_xml import get_xml_output_field

@@ -23,8 +23,7 @@ from contextlib import ExitStack
 from requests.exceptions import JSONDecodeError
 from time import sleep
 
-from streamsets.sdk.exceptions import ValidationError
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError, ValidationError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 

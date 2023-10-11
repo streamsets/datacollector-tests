@@ -17,7 +17,7 @@ import logging
 import pytest
 import string
 
-from streamsets.sdk.sdc_api import RunError, RunningError, StartError
+from streamsets.sdk.exceptions import RunError, RunningError, StartError
 from streamsets.testframework.markers import cassandra, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 

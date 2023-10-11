@@ -28,7 +28,7 @@ import sqlalchemy
 
 from sqlalchemy import Numeric, Date
 from streamsets.sdk.exceptions import ValidationError
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
 

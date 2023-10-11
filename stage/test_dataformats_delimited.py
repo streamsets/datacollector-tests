@@ -17,7 +17,7 @@ import os
 import pytest
 import tempfile
 
-from streamsets.sdk.sdc_api import RunError
+from streamsets.sdk.exceptions import RunError
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 

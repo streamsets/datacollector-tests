@@ -17,7 +17,7 @@ import pytest
 import logging
 import string
 
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError
 from streamsets.sdk.utils import get_random_string, Version
 from streamsets.testframework.markers import snowflake, sdc_min_version
 from streamsets.testframework.utils import get_random_string

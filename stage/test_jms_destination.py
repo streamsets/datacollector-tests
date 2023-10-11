@@ -22,7 +22,7 @@ import pytest
 from stomp.listener import TestListener as _TestListener
 from streamsets.testframework.markers import jms, sdc_min_version
 from streamsets.testframework.utils import get_random_string
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError
 
 
 logger = logging.getLogger(__name__)

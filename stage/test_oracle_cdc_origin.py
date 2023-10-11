@@ -27,8 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DatabaseError
 from time import sleep
 
-from streamsets.sdk.exceptions import ValidationError
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError, ValidationError
 from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version

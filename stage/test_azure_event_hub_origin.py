@@ -18,7 +18,7 @@ import logging
 import string
 
 import pytest
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import azure, sdc_min_version
 from streamsets.testframework.utils import get_random_string

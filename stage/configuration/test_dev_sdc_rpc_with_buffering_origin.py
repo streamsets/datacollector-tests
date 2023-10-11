@@ -13,7 +13,7 @@
 # limitations under the License.
 import pytest
 
-from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.exceptions import StartError
 from streamsets.testframework.decorators import stub
 
 

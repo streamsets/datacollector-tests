@@ -23,7 +23,7 @@ import time
 import pytest
 
 from pretenders.common.constants import FOREVER
-from streamsets.sdk.sdc_api import RunError, RunningError
+from streamsets.sdk.exceptions import RunError, RunningError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.constants import (CREDENTIAL_STORE_EXPRESSION, CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION,
                                                 STF_TESTCONFIG_DIR)

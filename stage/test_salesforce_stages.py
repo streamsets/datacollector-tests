@@ -28,7 +28,7 @@ from uuid import uuid4
 
 import pytest
 import requests
-from streamsets.sdk.sdc_api import StatusError
+from streamsets.sdk.exceptions import StatusError
 from streamsets.sdk.utils import wait_for_condition
 from streamsets.testframework.markers import salesforce, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version

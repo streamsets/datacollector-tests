@@ -18,7 +18,7 @@ import logging
 import string
 
 import pytest
-from streamsets.sdk.sdc_api import StatusError
+from streamsets.sdk.exceptions import StatusError
 from streamsets.sdk.utils import get_random_string
 from streamsets.testframework.markers import salesforce, sdc_min_version
 
