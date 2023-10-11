@@ -496,3 +496,57 @@ def test_jdbc_consumer_no_more_data_with_limit(sdc_builder, sdc_executor, databa
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
         connection.execute(f"DROP TABLE IF EXISTS {table_name}")
+
+
+@database('postgresql')
+@pytest.mark.parametrize('initial_offset', ['01/01/2023', '\'01/01/2023\'', '\"01/01/2023\"'])
+@pytest.mark.parametrize('offset_var', ['${OFFSET}', '\'${OFFSET}\'', '\"${OFFSET}\"'])
+@sdc_min_version('5.8.0')
+def test_jdbc_incremental_offset_to_string(sdc_builder, sdc_executor, database, initial_offset, offset_var):
+    """Check that the pipeline completes successfully using several combinations of quoted initial offset and
+    quoted offset variable when convert timestamp to string is set to true.
+
+    The pipeline looks like:
+        jdbc_query_consumer >> trash
+    """
+
+    num_records = 10
+    time_column = 'postgresql_time'
+    table_name = get_random_string(string.ascii_lowercase)
+    query = f'SELECT * FROM {table_name} WHERE {time_column} > {offset_var} ORDER BY {time_column}'
+    connection = database.engine.connect()
+
+    try:
+        connection.execute(f'CREATE TABLE {table_name}'
+                           f'(u_id INT PRIMARY KEY, name varchar(100), postgresql_time timestamp default current_timestamp)');
+        for id in range(num_records):
+            connection.execute(f'INSERT INTO {table_name} VALUES ({id}, \'{get_random_string()}\')')
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+
+        jdbc_query_consumer = pipeline_builder.add_stage('JDBC Query Consumer')
+        jdbc_query_consumer.set_attributes(sql_query=query,
+                                           initial_offset=initial_offset,
+                                           offset_column=time_column,
+                                           incremental_mode=True,
+                                           query_interval=0,
+                                           convert_timestamp_to_string=True)
+
+        trash = pipeline_builder.add_stage('Trash')
+
+        pipeline_finished_executor = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        pipeline_finished_executor.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+        jdbc_query_consumer >> trash
+        jdbc_query_consumer >= pipeline_finished_executor
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == num_records, 'Wrong number of records'
+
+    finally:
+        logger.info('Dropping tables in %s database...', database.type)
+        connection.execute(f'DROP TABLE IF EXISTS {table_name}')
