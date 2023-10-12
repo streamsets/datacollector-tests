@@ -148,6 +148,13 @@ ROWS_IN_DATABASE_NULL = [
      "publisher": "StreamSets"}
 ]
 
+ROWS_IN_DATABASE_NULL_VALUE = [
+    {"title": "Elon Musk: Tesla, SpaceX, the Quest for a Fantastic Future",
+     "author": None,
+     "genre": None,
+     "publisher": "StreamSets"}
+]
+
 ROWS_IN_DATABASE_QUOTED_NEWLINES = [
     {"title": "Elon Musk: Tesla, SpaceX\n the Quest for a Fantastic Future",
      "author": "Joaquin",
@@ -1142,6 +1149,74 @@ def test_basic_values_as_null(sdc_builder, sdc_executor, gcp, null_value):
     finally:
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
+
+
+@pytest.mark.parametrize('null_value, expected', [(None, ''), ('\\N', None), ('test', 'test')])
+@sdc_min_version('5.8.0')
+def test_null_values_for_json_file_format(sdc_builder, sdc_executor, gcp, null_value, expected):
+    """
+    Test for Google BigQuery with Google Cloud Storage staging with JSON file format for null values.
+
+    The pipeline looks like this:
+        dev_raw_data_source >> bigquery
+    """
+    bucket_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    dataset_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    table_name = f'stf_{get_random_string(ascii_lowercase, 10)}'
+    data = '\n'.join(json.dumps(rec) for rec in ROWS_IN_DATABASE_NULL_VALUE)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+
+    # Dev raw data source
+    dev_raw_data_source = pipeline_builder.add_stage('Dev Raw Data Source')
+    dev_raw_data_source.set_attributes(data_format='JSON',
+                                       raw_data=data,
+                                       stop_after_first_batch=True)
+
+    # Google BigQuery destination stage
+    bigquery = pipeline_builder.add_stage(name=DESTINATION_STAGE_NAME)
+    bigquery.set_attributes(project_id=gcp.project_id,
+                            dataset=dataset_name,
+                            table=table_name,
+                            bucket=bucket_name,
+                            enable_data_drift=True,
+                            create_table=True,
+                            create_dataset=True,
+                            purge_stage_file_after_ingesting=True,
+                            null_value=null_value,
+                            staging_file_format='JSON')
+
+    dev_raw_data_source >> bigquery
+
+    pipeline = pipeline_builder.build().configure_for_environment(gcp)
+
+    bigquery_client = gcp.bigquery_client
+    dataset_ref = DatasetReference(gcp.project_id, dataset_name)
+
+    try:
+        logger.info(f'Creating temporary bucket {bucket_name}')
+        bucket = gcp.retry_429(gcp.storage_client.create_bucket)(bucket_name)
+
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Verify by reading records using Google BigQuery client
+        # We retrieve the table after the pipeline has automatically created it
+        table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
+        data_from_bigquery = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+        data_from_bigquery.sort()
+
+        expected_data = [tuple(expected if None == v else v for v in d.values()) for d in ROWS_IN_DATABASE_NULL_VALUE]
+
+        assert len(data_from_bigquery) == len(expected_data)
+        assert data_from_bigquery == expected_data
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        sdc_executor.remove_pipeline(pipeline)
+        _clean_up_bigquery(bigquery_client, dataset_ref)
+        _clean_up_gcs(gcp, bucket, bucket_name)
+
 
 
 @pytest.mark.parametrize('file_format', ['CSV', 'AVRO', 'JSON'])
