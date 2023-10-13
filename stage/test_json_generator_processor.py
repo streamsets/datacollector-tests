@@ -86,7 +86,7 @@ def test_json_generator(sdc_builder, sdc_executor, contact_field, target_field):
 
 
 def test_json_generator_string_field(sdc_builder, sdc_executor):
-    """Test JSON Generator processor with invalid input field. The pipeline would look like:
+    """Test JSON Generator processor with string field. The pipeline would look like:
 
         dev_raw_data_source >> json_generator >> wiretap
     """
@@ -146,7 +146,7 @@ def test_json_generator_valid_input_field(sdc_builder, sdc_executor, raw_data):
   '{ "a_map":"abc" }'  # string type
 ))
 def test_json_generator_invalid_input_field(sdc_builder, sdc_executor, raw_data):
-    """Test JSON Generator processor with list input field. The pipeline would look like:
+    """Test JSON Generator processor with invalid input field. The pipeline would look like:
 
         dev_raw_data_source >> json_generator >> wiretap
     """
