@@ -25,3 +25,4 @@ pretenders-boss.pid
 pretenders.log
 venv/*
 *.zip
+.benchmarks/*
