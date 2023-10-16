@@ -323,7 +323,9 @@ def test_mongodb_atlas_lookup_processor_mapping(sdc_builder, sdc_executor, mongo
 ])
 def test_mongodb_atlas_lookup_processor_multiple_values_behaviour(sdc_builder, sdc_executor, mongodb, behavior):
     """
-    Blablabla.
+    Upload into MongoDB Atlas more than one document with the same field value in the mapping field and confirm that
+    MongoDB Atlas Lookup Processor can find the document and pass only the first found or send it to error depends on
+    the behavior of the multiple values property.
 
     The pipeline looks like:
         dev_raw_data_source >> mongodb_atlas_lookup >> trash
@@ -386,7 +388,8 @@ def test_mongodb_atlas_lookup_processor_multiple_values_behaviour(sdc_builder, s
 @pytest.mark.parametrize('behavior', ["PASS_RECORD_ON", "SEND_TO_ERROR"])
 def test_mongodb_atlas_lookup_processor_missing_values_behaviour(sdc_builder, sdc_executor, mongodb, behavior):
     """
-    Blablabla.
+    Don't upload any document into MongoDB Atlas and confirm that MongoDB Atlas Lookup Processor can't find any document
+    and pass the record or send it to error depends on the behavior of the missing values property.
 
     The pipeline looks like:
         dev_raw_data_source >> mongodb_atlas_lookup >> trash
