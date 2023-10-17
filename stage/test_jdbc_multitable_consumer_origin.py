@@ -263,19 +263,20 @@ def test_jdbc_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_exe
 
 @database
 @sdc_min_version('5.7.0')
-@pytest.mark.parametrize('offset_column, initial_offset, last_offset',
+@pytest.mark.parametrize('error_code, offset_column, initial_offset, last_offset',
                          [
-                             ('age', '2', '100'),
-                             ('id', '2', '1'),
-                             ('id', '2', '-5'),
-                             ('leaves', '5.5', '5.0'),
-                             ('leaves', '1.0', '-5.5'),
-                             ('doj', '1378987751000', '1284293351000'),
-                             ('doj', '1284293351000', '-1284111351000')
+                             ('JDBC_73', 'age', '2', '${missing_close_bracket'),
+                             ('JDBC_416', 'age', '2', '100'),
+                             ('JDBC_416', 'id', '2', '1'),
+                             ('JDBC_416', 'id', '2', '-5'),
+                             ('JDBC_416', 'leaves', '5.5', '5.0'),
+                             ('JDBC_416', 'leaves', '1.0', '-5.5'),
+                             ('JDBC_416', 'doj', '1378987751000', '1284293351000'),
+                             ('JDBC_416', 'doj', '1284293351000', '-1284111351000')
                          ]
 )
 def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_executor, database,
-                                                               offset_column, initial_offset, last_offset):
+                                                               error_code, offset_column, initial_offset, last_offset):
     """
     Set last offset less than initial offset and verify that a StartError occurs.
     Should not test with a String offset value as it is non-partitionable.
@@ -336,7 +337,7 @@ def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_
 
         with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-        assert "JDBC_416" in error.value.message, f'Expected a JDBC_416 error, got "{error.value.message}" instead'
+        assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'
 
     finally:
         if table is not None:
