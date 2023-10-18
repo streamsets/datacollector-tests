@@ -376,9 +376,11 @@ def test_mongodb_atlas_lookup_processor_multiple_values_behaviour(sdc_builder, s
             assert records[0].get_field_data('/result/f2') in [data_to_insert[0]['f2'], data_to_insert[1]['f2']]
         else:
             assert len(records) == 2
-            for record, actual in zip(records, data_to_insert):
-                assert record.get_field_data('/result/f1') == actual['f1']
-                assert record.get_field_data('/result/f2') == actual['f2']
+            result_records_sorted = sorted([record.get_field_data('/result') for record in records],
+                                           key=lambda d: (d['f2']))
+            for record, actual in zip(result_records_sorted, data_to_insert):
+                assert record['f1'] == actual['f1']
+                assert record['f2'] == actual['f2']
 
     finally:
         logger.info('Dropping %s database...', mongodb_atlas_lookup.database)
