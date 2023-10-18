@@ -536,8 +536,8 @@ def set_up_random(salesforce):
                  f'DailyBulkApiBatches: {limits["DailyBulkApiBatches"]["Remaining"]}, ' \
                  f'DailyDurableStreamingApiEvents: {limits["DailyDurableStreamingApiEvents"]["Remaining"]}, ' \
                  f'HourlyPublishedStandardVolumePlatformEvents: ' \
-                 f'{limits["HourlyPublishedStandardVolumePlatformEvents"]["Remaining"]}, ' \
-                 f'MonthlyPlatformEventsUsageEntitlement: {limits["MonthlyPlatformEventsUsageEntitlement"]["Remaining"]} '
+                 f'{limits["HourlyPublishedStandardVolumePlatformEvents"]["Remaining"]}, '
+                 # f'MonthlyPlatformEventsUsageEntitlement: {limits["MonthlyPlatformEventsUsageEntitlement"]["Remaining"]} '
 
     logger.info(log_limits)
 
