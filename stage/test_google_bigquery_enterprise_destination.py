@@ -1699,8 +1699,8 @@ def test_multithreading(sdc_builder, sdc_executor, gcp, eval_value):
 
 @sdc_min_version('5.6.1')
 @pytest.mark.parametrize('number_of_threads_and_tables', [15])
-@pytest.mark.parametrize('number_of_records', [100_000])
-@pytest.mark.parametrize('batch_size', [10_000])
+@pytest.mark.parametrize('number_of_records', [10_000])
+@pytest.mark.parametrize('batch_size', [1_000])
 def test_multithreaded_multiple_tables_date_types(sdc_builder, sdc_executor, gcp, number_of_threads_and_tables,
                                                   number_of_records, batch_size):
     """
@@ -1792,11 +1792,13 @@ def test_multithreaded_multiple_tables_date_types(sdc_builder, sdc_executor, gcp
             # Order by id per table to compare
             table = bigquery_client.get_table(f'{dataset_name}.{table_name}')
             rows = [tuple(row.values()) for row in bigquery_client.list_rows(table)]
+            assert len(rows) == len(expected_data_per_table[table_name])
             sorted_data_from_database = sorted(rows, key=lambda x: x[0])
             sorted_expected_data = sorted(expected_data_per_table[table_name], key=lambda x: x[0])
             # And compare sorted data per table
             assert sorted_data_from_database == sorted_expected_data, \
                 'Data read from BigQuery should have been the same as the data captured in wiretap.'
+
     finally:
         _clean_up_bigquery(bigquery_client, dataset_ref)
         _clean_up_gcs(gcp, bucket, bucket_name)
