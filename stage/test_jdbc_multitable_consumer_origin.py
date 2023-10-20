@@ -27,11 +27,10 @@ import pytest
 import sqlalchemy
 
 from sqlalchemy import Numeric, Date
-from streamsets.sdk.utils import Version
 from streamsets.sdk.exceptions import ValidationError
 from streamsets.sdk.sdc_api import StartError
 from streamsets.testframework.markers import database, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 from stage.utils.utils_primary_key_metadata import PRIMARY_KEY_NON_NUMERIC_METADATA_MYSQL, \
     PRIMARY_KEY_NUMERIC_METADATA_MYSQL, \
@@ -370,8 +369,8 @@ def test_jdbc_multitable_consumer_valid_offset_configuration(sdc_builder, sdc_ex
     Set initial offset less than last offset and verify that correct number of records are read.
     Should not test with a String offset value as it is non-partitionable.
     More info about it here : -> https://docs.streamsets.com/portal/platform-datacollector/latest/datacollector/UserGuide/Origins/MultiTableJDBCConsumer.html#concept_gvy_yws_p1b
-    Tested over String just to verify that it doesn't throw error when valid offset values are given,
-    even though the last offset would not be considered while fetching the records from the database.
+    Valid Till 5.7.1 --> Tested over String just to verify that it doesn't throw error when valid offset values are
+    given, even though the last offset would not be considered while fetching the records from the database.
     The pipeline looks like :
             jdbc_multitable_consumer >> trash
     """
@@ -421,19 +420,189 @@ def test_jdbc_multitable_consumer_valid_offset_configuration(sdc_builder, sdc_ex
         logger.info('Adding three rows into %s database ...', database.type)
         connection = database.engine.connect()
         connection.execute(table.insert(), ROWS_IN_DATABASE)
+        sdc_executor.add_pipeline(pipeline)
+
+        if offset_column == 'age' or offset_column == 'name':
+            with pytest.raises(Exception) as error:
+                sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+            assert "JDBC_107" in error.value.message, f'Expected a JDBC_107 error, got "{error.value.message}" instead'
+        else:
+            sdc_executor.start_pipeline(pipeline)
+
+            # We simply wait for the records to be read
+            time.sleep(5)
+
+            sdc_executor.stop_pipeline(pipeline)
+
+            # There must be 1 record read
+            history = sdc_executor.get_pipeline_history(pipeline)
+            assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
+            assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+
+    finally:
+
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
+        sdc_executor.remove_pipeline(pipeline)
+
+
+@database
+@sdc_min_version('5.8.0')
+@pytest.mark.parametrize('offset_column1, initial_offset1, last_offset1, offset_column2, initial_offset2, last_offset2',
+                         [
+                             ('id', '1', '2', 'leaves', '4.5', '5.0'),
+                             ('id', '1', '3', 'age', '100', '2')
+                         ]
+)
+def test_jdbc_multitable_consumer_multiple_initial_last_offset(sdc_builder, sdc_executor, database, offset_column1,
+                                                               initial_offset1, last_offset1, offset_column2,
+                                                               initial_offset2, last_offset2):
+    """
+    Set multiple offsets to verify that it throws a validation error as the table is not partitionable.
+    More info about it here : -> https://docs.streamsets.com/portal/platform-datacollector/latest/datacollector/UserGuide/Origins/MultiTableJDBCConsumer.html#concept_gvy_yws_p1b
+    The pipeline looks like :
+            jdbc_multitable_consumer >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+    connection = None
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.table_configs = [{
+        "tablePattern": table_name,
+        "overrideDefaultOffsetColumns": True,
+        "offsetColumns": [offset_column1, offset_column2],
+        "partitioningMode": "BEST_EFFORT",
+        "maxNumActivePartitions": -1,
+        "partitionSize": '5',
+        "offsetColumnToInitialOffsetValue": [{
+            "key": offset_column1,
+            "value": initial_offset1
+        },
+        {
+            "key": offset_column2,
+            "value": initial_offset2
+        }],
+        "offsetColumnToLastOffsetValue": [{
+            "key": offset_column1,
+            "value": last_offset1
+        },
+        {
+            "key": offset_column2,
+            "value": last_offset2
+        }]
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+        sqlalchemy.Column('leaves', Numeric(precision=10, scale=2), quote=True),
+        sqlalchemy.Column('doj', Date, quote=True),
+        sqlalchemy.Column('age', sqlalchemy.String(32), quote=True)
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
 
         sdc_executor.add_pipeline(pipeline)
-        sdc_executor.start_pipeline(pipeline)
+        with pytest.raises(Exception) as error:
+            sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        assert "JDBC_107" in error.value.message, f'Expected a JDBC_107 error, got "{error.value.message}" instead'
 
-        # We simply wait for the records to be read
-        time.sleep(5)
+    finally:
 
-        sdc_executor.stop_pipeline(pipeline)
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            table.drop(database.engine)
+        if connection is not None:
+            connection.close()
+        sdc_executor.remove_pipeline(pipeline)
 
-        # There must be 1 record read
-        history = sdc_executor.get_pipeline_history(pipeline)
-        assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 1
-        assert history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count == 1
+
+@database
+@sdc_min_version('5.8.0')
+@pytest.mark.parametrize('offset_column1, last_offset1, offset_column2, last_offset2',
+                         [
+                             ('id', '2', 'leaves', '5.0'),
+                             ('id', '3', 'age', '2')
+                         ]
+)
+def test_jdbc_multitable_consumer_multiple_last_offset_only(sdc_builder, sdc_executor, database, offset_column1,
+                                                            last_offset1, offset_column2, last_offset2):
+    """
+    Set multiple last offsets only to verify that it throws a validation error as the table is not partitionable.
+    More info about it here : -> https://docs.streamsets.com/portal/platform-datacollector/latest/datacollector/UserGuide/Origins/MultiTableJDBCConsumer.html#concept_gvy_yws_p1b
+    The pipeline looks like :
+            jdbc_multitable_consumer >> trash
+    """
+    table_name = get_random_string(string.ascii_lowercase, 10)
+    connection = None
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    jdbc_multitable_consumer = builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.table_configs = [{
+        "tablePattern": table_name,
+        "overrideDefaultOffsetColumns": True,
+        "offsetColumns": [offset_column1, offset_column2],
+        "partitioningMode": "BEST_EFFORT",
+        "maxNumActivePartitions": -1,
+        "partitionSize": '5',
+        "offsetColumnToLastOffsetValue": [{
+            "key": offset_column1,
+            "value": last_offset1
+        },
+            {
+                "key": offset_column2,
+                "value": last_offset2
+            }]
+    }]
+
+    trash = builder.add_stage('Trash')
+
+    jdbc_multitable_consumer >> trash
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    metadata = sqlalchemy.MetaData()
+    table = sqlalchemy.Table(
+        table_name,
+        metadata,
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True, quote=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), quote=True),
+        sqlalchemy.Column('leaves', Numeric(precision=10, scale=2), quote=True),
+        sqlalchemy.Column('doj', Date, quote=True),
+        sqlalchemy.Column('age', sqlalchemy.String(32), quote=True)
+    )
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        table.create(database.engine)
+
+        logger.info('Adding three rows into %s database ...', database.type)
+        connection = database.engine.connect()
+        connection.execute(table.insert(), ROWS_IN_DATABASE)
+
+        sdc_executor.add_pipeline(pipeline)
+        with pytest.raises(Exception) as error:
+            sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+        assert "JDBC_107" in error.value.message, f'Expected a JDBC_107 error, got "{error.value.message}" instead'
 
     finally:
 
