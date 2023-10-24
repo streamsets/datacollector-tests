@@ -36,8 +36,12 @@ DEFAULT_SCHEMA = 'STF_SCHEMA'
 
 DEFAULT_COLUMNS = [{'name': 'ID', 'type': 'NUMBER', 'primary_key': True},
                    {'name': 'NAME', 'type': 'STRING', 'primary_key': False}]
+GEOGRAPHY_COLUMNS = [{'name': 'ID', 'type': 'NUMBER', 'primary_key': True},
+                     {'name': 'LOCATION', 'type': 'GEOGRAPHY', 'primary_key': False}]
 
 DEFAULT_RECORDS = [(1, 'Roger Federer'), (2, 'Rafael Nadal'), (3, 'Dominic Thiem')]
+GEOGRAPHY_RECORDS = [(1, 'POINT(-122.350 37.550)'), (2, 'LINESTRING(-124.20 42.00, -120.01 41.99)')]
+EXPECTED_GEOGRAPHY_RECORDS = [(1, 'POINT(-122.35 37.55)'), (2, 'LINESTRING(-124.2 42,-120.01 41.99)')]
 
 # AWS S3 bucket in case of AWS or Azure blob storage container in case of Azure.
 STORAGE_BUCKET_CONTAINER = 'snowflake'
@@ -670,4 +674,68 @@ def test_parallel_transfers(sdc_builder, sdc_executor, snowflake, parallel_trans
         snowflake.drop_entities(stage_name=stage_name)
         for table in tables:
             drop_table(engine, table)
+        engine.dispose()
+
+
+@sdc_min_version('5.8.0')
+def test_type_geography(sdc_builder, sdc_executor, snowflake):
+    """
+    Tests that the Snowflake Bulk Origin properly reads geography data.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    stage_location = "INTERNAL"
+    compressed_file = False
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(stage_location=stage_location,
+                                    snowflake_stage_name=stage_name,
+                                    table_config=[{'inclusionPattern': table_name}],
+                                    compressed_file=compressed_file,
+                                    read_values_as_string=False)
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        column_names = create_table_and_insert_values(engine, table_name, GEOGRAPHY_COLUMNS, GEOGRAPHY_RECORDS)
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        expected_records = EXPECTED_GEOGRAPHY_RECORDS
+
+        # Check that the number of records is equal to what we expect
+        assert len(records) == len(expected_records), \
+            f'{len(expected_records)} records should have been processed but only {len(records)} were found'
+
+        for record, expected_record in zip(records, expected_records):
+            assert record.header.values[DATABASE_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_DATABASE
+            assert record.header.values[SCHEMA_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_SCHEMA
+            assert record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME] == table_name
+
+            for i in range(0, len(column_names)):
+                # Check that each row has the needed columns ...
+                assert column_names[i] in record.field, f'The record should have a column named {column_names[i]}'
+                # ... and that the value contained is what we expect
+                assert expected_record[i] == record.field[column_names[i]], \
+                    f'The value of the field {column_names[i]} should have been {expected_record[i]},' \
+                    f' but it is {record.field[column_names[i]]}'
+
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_table(engine, table_name)
         engine.dispose()

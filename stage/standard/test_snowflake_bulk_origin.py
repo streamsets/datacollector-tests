@@ -66,6 +66,7 @@ DATA_TYPES_SNOWFLAKE = [
     ('NCHAR(15)',         'string',                     'STRING',         'string',                                   'string'),
     ('NVARCHAR2(15)',     'string',                     'STRING',         'string',                                   'string'),
     ('BINARY',            '737472696e67',               'BYTE_ARRAY',     b'string',                                  '737472696E67'),
+    ('GEOGRAPHY',         'LINESTRING(-124.20 42.0, -120.01 41.99)', 'STRING', 'LINESTRING(-124.2 42,-120.01 41.99)', 'LINESTRING(-124.2 42,-120.01 41.99)'),
 ]
 
 
