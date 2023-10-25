@@ -2129,3 +2129,59 @@ def test_s3_multithreading_multiple_batches(
             sdc_executor.stop_pipeline(s3_origin_pipeline)
 
         aws.delete_s3_data(s3_bucket, s3_key)
+
+
+@aws('s3')
+@sdc_min_version('5.8.0')
+def test_pipeline_retry_for_exceptions_with_on_error_record_action_stop_pipeline(sdc_builder, sdc_executor, aws):
+    """
+    STF test added for COLLECTOR-4294. Checks that pipeline retries are triggered properly when stage errors are thrown
+    in Amazon S3 Origin. This test makes the stage fail and checks the pipeline history to see that the pipeline
+    has gone through the RETRY state.
+    """
+    s3_bucket = aws.s3_bucket_name
+    # / at the end of the common prefix should be explicit
+    s3_common_prefix = f'{S3_SANDBOX_PREFIX}/{get_random_string()}/sdc/'
+    s3_file_name = f'{get_random_string()}.txt'
+
+    # Build pipeline.
+    builder = sdc_builder.get_pipeline_builder()
+    builder.add_error_stage('Discard')
+
+    s3_origin = builder.add_stage('Amazon S3', type='origin')
+
+    s3_origin.set_attributes(
+        bucket=s3_bucket,
+        data_format='JSON',
+        prefix_pattern=s3_file_name,
+        common_prefix = s3_common_prefix,
+        on_record_error='STOP_PIPELINE'
+    )
+
+    wiretap = builder.add_wiretap()
+    finisher = builder.add_stage('Pipeline Finisher Executor')
+    finisher.stage_record_preconditions = ['${record:eventType() == "no-more-data"}']
+
+    s3_origin >> wiretap.destination
+    s3_origin >= finisher
+
+    pipeline = builder.build(title=f'S3 single file').configure_for_environment(aws)
+    pipeline.configuration['shouldRetry'] = True
+    pipeline.configuration['retryAttempts'] = 1
+    sdc_executor.add_pipeline(pipeline)
+
+    client = aws.s3
+    test_data = [f'Message {i}' for i in range(10)]
+    try:
+        file_key = f'{s3_common_prefix}{s3_file_name}'
+        logger.debug('Creating the file')
+        client.put_object(Bucket=aws.s3_bucket_name, Key=file_key, Body='\n'.join(test_data).encode('ascii'))
+
+        logger.debug('Starting Pipeline')
+        pipeline_cmd = sdc_executor.start_pipeline(pipeline=pipeline, wait_for_statuses=['RETRY', 'START_ERROR'])
+
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert 'RETRY' in [entry['status'] for entry in history.entries]
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
