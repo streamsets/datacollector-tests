@@ -18,6 +18,7 @@ import logging
 import string
 
 from streamsets.sdk.sdc_api import StartError
+from streamsets.sdk.utils import get_random_string, Version
 from streamsets.testframework.markers import snowflake, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -51,6 +52,12 @@ def create_table(engine, table_name, column_definitions, primary_keys_clause):
     logger.info(f'Creating table {table_name}...')
     engine.execute(f'CREATE TABLE {DEFAULT_DATABASE}.{DEFAULT_SCHEMA}."{table_name}" '
                    f'({",".join(column_definitions)}{primary_keys_clause});')
+
+
+def create_view(engine, view_name, table_name):
+    logger.info(f'Creating view {view_name} from table {table_name}...')
+    engine.execute(f'CREATE VIEW {DEFAULT_DATABASE}.{DEFAULT_SCHEMA}."{view_name}" '
+                   f'AS SELECT * FROM {DEFAULT_DATABASE}.{DEFAULT_SCHEMA}."{table_name}";')
 
 
 def insert_values(engine, table_name, column_names, values, records_per_block=1000):
@@ -103,6 +110,15 @@ def drop_table(engine, table_name):
     engine.execute(f'DROP TABLE IF EXISTS "{table_name}"')
 
 
+def drop_view(engine, view_name):
+    logger.info(f'Dropping view {view_name}...')
+    engine.execute(f'DROP VIEW IF EXISTS "{view_name}"')
+
+
+def get_table_config_arg_name(version):
+    return 'table_config' if Version(version) < Version("5.8.0") else 'table_or_view_configuration'
+
+
 @pytest.mark.parametrize('stage_location', ["INTERNAL", "AWS_S3", "GCS", "BLOB_STORAGE"])
 @pytest.mark.parametrize('compressed_file', [True, False])
 def test_basic(sdc_builder, sdc_executor, snowflake, stage_location, compressed_file):
@@ -126,7 +142,7 @@ def test_basic(sdc_builder, sdc_executor, snowflake, stage_location, compressed_
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location=stage_location,
                                     snowflake_stage_name=stage_name,
-                                    table_config=[{'inclusionPattern': table_name}],
+                                    **{get_table_config_arg_name(sdc_builder.version): [{'inclusionPattern': table_name}]},
                                     compressed_file=compressed_file)
 
     wiretap = pipeline_builder.add_wiretap()
@@ -191,10 +207,10 @@ def test_where_clause(sdc_builder, sdc_executor, snowflake, where_clause, expect
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location="INTERNAL",
                                     snowflake_stage_name=stage_name,
-                                    table_config=[{
+                                    **{get_table_config_arg_name(sdc_builder.version): [{
                                         'inclusionPattern': table_name,
                                         'whereClause': where_clause
-                                    }])
+                                    }]})
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -254,10 +270,10 @@ def test_exclusion_pattern(sdc_builder, sdc_executor, snowflake, number_of_table
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location="INTERNAL",
                                     snowflake_stage_name=stage_name,
-                                    table_config=[{
+                                    **{get_table_config_arg_name(sdc_builder.version): [{
                                         'inclusionPattern': f'{table_names_prefix}_%',
                                         'exclusionPattern': f'(\\S)*_{excluded_tables_mark}_(\\S)*'
-                                    }])
+                                    }]})
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -346,7 +362,7 @@ def test_multiple_table_config_patterns(sdc_builder, sdc_executor, snowflake):
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location="INTERNAL",
                                     snowflake_stage_name=stage_name,
-                                    table_config=[{
+                                    **{get_table_config_arg_name(sdc_builder.version): [{
                                         'inclusionPattern': f'{table_names_prefix}_p1_%',
                                         'exclusionPattern': f'(\\S)*_{excluded_tables_mark}_(\\S)*',
                                         'whereClause': "id = 1"
@@ -357,7 +373,7 @@ def test_multiple_table_config_patterns(sdc_builder, sdc_executor, snowflake):
                                         'inclusionPattern': f'{table_names_prefix}_%_p2',
                                         'exclusionPattern': f'(\\S)*_{excluded_tables_mark}_(\\S)*',
                                         'whereClause': "id = 3"
-                                    }])
+                                    }]})
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -430,13 +446,13 @@ def test_table_included_in_multiple_table_config_rows(sdc_builder, sdc_executor,
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location="INTERNAL",
                                     snowflake_stage_name=stage_name,
-                                    table_config=[{
+                                    **{get_table_config_arg_name(sdc_builder.version): [{
                                         'inclusionPattern': table_name,
                                         'whereClause': "id = 1"
                                     }, {
                                         'inclusionPattern': table_name,
                                         'whereClause': "id != 1"
-                                    }])
+                                    }]})
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -497,7 +513,9 @@ def test_big_amounts_of_records(sdc_builder, sdc_executor, snowflake, stage_loca
     snowflake_origin.set_attributes(stage_location=stage_location,
                                     max_batch_size=batch_size,
                                     snowflake_stage_name=stage_name,
-                                    table_config=[{'inclusionPattern': f'{base_table_name}%'}])
+                                    **{get_table_config_arg_name(sdc_builder.version): [{
+                                        'inclusionPattern': f'{base_table_name}%'
+                                    }]})
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -563,7 +581,9 @@ def test_stage_file_reader_multithreading(sdc_builder, sdc_executor, snowflake, 
                                     maximum_stage_file_reader_threads=reader_threads,
                                     maximum_stage_file_processing_threads=processor_threads,
                                     snowflake_stage_name=stage_name,
-                                    table_config=[{'inclusionPattern': f'{base_table_name}%'}])
+                                    **{get_table_config_arg_name(sdc_builder.version): [{
+                                        'inclusionPattern': f'{base_table_name}%'
+                                    }]})
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -642,7 +662,9 @@ def test_parallel_transfers(sdc_builder, sdc_executor, snowflake, parallel_trans
     snowflake_origin.set_attributes(stage_location='INTERNAL',
                                     snowflake_stage_name=stage_name,
                                     parallel_transfers=parallel_transfers,
-                                    table_config=[{'inclusionPattern': f'{base_table_name}%'}])
+                                    **{get_table_config_arg_name(sdc_builder.version): [{
+                                        'inclusionPattern': f'{base_table_name}%'
+                                    }]})
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -700,7 +722,7 @@ def test_type_geography(sdc_builder, sdc_executor, snowflake):
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location=stage_location,
                                     snowflake_stage_name=stage_name,
-                                    table_config=[{'inclusionPattern': table_name}],
+                                    table_or_view_configuration=[{'inclusionPattern': table_name}],
                                     compressed_file=compressed_file,
                                     read_values_as_string=False)
 
@@ -738,4 +760,145 @@ def test_type_geography(sdc_builder, sdc_executor, snowflake):
         snowflake.delete_staged_files(storage_path)
         snowflake.drop_entities(stage_name=stage_name)
         drop_table(engine, table_name)
+        engine.dispose()
+
+
+@sdc_min_version('5.8.0')
+def test_views(sdc_builder, sdc_executor, snowflake):
+    """
+    Tests that the Snowflake Bulk Origin can be used to read from views.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    stage_location = "INTERNAL"
+    compressed_file = True
+    table_name = f'STF_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+    view_name = f'STF_VIEW_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(stage_location=stage_location,
+                                    snowflake_stage_name=stage_name,
+                                    table_or_view_configuration=[{'inclusionPattern': view_name}],
+                                    compressed_file=compressed_file)
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        pass
+        column_names = create_table_and_insert_values(engine, table_name, DEFAULT_COLUMNS, DEFAULT_RECORDS)
+        create_view(engine, view_name, table_name)
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        expected_records = DEFAULT_RECORDS
+
+        # Check that the number of records is equal to what we expect
+        assert len(records) == len(expected_records), \
+            f'{len(expected_records)} records should have been processed but only {len(records)} were found'
+
+        for record, expected_record in zip(records, expected_records):
+            assert record.header.values[DATABASE_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_DATABASE
+            assert record.header.values[SCHEMA_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_SCHEMA
+            assert record.header.values[TABLE_RECORD_HEADER_ATTRIBUTE_NAME] == view_name
+
+            for i in range(0, len(column_names)):
+                # Check that each row has the needed columns ...
+                assert column_names[i] in record.field, f'The record should have a column named {column_names[i]}'
+                # ... and that the value contained is what we expect
+                assert expected_record[i] == record.field[column_names[i]], \
+                    f'The value of the field {column_names[i]} should have been {expected_record[i]},' \
+                    f' but it is {record.field[column_names[i]]}'
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_view(engine, view_name)
+        drop_table(engine, table_name)
+        engine.dispose()
+
+
+@sdc_min_version('5.8.0')
+def test_mix_tables_and_views(sdc_builder, sdc_executor, snowflake):
+    """
+    Tests that the Snowflake Bulk Origin can be used to read from a mix of tables and views.
+
+    The pipeline created looks like:
+        Snowflake Bulk Origin >> Wiretap
+    """
+    stage_location = "INTERNAL"
+    compressed_file = True
+    stage_name = f'STF_STAGE_{get_random_string(string.ascii_uppercase, 5)}'
+    prefix1 = f'STF_{get_random_string(string.ascii_uppercase, 5)}'
+    table1_name = f'{prefix1}_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    view1_name = f'{prefix1}_VIEW_{get_random_string(string.ascii_uppercase, 5)}'
+    prefix2 = f'STF_{get_random_string(string.ascii_uppercase, 5)}'
+    table2_name = f'{prefix2}_TABLE_{get_random_string(string.ascii_uppercase, 5)}'
+    view2_name = f'{prefix2}_VIEW_{get_random_string(string.ascii_uppercase, 5)}'
+
+    engine = snowflake.engine
+
+    # Path inside a bucket in case of AWS S3 or path inside container in case of Azure Blob Storage container.
+    storage_path = f'{STORAGE_BUCKET_CONTAINER}/{get_random_string(string.ascii_letters, 10)}'
+    snowflake.create_stage(stage_name, storage_path, stage_location=stage_location)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
+    snowflake_origin.set_attributes(stage_location=stage_location,
+                                    snowflake_stage_name=stage_name,
+                                    table_or_view_configuration=[
+                                        {'inclusionPattern': prefix1+"%"},
+                                        {'inclusionPattern': prefix2+"%"},
+                                    ],
+                                    compressed_file=compressed_file)
+
+    wiretap = pipeline_builder.add_wiretap()
+    snowflake_origin >> wiretap.destination
+
+    pipeline = pipeline_builder.build().configure_for_environment(snowflake)
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        column_names = create_table_and_insert_values(engine, table1_name, DEFAULT_COLUMNS, DEFAULT_RECORDS)
+        column_names = create_table_and_insert_values(engine, table2_name, DEFAULT_COLUMNS, DEFAULT_RECORDS)
+        create_view(engine, view1_name, table1_name)
+        create_view(engine, view2_name, table2_name)
+
+        sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        records = wiretap.output_records
+        expected_records = 4 * (DEFAULT_RECORDS)
+
+        # Check that the number of records is equal to what we expect
+        assert len(records) == len(expected_records), \
+            f'{len(expected_records)} records should have been processed but only {len(records)} were found'
+
+        for record, expected_record in zip(records, expected_records):
+            assert record.header.values[DATABASE_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_DATABASE
+            assert record.header.values[SCHEMA_RECORD_HEADER_ATTRIBUTE_NAME] == DEFAULT_SCHEMA
+
+            for i in range(0, len(column_names)):
+                # Check that each row has the needed columns ...
+                assert column_names[i] in record.field, f'The record should have a column named {column_names[i]}'
+                # ... and that the value contained is what we expect
+                assert expected_record[i] == record.field[column_names[i]], \
+                    f'The value of the field {column_names[i]} should have been {expected_record[i]},' \
+                    f' but it is {record.field[column_names[i]]}'
+    finally:
+        snowflake.delete_staged_files(storage_path)
+        snowflake.drop_entities(stage_name=stage_name)
+        drop_view(engine, view1_name)
+        drop_view(engine, view2_name)
+        drop_table(engine, table1_name)
+        drop_table(engine, table2_name)
         engine.dispose()
