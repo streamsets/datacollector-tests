@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import binascii
+from datetime import datetime, timedelta
 import json
 import logging
 import pytest
@@ -30,6 +31,7 @@ from time import sleep, time
 logger = logging.getLogger(__name__)
 
 DEFAULT_SCHEMA_NAME = 'dbo'
+CDC_LSN_TIME_MAPPING_TABLE = 'cdc.lsn_time_mapping'
 
 BASIC_RECORDS = 'BASIC'
 DISCARD_BEFORE_UPDATE_RECORDS = 'DISCARD_BEFORE_UPDATE'
@@ -221,6 +223,129 @@ def test_sql_server_cdc_with_specific_capture_instance_name(
 
 
 @database('sqlserver')
+@pytest.mark.parametrize('automatically_reset_offset_after_cleanup', [False, True])
+def test_sql_server_cdc_check_offset_after_cleanup(
+        sdc_builder,
+        sdc_executor,
+        database,
+        automatically_reset_offset_after_cleanup
+):
+    """Test for SQL Server CDC origin stage with different options for the 'automatically_reset_offset_after_cleanup'
+    parameter.
+
+    Create 2 tables in the database and activate CDC on them. The main one is where the cleanup is performed. The second
+    one is just used to be able to fully delete all captured changes on the CDC main table.
+
+    Create, run and stop this pipeline to get some data and have a CDC offset for the main table:
+        sql_server_cdc_origin >> wiretap
+        sql_server_cdc >= finisher
+
+    With the pipeline stopped, trigger the CDC Cleanup Process on the main CDC table (all data is erased).
+
+    When running the same pipeline again:
+    - if not automatically_reset_offset_after_cleanup or SDC version < 5.8.0 -> the CDC offset is kept leading to a
+      JDBC_78 Stage Error on the origin (default behaviour)
+    - When automatically_reset_offset_after_cleanup is activated -> the offset is removed and no stage errors are
+      present. It treats the table as if it was newly added.
+    """
+    if not database.is_cdc_enabled:
+        pytest.skip('Test only runs against SQL Server with CDC enabled.')
+    table = None
+    aux_table = None
+    pipeline = None
+    connection = None
+    try:
+        connection = database.engine.connect()
+        schema_name = DEFAULT_SCHEMA_NAME
+        no_of_records = 10
+        rows_in_database = setup_sample_data(no_of_records)
+
+        # Create the main table (with half of the data)
+        table_name = get_random_string(string.ascii_lowercase, 20)
+        table = setup_table(connection, schema_name, table_name, rows_in_database[0:int(no_of_records/2)])
+
+        # Create an auxiliary table to insert data that will create new LSN values
+        # to be used to clean up the main table
+        aux_table_name = f"aux_{table_name}"
+        aux_table = setup_table(connection, schema_name, aux_table_name, rows_in_database[0])
+
+        # Get the capture_instance_name
+        capture_instance_name = f'{schema_name}_{table_name}'
+        cdc_table_name = f"cdc.{capture_instance_name}_CT"
+
+        pipeline_builder = sdc_builder.get_pipeline_builder()
+        sql_server_cdc = pipeline_builder.add_stage('SQL Server CDC Client')
+        sql_server_cdc.set_attributes(table_configs=[{'capture_instance': capture_instance_name}],
+                                      automatically_reset_offset_after_cleanup=automatically_reset_offset_after_cleanup,
+                                      max_batch_size_in_records=1,
+                                      on_record_error='STOP_PIPELINE')
+
+        wiretap = pipeline_builder.add_wiretap()
+        finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+        finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'offset-removed'}"])
+
+        sql_server_cdc >> wiretap.destination
+        sql_server_cdc >= finisher
+
+        pipeline = pipeline_builder.build().configure_for_environment(database)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Run the pipeline until getting some data and stop it to perform the CDC Cleanup
+        sdc_executor.start_pipeline(pipeline)
+        # Add the second half of the data into the table to simulate new inputs and have different LSN values
+        add_data_to_table(connection, table, rows_in_database[int(no_of_records/2):no_of_records])
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', no_of_records)
+        sdc_executor.stop_pipeline(pipeline)
+
+        no_rows_cdc_table_before_cleanup = _get_table_data(connection, cdc_table_name)
+        assert len(no_rows_cdc_table_before_cleanup) == no_of_records
+
+        # Add new data to the second table to have a new and larger LSN to be used to be able to successfully delete all
+        # the data from the main CDC table.
+        is_new_lsn = _add_data_and_wait_for_new_lsn(connection, aux_table, rows_in_database[1])
+        if is_new_lsn:
+            _cdc_cleanup(connection, capture_instance_name)
+        else:
+            raise Exception(f"The CDC Cleanup process could not be executed against table {table} "
+                            f"in {database.type} database.")
+
+        no_rows_cdc_table_after_cleanup = _get_table_data(connection, cdc_table_name)
+        assert len(no_rows_cdc_table_after_cleanup) == 0, \
+            f"CDC Cleanup process wrongly executed against table {table} in {database.type} database.\n" \
+            f"No rows where expected but {len(no_rows_cdc_table_after_cleanup)} where found.\n" \
+            f"CDC Table Rows After CDC Cleanup: {no_rows_cdc_table_after_cleanup}"
+
+        expected_pipeline_status = 'FINISHED'
+        if not automatically_reset_offset_after_cleanup or Version(sdc_builder.version) < Version('5.8.0'):
+            expected_pipeline_status = 'RUN_ERROR'
+
+        # Run the pipeline again to check the expected status
+        try:
+            sdc_executor.start_pipeline(pipeline, timeout=30).wait_for_status(expected_pipeline_status)
+        except Exception as ex:
+            logger.debug(f'Exception captured: {ex}')
+        pipeline_status = sdc_executor.get_pipeline_status(pipeline).response.json().get('status')
+        assert pipeline_status == expected_pipeline_status, \
+            f"Pipeline status expected to be '{expected_pipeline_status}', but got '{pipeline_status}' instead"
+
+    finally:
+        if sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        if pipeline is not None:
+            logger.info('Removing pipeline %s...', pipeline.id)
+            sdc_executor.remove_pipeline(pipeline)
+        if table is not None:
+            logger.info('Dropping table %s in %s database...', table, database.type)
+            table.drop(database.engine)
+        if aux_table is not None:
+            logger.info('Dropping table %s in %s database...', aux_table, database.type)
+            aux_table.drop(database.engine)
+        if connection is not None:
+            logger.info('Closing connection to %s database...', database.type)
+            connection.close()
+
+
+@database('sqlserver')
 @sdc_min_version('3.6.0')
 @pytest.mark.parametrize('use_table', [True, False])
 def test_sql_server_cdc_with_empty_initial_offset(
@@ -237,6 +362,8 @@ def test_sql_server_cdc_with_empty_initial_offset(
     """
     if not database.is_cdc_enabled:
         pytest.skip('Test only runs against SQL Server with CDC enabled.')
+
+    pipeline = None
 
     try:
         connection = database.engine.connect()
@@ -271,6 +398,8 @@ def test_sql_server_cdc_with_empty_initial_offset(
         if table is not None:
             logger.info('Dropping table %s in %s database...', table, database.type)
             table.drop(database.engine)
+        if pipeline is not None:
+            sdc_executor.remove_pipeline(pipeline)
 
 
 @database('sqlserver')
@@ -1684,6 +1813,54 @@ def _wait_until_is_tracked_by_cdc(connection, table_name, is_tracked_by_cdc):
             sleep(1)
 
 
+def _wait_until_cdc_table_has_been_cleaned_up(connection, capture_instance_name, n_rows_before_cleanup, timeout=10):
+    t_start = time()
+    cdc_table_name = f"cdc.{capture_instance_name}_CT"
+    while True:
+        rows = _get_table_data(connection, cdc_table_name)
+        if len(rows) < n_rows_before_cleanup:
+            return True
+        elif time() - t_start >= timeout:
+            logger.info(f'Cleanup process could not be performed on CDC table {cdc_table_name}')
+            return False
+        else:
+            logger.info(f'Waiting until CDC table {cdc_table_name} has been cleaned up')
+            sleep(1)
+
+
+def _add_data_and_wait_for_new_lsn(connection, table, data, wait_secs=0.5, timeout=10):
+    is_data_added = False
+    lsn_table_before = _get_table_data(connection, CDC_LSN_TIME_MAPPING_TABLE)
+    add_data_to_table(connection, table, data)
+    t_start = time()
+    while time() - t_start < timeout:
+        lsn_table_after = _get_table_data(connection, CDC_LSN_TIME_MAPPING_TABLE)
+        if len(lsn_table_before) < len(lsn_table_after):
+            is_data_added = True
+            break
+        sleep(wait_secs)
+    return is_data_added
+
+
+def _cdc_cleanup(connection, capture_instance_name):
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+    sql_cdc_cleanup_statement = f"""
+        DECLARE @new_time DATETIME, @new_lsn BINARY (10);
+        SET @new_time = '{tomorrow}';
+        SELECT @new_lsn = sys.fn_cdc_map_time_to_lsn('largest less than or equal', @new_time);
+        EXEC sys.sp_cdc_cleanup_change_table @capture_instance = '{capture_instance_name}', @low_water_mark = @new_lsn;
+    """
+    logger.info(f"Execute SQL CDC Cleanup process:\n{sql_cdc_cleanup_statement}")
+    transaction = connection.begin()
+    connection.execute(sql_cdc_cleanup_statement)
+    transaction.commit()
+
+
+def _get_table_data(connection, table_name):
+    cursor = connection.execute(f"Select * from {table_name}")
+    return cursor.mappings().all()
+
+
 def _get_data_field_from_record(record, field_name, record_format=BASIC_RECORDS):
     return record.field['Data'][field_name] if record_format == RICH_RECORDS else record.field[field_name]
 
@@ -1694,3 +1871,4 @@ def _check_record(record, sdc_operation_type, id, name, dt, record_format, combi
     assert record_field_data['id'].value == id
     assert record_field_data['name'].value == name
     assert record_field_data['dt'].value == dt
+
