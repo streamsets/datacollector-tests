@@ -4554,20 +4554,23 @@ def test_oracle_cdc_client_sorted_columns(sdc_builder,
 
 @sdc_min_version('5.1.0')
 @database('oracle')
-@pytest.mark.parametrize('test_case, setup_actions, tear_down_actions, expected_error, skip', [
-    ('Buffer directory does not exist.', [], [], 'JDBC_643', False),
+@pytest.mark.parametrize('test_case, setup_actions, tear_down_actions, old_error_code, new_error_code, skip', [
+    ('Buffer directory does not exist.', [], [], 'JDBC_643', 'ORACLE_CDC_CLIENT_INIT_08', False),
     ('Buffer directory does not have read permissions.', [f'mkdir -m 222 %s'], [f'chmod 700 %s', f'rm -fr %s'],
-     'JDBC_644', True),
-    ('Buffer directory does not have write permissions.', [f'mkdir -m 444 %s'], [f'rm -fr %s'], 'JDBC_645', True),
-    ('Buffer directory is used correctly.', [f'mkdir -m 755 %s'], [], None, False)])
+     'JDBC_644', 'ORACLE_CDC_CLIENT_INIT_09', True),
+    ('Buffer directory does not have write permissions.', [f'mkdir -m 444 %s'], [f'rm -fr %s'], 'JDBC_645', 
+     'ORACLE_CDC_CLIENT_INIT_10', True),
+    ('Buffer directory is used correctly.', [f'mkdir -m 755 %s'], [], None, None, False)])
 def test_buffer_directory(sdc_builder, sdc_executor, database, test_case, setup_actions, tear_down_actions,
-                          expected_error, skip):
+                          old_error_code, new_error_code, skip):
     """
         Verify that the buffer directory is used.
     """
 
     if skip:
         pytest.skip("This test is disabled because the user running the test always has permission to r/w the folder")
+
+    expected_error = old_error_code if Version(sdc_executor.version) < Version('5.8.0') else new_error_code
 
     buffer_directory = "/tmp/sdc-%s" % get_random_string(string.ascii_lowercase, 10)
     for setup_action in setup_actions:

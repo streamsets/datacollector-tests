@@ -185,9 +185,11 @@ def test_jdbc_multitable_consumer_invalid_initial_offset(sdc_builder, sdc_execut
         connection.execute(table.insert(), ROWS_IN_DATABASE)
 
         sdc_executor.add_pipeline(pipeline)
+        expected_error = 'JDBC_72' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_25'
         with pytest.raises(Exception) as error:
             sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-        assert "JDBC_72" in error.value.message, f'Expected a JDBC_72 error, got "{error.value.message}" instead'
+        assert expected_error in error.value.message, \
+            f'Expected a {expected_error} error, got "{error.value.message}" instead'
 
     finally:
         if table is not None:
@@ -262,20 +264,28 @@ def test_jdbc_multitable_consumer_initial_offset_at_the_end(sdc_builder, sdc_exe
 
 @database
 @sdc_min_version('5.7.0')
-@pytest.mark.parametrize('error_code, offset_column, initial_offset, last_offset',
+@pytest.mark.parametrize('old_error_code, new_error_code, offset_column, initial_offset, last_offset',
                          [
-                             ('JDBC_73', 'age', '2', '${missing_close_bracket'),
-                             ('JDBC_416', 'age', '2', '100'),
-                             ('JDBC_416', 'id', '2', '1'),
-                             ('JDBC_416', 'id', '2', '-5'),
-                             ('JDBC_416', 'leaves', '5.5', '5.0'),
-                             ('JDBC_416', 'leaves', '1.0', '-5.5'),
-                             ('JDBC_416', 'doj', '1378987751000', '1284293351000'),
-                             ('JDBC_416', 'doj', '1284293351000', '-1284111351000')
+                             ('JDBC_73', 'JDBC_INIT_26', 'age', '2', '${missing_close_bracket'),
+                             ('JDBC_416', 'JDBC_INIT_43', 'age', '2', '100'),
+                             ('JDBC_416', 'JDBC_INIT_43', 'id', '2', '1'),
+                             ('JDBC_416', 'JDBC_INIT_43', 'id', '2', '-5'),
+                             ('JDBC_416', 'JDBC_INIT_43', 'leaves', '5.5', '5.0'),
+                             ('JDBC_416', 'JDBC_INIT_43', 'leaves', '1.0', '-5.5'),
+                             ('JDBC_416', 'JDBC_INIT_43', 'doj', '1378987751000', '1284293351000'),
+                             ('JDBC_416', 'JDBC_INIT_43', 'doj', '1284293351000', '-1284111351000')
                          ]
 )
-def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_executor, database,
-                                                               error_code, offset_column, initial_offset, last_offset):
+def test_jdbc_multitable_consumer_invalid_offset_configuration(
+        sdc_builder,
+        sdc_executor,
+        database,
+        old_error_code,
+        new_error_code,
+        offset_column,
+        initial_offset,
+        last_offset
+):
     """
     Set last offset less than initial offset and verify that a StartError occurs.
     Should not test with a String offset value as it is non-partitionable.
@@ -336,6 +346,8 @@ def test_jdbc_multitable_consumer_invalid_offset_configuration(sdc_builder, sdc_
 
         with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
+
+        error_code = old_error_code if Version(sdc_executor.version) < Version('5.8.0') else new_error_code
         assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'
 
     finally:
@@ -425,7 +437,10 @@ def test_jdbc_multitable_consumer_valid_offset_configuration(sdc_builder, sdc_ex
         if offset_column == 'age' or offset_column == 'name':
             with pytest.raises(Exception) as error:
                 sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-            assert "JDBC_107" in error.value.message, f'Expected a JDBC_107 error, got "{error.value.message}" instead'
+
+            error_code = 'JDBC_107' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_40'
+            assert error_code in error.value.message, \
+                f'Expected a {error_code} error, got "{error.value.message}" instead'
         else:
             sdc_executor.start_pipeline(pipeline)
 
@@ -524,7 +539,9 @@ def test_jdbc_multitable_consumer_multiple_initial_last_offset(sdc_builder, sdc_
         sdc_executor.add_pipeline(pipeline)
         with pytest.raises(Exception) as error:
             sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-        assert "JDBC_107" in error.value.message, f'Expected a JDBC_107 error, got "{error.value.message}" instead'
+
+        error_code = 'JDBC_107' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_40'
+        assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'
 
     finally:
 
@@ -602,7 +619,9 @@ def test_jdbc_multitable_consumer_multiple_last_offset_only(sdc_builder, sdc_exe
         sdc_executor.add_pipeline(pipeline)
         with pytest.raises(Exception) as error:
             sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-        assert "JDBC_107" in error.value.message, f'Expected a JDBC_107 error, got "{error.value.message}" instead'
+
+        error_code = 'JDBC_107' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_40'
+        assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'
 
     finally:
 
@@ -664,7 +683,9 @@ def test_jdbc_multitable_consumer_invalid_last_offset(sdc_builder, sdc_executor,
         sdc_executor.add_pipeline(pipeline)
         with pytest.raises(Exception) as error:
             sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
-        assert "JDBC_72" in error.value.message, f'Expected a JDBC_72 error, got "{error.value.message}" instead'
+
+        error_code = 'JDBC_72' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_25'
+        assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'
 
     finally:
         if table is not None:
@@ -2257,7 +2278,8 @@ def test_jdbc_schema_settings(sdc_builder, sdc_executor, database, schema_value)
             assert e is not None
             assert e.value.issues is not None
             assert e.value.issues['issueCount'] == 1
-            assert 'JDBC_104' in e.value.issues['stageIssues']['JDBCMultitableConsumer_01'][0]['message']
+            error_code = 'JDBC_104' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_38'
+            assert error_code in e.value.issues['stageIssues']['JDBCMultitableConsumer_01'][0]['message']
             logger.info('Validation correctly failed for wildcard schema on ' + database.type + ' database')
         else:
             sdc_executor.validate_pipeline(pipeline)

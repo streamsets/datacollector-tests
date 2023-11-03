@@ -23,6 +23,7 @@ import sqlalchemy
 from streamsets.testframework.markers import sap_hana, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 from streamsets.sdk.exceptions import ValidationError
+from streamsets.sdk.utils import Version
 
 logger = logging.getLogger(__name__)
 
@@ -279,7 +280,8 @@ def test_duplicate_column_labels(sdc_builder, sdc_executor, database):
 
         assert e.value.issues['issueCount'] == 1
         exception_message = e.value.issues['stageIssues'][origin.instance_name][0]['message']
-        assert "JDBC_31 -" in exception_message
+        error_code = 'JDBC_31' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_11'
+        assert f"{error_code} -" in exception_message
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -435,7 +437,8 @@ def test_invalid_query(sdc_builder, sdc_executor, database):
     logger.info(f"Issue count: {e.value.issues['issueCount']}")
     assert e.value.issues['issueCount'] == 1
     exception_message = e.value.issues['stageIssues'][origin.instance_name][0]['message']
-    assert "JDBC_34 -" in exception_message
+    error_code = 'JDBC_34' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_14'
+    assert f"{error_code} -" in exception_message
 
 
 @sdc_min_version('3.17.0')
@@ -583,7 +586,8 @@ def test_missing_clause(sdc_builder, sdc_executor, database, query_end):
 
         assert e.value.issues['issueCount'] == 1
         exception_message = e.value.issues['stageIssues'][origin.instance_name][0]['message']
-        assert 'JDBC_38 -' in exception_message
+        error_code = 'JDBC_38' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_15'
+        assert f'{error_code} -' in exception_message
 
     finally:
         logger.info('Dropping table %s in %s database...', table_name, database.type)
@@ -634,12 +638,15 @@ def test_multiline_query(sdc_builder, sdc_executor, database):
 
 @sdc_min_version('3.17.0')
 @sap_hana
-@pytest.mark.parametrize('offset_column,expected_error', [('T.P_ID', 'JDBC_32 -'), ('NONEXISTINGCOLUMN', 'JDBC_29 -')])
-def test_invalid_offset_column(sdc_builder, sdc_executor, database, offset_column, expected_error):
+@pytest.mark.parametrize('offset_column, old_error_code, new_error_code', 
+                         [('T.P_ID', 'JDBC_32 -', 'JDBC_INIT_12 -'), 
+                          ('NONEXISTINGCOLUMN', 'JDBC_29 -', 'JDBC_29 -')])
+def test_invalid_offset_column(sdc_builder, sdc_executor, database, offset_column, old_error_code, new_error_code):
     """
         Tests the validation raises an error when the query does not contain
         a valid offset column config.
     """
+    expected_error = old_error_code if Version(sdc_executor.version) < Version('5.8.0') else new_error_code
     table_name = get_random_string(string.ascii_lowercase, 20)
 
     connection = database.engine.connect()

@@ -135,7 +135,8 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
             assert rows_from_wiretap == LOOKUP_EXPECTED_DATA
     except sdk.exceptions.StartError as e:
         if not existing_column_name:
-            assert "JDBC_95" in str(e.args[0])
+            error_code = 'JDBC_95' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_33'
+            assert error_code in str(e.args[0])
         else:
             # should never reach
             raise e
@@ -212,9 +213,11 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
 
     except sdk.exceptions.StartError as e:
         if table_type == 'wrong':
-            assert "JDBC_97" in str(e.args[0])
+            error_code = 'JDBC_97' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_34'
+            assert error_code in str(e.args[0])
         elif validate_column_mappings and not correct_column_name_config:
-            assert "JDBC_95" in str(e.args[0])
+            error_code = 'JDBC_95' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_33'
+            assert error_code in str(e.args[0])
         else:
             # should never reach
             pytest.fail(e.args[0])
@@ -633,7 +636,9 @@ def test_validation_for_default_value(sdc_builder, sdc_executor, database, crede
 
     with pytest.raises(Exception) as error:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert "JDBC_53" in error.value.message, f'Expected a JDBC_53 error, got "{error.value.message}" instead'
+
+    error_code = 'JDBC_53' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_18'
+    assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'
 
 
 @database
@@ -668,7 +673,9 @@ def test_worng_data_type_default_value(sdc_builder, sdc_executor, database, cred
 
     with pytest.raises(Exception) as error:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert "JDBC_410" in error.value.message, f'Expected a JDBC_410 error, got "{error.value.message}" instead'
+
+    error_code = 'JDBC_410' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_41'
+    assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'
 
 
 @database
@@ -703,4 +710,6 @@ def test_validation_for_datetime_default_value(sdc_builder, sdc_executor, databa
 
     with pytest.raises(Exception) as error:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    assert "JDBC_56" in error.value.message, f'Expected a JDBC_56 error, got "{error.value.message}" instead'
+
+    error_code = 'JDBC_56' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_20'
+    assert error_code in error.value.message, f'Expected a {error_code} error, got "{error.value.message}" instead'

@@ -192,7 +192,8 @@ def test_jdbc_multitable_consumer_origin_configuration_quote_character(sdc_build
                 assert False, 'This line should not be reached'
             except ValidationError as error:
                 assert error.issues['issueCount'] == 1
-                assert 'JDBC_414' in error.issues['stageIssues']['JDBCMultitableConsumer_01'][0]['message']
+                error_code = 'JDBC_414' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_INIT_42'
+                assert error_code in error.issues['stageIssues']['JDBCMultitableConsumer_01'][0]['message']
 
         else :
             # If the combination is correct, execute normally and check results

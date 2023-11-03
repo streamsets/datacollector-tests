@@ -890,9 +890,10 @@ def test_error_handling_when_there_is_no_primary_key(sdc_builder, sdc_executor, 
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         logger.info('pipeline: %s', pipeline)
+        error_code = 'JDBC_62' if Version(sdc_executor.version) < Version('5.8.0') else 'JDBC_60'
         assert expected_error_record_count == len(wiretap.error_records)
         for i in range(0, expected_error_record_count):
-            assert 'JDBC_62' == wiretap.error_records[i].header['errorCode']
+            assert error_code == wiretap.error_records[i].header['errorCode']
     finally:
         for i in range(0, created_table_count):  # We will drop only the tables we have created
             tables[i].drop(database.engine)
