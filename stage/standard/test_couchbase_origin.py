@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 pytestmark = [couchbase, sdc_min_version('5.8.0')]
 
+SUPPORTED_LIBS = ['streamsets-datacollector-couchbase_3-lib']
 STAGE_NAME = 'com_streamsets_pipeline_stage_origin_couchbase_CouchbaseDSource'
 
 DEFAULT_SCOPE = '_default'
@@ -96,6 +97,14 @@ COUCHBASE_SCOPE_AND_COLLECTION_NAMES = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def library_check(couchbase):
+    for lib in couchbase.sdc_stage_libs:
+        if lib in SUPPORTED_LIBS:
+            return
+    pytest.skip(f'Couchbase Origin test requires using libraries in {SUPPORTED_LIBS}')
+
+
 def get_bucket_config(bucket, scope=DEFAULT_SCOPE, collection=DEFAULT_COLLECTION, where=None, order_by='META().id'):
     return {
         'bucket': bucket,
@@ -131,8 +140,9 @@ def create_bucket(couchbase, bucket_name, scope_name=DEFAULT_SCOPE, collection_n
 
 def insert_documents(bucket, document_ids, documents, scope=DEFAULT_SCOPE, collection=DEFAULT_COLLECTION):
     logger.info(f'Inserting {len(documents)} documents into Couchbase {bucket.name}.')
+    collection = bucket.scope(scope).collection(collection)
     for document_key, document in zip(document_ids, documents):
-        bucket.scope(scope).collection(collection).insert(document_key, document)
+        collection.insert(document_key, document)
 
 
 @pytest.mark.parametrize('data_types', [

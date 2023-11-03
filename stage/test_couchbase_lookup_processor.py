@@ -29,10 +29,19 @@ logger = logging.getLogger(__name__)
 
 pytestmark = [couchbase, sdc_min_version('4.2.0')]
 
+SUPPORTED_LIBS = ['streamsets-datacollector-couchbase_2-lib']
 STAGE_NAME = 'com_streamsets_pipeline_stage_processor_couchbase_CouchbaseDProcessor'
 
 DEFAULT_SCOPE = '_default'
 DEFAULT_COLLECTION = '_default'
+
+
+@pytest.fixture(autouse=True)
+def library_check(couchbase):
+    for lib in couchbase.sdc_stage_libs:
+        if lib in SUPPORTED_LIBS:
+            return
+    pytest.skip(f'Couchbase Lookup test requires using libraries in {SUPPORTED_LIBS}')
 
 
 def create_bucket(couchbase, bucket_name, scope_name=DEFAULT_SCOPE, collection_name=DEFAULT_COLLECTION,
