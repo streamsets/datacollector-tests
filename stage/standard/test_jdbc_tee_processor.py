@@ -628,7 +628,6 @@ def test_object_names_mariadb(sdc_builder, sdc_executor, database, test_name, ta
 # Rules: https://dev.mysql.com/doc/refman/8.0/en/identifier-length.html
 # Rules: https://dev.mysql.com/doc/refman/8.0/en/identifiers.html
 OBJECT_NAMES_MYSQL = [
-    ('keywords', 'table', 'column'),
     ('lowercase', get_random_string(string.ascii_lowercase, 20), get_random_string(string.ascii_lowercase, 20)),
     ('uppercase', get_random_string(string.ascii_uppercase, 20), get_random_string(string.ascii_uppercase, 20)),
     ('mixedcase', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 20)),
@@ -636,6 +635,7 @@ OBJECT_NAMES_MYSQL = [
     ('max_column_name', get_random_string(string.ascii_letters, 20), get_random_string(string.ascii_letters, 64)),
     ('numbers', get_random_string(string.ascii_letters, 5) + "0123456789", get_random_string(string.ascii_letters, 5) + "0123456789"),
     ('special', get_random_string(string.ascii_letters, 5) + "$_", get_random_string(string.ascii_letters, 5) + "$_"),
+    ('keywords', 'table', 'column')
 ]
 @database('mysql')
 @pytest.mark.parametrize('use_multi_row_operation', [True, False])
@@ -650,8 +650,6 @@ def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_nam
     connection = database.engine.connect()
     if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         connection.execute("SET sql_mode=ANSI_QUOTES")
-
-    schema = 'default'
 
     # To avoid two tests to collision when using the same table name 'table'
     # a schema is created and used.
@@ -676,7 +674,6 @@ def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_nam
 
     tee = builder.add_stage('JDBC Tee')
     tee.table_name = table_name
-    tee.schema_name = schema
     tee.default_operation = 'INSERT'
     tee.enclose_table_name = True
     tee.field_to_column_mapping = []
@@ -696,6 +693,10 @@ def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_nam
     # Work-arounding STF behavior of upper-casing table name configuration
     tee.table_name = table_name
 
+    # When test_name is keywords a different schema is created an configured after configuring_for_environment
+    if test_name == 'keywords':
+        tee.schema_name = schema
+
     # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
     if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
         tee.init_query = "SET sql_mode=ANSI_QUOTES"
@@ -704,7 +705,7 @@ def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_nam
         logger.info('Creating table %s in %s database ...', table_name, database.type)
         if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
             connection.execute(f"""
-                CREATE TABLE "{schema}"."{table_name}"(
+                CREATE TABLE "{table_name}"(
                    "id" int primary key auto_increment, 
                     "{column_name}" int NULL
                 )
@@ -730,7 +731,7 @@ def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_nam
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
         # Verify that the data were indeed inserted
-        result = connection.execute(f'select "id", "{column_name}" from "{schema}"."{table_name}"')
+        result = connection.execute(f'select "id", "{column_name}" from "{table_name}"')
         rows = result.fetchall()
         result.close()
 
@@ -746,7 +747,7 @@ def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_nam
     finally:
         if not keep_data:
             logger.info('Dropping table %s in %s database...', table_name, database.type)
-            connection.execute(f'DROP TABLE "{schema}"."{table_name}"')
+            connection.execute(f'DROP TABLE "{table_name}"')
             if test_name == 'keywords':
                 info = connection.execute(f'DROP SCHEMA "{schema}"')
                 logger.info(f"Drop Schema info {info}")
