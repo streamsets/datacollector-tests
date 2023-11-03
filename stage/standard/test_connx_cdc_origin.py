@@ -26,57 +26,53 @@ logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.connx, sdc_min_version('5.4.0')]
 
-def prepare_CDC(connx, table_name, table_id, transform_name):
-    with connx.get_connection() as conn:
-        with conn.cursor() as cursor:
-            logger.info(f'Creating table {table_name}...')
-            cursor.execute(
-                f'CREATE TABLE localhost.dbo.{table_name} (id INTEGER, tinyintval TINYINT, smallintval SMALLINT,'
-                f'intval INT, decimalval DECIMAL(5,2), numericval NUMERIC(5,2), doubleval DOUBLE,'
-                f'realval REAL, bitval BIT, dateval DATE, timestampval TIMESTAMP, charval CHAR(5),'
-                f'varcharval VARCHAR(5), longvarcharval LONGVARCHAR(5), ncharval NCHAR(5), binaryval BINARY,'
-                f'varbinaryval VARBINARY(8), longvarbinaryval LONGVARBINARY(8), PRIMARY KEY (ID));')
-            logger.info(f'Creating table index for {table_name}...')
-            cursor.execute(f'CREATE UNIQUE INDEX {table_name}_INDEX ON localhost.dbo.{table_name} (ID);')
-            logger.info(f'Adding table {table_name} to DataSync TableList...')
-            cursor.execute(
-                f'INSERT INTO CONNXDataSync.datasync.TableList (TableID,TableName,SynchronizationCategoryID,'
-                f'TransformSQL,TransformTargetTable,TransformSourceTableForGuiPath,TimeStampFilterField,'
-                f'LastDataTimestamp,DaylightSavingsType,DaylightSavingsBegins,DaylightSavingsEnds,DriftSeconds,'
-                f'DropAndRecreate,PurgeUsingDelete) VALUES ({table_id},\'{transform_name}\',1,\'SELECT * FROM "localhost"."dbo"."{table_name}"\','
-                f'\'\',\'localhost.dbo.{table_name}\',\'\',NULL,\'\',NULL,NULL,5,1,1);')
-            logger.info(f'Adding table {table_name} to DataSync TableMapper...')
-            cursor.execute(
-                f'INSERT INTO CONNXDataSync.datasync.TableMapper (TableID,TargetColumnOrdinal,SourceExpression,'
-                f'SourceDataType,TargetColumn,TargetDataType,TargetSqlDataType,TargetSqlLength,TargetScale,'
-                f'TargetPrecision,TargetIsNullable,SourceColumnOrdinal)VALUES ({table_id},0,\'ID\',\'4\',\'ID\',\'\','
-                f'4,4,0,0,1,0);')
-            logger.info(f'Adding table {table_name} to DataSync TargetTableIndex...')
-            cursor.execute(
-                f'INSERT INTO CONNXDataSync.datasync.TargetTableIndex (TableID,IndexID,IsUnique,IsPrimary,IsIndexUsedForSync,IndexName) '
-                f'VALUES ({table_id},1,-1,-1,NULL,\'{table_name}_INDEX\');')
-            logger.info(f'Adding table {table_name} to DataSync TargetTableIndexColumns...')
-            cursor.execute(
-                f'INSERT INTO CONNXDataSync.datasync.TargetTableIndexColumns (TableID,IndexID,ColumnSequence,ColumnName,'
-                f'ColumnSortOrder) VALUES ({table_id},1,1,\'ID\',\'ASC\');')
-            logger.info(f'Executing CRC operations for transform {transform_name}...')
-            cursor.execute(f'SELECT create_crc_baseline(\'{transform_name}\');')
-            cursor.execute(f'SELECT create_crc_savepoint(\'{transform_name}\');')
-            cursor.execute(f'SELECT create_crc_finalize(\'{transform_name}\');')
+def prepare_CDC(cursor, table_name, table_id, transform_name):
+    logger.info(f'Creating table {table_name}...')
+    cursor.execute(
+        f'CREATE TABLE localhost.dbo.{table_name} (id INTEGER, tinyintval TINYINT, smallintval SMALLINT,'
+        f'intval INT, decimalval DECIMAL(5,2), numericval NUMERIC(5,2), doubleval DOUBLE,'
+        f'realval REAL, bitval BIT, dateval DATE, timestampval TIMESTAMP, charval CHAR(5),'
+        f'varcharval VARCHAR(5), longvarcharval LONGVARCHAR(5), ncharval NCHAR(5), binaryval BINARY,'
+        f'varbinaryval VARBINARY(8), longvarbinaryval LONGVARBINARY(8), PRIMARY KEY (ID));')
+    logger.info(f'Creating table index for {table_name}...')
+    cursor.execute(f'CREATE UNIQUE INDEX {table_name}_INDEX ON localhost.dbo.{table_name} (ID);')
+    logger.info(f'Adding table {table_name} to DataSync TableList...')
+    cursor.execute(
+        f'INSERT INTO CONNXDataSync.datasync.TableList (TableID,TableName,SynchronizationCategoryID,'
+        f'TransformSQL,TransformTargetTable,TransformSourceTableForGuiPath,TimeStampFilterField,'
+        f'LastDataTimestamp,DaylightSavingsType,DaylightSavingsBegins,DaylightSavingsEnds,DriftSeconds,'
+        f'DropAndRecreate,PurgeUsingDelete) VALUES ({table_id},\'{transform_name}\',1,\'SELECT * FROM "localhost"."dbo"."{table_name}"\','
+        f'\'\',\'localhost.dbo.{table_name}\',\'\',NULL,\'\',NULL,NULL,5,1,1);')
+    logger.info(f'Adding table {table_name} to DataSync TableMapper...')
+    cursor.execute(
+        f'INSERT INTO CONNXDataSync.datasync.TableMapper (TableID,TargetColumnOrdinal,SourceExpression,'
+        f'SourceDataType,TargetColumn,TargetDataType,TargetSqlDataType,TargetSqlLength,TargetScale,'
+        f'TargetPrecision,TargetIsNullable,SourceColumnOrdinal)VALUES ({table_id},0,\'ID\',\'4\',\'ID\',\'\','
+        f'4,4,0,0,1,0);')
+    logger.info(f'Adding table {table_name} to DataSync TargetTableIndex...')
+    cursor.execute(
+        f'INSERT INTO CONNXDataSync.datasync.TargetTableIndex (TableID,IndexID,IsUnique,IsPrimary,IsIndexUsedForSync,IndexName) '
+        f'VALUES ({table_id},1,-1,-1,NULL,\'{table_name}_INDEX\');')
+    logger.info(f'Adding table {table_name} to DataSync TargetTableIndexColumns...')
+    cursor.execute(
+        f'INSERT INTO CONNXDataSync.datasync.TargetTableIndexColumns (TableID,IndexID,ColumnSequence,ColumnName,'
+        f'ColumnSortOrder) VALUES ({table_id},1,1,\'ID\',\'ASC\');')
+    logger.info(f'Executing CRC operations for transform {transform_name}...')
+    cursor.execute(f'SELECT create_crc_baseline(\'{transform_name}\');')
+    cursor.execute(f'SELECT create_crc_savepoint(\'{transform_name}\');')
+    cursor.execute(f'SELECT create_crc_finalize(\'{transform_name}\');')
 
-def tear_down_CDC(connx, table_name, table_id):
-    with connx.get_connection() as conn:
-        with conn.cursor() as cursor:
-            logger.info(f'Tear the environment down')
-            cursor.execute(f'delete from CONNXDataSync.datasync.TableList where TableID = {table_id};')
-            cursor.execute(f'delete from CONNXDataSync.datasync.TableMapper where TableID = {table_id};')
-            cursor.execute(f'delete from CONNXDataSync.datasync.TargetTableIndex where TableID = {table_id};')
-            cursor.execute(f'delete from CONNXDataSync.datasync.TargetTableIndexColumns where TableID = {table_id};')
-            try:
-                cursor.execute(f'drop table localhost.dbo.{table_name};')
-            except:
-                logger.info(f'Table {table_name} already deleted')
-                pass
+def tear_down_CDC(cursor, table_name, table_id):
+    logger.info(f'Tear the environment down')
+    try:
+        cursor.execute(f'delete from CONNXDataSync.datasync.TableList where TableID = {table_id};')
+        cursor.execute(f'delete from CONNXDataSync.datasync.TableMapper where TableID = {table_id};')
+        cursor.execute(f'delete from CONNXDataSync.datasync.TargetTableIndex where TableID = {table_id};')
+        cursor.execute(f'delete from CONNXDataSync.datasync.TargetTableIndexColumns where TableID = {table_id};')
+        cursor.execute(f'drop table localhost.dbo.{table_name};')
+    except:
+        logger.info(f'Table {table_name} already deleted')
+        pass
 
 # https://www.connx.com/products/connx/CONNX%2013.5%20UserGuide/default.htm#connxcdd32c/ole_db_data_types.htm
 # Omitting BIGINT and TIME for the time being since CONNX when used in the underlying MySQL table CONNX maps both of
@@ -111,16 +107,14 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
     table_name = get_random_string(string.ascii_letters, 15)
     transform_name = get_random_string(string.ascii_letters, 15)
     table_id = random.randint(100, 100000)
-    prepare_CDC(connx, table_name, table_id, transform_name)
+    cursor = connx.get_connection().cursor()
+
     try:
-        with connx.get_connection() as conn:
-            with conn.cursor() as cursor:
-                logger.info(f'Creating some CDC data')
-                cursor.execute(f'select create_crc_savepoint(\'{transform_name}\');')
-                cursor.execute(f'select create_crc_finalize(\'{transform_name}\');')
-                logger.info('Inserting data into %s', table_name)
-                cursor.execute(f"INSERT INTO {table_name} (id, {connx_type}) VALUES(1,{insert_fragment})")
-                cursor.execute(f"INSERT INTO {table_name} (id, {connx_type}) VALUES(2,NULL)")
+        prepare_CDC(cursor, table_name, table_id, transform_name)
+
+        logger.info('Inserting data into %s', table_name)
+        cursor.execute(f"INSERT INTO {table_name} (id, {connx_type}) VALUES(1,{insert_fragment})")
+        cursor.execute(f"INSERT INTO {table_name} (id, {connx_type}) VALUES(2,NULL)")
 
         builder = sdc_builder.get_pipeline_builder()
         origin = builder.add_stage('CONNX CDC')
@@ -151,7 +145,7 @@ def test_data_types(sdc_builder, sdc_executor, connx_type, connx, insert_fragmen
         assert record.field[connx_type]._data['value'] == expected_value
         assert null_record.field[connx_type] == None
     finally:
-        tear_down_CDC(connx, table_name, table_id)
+        tear_down_CDC(cursor, table_name, table_id)
 
 
 def test_object_names(sdc_builder, sdc_executor, connx):
@@ -163,7 +157,7 @@ def test_multiple_batches(sdc_builder, sdc_executor, connx):
     table_name = get_random_string(string.ascii_letters, 15)
     transform_name = get_random_string(string.ascii_letters, 15)
     table_id = random.randint(100, 100000)
-    prepare_CDC(connx, table_name, table_id, transform_name)
+    cursor = connx.get_connection().cursor()
 
     max_batch_size = 20
     batches = 10
@@ -185,14 +179,11 @@ def test_multiple_batches(sdc_builder, sdc_executor, connx):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        with connx.get_connection() as conn:
-            with conn.cursor() as cursor:
-                logger.info(f'Creating some CDC data')
-                cursor.execute(f'select create_crc_savepoint(\'{transform_name}\');')
-                cursor.execute(f'select create_crc_finalize(\'{transform_name}\');')
-                logger.info('Inserting data into %s', table_name)
-                for n in range(1,  max_batch_size * batches + 1):
-                    cursor.execute(f"INSERT INTO {table_name} (id) VALUES({n})")
+        prepare_CDC(cursor, table_name, table_id, transform_name)
+
+        logger.info('Inserting data into %s', table_name)
+        for n in range(1,  max_batch_size * batches + 1):
+            cursor.execute(f"INSERT INTO {table_name} (id) VALUES({n})")
 
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(max_batch_size * batches)
 
@@ -210,14 +201,15 @@ def test_multiple_batches(sdc_builder, sdc_executor, connx):
             assert record.field['id'] == expected_number
             expected_number = expected_number + 1
     finally:
-        tear_down_CDC(connx, table_name, table_id)
+        tear_down_CDC(cursor, table_name, table_id)
 
 
 def test_dataflow_events(sdc_builder, sdc_executor, connx):
     table_name = get_random_string(string.ascii_letters, 15)
     transform_name = get_random_string(string.ascii_letters, 15)
     table_id = random.randint(100, 100000)
-    prepare_CDC(connx, table_name, table_id, transform_name)
+    cursor = connx.get_connection().cursor()
+
     builder = sdc_builder.get_pipeline_builder()
 
     origin = builder.add_stage('CONNX CDC')
@@ -236,14 +228,11 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        with connx.get_connection() as conn:
-            with conn.cursor() as cursor:
-                logger.info(f'Creating some CDC data')
-                cursor.execute(f'select create_crc_savepoint(\'{transform_name}\');')
-                cursor.execute(f'select create_crc_finalize(\'{transform_name}\');')
-                logger.info('Inserting data into %s', table_name)
-                for n in range(1, 101):
-                    cursor.execute(f"INSERT INTO {table_name} (id) VALUES({n})")
+        prepare_CDC(cursor, table_name, table_id, transform_name)
+
+        logger.info('Inserting data into %s', table_name)
+        for n in range(1, 101):
+            cursor.execute(f"INSERT INTO {table_name} (id) VALUES({n})")
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
@@ -280,7 +269,7 @@ def test_dataflow_events(sdc_builder, sdc_executor, connx):
         assert 'timestamp' in records[4].field
         assert 'query' in records[4].field
     finally:
-        tear_down_CDC(connx, table_name, table_id)
+        tear_down_CDC(cursor, table_name, table_id)
 
 
 def test_data_format(sdc_builder, sdc_executor, connx, keep_data):
