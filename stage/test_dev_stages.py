@@ -16,8 +16,7 @@ import logging
 from time import sleep
 
 import pytest
-from streamsets.sdk import sdc_api
-from streamsets.sdk.exceptions import ValidationError
+from streamsets.sdk.exceptions import StartError, ValidationError
 from streamsets.testframework.markers import aster_authentication, rpmpackaging, sdc_min_version
 from streamsets.testframework.utils import Version
 
@@ -229,7 +228,7 @@ def test_invalid_execution_mode(sdc_executor, pipeline):
                 sdc_executor.dump_log_on_error = False
                 sdc_executor.start_pipeline(pipeline)
         else:
-            with pytest.raises(sdc_api.StartError):
+            with pytest.raises(StartError):
                 sdc_executor.dump_log_on_error = False
                 sdc_executor.start_pipeline(pipeline)
     finally:

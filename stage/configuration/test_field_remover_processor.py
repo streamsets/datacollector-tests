@@ -15,7 +15,7 @@
 import json
 
 import pytest
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import RunError
 from streamsets.testframework.decorators import stub
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.sdk.utils import Version
@@ -171,7 +171,7 @@ def test_error_handling_stop_pipeline(sdc_builder, sdc_executor):
 
     # Check the pipeline stops as soon as it receives the first record with a RunError
     sdc_executor.dump_log_on_error = False
-    with pytest.raises(sdc_api.RunError) as exception_info:
+    with pytest.raises(RunError) as exception_info:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.dump_log_on_error = True
 

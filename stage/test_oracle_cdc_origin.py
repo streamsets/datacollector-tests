@@ -27,8 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DatabaseError
 from time import sleep
 
-from streamsets.sdk.exceptions import StartError, ValidationError
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import StartError, RunningError, ValidationError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version
 from streamsets.testframework.utils import get_random_string, Version
@@ -2177,7 +2176,7 @@ def test_unsupported_types_adt(sdc_builder, sdc_executor, database, buffer_locat
                     assert wiretap.output_records[i].field['NAME_EX'] == 'TONI'
             else:
                 # With default parser throws the exception SDC-15822"""
-                with pytest.raises(sdc_api.RunningError) as exception_info:
+                with pytest.raises(RunningError) as exception_info:
                     status.wait_for_status('RUN_ERROR', timeout_sec=300)
                 assert 'JDBC_405 - ' in f'{exception_info.value}'
                 assert 'UPDATE' in f'{exception_info.value}'

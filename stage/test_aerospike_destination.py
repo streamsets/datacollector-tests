@@ -15,7 +15,7 @@
 import json
 import pytest
 import time
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import StartError
 from streamsets.testframework.markers import aerospike, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -591,7 +591,7 @@ def test_merge_append_with_no_update_policy(sdc_builder, sdc_executor, aerospike
         aerospike_key = ('test', None, record_key)
         aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
 
-        with pytest.raises(sdc_api.StartError) as error:
+        with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         assert expected_error in error.value.message
 
@@ -809,7 +809,7 @@ def test_check_wrong_username(sdc_builder, sdc_executor, aerospike):
         aerospike_key = ('test', None, record_key)
         aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
 
-        with pytest.raises(sdc_api.StartError) as error:
+        with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         assert 'AEROSPIKE_00' in error.value.message
         assert 'Login failed' in error.value.message
@@ -844,7 +844,7 @@ def test_check_wrong_password(sdc_builder, sdc_executor, aerospike):
         aerospike_key = ('test', None, record_key)
         aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
 
-        with pytest.raises(sdc_api.StartError) as error:
+        with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         assert 'AEROSPIKE_00' in error.value.message
         assert 'Login failed' in error.value.message
@@ -879,7 +879,7 @@ def test_check_wrong_use_authentication(sdc_builder, sdc_executor, aerospike):
         aerospike_key = ('test', None, record_key)
         aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
 
-        with pytest.raises(sdc_api.StartError) as error:
+        with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         assert 'AEROSPIKE_00' in error.value.message
         assert 'Node name is null' in error.value.message  # Seems unrelated but it is the error message that the aerospike client provides
@@ -914,7 +914,7 @@ def test_check_wrong_use_tls_with_tls_name_set(sdc_builder, sdc_executor, aerosp
         aerospike_key = ('test', None, record_key)
         aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
 
-        with pytest.raises(sdc_api.StartError) as error:
+        with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         if aerospike.authentication_mode == 'EXTERNAL':
             assert 'AEROSPIKE_01' in error.value.message
@@ -952,7 +952,7 @@ def test_check_wrong_tls_name(sdc_builder, sdc_executor, aerospike):
         aerospike_key = ('test', None, record_key)
         aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
 
-        with pytest.raises(sdc_api.StartError) as error:
+        with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         assert 'AEROSPIKE_00' in error.value.message
         assert 'Invalid TLS name: fake_tls_name' in error.value.message
@@ -989,7 +989,7 @@ def test_check_wrong_use_tls_with_wrong_node_config(sdc_builder, sdc_executor, a
         aerospike_key = ('test', None, record_key)
         aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
 
-        with pytest.raises(sdc_api.StartError) as error:
+        with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         assert 'AEROSPIKE_00' in error.value.message
 
@@ -1024,7 +1024,7 @@ def test_check_external_auth_no_tls(sdc_builder, sdc_executor, aerospike):
         aerospike_key = ('test', None, record_key)
         aerospike.engine.put(aerospike_key, { 'map': {'a': 10} })
 
-        with pytest.raises(sdc_api.StartError) as error:
+        with pytest.raises(StartError) as error:
             sdc_executor.start_pipeline(producer_dest_pipeline).wait_for_finished()
         assert 'AEROSPIKE_01' in error.value.message
 

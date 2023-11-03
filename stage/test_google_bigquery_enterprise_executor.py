@@ -59,7 +59,7 @@ def test_google_bigquery_wrong_query(sdc_builder, sdc_executor, gcp, queries):
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         assert False
-    except sdk.sdc_api.StartError as e:
+    except sdk.exceptions.StartError as e:
         assert 'BIGQUERY_EXECUTOR_02' in str(e)
 
 

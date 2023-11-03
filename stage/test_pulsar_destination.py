@@ -139,7 +139,7 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
         assert msgs_sent_count >= 10
         assert msgs_sent_count == len(msgs_received)
         assert msgs_received[0] == input_text
-    except (sdk.sdc_api.RunError, sdk.sdc_api.StartError) as e:
+    except (sdk.exceptions.RunError, sdk.exceptions.StartError) as e:
         # StageException because in this case the pulsar schema is a stage level configuration
         assert error_code is not None
         assert error_code in e.message
@@ -267,7 +267,7 @@ def test_pulsar_producer_with_avro_schema_negative(sdc_builder, sdc_executor, pu
         sdc_executor.stop_pipeline(pipeline)
 
         assert False, "The pipeline did not fail when expected"
-    except (sdk.sdc_api.RunningError, sdk.sdc_api.RunError) as e:
+    except (sdk.exceptions.RunningError, sdk.exceptions.RunError) as e:
         # StageException because in this case the pulsar schema is a stage level configuration
         assert error_code in e.message
     finally:
@@ -420,7 +420,7 @@ def test_pulsar_producer_schema_auto_schema(sdc_builder, sdc_executor, pulsar, i
         assert msgs_sent_count == number_generated_records
         assert msgs_sent_count == len(msgs_received)
         assert msgs_received[0] == input_data_avro
-    except sdk.sdc_api.RunError as e:
+    except sdk.exceptions.RunError as e:
         # StageException because in this case the pulsar schema is a stage level configuration
         assert error_code is not None
         assert error_code in e.message

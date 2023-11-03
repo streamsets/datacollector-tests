@@ -18,7 +18,7 @@ import string
 import tempfile
 
 import pytest
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import RunError, RunningError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
@@ -40,7 +40,7 @@ def test_error_records_stop_pipeline_on_required_field(random_expression_pipelin
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.dump_log_on_error = False
-    with pytest.raises((sdc_api.RunError, sdc_api.RunningError)) as exception_info:
+    with pytest.raises((RunError, RunningError)) as exception_info:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.dump_log_on_error = True
 
@@ -54,7 +54,7 @@ def test_error_records_stop_pipeline_on_record_precondition(random_expression_pi
     sdc_executor.add_pipeline(pipeline)
 
     sdc_executor.dump_log_on_error = False
-    with pytest.raises(sdc_api.RunError) as exception_info:
+    with pytest.raises(RunError) as exception_info:
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
     sdc_executor.dump_log_on_error = True
 

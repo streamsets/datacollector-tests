@@ -18,7 +18,7 @@ import pytest
 import string
 import tempfile
 
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import RunError
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -351,7 +351,7 @@ def test_pipeline_finisher_react_to_events_unexpected_event(sdc_builder, sdc_exe
         # Finisher's On Error Record policy, which will arise a RunError as soon as a different event is received
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         assert False, 'The test should not reach here, a RunError should have been thrown'
-    except sdc_api.RunError as error:
+    except RunError as error:
         error_message = "PIPELINE_FINISHER_002 - Unsatisfied stage condition: The event is not of type 'file-created'"
         assert error_message in error.message
     finally:
@@ -399,7 +399,7 @@ def test_pipeline_finisher_react_to_events_not_an_event(sdc_builder, sdc_executo
         # Finisher's On Error Record policy, which will arise a RunError once a record that is not an event is read
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         assert False, 'The test should not reach here, a RunError should have been thrown'
-    except sdc_api.RunError as error:
+    except RunError as error:
         error_message = "PIPELINE_FINISHER_001 - Unsatisfied stage condition: The record is not an event"
         assert error_message in error.message
     finally:

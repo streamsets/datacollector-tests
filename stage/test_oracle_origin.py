@@ -5,7 +5,7 @@ import string
 
 import pytest
 import sqlalchemy
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import RunError, RunningError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database, sdc_min_version, sdc_enterprise_lib_min_version
 from streamsets.testframework.utils import get_random_string
@@ -85,7 +85,7 @@ def test_oracle_consumer_read_empty_table(sdc_builder, sdc_executor, database, c
 
     try:
         sdc_executor.add_pipeline(pipeline)
-        with pytest.raises((sdc_api.RunError, sdc_api.RunningError)) as exception:
+        with pytest.raises((RunError, RunningError)) as exception:
             sdc_executor.start_pipeline(pipeline=pipeline, wait_for_statuses=['FINISHED'], timeout_sec=30)
 
         assert 'ORACLE_01' in f'{exception.value.message}', f'Expected a ORACLE_01 error, got "{exception.value.message}" instead'

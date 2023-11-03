@@ -16,7 +16,6 @@ import re
 import json
 import pytest
 import time
-from streamsets.sdk import sdc_api
 from streamsets.testframework.markers import aerospike, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 

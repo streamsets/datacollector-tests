@@ -30,7 +30,6 @@ from collections import namedtuple
 from pretenders.common.constants import FOREVER
 from requests_gssapi import HTTPSPNEGOAuth
 from streamsets.sdk.exceptions import RunError
-from streamsets.sdk import sdc_api
 from streamsets.sdk.utils import Version
 from streamsets.testframework.constants import (CREDENTIAL_STORE_EXPRESSION, CREDENTIAL_STORE_WITH_OPTIONS_EXPRESSION,
                                                 STF_TESTCONFIG_DIR)
@@ -218,7 +217,7 @@ def test_http_processor_response_action_stage_error(sdc_builder, sdc_executor, h
         pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions')
         sdc_executor.add_pipeline(pipeline)
 
-        with pytest.raises(sdc_api.RunError) as exception_info:
+        with pytest.raises(RunError) as exception_info:
             sdc_executor.start_pipeline(pipeline)
 
         assert 'HTTP_14 - ' in f'{exception_info.value}'
@@ -430,7 +429,7 @@ def test_http_processor_max_batch_processing_time_not_enough(sdc_builder, sdc_ex
         exception_at_start = None
         try:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        except sdc_api.RunError as e:
+        except RunError as e:
             exception_at_start = e
 
         output_records = wiretap.output_records
@@ -527,7 +526,7 @@ def test_http_processor_max_batch_processing_timeout_retrying_request_one_reques
                                        'Max wait Time is not enough stage error')
         sdc_executor.add_pipeline(pipeline)
 
-        with pytest.raises(sdc_api.RunError) as exception_info:
+        with pytest.raises(RunError) as exception_info:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
         assert 'HTTP_67' in exception_info.value.message
 
@@ -599,7 +598,7 @@ def test_http_processor_max_batch_processing_timeout_retrying_request_one_reques
                                        'Max wait Time is not enough stage error')
         sdc_executor.add_pipeline(pipeline)
 
-        with pytest.raises(sdc_api.RunError) as exception_info:
+        with pytest.raises(RunError) as exception_info:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
         assert 'HTTP_67' in exception_info.value.message
 
@@ -655,7 +654,7 @@ def test_http_processor_max_batch_processing_timeout_on_slow_connections(sdc_bui
         pipeline = builder.build(title='HTTP Lookup Processor pipeline Response Actions '
                                        'Max wait Time is not enough stage error')
         sdc_executor.add_pipeline(pipeline)
-        with pytest.raises(sdc_api.RunError) as exception_info:
+        with pytest.raises(RunError) as exception_info:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
         assert 'HTTP_67' in exception_info.value.message
 

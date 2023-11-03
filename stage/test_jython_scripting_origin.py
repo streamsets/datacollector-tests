@@ -14,7 +14,7 @@
 
 
 import pytest
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import RunError, RunningError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 
@@ -129,7 +129,7 @@ def test_send_error_records(sdc_builder, sdc_executor, stage_attributes):
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
     # SDC-13828 - may raise either RunError or RunningError depending on whether or not
     # the user script has terminated (i.e. the pipeline is stopped) in time
-    except (sdc_api.RunError, sdc_api.RunningError) as ex:
+    except (RunError, RunningError) as ex:
         assert stage_attributes['on_record_error'] == 'STOP_PIPELINE', \
             "RunError or RunningError should only occur when ErrorRecords generated with STOP_PIPELINE."
 

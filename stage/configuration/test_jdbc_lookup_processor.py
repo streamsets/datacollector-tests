@@ -133,7 +133,7 @@ def test_column_mappings(sdc_builder, sdc_executor, database, credential_store, 
             rows_from_wiretap = [{list(record.field.keys())[1]: list(record.field.values())[1].value}
                                  for record in wiretap.output_records]
             assert rows_from_wiretap == LOOKUP_EXPECTED_DATA
-    except sdk.sdc_api.StartError as e:
+    except sdk.exceptions.StartError as e:
         if not existing_column_name:
             assert "JDBC_95" in str(e.args[0])
         else:
@@ -210,7 +210,7 @@ def test_validate_column_mappings(sdc_builder, sdc_executor, database, credentia
             # Should never reach
             pytest.fail('Start pipeline should have failed, but did not')
 
-    except sdk.sdc_api.StartError as e:
+    except sdk.exceptions.StartError as e:
         if table_type == 'wrong':
             assert "JDBC_97" in str(e.args[0])
         elif validate_column_mappings and not correct_column_name_config:

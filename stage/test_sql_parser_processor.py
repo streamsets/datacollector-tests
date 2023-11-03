@@ -21,7 +21,7 @@ import sqlalchemy
 from sqlalchemy import text
 from time import sleep
 
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import RunError
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import database
 from streamsets.testframework.markers import sdc_min_version
@@ -157,7 +157,7 @@ def test_sql_parser_parse_exception(sdc_builder, sdc_executor, multithreading, t
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.validate_pipeline(pipeline)
 
-    with pytest.raises(sdc_api.RunError) as exception:
+    with pytest.raises(RunError) as exception:
         sdc_executor.start_pipeline(pipeline)
 
     assert 'JDBC_96' in f'{exception.value}'

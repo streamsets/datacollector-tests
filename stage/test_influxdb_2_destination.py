@@ -19,7 +19,7 @@ import time
 from datetime import timezone
 
 import pytest
-from streamsets.sdk import sdc_api
+from streamsets.sdk.exceptions import StartError
 from streamsets.testframework.markers import influxdb2, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -253,7 +253,7 @@ def test_influxdb2_retention_time(sdc_builder, sdc_executor, influxdb2, retentio
 
     try:
         if retention_time == 1:
-            with pytest.raises(sdc_api.StartError) as exception:
+            with pytest.raises(StartError) as exception:
                 sdc_executor.start_pipeline(pipeline)
 
             assert f'INFLUX_03 - Retention time should be either 0 (infinite) or bigger than 1h. ' \
@@ -320,7 +320,7 @@ def test_influxdb2_wrong_url(sdc_builder, sdc_executor, influxdb2):
     influxdb_destination.set_attributes(url='thisIsNotTheURL')
     sdc_executor.add_pipeline(pipeline)
 
-    with pytest.raises(sdc_api.StartError) as exception:
+    with pytest.raises(StartError) as exception:
         sdc_executor.start_pipeline(pipeline)
 
     assert 'INFLUX_08 - Failed to create InfluxDB client.' in f'{exception.value}'
@@ -357,7 +357,7 @@ def test_influxdb2_wrong_token(sdc_builder, sdc_executor, influxdb2):
     influxdb_destination.set_attributes(token='thisIsNotTheToken')
     sdc_executor.add_pipeline(pipeline)
 
-    with pytest.raises(sdc_api.StartError) as exception:
+    with pytest.raises(StartError) as exception:
         sdc_executor.start_pipeline(pipeline)
 
     assert 'INFLUX_07 - Unable to authenticate using the provided token.' in f'{exception.value}'
@@ -394,7 +394,7 @@ def test_influxdb2_non_existing_org(sdc_builder, sdc_executor, influxdb2):
     influxdb_destination.set_attributes(organization='thisIsNotAnOrg')
     sdc_executor.add_pipeline(pipeline)
 
-    with pytest.raises(sdc_api.StartError) as exception:
+    with pytest.raises(StartError) as exception:
         sdc_executor.start_pipeline(pipeline)
 
     assert "INFLUX_02 - Organization 'thisIsNotAnOrg' not found." in f'{exception.value}'
@@ -429,7 +429,7 @@ def test_influxdb2_non_existing_bucket(sdc_builder, sdc_executor, influxdb2):
     influxdb_destination.set_attributes(organization='thisIsNotAnOrg')
     sdc_executor.add_pipeline(pipeline)
 
-    with pytest.raises(sdc_api.StartError) as exception:
+    with pytest.raises(StartError) as exception:
         sdc_executor.start_pipeline(pipeline)
 
     assert "INFLUX_01 - Bucket 'NonExistingBucket' not found." in f'{exception.value}'
