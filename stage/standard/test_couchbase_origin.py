@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
 import logging
 import string
 import time
@@ -365,6 +364,71 @@ def test_empty_bucket(sdc_builder, sdc_executor, couchbase):
         assert history.latest.metrics.counter('pipeline.batchCount.counter').count == 0
         assert history.latest.metrics.counter('pipeline.batchInputRecords.counter').count == 0
         assert history.latest.metrics.counter('pipeline.batchErrorRecords.counter').count == 0
+    finally:
+        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
+        couchbase.bucket_manager.drop_bucket(bucket_name)
+
+
+def test_resume_offset(sdc_builder, sdc_executor, couchbase):
+    """ Test for Couchbase Origin, ensuring we can start reading from an existing offset. The pipeline looks like:
+
+    couchbase_origin >> delay >> wiretap
+    """
+    bucket_name = get_random_string(string.ascii_letters, 10)
+    document_ids = DEFAULT_DOCUMENT_IDS
+    documents = DEFAULT_DOCUMENTS
+    try:
+        bucket = create_bucket(couchbase, bucket_name)
+        insert_documents(bucket, document_ids, documents)
+
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        couchbase_origin = builder.add_stage(name=STAGE_NAME)
+        couchbase_origin.set_attributes(buckets=[get_bucket_config(bucket_name)],
+                                        max_batch_size_in_records=1)
+
+        finisher = builder.add_stage('Pipeline Finisher Executor')
+        finisher.set_attributes(stage_record_preconditions=["${record:eventType() == 'no-more-data'}"])
+
+        delay = builder.add_stage('Delay')
+        delay.set_attributes(delay_between_batches=2500)
+
+        wiretap = builder.add_wiretap()
+
+        couchbase_origin >> delay >> wiretap.destination
+        couchbase_origin >= finisher
+
+        pipeline = builder.build().configure_for_environment(couchbase)
+        sdc_executor.add_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline)
+        sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 1)
+        sdc_executor.stop_pipeline(pipeline)
+
+        records_1 = wiretap.output_records
+        wiretap.reset()
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        records_2 = wiretap.output_records
+
+        records = records_1 + records_2
+        assert len(documents) == len(records), \
+            f'{len(documents)} records should have been processed but {len(records)} were found'
+        for record, document_id, document in zip(records, document_ids, documents):
+            assert record.header.values[FLAGS_HEADER]
+            assert record.header.values[EXPIRATION_HEADER] == '0'
+            assert record.header.values[SCOPE_HEADER] == DEFAULT_SCOPE
+            assert record.header.values[COLLECTION_HEADER] == DEFAULT_COLLECTION
+            assert record.header.values[BUCKET_HEADER] == bucket_name
+            assert record.header.values[DOCUMENT_ID_HEADER] == document_id
+            assert record.header.values[
+                       KEYSPACE_HEADER] == f'default:{bucket_name}.{DEFAULT_SCOPE}.{DEFAULT_COLLECTION}'
+            assert record.header.values[CAS_HEADER]
+            assert record.header.values[TYPE_HEADER] == 'json'
+
+            for record_key, document_key in zip(record.field.keys(), document.keys()):
+                assert record_key == document_key
+                assert record.field[record_key] == document[document_key]
     finally:
         logger.info('Deleting %s Couchbase bucket ...', bucket_name)
         couchbase.bucket_manager.drop_bucket(bucket_name)
