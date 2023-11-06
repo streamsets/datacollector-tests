@@ -190,13 +190,20 @@ def test_write_empty_batch(sdc_builder, sdc_executor, couchbase):
         couchbase.bucket_manager.drop_bucket(bucket_name)
 
 
-@pytest.mark.parametrize('default_write_operation', ['DELETE', 'INSERT', 'REPLACE', 'UPSERT'])
-def test_row_operations(sdc_builder, sdc_executor, couchbase, default_write_operation):
+def test_row_operation_insert(sdc_builder, sdc_executor, couchbase):
+    """
+        Test for INSERT row operation on Couchbase. The test run the pipeline twice.
+        The first time Couchbase creates the document using the default write operation INSERT.
+        The second time Couchbase tries to create the document using the default INSERT write operation,
+        but the document already exists as an aspect, it returns an error.
+    """
+
     bucket_name = get_random_string(string.ascii_letters, 10)
     document_key_field = 'mydocname'
     raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
     raw_dict[document_key_field] = 'mydocid'
     raw_data = json.dumps(raw_dict)
+    pipeline = None
 
     try:
         bucket = create_bucket(couchbase, bucket_name)
@@ -212,22 +219,32 @@ def test_row_operations(sdc_builder, sdc_executor, couchbase, default_write_oper
         destination.set_attributes(authentication_mode='USER', bucket=bucket_name,
                                    document_key="${record:value('/" + document_key_field + "')}",
                                    data_format='JSON',
-                                   default_write_operation=default_write_operation)
+                                   default_write_operation='INSERT')
 
         source >> destination
 
         pipeline = builder.build().configure_for_environment(couchbase)
         sdc_executor.add_pipeline(pipeline)
 
+        # Couchbase document don't exist
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        doc_value = get_value(bucket, raw_dict[document_key_field])
+        assert len(doc_value) == len(raw_dict)
+        assert doc_value == raw_dict
+
+        # Couchbase document exists but json document is different
+        # Update raw_dict to add a new element on the json object
+        raw_dict['newElement'] = 'helloWorld'
+        raw_dict[document_key_field] = 'mydocid'
+        raw_data = json.dumps(raw_dict)
+        # Update de pipeline
+        pipeline.stages.get(label=source.label).set_attributes(raw_data=raw_data)
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
         history = sdc_executor.get_pipeline_history(pipeline)
-        num_records = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        if default_write_operation == 'INSERT' or default_write_operation == 'UPSERT':
-            doc_value = get_value(bucket, raw_dict[document_key_field])
-            assert doc_value == raw_dict
-            assert num_records == 1
-        else:
-            assert num_records == 0
+        assert history.latest.metrics.counter('stage.Couchbase_01.errorRecords.counter').count == 1
+
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
@@ -235,13 +252,20 @@ def test_row_operations(sdc_builder, sdc_executor, couchbase, default_write_oper
         couchbase.bucket_manager.drop_bucket(bucket_name)
 
 
-@pytest.mark.parametrize('default_write_operation', ['DELETE', 'INSERT', 'REPLACE', 'UPSERT'])
-def test_row_operations(sdc_builder, sdc_executor, couchbase, default_write_operation):
+def test_row_operation_upsert(sdc_builder, sdc_executor, couchbase):
+    """
+        Test for UPSERT row operation on Couchbase. The test run the pipeline twice.
+        The first time Couchbase creates the document using the default write operation UPSERT.
+        The second time Couchbase tries to create the document using the default UPSERT write operation,
+        and updates the information in the document.
+    """
+
     bucket_name = get_random_string(string.ascii_letters, 10)
     document_key_field = 'mydocname'
     raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
     raw_dict[document_key_field] = 'mydocid'
     raw_data = json.dumps(raw_dict)
+    pipeline = None
 
     try:
         bucket = create_bucket(couchbase, bucket_name)
@@ -257,7 +281,71 @@ def test_row_operations(sdc_builder, sdc_executor, couchbase, default_write_oper
         destination.set_attributes(authentication_mode='USER', bucket=bucket_name,
                                    document_key="${record:value('/" + document_key_field + "')}",
                                    data_format='JSON',
-                                   default_write_operation=default_write_operation)
+                                   default_write_operation='UPSERT')
+
+        source >> destination
+
+        pipeline = builder.build().configure_for_environment(couchbase)
+        sdc_executor.add_pipeline(pipeline)
+
+        # Couchbase document not exist
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        doc_value = get_value(bucket, raw_dict[document_key_field])
+        assert len(doc_value) == len(raw_dict)
+        assert doc_value == raw_dict
+
+        # Couchbase document exists but json document is different
+        # Update raw_dict to add a new element on the json object
+        raw_dict['newElement'] = 'helloWorld'
+        raw_dict[document_key_field] = 'mydocid'
+        raw_data = json.dumps(raw_dict)
+        # Update de pipeline
+        pipeline.stages.get(label=source.label).set_attributes(raw_data=raw_data)
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        doc_value = get_value(bucket, raw_dict[document_key_field])
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.Couchbase_01.errorRecords.counter').count == 0
+        assert 'newElement' in doc_value
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
+        couchbase.bucket_manager.drop_bucket(bucket_name)
+
+
+def test_row_operation_delete(sdc_builder, sdc_executor, couchbase):
+    """
+        Test for DELETE row operation on Couchbase. The test runs the pipeline three times.
+        The first time, Couchbase tries to delete the document using the default write operation DELETE,
+        but the document doesn't exist.
+        The second time Couchbase creates the document using the default INSERT write operation.
+        The third time, Couchbase deletes the document we created earlier using the default write operation DELETE.
+    """
+    bucket_name = get_random_string(string.ascii_letters, 10)
+    document_key_field = 'mydocname'
+    raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
+    raw_dict[document_key_field] = 'mydocid'
+    raw_data = json.dumps(raw_dict)
+    pipeline = None
+
+    try:
+        bucket = create_bucket(couchbase, bucket_name)
+
+        # Build the pipeline
+        builder = sdc_builder.get_pipeline_builder()
+
+        source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                         raw_data=raw_data,
+                                                                         stop_after_first_batch=True)
+
+        destination = builder.add_stage(name=STAGE_NAME)
+        destination.set_attributes(authentication_mode='USER', bucket=bucket_name,
+                                   document_key="${record:value('/" + document_key_field + "')}",
+                                   data_format='JSON',
+                                   default_write_operation='DELETE')
 
         source >> destination
 
@@ -266,13 +354,90 @@ def test_row_operations(sdc_builder, sdc_executor, couchbase, default_write_oper
 
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         history = sdc_executor.get_pipeline_history(pipeline)
-        num_records = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
-        if default_write_operation == 'INSERT' or default_write_operation == 'UPSERT':
-            doc_value = get_value(bucket, raw_dict[document_key_field])
-            assert doc_value == raw_dict
-            assert num_records == 1
-        else:
-            assert num_records == 0
+        assert history.latest.metrics.counter('stage.Couchbase_01.errorRecords.counter').count == 1
+
+        pipeline.stages.get(label=destination.label).set_attributes(default_write_operation='INSERT')
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        doc_value = get_value(bucket, raw_dict[document_key_field])
+        assert len(doc_value) == len(raw_dict)
+        assert doc_value == raw_dict
+
+        pipeline.stages.get(label=destination.label).set_attributes(default_write_operation='DELETE')
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.Couchbase_01.outputRecords.counter').count == 1
+        assert history.latest.metrics.counter('stage.Couchbase_01.errorRecords.counter').count == 0
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
+        couchbase.bucket_manager.drop_bucket(bucket_name)
+
+
+def test_row_operation_replace(sdc_builder, sdc_executor, couchbase):
+    """
+        Test for REPLACE row operation on Couchbase. The test runs the pipeline three times.
+        The first time, Couchbase tries to replace the document using the default write operation REPLACE,
+        but the document doesn't exist.
+        The second time Couchbase creates the document using the default INSERT write operation.
+        The third time, Couchbase updates the document we created earlier using the default write operation REPLACE.
+    """
+    bucket_name = get_random_string(string.ascii_letters, 10)
+    document_key_field = 'mydocname'
+    raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
+    raw_dict[document_key_field] = 'mydocid'
+    raw_data = json.dumps(raw_dict)
+    pipeline = None
+
+    try:
+        bucket = create_bucket(couchbase, bucket_name)
+
+        # Build the pipeline
+        builder = sdc_builder.get_pipeline_builder()
+
+        source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                         raw_data=raw_data,
+                                                                         stop_after_first_batch=True)
+
+        destination = builder.add_stage(name=STAGE_NAME)
+        destination.set_attributes(authentication_mode='USER', bucket=bucket_name,
+                                   document_key="${record:value('/" + document_key_field + "')}",
+                                   data_format='JSON',
+                                   default_write_operation='REPLACE')
+
+        source >> destination
+
+        pipeline = builder.build().configure_for_environment(couchbase)
+        sdc_executor.add_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        history = sdc_executor.get_pipeline_history(pipeline)
+        assert history.latest.metrics.counter('stage.Couchbase_01.errorRecords.counter').count == 1
+
+        pipeline.stages.get(label=destination.label).set_attributes(default_write_operation='INSERT')
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        doc_value = get_value(bucket, raw_dict[document_key_field])
+        assert len(doc_value) == len(raw_dict)
+        assert doc_value == raw_dict
+
+        raw_dict['newElement'] = 'replace'
+        raw_dict[document_key_field] = 'mydocid'
+        raw_data = json.dumps(raw_dict)
+        # Update de pipeline
+        pipeline.stages.get(label=source.label).set_attributes(raw_data=raw_data)
+        pipeline.stages.get(label=destination.label).set_attributes(default_write_operation='REPLACE')
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        doc_value = get_value(bucket, raw_dict[document_key_field])
+
+        assert len(doc_value) == len(raw_dict)
+        assert 'newElement' in doc_value
+        assert doc_value == raw_dict
+
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
@@ -281,7 +446,170 @@ def test_row_operations(sdc_builder, sdc_executor, couchbase, default_write_oper
 
 
 @pytest.mark.parametrize('subdoc_op', ['DELETE', 'INSERT', 'REPLACE', 'UPSERT'])
-def test_subdoc_operation(sdc_builder, sdc_executor, couchbase, subdoc_op):
+def test_subdoc_operation_insert(sdc_builder, sdc_executor, couchbase, subdoc_op):
+    bucket_name = get_random_string(string.ascii_letters, 10)
+    document_key_field = 'mydocname'
+    sub_document_path = 'myPath'
+    raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
+    raw_dict[document_key_field] = 'mydocid'
+    raw_data = json.dumps(raw_dict)
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+
+    source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                     raw_data=raw_data,
+                                                                     stop_after_first_batch=True)
+
+    destination = builder.add_stage(name=STAGE_NAME)
+    destination.set_attributes(authentication_mode='USER', bucket=bucket_name,
+                               document_key="${record:value('/" + document_key_field + "')}",
+                               data_format='JSON')
+
+    source >> destination
+
+    pipeline = builder.build().configure_for_environment(couchbase)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        bucket = create_bucket(couchbase, bucket_name)
+        # Create Couchbase doucment
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        if subdoc_op == 'INSERT' or subdoc_op == 'UPDATE':
+            # Apply subdocument operation
+            pipeline.stages.get(label=destination.label).set_attributes(sub_document_path=sub_document_path,
+                                                                        allow_sub_document_writes=True,
+                                                                        sub_document_operation=subdoc_op)
+            sdc_executor.update_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            doc_value = get_value(bucket, raw_dict[document_key_field])
+
+            assert sub_document_path in doc_value
+            assert doc_value[sub_document_path] == raw_dict
+
+        elif subdoc_op == 'DELETE':
+            # Create subdocument
+            pipeline.stages.get(label=destination.label).set_attributes(sub_document_path=sub_document_path,
+                                                                        allow_sub_document_writes=True,
+                                                                        sub_document_operation='INSERT')
+            sdc_executor.update_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            doc_value = get_value(bucket, raw_dict[document_key_field])
+
+            assert sub_document_path in doc_value
+
+            # Apply subdocument operation
+            pipeline.stages.get(label=destination.label).set_attributes(sub_document_path=sub_document_path,
+                                                                        allow_sub_document_writes=True,
+                                                                        sub_document_operation=subdoc_op)
+            sdc_executor.update_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            doc_value = get_value(bucket, raw_dict[document_key_field])
+
+            assert sub_document_path not in doc_value
+
+        elif subdoc_op == 'REPLACE':
+            # Create subdocument
+            pipeline.stages.get(label=destination.label).set_attributes(sub_document_path=sub_document_path,
+                                                                        allow_sub_document_writes=True,
+                                                                        sub_document_operation='INSERT')
+            sdc_executor.update_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            doc_value = get_value(bucket, raw_dict[document_key_field])
+
+            assert sub_document_path in doc_value
+
+            # Apply subdocument operation
+            # Modify raw_dict element to add a new parameter
+            raw_dict['subdocOp'] = subdoc_op
+            raw_dict[document_key_field] = 'mydocid'
+            raw_data = json.dumps(raw_dict)
+            # Update de pipeline
+            pipeline.stages.get(label=source.label).set_attributes(raw_data=raw_data)
+            pipeline.stages.get(label=destination.label).set_attributes(sub_document_path="myPath",
+                                                                        allow_sub_document_writes=True,
+                                                                        sub_document_operation=subdoc_op)
+            sdc_executor.update_pipeline(pipeline)
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            doc_value = get_value(bucket, raw_dict[document_key_field])
+
+            assert sub_document_path in doc_value
+            assert 'subdocOp' in doc_value[sub_document_path]
+            assert doc_value[sub_document_path] == raw_dict
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
+        couchbase.bucket_manager.drop_bucket(bucket_name)
+
+
+@pytest.mark.parametrize('subdoc_op', ['ARRAY_PREPEND', 'ARRAY_APPEND', 'ARRAY_ADD_UNIQUE'])
+def test_subdoc_array_operation(sdc_builder, sdc_executor, couchbase, subdoc_op):
+    if couchbase.sdc_stage_libs == 'streamsets-datacollector-couchbase_2-lib':
+        pytest.skip('Subdocument operation using array type can only run for Couchbase >= 3')
+
+    bucket_name = get_random_string(string.ascii_letters, 10)
+    document_key_field = 'mydocname'
+    sub_document_path = 'myPath'
+    raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
+    raw_dict[document_key_field] = 'mydocid'
+    raw_data = json.dumps(raw_dict)
+
+    # Build the pipeline
+    builder = sdc_builder.get_pipeline_builder()
+    source = builder.add_stage('Dev Raw Data Source').set_attributes(data_format='JSON',
+                                                                     raw_data=raw_data,
+                                                                     stop_after_first_batch=True)
+
+    destination = builder.add_stage(name=STAGE_NAME)
+    destination.set_attributes(authentication_mode='USER', bucket=bucket_name,
+                               document_key="${record:value('/" + document_key_field + "')}",
+                               data_format='JSON',
+                               allow_sub_document_writes=True,
+                               sub_document_path=sub_document_path,
+                               sub_document_operation=subdoc_op)
+
+    source >> destination
+
+    pipeline = builder.build().configure_for_environment(couchbase)
+    sdc_executor.add_pipeline(pipeline)
+
+    try:
+        bucket = create_bucket(couchbase, bucket_name)
+        # Create Couchbase document
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        # Add subdocument information on the Couchbase doucment
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+        # Modify raw_dict element to add a new parameter
+        raw_dict['subdocOp'] = subdoc_op
+        raw_dict[document_key_field] = 'mydocid'
+        raw_data = json.dumps(raw_dict)
+        # Update de pipeline
+        pipeline.stages.get(label=source.label).set_attributes(raw_data=raw_data)
+        sdc_executor.update_pipeline(pipeline)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        doc_value = get_value(bucket, raw_dict[document_key_field])
+
+        if subdoc_op == 'ARRAY_PREPEND':
+            assert doc_value[sub_document_path][0]['subdocOp'] == subdoc_op
+            assert len(doc_value[sub_document_path]) == 2
+        elif subdoc_op == 'ARRAY_APPEND':
+            assert doc_value[sub_document_path][1]['subdocOp'] == subdoc_op
+            assert len(doc_value[sub_document_path]) == 2
+        else:
+            assert sub_document_path not in doc_value
+
+    finally:
+        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
+            sdc_executor.stop_pipeline(pipeline)
+        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
+        couchbase.bucket_manager.drop_bucket(bucket_name)
+
+
+def test_use_cas(sdc_builder, sdc_executor, couchbase):
     bucket_name = get_random_string(string.ascii_letters, 10)
     document_key_field = 'mydocname'
     raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
@@ -299,8 +627,7 @@ def test_subdoc_operation(sdc_builder, sdc_executor, couchbase, subdoc_op):
     destination.set_attributes(authentication_mode='USER', bucket=bucket_name,
                                document_key="${record:value('/" + document_key_field + "')}",
                                data_format='JSON',
-                               sub_document_path="myPath",
-                               sub_document_operation=subdoc_op)
+                               default_write_operation='UPSERT')
 
     source >> destination
 
@@ -308,12 +635,30 @@ def test_subdoc_operation(sdc_builder, sdc_executor, couchbase, subdoc_op):
     sdc_executor.add_pipeline(pipeline)
 
     try:
-        create_bucket(couchbase, bucket_name)
+        bucket = create_bucket(couchbase, bucket_name)
+        # Create document
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
-        history = sdc_executor.get_pipeline_history(pipeline)
+        doc_value = get_value(bucket, raw_dict[document_key_field])
 
-        assert history.latest.metrics.counter('stage.Couchbase_01.outputRecords.counter').count == 1
-        assert history.latest.metrics.counter('stage.Couchbase_01.errorRecords.counter').count == 0
+        assert len(doc_value) == len(raw_dict)
+        assert doc_value == raw_dict
+
+        raw_dict['newElement'] = 'replace'
+        raw_dict[document_key_field] = 'mydocid'
+        raw_data = json.dumps(raw_dict)
+
+        # Update de pipeline
+        pipeline.stages.get(label=source.label).set_attributes(raw_data=raw_data)
+        pipeline.stages.get(label=destination.label).set_attributes(default_write_operation='REPLACE',
+                                                                    use_cas=True)
+        sdc_executor.update_pipeline(pipeline)
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        doc_value = get_value(bucket, raw_dict[document_key_field])
+
+        assert len(doc_value) == len(raw_dict)
+        assert 'newElement' in doc_value
+        assert doc_value == raw_dict
+
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
             sdc_executor.stop_pipeline(pipeline)
