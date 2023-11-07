@@ -18,6 +18,7 @@ from streamsets.testframework.utils import get_random_string
 
 DESTINATION_STAGE_NAME = 'com_streamsets_pipeline_stage_destination_DatabricksDeltaLakeDTarget'
 MIN_VERSION_UNITY_CATALOG = 11
+MIN_VERSION_CLUSTER = 6
 REGEX_EXPRESSION_DATABRICKS_VERSION = re.compile(r'\d+')
 
 pytestmark = [deltalake, sdc_min_version('5.5.0')]
@@ -1920,6 +1921,10 @@ def test_with_gcs_storage(sdc_builder, sdc_executor, deltalake, gcp):
     The pipeline looks like this:
         dev_raw_data_source >> databricks_deltalake
     """
+
+    if int(re.findall(REGEX_EXPRESSION_DATABRICKS_VERSION, deltalake.cluster_name)[0]) <= MIN_VERSION_CLUSTER:
+        pytest.skip('Test with Google Cloud Store will only run against Databricks Cluster Versions >= 6')
+
     table_name = f'stf_{get_random_string()}'
 
     engine = deltalake.engine
