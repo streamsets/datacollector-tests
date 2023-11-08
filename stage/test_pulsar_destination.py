@@ -139,7 +139,7 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
         assert msgs_sent_count >= 10
         assert msgs_sent_count == len(msgs_received)
         assert msgs_received[0] == input_text
-    except (sdk.exceptions.RunError, sdk.exceptions.StartError) as e:
+    except (sdk.exceptions.RunError, sdk.exceptions.StartError, sdk.exceptions.StartingError) as e:
         # StageException because in this case the pulsar schema is a stage level configuration
         assert error_code is not None
         assert error_code in e.message
