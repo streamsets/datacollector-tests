@@ -99,6 +99,8 @@ def sdc_common_hook(request):
 
 
 def test_classpath(sdc_executor, stagelib):
+    pytest.skip('Tests disabled in https://review.streamsets.net/c/datacollector/+/66818')
+
     # Validate that
     if sdc_executor.server_url:
         pytest.skip('This test is only applicable to Docker-based SDC test.')
