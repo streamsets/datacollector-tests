@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import logging
+import os
 import string
 import pytest
 import sqlalchemy
 
 from streamsets.testframework.markers import database, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +69,10 @@ def test_non_matching_types(sdc_builder, sdc_executor, database, keep_data):
 
 @database('postgresql')
 def test_data_drift_between_batches(sdc_builder, sdc_executor, database):
-
     CSV01 = "fa,fb\na,b"
     CSV02 = "fa,fb,fc\na,b,c"  # add column fc
     schema_name = "schema_" + get_random_string(string.ascii_letters, 5).lower()
-    table_name  = "table_" +  get_random_string(string.ascii_letters, 5).lower()
+    table_name = "table_" + get_random_string(string.ascii_letters, 5).lower()
     temp_dir = sdc_executor.execute_shell(f'mktemp -d').stdout.rstrip()
 
     builder = sdc_builder.get_pipeline_builder()
@@ -139,11 +139,7 @@ def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, databa
                                                omit_constraints_when_creating_tables, does_destination_table_exist):
     # Prepare data and table names
     num_records = 2
-    input_data = [{'id': i,
-                   'name': get_random_string(string.ascii_lowercase, 10),
-                   'phone': get_random_string(string.ascii_lowercase, 10),
-                   'email': get_random_string(string.ascii_lowercase, 10)}
-                  for i in range(1, num_records + 1)]
+    input_data = _generate_dummy_records(num_records)
     origin_table_name = f'origin_table_{get_random_string(string.ascii_lowercase, 20)}'
     destination_table_name = f'destination_table_{get_random_string(string.ascii_lowercase, 20)}'
 
@@ -160,6 +156,9 @@ def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, databa
     processor.set_attributes(table_name=destination_table_name,
                              omit_constraints_when_creating_tables=omit_constraints_when_creating_tables)
 
+    if Version(sdc_builder.version) >= Version('5.8.0') and not omit_constraints_when_creating_tables:
+        processor.set_attributes(query_the_origin_table=True)
+
     wiretap = pipeline_builder.add_wiretap()
 
     origin >> processor >> wiretap.destination
@@ -170,24 +169,10 @@ def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, databa
     try:
         # Create and populate tables
         connection = database.engine.connect()
-        logger.info('Creating origin table %s in %s database ...', origin_table_name, database.type)
-        origin_table = sqlalchemy.Table(origin_table_name,
-                                        sqlalchemy.MetaData(),
-                                        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-                                        sqlalchemy.Column('name', sqlalchemy.String(32), primary_key=True),
-                                        sqlalchemy.Column('phone', sqlalchemy.String(32), nullable=False),
-                                        sqlalchemy.Column('email', sqlalchemy.String(32)))
-        origin_table.create(database.engine)
+        origin_table = _create_dummy_table(database, origin_table_name)
         connection.execute(origin_table.insert(), input_data)
         if does_destination_table_exist:
-            logger.info('Creating destination table %s in %s database ...', destination_table_name, database.type)
-            destination_table = sqlalchemy.Table(destination_table_name,
-                                                 sqlalchemy.MetaData(),
-                                                 sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
-                                                 sqlalchemy.Column('name', sqlalchemy.String(32)),
-                                                 sqlalchemy.Column('phone', sqlalchemy.String(32), nullable=False),
-                                                 sqlalchemy.Column('email', sqlalchemy.String(32)))
-            destination_table.create(database.engine)
+            destination_table = _create_dummy_table(database, destination_table_name, False)
             connection.execute(destination_table.insert(), input_data)
 
         # Run the pipeline
@@ -236,3 +221,164 @@ def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, databa
                 connection.execute(f"DROP TABLE IF EXISTS \"{table}\"")
             if pipeline is not None:
                 sdc_executor.remove_pipeline(pipeline)
+
+
+@database('postgresql')
+@sdc_min_version('5.8.0')
+def test_retrieve_primary_key_constraints_from_the_records(
+        sdc_builder,
+        sdc_executor,
+        database,
+        keep_data
+):
+    """
+    Tests that, when creating tables with PostgreSQL Metadata, the primary keys information can be retrieved correctly
+    from the record headers.
+
+    In order to simulate having the origin and destination tables in different DBs, which cannot be achieved by now in
+    STF tests, we will use 2 pipelines: The first pipeline will read the table records and store them locally, the
+    table will then be deleted, and then the second pipeline will read the records with a directory stage and send them
+    to the PostgreSQL Metadata stage.
+
+    The pipelines look like:
+        JDBC Multitable Consumer >> Local FS
+        Directory >> PostgreSQL Metadata >> Wiretap
+    """
+    num_records = 2
+    input_data = _generate_dummy_records(num_records)
+    origin_table_name = f'origin_table_{get_random_string(string.ascii_lowercase, 20)}'
+    destination_table_name = f'destination_table_{get_random_string(string.ascii_lowercase, 20)}'
+    files_directory = os.path.join('/tmp', get_random_string(string.ascii_lowercase, 10))
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    jdbc_multitable_consumer = pipeline_builder.add_stage('JDBC Multitable Consumer')
+    jdbc_multitable_consumer.set_attributes(
+        table_configs=[{"tablePattern": f'%{origin_table_name}%'}]
+    )
+
+    local_fs = pipeline_builder.add_stage('Local FS')
+    local_fs.set_attributes(
+        data_format='SDC_JSON',
+        directory_template=files_directory,
+    )
+
+    jdbc_multitable_consumer >> local_fs
+    pipeline_1 = pipeline_builder.build('JDBC Multitable Consumer > Local FS').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline_1)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory')
+    directory.set_attributes(
+        buffer_size_in_bytes=10,
+        files_directory=files_directory,
+        file_name_pattern='*',
+        data_format='SDC_JSON'
+    )
+
+    postgresql_metadata = pipeline_builder.add_stage('PostgreSQL Metadata')
+    postgresql_metadata.set_attributes(
+        table_name=destination_table_name,
+        omit_constraints_when_creating_tables=False,
+        query_the_origin_table=False
+    )
+
+    wiretap = pipeline_builder.add_wiretap()
+
+    directory >> postgresql_metadata >> wiretap.destination
+    pipeline_2 = pipeline_builder.build('Directory > PostgreSQL Metadata > Wiretap').configure_for_environment(database)
+    sdc_executor.add_pipeline(pipeline_2)
+
+    connection = database.engine.connect()
+
+    try:
+        logger.debug('Creating files directory %s ...', files_directory)
+        sdc_executor.execute_shell(f'mkdir {files_directory}')
+
+        origin_table = _create_dummy_table(database, origin_table_name)
+        connection.execute(origin_table.insert(), input_data)
+
+        logger.info('Running the 1st pipeline (JDBC Query Consumer >> Local FS) ...')
+        sdc_executor.start_pipeline(pipeline_1)
+        sdc_executor.wait_for_pipeline_metric(pipeline_1, 'input_record_count', num_records)
+        sdc_executor.stop_pipeline(pipeline_1)
+
+        logger.info(f'Deleting table {origin_table_name}...')
+        connection.execute(f'DROP TABLE IF EXISTS "{origin_table_name}"')
+
+        logger.info('Running the second pipeline (Directory >> PostgreSQL Metadata >> Wiretap) ...')
+        sdc_executor.start_pipeline(pipeline_2)
+        sdc_executor.wait_for_pipeline_metric(pipeline_2, 'input_record_count', num_records)
+        sdc_executor.stop_pipeline(pipeline_2)
+
+        output_records = wiretap.output_records
+        assert len(output_records) == num_records, \
+            f'Expected {num_records} records from the 2nd pipeline but {len(output_records)} were found'
+
+        inspector = sqlalchemy.inspect(database.engine)
+        assert inspector.has_table(destination_table_name), \
+            f"Destination table {destination_table_name} has not been created."
+
+        # Primary Key and Nullable constraints check
+        primary_keys = inspector.get_pk_constraint(destination_table_name)['constrained_columns']
+        nullable_columns = []
+        for column in inspector.get_columns(destination_table_name):
+            # They keep the same order as they were created: id, name, phone, email
+            nullable_columns.append(column['nullable'])
+
+        assert len(nullable_columns) == 4, \
+            f"There are {len(nullable_columns)} columns in the destination table when there should be 4."
+
+        expected_pks = ['id', 'name']
+        assert primary_keys == expected_pks, \
+            f'The primary keys were expected to be {expected_pks}, but got {primary_keys}'
+
+        expected_nullable_columns = [False, False, True, True]
+        assert nullable_columns == expected_nullable_columns, \
+            f'The nullable constraint for each columns were expected to be {expected_nullable_columns}, ' \
+            f'but got {nullable_columns}'
+    finally:
+        if not keep_data:
+            for table in [origin_table_name, destination_table_name]:
+                logger.info('Dropping table %s in %s database ...', table, database.type)
+                connection.execute(f"DROP TABLE IF EXISTS \"{table}\"")
+
+            if pipeline_1 and sdc_executor.get_pipeline_status(pipeline_1).response.json().get('status') == 'RUNNING':
+                try:
+                    sdc_executor.stop_pipeline(pipeline_1)
+                except Exception:
+                    logger.info(f'Could not stop pipeline 1')
+
+            if pipeline_2 and sdc_executor.get_pipeline_status(pipeline_2).response.json().get('status') == 'RUNNING':
+                try:
+                    sdc_executor.stop_pipeline(pipeline_2)
+                except Exception:
+                    logger.info(f'Could not stop pipeline 2')
+
+            logger.info(f'Deleting the files directory "{files_directory}" ... ')
+            try:
+                sdc_executor.execute_shell(f'rm -r {files_directory}')
+            except Exception:
+                logger.info(f'The files directory could not be deleted')
+
+
+def _generate_dummy_records(num_records=2):
+    return [{
+                'id': i,
+                'name': get_random_string(string.ascii_lowercase, 10),
+                'phone': get_random_string(string.ascii_lowercase, 10),
+                'email': get_random_string(string.ascii_lowercase, 10)
+            } for i in range(1, num_records + 1)]
+
+
+def _create_dummy_table(database, table_name, is_name_a_pk=True):
+    logger.info('Creating table %s in %s database ...', table_name, database.type)
+    table = sqlalchemy.Table(
+        table_name,
+        sqlalchemy.MetaData(),
+        sqlalchemy.Column('id', sqlalchemy.Integer, primary_key=True),
+        sqlalchemy.Column('name', sqlalchemy.String(32), primary_key=is_name_a_pk),
+        sqlalchemy.Column('phone', sqlalchemy.String(32), nullable=False),
+        sqlalchemy.Column('email', sqlalchemy.String(32))
+    )
+    table.create(database.engine)
+    return table
