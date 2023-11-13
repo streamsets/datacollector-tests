@@ -672,7 +672,7 @@ def test_sql_parser_dual_parser(sdc_builder,
             assert ('oracle.cdc.redoValue' in record.header.values), error_message
             assert ('oracle.cdc.operation' in record.header.values), error_message
             assert ('sdc.operation.type' in record.header.values), error_message
-            assert ('TABLE_SCHEM' in record.header.values), error_message
+            assert ('TABLE_SCHEMA' in record.header.values), error_message
             assert ('TABLE_NAME' in record.header.values), error_message
             assert ('oracle.cdc.table' in record.header.values), error_message
             assert ('schema' in record.header.values), error_message
