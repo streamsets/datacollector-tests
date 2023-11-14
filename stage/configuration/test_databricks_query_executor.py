@@ -1,5 +1,5 @@
 #  Copyright (c) 2023 StreamSets Inc.
-
+import copy
 import json
 import logging
 import pytest
@@ -62,7 +62,9 @@ def set_sdc_stage_config(deltalake, config, value):
     # There is this stf issue that sets up 2 configs are named the same, both configs are set up
     # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
     # This acts as a workaround to only set that specific config
-    deltalake.sdc_stage_configurations[EXECUTOR_STAGE_NAME][config] = value
+    custom_deltalake = copy.deepcopy(deltalake)
+    custom_deltalake.sdc_stage_configurations[EXECUTOR_STAGE_NAME][config] = value
+    return custom_deltalake
 
 
 @category('basic')
@@ -74,7 +76,7 @@ def test_account_fqdn(sdc_builder, sdc_executor, deltalake, azure, authenticatio
     if Version(sdc_builder.version) < Version("5.7.0"):
         stage_attributes['azure_authentication_method'] = authentication_method
     else:
-        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        deltalake = set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
 
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
 
@@ -88,7 +90,7 @@ def test_account_shared_key(sdc_builder, sdc_executor, deltalake, azure, authent
     if Version(sdc_builder.version) < Version("5.7.0"):
         stage_attributes['azure_authentication_method'] = authentication_method
     else:
-        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        deltalake = set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
         stage_attributes['endpoint_type'] = 'URL'
 
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
@@ -109,7 +111,7 @@ def test_application_id(sdc_builder, sdc_executor, deltalake, azure, authenticat
     if Version(sdc_builder.version) < Version("5.7.0"):
         stage_attributes['azure_authentication_method'] = authentication_method
     else:
-        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        deltalake = set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
         stage_attributes['endpoint_type'] = 'URL'
 
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
@@ -124,7 +126,7 @@ def test_application_key(sdc_builder, sdc_executor, deltalake, azure, authentica
     if Version(sdc_builder.version) < Version("5.7.0"):
         stage_attributes['azure_authentication_method'] = authentication_method
     else:
-        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        deltalake = set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
         stage_attributes['endpoint_type'] = 'URL'
 
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
@@ -139,7 +141,7 @@ def test_auth_token_endpoint(sdc_builder, sdc_executor, deltalake, azure, authen
     if Version(sdc_builder.version) < Version("5.7.0"):
         stage_attributes['azure_authentication_method'] = authentication_method
     else:
-        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        deltalake = set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
         stage_attributes['endpoint_type'] = 'URL'
 
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
@@ -168,7 +170,7 @@ def test_authentication_method(sdc_builder, sdc_executor, deltalake, azure, auth
     if Version(sdc_builder.version) < Version("5.7.0"):
         stage_attributes['azure_authentication_method'] = authentication_method
     else:
-        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
+        deltalake = set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, authentication_method)
         stage_attributes['endpoint_type'] = 'URL'
 
     _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)
@@ -269,7 +271,7 @@ def test_storage_location(sdc_builder, sdc_executor, stage_attributes, deltalake
         _test_with_no_storage(sdc_builder, sdc_executor, deltalake,
                               stage_attributes={'storage_location': DEFAULT_STORAGE_LOCATION})
     elif stage_attributes['storage_location'] == 'ADLS_GEN2':
-        set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, 'SHARED_KEY')
+        deltalake = set_sdc_stage_config(deltalake, ADLS_GEN2_AUTH_METHOD_CONFIG, 'SHARED_KEY')
         if Version(sdc_builder.version) >= Version("5.7.0"):
             stage_attributes['endpoint_type'] = 'URL'
         _test_with_adls_gen2_storage(sdc_builder, sdc_executor, deltalake, azure, stage_attributes)

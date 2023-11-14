@@ -1,5 +1,5 @@
 #  Copyright (c) 2023 StreamSets Inc.
-
+import copy
 import json
 import logging
 import pytest
@@ -167,7 +167,9 @@ def set_sdc_stage_config(deltalake, config, value):
     # There is this stf issue that sets up 2 configs are named the same, both configs are set up
     # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
     # This acts as a workaround to only set that specific config
-    deltalake.sdc_stage_configurations[DESTINATION_STAGE_NAME][config] = value
+    custom_deltalake = copy.deepcopy(deltalake)
+    custom_deltalake.sdc_stage_configurations[DESTINATION_STAGE_NAME][config] = value
+    return custom_deltalake
 
 
 @stub
@@ -796,7 +798,7 @@ def test_cdc_with_unity_catalog(sdc_builder, sdc_executor, deltalake, aws):
                                         primary_key_location="TABLE",
                                         table_key_columns=table_key_columns)
 
-    set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
+    deltalake = set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
 
     dev_raw_data_source >> expression_evaluator >> field_remover >> databricks_deltalake
 
@@ -1235,9 +1237,9 @@ def test_use_iam_roles(sdc_builder, sdc_executor, deltalake, aws, use_instance_p
         if Version(sdc_builder.version) < Version("5.7.0"):
             databricks_deltalake.set_attributes(use_instance_profile=True, access_key_id="", secret_access_key="")
         else:
-            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
-            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsAccessKeyId', '')
-            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsSecretAccessKey', '')
+            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
+            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsAccessKeyId', '')
+            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsSecretAccessKey', '')
 
     pipeline = pipeline_builder.build().configure_for_environment(deltalake, aws)
 

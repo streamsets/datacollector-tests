@@ -1,5 +1,5 @@
 #  Copyright (c) 2023 StreamSets Inc.
-
+import copy
 import json
 import logging
 import os
@@ -121,7 +121,9 @@ def set_sdc_stage_config(deltalake, config, value):
     # There is this stf issue that sets up 2 configs are named the same, both configs are set up
     # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
     # This acts as a workaround to only set that specific config
-    deltalake.sdc_stage_configurations[DESTINATION_STAGE_NAME][config] = value
+    custom_deltalake = copy.deepcopy(deltalake)
+    custom_deltalake.sdc_stage_configurations[DESTINATION_STAGE_NAME][config] = value
+    return custom_deltalake
 
 
 @aws('s3')
@@ -166,9 +168,9 @@ def test_with_aws_s3_storage(sdc_builder, sdc_executor, deltalake, aws, use_inst
         if Version(sdc_builder.version) < Version("5.7.0"):
             databricks_deltalake.set_attributes(use_instance_profile=True, access_key_id="", secret_access_key="")
         else:
-            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
-            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsAccessKeyId', '')
-            set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsSecretAccessKey', '')
+            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
+            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsAccessKeyId', '')
+            deltalake = set_sdc_stage_config(deltalake, 'config.s3Stage.connection.awsConfig.awsSecretAccessKey', '')
 
     dev_raw_data_source >> databricks_deltalake
 
@@ -231,7 +233,7 @@ def test_with_adls_shared_key_storage(sdc_builder, sdc_executor, deltalake, azur
     if Version(sdc_builder.version) < Version("5.7.0"):
         databricks_deltalake.set_attributes(azure_authentication_method='SHARED_KEY')
     else:
-        set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
+        deltalake = set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
 
     dev_raw_data_source >> databricks_deltalake
 
@@ -298,7 +300,7 @@ def test_with_adls_oauth_storage(sdc_builder, sdc_executor, deltalake, azure, st
     if Version(sdc_builder.version) < Version("5.7.0"):
         databricks_deltalake.set_attributes(azure_authentication_method='OAUTH')
     else:
-        set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'CLIENT')
+        deltalake = set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'CLIENT')
         databricks_deltalake.set_attributes(parquet_schema_location='INFER',
                                             endpoint_type='URL')
 
@@ -1480,7 +1482,7 @@ def test_partition_table_with_unity_catalog(sdc_builder, sdc_executor, deltalake
                                         table_location_path=uri_external_location,
                                         partition_columns=partition_information)
 
-    set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
+    deltalake = set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
 
     dev_raw_data_source >> databricks_deltalake
 
@@ -1592,7 +1594,7 @@ def test_partition_table_with_unity_catalog_error(sdc_builder, sdc_executor, del
                                         table_location_path=uri_external_location,
                                         partition_columns=partition_information)
 
-    set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
+    deltalake = set_sdc_stage_config(deltalake, 'config.dataLakeGen2Stage.connection.authMethod', 'SHARED_KEY')
 
     dev_raw_data_source >> databricks_deltalake
 

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import copy
 import json
 import logging
 import os
@@ -97,11 +97,13 @@ CDC_ROWS_IN_DATABASE_COMPOSITE_KEY = [
 STORAGE_BUCKET_CONTAINER = 'snowflake'
 
 
-def set_sdc_stage_config(deltalake, config, value):
+def set_sdc_stage_config(snowflake, config, value):
     # There is this stf issue that sets up 2 configs are named the same, both configs are set up
     # If the config is an enum, it created invalid pipelines (e.g. Authentication Method in azure and s3 staging)
     # This acts as a workaround to only set that specific config
-    deltalake.sdc_stage_configurations[STAGE_NAME][config] = value
+    custom_snowflake = copy.deepcopy(snowflake)
+    custom_snowflake.sdc_stage_configurations[STAGE_NAME][config] = value
+    return custom_snowflake
 
 
 def get_stage_location(sdc_builder, stage_location):
@@ -215,7 +217,7 @@ def _run_test_basic(sdc_builder, sdc_executor, snowflake, stage_location, sse_km
             snowflake_destination.set_attributes(encryption='KMS')
         if sas_token:
             # Use Azure SAS Token to authenticate
-            set_sdc_stage_config(snowflake, 'config.blobStorageStage.connection.authMethod', 'SAS_TOKEN')
+            snowflake = set_sdc_stage_config(snowflake, 'config.blobStorageStage.connection.authMethod', 'SAS_TOKEN')
 
     if Version(sdc_builder.version) < Version("5.7.0"):
         # do nothing, property didn't exist
@@ -1729,7 +1731,7 @@ def test_instance_profile_credentials(sdc_builder, sdc_executor, snowflake):
     if Version(sdc_builder.version) < Version("5.7.0"):
         snowflake_destination.set_attributes(use_instance_profile=True)
     else:
-        set_sdc_stage_config(snowflake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
+        snowflake = set_sdc_stage_config(snowflake, 'config.s3Stage.connection.awsConfig.credentialMode', 'WITH_IAM_ROLES')
 
     dev_raw_data_source >> snowflake_destination
 
