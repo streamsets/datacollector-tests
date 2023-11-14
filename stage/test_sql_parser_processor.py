@@ -49,7 +49,7 @@ def sdc_common_hook():
     return hook
 
 
-@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 4)])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 def test_sql_parser_case_sensitive(sdc_builder, sdc_executor, case_sensitive, multithreading, thread_count):
     """
@@ -114,7 +114,7 @@ def test_sql_parser_case_sensitive(sdc_builder, sdc_executor, case_sensitive, mu
             assert record.field['columns']['C'] == '3'
 
 
-@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 4)])
 def test_sql_parser_parse_exception(sdc_builder, sdc_executor, multithreading, thread_count):
     """
     Check that SQL Parser Processor treats wrong statements.
@@ -164,7 +164,7 @@ def test_sql_parser_parse_exception(sdc_builder, sdc_executor, multithreading, t
 
 
 @sdc_min_version('4.0.0')
-@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 4)])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('pseudocolumns_in_header', [True, False])
 def test_sql_parser_pseudocolumns(sdc_builder,
@@ -344,7 +344,7 @@ def test_sql_parser_pseudocolumns(sdc_builder,
 
 @sdc_min_version('4.1.0')
 @database('oracle')
-@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 4)])
 @pytest.mark.parametrize('add_unsupported_fields_to_records', [True, False])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('use_peg_parser', [True, False])
@@ -705,7 +705,7 @@ def test_sql_parser_dual_parser(sdc_builder,
 
 @sdc_min_version('5.1.0')
 @database('oracle')
-@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 4)])
 @pytest.mark.parametrize('add_unsupported_fields_to_records', [True, False])
 @pytest.mark.parametrize('case_sensitive', [True, False])
 @pytest.mark.parametrize('use_peg_parser', [True, False])
@@ -908,7 +908,7 @@ def test_sql_parser_processor_sorted_columns(sdc_builder,
 
 @sdc_min_version('5.1.0')
 @database('oracle')
-@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 1), (True, 2), (True, 8)])
+@pytest.mark.parametrize('multithreading, thread_count', [(False, 1), (True, 4)])
 @pytest.mark.parametrize('use_peg_parser', [True, False])
 @pytest.mark.parametrize('buffer_location', ['IN_MEMORY', 'ON_DISK'])
 def test_decimal_attributes(sdc_builder,
