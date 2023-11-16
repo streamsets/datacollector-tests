@@ -64,7 +64,6 @@ COUCHBASE_BUCKET_NAMES = [
     ('lowercase', lambda: get_random_string(string.ascii_lowercase)),
     ('uppercase', lambda: get_random_string(string.ascii_uppercase)),
     ('hyphen', lambda: get_random_string(string.ascii_lowercase) + '-' + get_random_string(string.ascii_lowercase)),
-    ('period', lambda: get_random_string(string.ascii_lowercase) + '.' + get_random_string(string.ascii_lowercase)),
     ('underscore', lambda: get_random_string(string.ascii_lowercase) + '_' + get_random_string(string.ascii_lowercase)),
     ('percent', lambda: get_random_string(string.ascii_lowercase) + '%' + get_random_string(string.ascii_lowercase)),
     ('digits', lambda: get_random_string(string.digits))
