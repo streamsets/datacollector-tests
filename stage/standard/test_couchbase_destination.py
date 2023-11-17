@@ -19,10 +19,7 @@ import string
 
 from avro.datafile import DataFileReader
 from avro.io import DatumReader
-from couchbase.management.buckets import CreateBucketSettings
-from couchbase.management.collections import CollectionSpec
 from couchbase.transcoder import RawJSONTranscoder, RawStringTranscoder, RawBinaryTranscoder, Transcoder
-from couchbase.options import ClusterOptions, GetOptions, UpsertOptions
 from io import BytesIO
 
 from streamsets.testframework.markers import couchbase, sdc_min_version
@@ -72,51 +69,22 @@ COUCHBASE_BUCKET_NAMES = [
 PROTOBUF_FILE_PATH = 'resources/protobuf/addressbook.desc'
 
 
-@pytest.fixture(autouse=True)
-def library_check(couchbase):
+@pytest.fixture(autouse=True, scope='module')
+def init(couchbase):
     for lib in couchbase.sdc_stage_libs:
         if lib in SUPPORTED_LIBS:
+            couchbase.pre_create_buckets()
             return
     pytest.skip(f'Couchbase Destination test requires using libraries in {SUPPORTED_LIBS}')
 
 
-def create_bucket(couchbase, bucket_name, scope_name=DEFAULT_SCOPE, collection_name=DEFAULT_COLLECTION,
-                  ram_quota_mb=128, create_primary_index=True):
-    logger.info(f'Creating {bucket_name} Couchbase bucket...')
-    couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
-                                                                bucket_type='couchbase',
-                                                                ram_quota_mb=ram_quota_mb))
-    couchbase.wait_for_healthy_bucket(bucket_name)
-    bucket = couchbase.cluster.bucket(bucket_name)
-    if scope_name != DEFAULT_SCOPE:
-        logger.info(f'Creating {scope_name} scope in {bucket_name} Couchbase bucket...')
-        bucket.collections().create_scope(scope_name)
-    if collection_name != DEFAULT_COLLECTION:
-        logger.info(
-            f'Creating {collection_name} collection in {scope_name} scope in {bucket_name} Couchbase bucket...')
-        bucket.collections().create_collection(
-            CollectionSpec(collection_name=collection_name, scope_name=scope_name))
-    if create_primary_index:
-        logger.info(
-            f'Creating PRIMARY INDEX on `{bucket_name}`.`{scope_name}`.`{collection_name}` Couchbase bucket ...')
-        couchbase.cluster.query(f'CREATE PRIMARY INDEX ON `{bucket_name}`.`{scope_name}`.`{collection_name}`').execute()
-    return bucket
-
-
-def get_value(bucket, document_id, scope_name=DEFAULT_SCOPE, collection_name=DEFAULT_COLLECTION, transcoder=None):
-    return bucket.scope(scope_name).collection(collection_name).get(document_id,
-                                                                    GetOptions(transcoder=transcoder)).value
-
-
 @pytest.mark.parametrize('input,converter_type,expected', DATA_TYPES, ids=[i[1] for i in DATA_TYPES])
 def test_data_types(sdc_builder, sdc_executor, couchbase, input, converter_type, expected):
-    bucket_name = get_random_string(string.ascii_letters, 10)
-
     document_key_field = 'mydocname'
     raw_dict = {"value": input, document_key_field: 'mydocid'}
     raw_data = json.dumps(raw_dict)
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
 
@@ -146,15 +114,12 @@ def test_data_types(sdc_builder, sdc_executor, couchbase, input, converter_type,
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        doc_value = get_value(bucket, raw_dict[document_key_field])
+        doc_value = couchbase.get_value(raw_dict[document_key_field], bucket_name)
 
         assert len(doc_value) == len(raw_dict)
         assert doc_value['value'] == expected
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 @pytest.mark.parametrize('test_name, bucket_generator',
@@ -169,7 +134,7 @@ def test_object_names_bucket(sdc_builder, sdc_executor, couchbase, test_name, bu
     raw_data = json.dumps(raw_dict)
 
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        couchbase.create_bucket(bucket_name)
 
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -188,22 +153,19 @@ def test_object_names_bucket(sdc_builder, sdc_executor, couchbase, test_name, bu
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        doc_value = get_value(bucket, raw_dict[document_key_field])
+        doc_value = couchbase.get_value(raw_dict[document_key_field], bucket_name)
         assert doc_value == raw_dict
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
         logger.info('Deleting %s Couchbase bucket ...', bucket_name)
         couchbase.bucket_manager.drop_bucket(bucket_name)
 
 
 @pytest.mark.parametrize('batch_size', [1, 10])
 def test_multiple_batches(sdc_builder, sdc_executor, couchbase, batch_size):
-    bucket_name = get_random_string(string.ascii_letters, 10)
     batches = 3
 
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
 
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -234,11 +196,10 @@ def test_multiple_batches(sdc_builder, sdc_executor, couchbase, batch_size):
         assert num_records == len(wiretap.output_records)
 
         for i in range(num_records):
-            assert get_value(bucket, str(i)) == wiretap.output_records[i].field
+            assert couchbase.get_value(str(i), bucket_name) == wiretap.output_records[i].field
 
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 def test_dataflow_events(sdc_builder, sdc_executor, couchbase):
@@ -246,7 +207,6 @@ def test_dataflow_events(sdc_builder, sdc_executor, couchbase):
 
 
 def test_data_format_avro(sdc_builder, sdc_executor, couchbase):
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_key = 'id'
 
     DATA = {'name': 'boss', 'age': 60, 'emails': ['boss@company.com', 'boss2@company.com'], 'boss': None}
@@ -259,7 +219,7 @@ def test_data_format_avro(sdc_builder, sdc_executor, couchbase):
                          {'name': 'boss', 'type': ['Employee', 'null']}]}
 
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
 
@@ -277,7 +237,7 @@ def test_data_format_avro(sdc_builder, sdc_executor, couchbase):
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        doc_value = get_value(bucket, document_key, transcoder=RawBinaryTranscoder())
+        doc_value = couchbase.get_value(document_key, bucket_name, transcoder=RawBinaryTranscoder())
 
         # decode the bytes object returned by Couchbase
         file = BytesIO(doc_value)
@@ -287,19 +247,15 @@ def test_data_format_avro(sdc_builder, sdc_executor, couchbase):
         assert records[0] == DATA
         reader.close()
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 def test_data_format_binary(sdc_builder, sdc_executor, couchbase):
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_key = 'id'
     batch_size = 1
 
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
 
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -327,22 +283,20 @@ def test_data_format_binary(sdc_builder, sdc_executor, couchbase):
         history = sdc_executor.get_pipeline_history(pipeline)
         num_records = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
         logger.info(f"Wrote {num_records} records")
-        doc_value = get_value(bucket, document_key, transcoder=RawBinaryTranscoder())
+        doc_value = couchbase.get_value(document_key, bucket_name, transcoder=RawBinaryTranscoder())
         assert num_records == len(wiretap.output_records)
         assert doc_value == wiretap.output_records[0].field['data']
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 def test_data_format_delimited(sdc_builder, sdc_executor, couchbase):
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_key = 'id'
     raw_data = 'Alex,Xavi,Tucu,Martin'
     expected = 'Alex,Xavi,Tucu,Martin\r'
 
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
 
@@ -365,25 +319,21 @@ def test_data_format_delimited(sdc_builder, sdc_executor, couchbase):
         logger.info(f"Wrote {num_records} records")
         assert num_records == 1, 'Number of records stored should equal the number of records that entered the pipeline'
 
-        doc_value = get_value(bucket, document_key, transcoder=RawBinaryTranscoder())
+        doc_value = couchbase.get_value(document_key, bucket_name, transcoder=RawBinaryTranscoder())
         # Decode the bytes object returned by Couchbase and remove the empty final line
         contents = doc_value.decode('ascii').replace('\n', '')
         assert contents == expected
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 def test_data_format_json(sdc_builder, sdc_executor, couchbase):
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_key_field = 'mydocname'
     raw_dict = dict(f1='abc', f2='xyz', f3='lmn')
     raw_dict[document_key_field] = 'mydocid'
     raw_data = json.dumps(raw_dict)
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
 
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -403,23 +353,19 @@ def test_data_format_json(sdc_builder, sdc_executor, couchbase):
         sdc_executor.add_pipeline(pipeline)
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-        doc_value = get_value(bucket, raw_dict[document_key_field])
+        doc_value = couchbase.get_value(raw_dict[document_key_field], bucket_name)
         assert doc_value == raw_dict
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 def test_data_format_protobuf(sdc_builder, sdc_executor, couchbase):
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_key = 'id'
     raw_data = '{"first_name": "Martin","last_name": "Balzamo"}'
     expected = '\x11\x06Martin\x12\x07Balzamo'
 
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
 
@@ -443,26 +389,22 @@ def test_data_format_protobuf(sdc_builder, sdc_executor, couchbase):
         logger.info(f"Wrote {num_records} records")
         assert num_records == 1, 'Number of records stored should equal the number of records that entered the pipeline'
 
-        doc_value = get_value(bucket, document_key, transcoder=RawBinaryTranscoder())
+        doc_value = couchbase.get_value(document_key, bucket_name, transcoder=RawBinaryTranscoder())
         # Decode the bytes object returned by Couchbase and remove any record separators (newline characters)
         contents = doc_value.decode('ascii').replace('\n', '')
         assert contents == expected
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 def test_data_format_sdc_record(sdc_builder, sdc_executor, couchbase):
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_key_field = 'field1'
     json_data = [{"field1": "abc", "field2": "def", "field3": "ghi"},
                  {"field1": "jkl", "field2": "mno", "field3": "pqr"}]
     raw_data = ''.join(json.dumps(record) for record in json_data)
 
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
 
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -488,7 +430,7 @@ def test_data_format_sdc_record(sdc_builder, sdc_executor, couchbase):
         assert num_records == len(json_data)
 
         for i in range(len(json_data)):
-            doc_value = get_value(bucket, json_data[i][document_key_field], transcoder=RawBinaryTranscoder())
+            doc_value = couchbase.get_value(json_data[i][document_key_field], bucket_name, transcoder=RawBinaryTranscoder())
             # Decode the bytes object and disregard the first character (0xa1)
             contents = doc_value.decode('latin1')[1:]
             # Decode the SDC Record JSON into a dictionary containing its value
@@ -496,19 +438,15 @@ def test_data_format_sdc_record(sdc_builder, sdc_executor, couchbase):
             value = sdc_value_reader(dictionary['value'])
             assert value == json_data[i]
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 def test_data_format_text(sdc_builder, sdc_executor, couchbase):
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_key = 'id'
     raw_data = get_random_string(string.ascii_letters, length=100)
 
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
 
         # Build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -532,15 +470,12 @@ def test_data_format_text(sdc_builder, sdc_executor, couchbase):
         logger.info(f"Wrote {num_records} records")
         assert num_records == 1, 'Number of records stored should equal the number of records that entered the pipeline'
 
-        doc_value = get_value(bucket, document_key, transcoder=RawBinaryTranscoder())
+        doc_value = couchbase.get_value(document_key, bucket_name, transcoder=RawBinaryTranscoder())
         # Decode the bytes object returned by Couchbase and remove any record separators (newline characters)
         contents = doc_value.decode('ascii').replace('\n', '')
         assert contents == raw_data
     finally:
-        if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
-            sdc_executor.stop_pipeline(pipeline)
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 def test_push_pull(sdc_builder, sdc_executor, couchbase):

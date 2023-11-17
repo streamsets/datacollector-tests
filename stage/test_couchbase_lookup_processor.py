@@ -18,10 +18,6 @@ import pytest
 import string
 
 from collections import Counter
-from couchbase.management.buckets import CreateBucketSettings
-from couchbase.management.collections import CollectionSpec
-from couchbase.transcoder import RawJSONTranscoder, RawStringTranscoder, RawBinaryTranscoder, Transcoder
-from couchbase.options import ClusterOptions, GetOptions, UpsertOptions
 from streamsets.testframework.markers import couchbase, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -36,35 +32,13 @@ DEFAULT_SCOPE = '_default'
 DEFAULT_COLLECTION = '_default'
 
 
-@pytest.fixture(autouse=True)
-def library_check(couchbase):
+@pytest.fixture(autouse=True, scope='module')
+def init(couchbase):
     for lib in couchbase.sdc_stage_libs:
         if lib in SUPPORTED_LIBS:
+            couchbase.pre_create_buckets()
             return
     pytest.skip(f'Couchbase Lookup test requires using libraries in {SUPPORTED_LIBS}')
-
-
-def create_bucket(couchbase, bucket_name, scope_name=DEFAULT_SCOPE, collection_name=DEFAULT_COLLECTION,
-                  ram_quota_mb=128, create_primary_index=True):
-    logger.info(f'Creating {bucket_name} Couchbase bucket...')
-    couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
-                                                                bucket_type='couchbase',
-                                                                ram_quota_mb=ram_quota_mb))
-    couchbase.wait_for_healthy_bucket(bucket_name)
-    bucket = couchbase.cluster.bucket(bucket_name)
-    if scope_name != DEFAULT_SCOPE:
-        logger.info(f'Creating {scope_name} scope in {bucket_name} Couchbase bucket...')
-        bucket.collections().create_scope(scope_name)
-    if collection_name != DEFAULT_COLLECTION:
-        logger.info(
-            f'Creating {collection_name} collection in {scope_name} scope in {bucket_name} Couchbase bucket...')
-        bucket.collections().create_collection(
-            CollectionSpec(collection_name=collection_name, scope_name=scope_name))
-    if create_primary_index:
-        logger.info(
-            f'Creating PRIMARY INDEX on `{bucket_name}`.`{scope_name}`.`{collection_name}` Couchbase bucket ...')
-        couchbase.cluster.query(f'CREATE PRIMARY INDEX ON `{bucket_name}`.`{scope_name}`.`{collection_name}`').execute()
-    return bucket
 
 
 LOOKUPS = [
@@ -78,15 +52,14 @@ LOOKUPS = [
                          LOOKUPS, ids=[i[0] for i in LOOKUPS])
 def test_lookup_kv(sdc_builder, sdc_executor, couchbase,
                    test_name, input, expected_out, expected_error, missing_value_behavior):
-    bucket_name = get_random_string(string.ascii_letters, 10).lower()
     doc = {'id': 'id1', 'data': 'hello'}
     raw_dict = dict(id=input)
     raw_data = json.dumps(raw_dict)
 
     try:
         # populate the database
-        bucket = create_bucket(couchbase, bucket_name)
-        bucket.upsert(doc['id'], doc)
+        bucket_name = couchbase.get_bucket()
+        couchbase.insert_documents(doc['id'], doc, bucket_name)
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -120,11 +93,7 @@ def test_lookup_kv(sdc_builder, sdc_executor, couchbase,
         if expected_error:
             assert error_records[0].field == expected_error[0]
     finally:
-        try:
-            logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.bucket_manager.drop_bucket(bucket_name)
-        except Exception as e:
-            logger.error(f"Can't delete bucket: {e}")
+        couchbase.cleanup_buckets()
 
 
 QUERIES = [
@@ -150,9 +119,9 @@ def test_lookup_query(sdc_builder, sdc_executor, couchbase,
 
     try:
         # populate the database
-        bucket = create_bucket(couchbase, bucket_name, create_primary_index=True)
+        bucket_name = couchbase.get_bucket()
         for doc in docs:
-            bucket.upsert(doc['id'], doc)
+            couchbase.insert_documents(doc['id'], doc, bucket_name)
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -197,8 +166,4 @@ def test_lookup_query(sdc_builder, sdc_executor, couchbase,
             output_list = [record.field['output'] for record in output_records]
             assert Counter(output_list) == Counter(expected)
     finally:
-        try:
-            logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.bucket_manager.drop_bucket(bucket_name)
-        except Exception as e:
-            logger.error(f"Can't delete bucket: {e}")
+        couchbase.cleanup_buckets()

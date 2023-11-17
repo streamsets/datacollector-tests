@@ -17,10 +17,6 @@ import logging
 import pytest
 import string
 
-from couchbase.management.buckets import CreateBucketSettings
-from couchbase.management.collections import CollectionSpec
-from couchbase.transcoder import RawJSONTranscoder, RawStringTranscoder, RawBinaryTranscoder, Transcoder
-from couchbase.options import ClusterOptions, GetOptions, UpsertOptions
 from streamsets.testframework.markers import couchbase, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -46,41 +42,13 @@ DATA_TYPES = [
 ]
 
 
-@pytest.fixture(autouse=True)
-def library_check(couchbase):
+@pytest.fixture(autouse=True, scope='module')
+def init(couchbase):
     for lib in couchbase.sdc_stage_libs:
         if lib in SUPPORTED_LIBS:
+            couchbase.pre_create_buckets()
             return
     pytest.skip(f'Couchbase Lookup test requires using libraries in {SUPPORTED_LIBS}')
-
-
-def create_bucket(couchbase, bucket_name, scope_name=DEFAULT_SCOPE, collection_name=DEFAULT_COLLECTION,
-                  ram_quota_mb=128, create_primary_index=True):
-    logger.info(f'Creating {bucket_name} Couchbase bucket...')
-    couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
-                                                                bucket_type='couchbase',
-                                                                ram_quota_mb=ram_quota_mb))
-    couchbase.wait_for_healthy_bucket(bucket_name)
-    bucket = couchbase.cluster.bucket(bucket_name)
-    if scope_name != DEFAULT_SCOPE:
-        logger.info(f'Creating {scope_name} scope in {bucket_name} Couchbase bucket...')
-        bucket.collections().create_scope(scope_name)
-    if collection_name != DEFAULT_COLLECTION:
-        logger.info(
-            f'Creating {collection_name} collection in {scope_name} scope in {bucket_name} Couchbase bucket...')
-        bucket.collections().create_collection(
-            CollectionSpec(collection_name=collection_name, scope_name=scope_name))
-    if create_primary_index:
-        logger.info(
-            f'Creating PRIMARY INDEX on `{bucket_name}`.`{scope_name}`.`{collection_name}` Couchbase bucket ...')
-        couchbase.cluster.query(f'CREATE PRIMARY INDEX ON `{bucket_name}`.`{scope_name}`.`{collection_name}`').execute()
-    return bucket
-
-
-def upsert(bucket, document_id, document, scope_name=DEFAULT_SCOPE, collection_name=DEFAULT_COLLECTION,
-           transcoder=None):
-    return bucket.scope(scope_name).collection(collection_name).upsert(document_id, document,
-                                                                       UpsertOptions(transcoder=transcoder)).value
 
 
 @pytest.mark.parametrize('input,test_name,expected_type,expected_value', DATA_TYPES, ids=[i[1] for i in DATA_TYPES])
@@ -93,8 +61,8 @@ def test_data_types_kv(sdc_builder, sdc_executor, couchbase, input, test_name, e
 
     try:
         # populate the database
-        bucket = create_bucket(couchbase, bucket_name)
-        upsert(bucket, key, doc)
+        bucket_name = couchbase.get_bucket()
+        couchbase.insert_documents(key, doc, bucket_name)
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -143,8 +111,8 @@ def test_data_types_query(sdc_builder, sdc_executor, couchbase, input, test_name
 
     try:
         # populate the database
-        bucket = create_bucket(couchbase, bucket_name, create_primary_index=True)
-        bucket.upsert(key, doc)
+        bucket_name = couchbase.get_bucket()
+        couchbase.insert_documents(key, doc, bucket_name)
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -206,8 +174,8 @@ def test_object_names_bucket_kv(sdc_builder, sdc_executor, couchbase, test_name,
 
     try:
         # populate the database
-        bucket = create_bucket(couchbase, bucket_name)
-        bucket.upsert(key, doc)
+        couchbase.create_bucket(bucket_name)
+        couchbase.insert_documents(key, doc, bucket_name)
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -237,7 +205,7 @@ def test_object_names_bucket_kv(sdc_builder, sdc_executor, couchbase, test_name,
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.bucket_manager.drop_bucket(bucket_name)
+            couchbase.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
@@ -253,8 +221,8 @@ def test_object_names_bucket_query(sdc_builder, sdc_executor, couchbase, test_na
 
     try:
         # populate the database
-        bucket = create_bucket(couchbase, bucket_name, create_primary_index=True)
-        bucket.upsert(key, doc)
+        couchbase.create_bucket(bucket_name)
+        couchbase.insert_documents(key, doc, bucket_name)
 
         # build the pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -285,53 +253,52 @@ def test_object_names_bucket_query(sdc_builder, sdc_executor, couchbase, test_na
     finally:
         try:
             logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-            couchbase.bucket_manager.drop_bucket(bucket_name)
+            couchbase.drop_bucket(bucket_name)
         except Exception as e:
             logger.error(f"Can't delete bucket: {e}")
 
 
 @pytest.mark.parametrize('batch_size', [1, 10])
 def test_multiple_batches_kv(sdc_builder, sdc_executor, couchbase, batch_size):
-    bucket_name = get_random_string(string.ascii_letters, 10).lower()
     docs = [{"id": "1", "data": 10},
             {"id": "2", "data": 20},
             {"id": "3", "data": 30}]
     batches = 3
 
-    # populate the database
-    bucket = create_bucket(couchbase, bucket_name)
-
-    for doc in docs:
-        bucket.upsert(doc["id"], doc)
-
-    # build the pipeline
-    builder = sdc_builder.get_pipeline_builder()
-
-    origin = builder.add_stage('Dev Data Generator')
-    origin.fields_to_generate = [{
-        "type": "LONG_SEQUENCE",
-        "field": "seq"
-    }]
-
-    expression = builder.add_stage('Expression Evaluator')
-    expression.field_expressions = [{
-        'fieldToSet': '/lookup',
-        'expression': '${record:value("/seq") % 3 + 1}'
-    }]
-
-    lookup = builder.add_stage(name=STAGE_NAME)
-    lookup.set_attributes(authentication_mode='USER', bucket=bucket_name,
-                          lookup_type='KV', document_key='${record:value("/lookup")}', sdc_field='/output',
-                          missing_value_behavior='PASS')
-
-    wiretap = builder.add_wiretap()
-
-    origin >> expression >> lookup >> wiretap.destination
-
-    pipeline = builder.build().configure_for_environment(couchbase)
-    sdc_executor.add_pipeline(pipeline)
-
     try:
+        # populate the database
+        bucket_name = couchbase.get_bucket()
+
+        for doc in docs:
+            couchbase.insert_documents(doc['id'], doc, bucket_name)
+
+        # build the pipeline
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('Dev Data Generator')
+        origin.fields_to_generate = [{
+            "type": "LONG_SEQUENCE",
+            "field": "seq"
+        }]
+
+        expression = builder.add_stage('Expression Evaluator')
+        expression.field_expressions = [{
+            'fieldToSet': '/lookup',
+            'expression': '${record:value("/seq") % 3 + 1}'
+        }]
+
+        lookup = builder.add_stage(name=STAGE_NAME)
+        lookup.set_attributes(authentication_mode='USER', bucket=bucket_name,
+                              lookup_type='KV', document_key='${record:value("/lookup")}', sdc_field='/output',
+                              missing_value_behavior='PASS')
+
+        wiretap = builder.add_wiretap()
+
+        origin >> expression >> lookup >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(couchbase)
+        sdc_executor.add_pipeline(pipeline)
+
         # run the pipeline
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batches * batch_size)
         sdc_executor.stop_pipeline(pipeline)
@@ -366,48 +333,46 @@ def test_multiple_batches_kv(sdc_builder, sdc_executor, couchbase, batch_size):
 
 @pytest.mark.parametrize('batch_size', [1, 10])
 def test_multiple_batches_query(sdc_builder, sdc_executor, couchbase, batch_size):
-    bucket_name = get_random_string(string.ascii_letters, 10).lower()
-    docs = [{"id": "1", "data": 10},
-            {"id": "2", "data": 20},
-            {"id": "3", "data": 30}]
-    batches = 3
-    query = f'SELECT data FROM {bucket_name} WHERE ' + 'id="${record:value("/lookup")}"'
-
-    # populate the database
-    bucket = create_bucket(couchbase, bucket_name, create_primary_index=True)
-
-    for doc in docs:
-        bucket.upsert(doc["id"], doc)
-
-    # build the pipeline
-    builder = sdc_builder.get_pipeline_builder()
-
-    origin = builder.add_stage('Dev Data Generator')
-    origin.fields_to_generate = [{
-        "type": "LONG_SEQUENCE",
-        "field": "seq"
-    }]
-
-    expression = builder.add_stage('Expression Evaluator')
-    expression.field_expressions = [{
-        'fieldToSet': '/lookup',
-        'expression': '${record:value("/seq") % 3 + 1}'
-    }]
-
-    lookup = builder.add_stage(name=STAGE_NAME)
-    lookup.set_attributes(authentication_mode='USER', bucket=bucket_name,
-                          lookup_type='N1QL', n1ql_query=query,
-                          n1ql_mappings=[dict(property='data', sdcField='/output')],
-                          missing_value_behavior='PASS')
-
-    wiretap = builder.add_wiretap()
-
-    origin >> expression >> lookup >> wiretap.destination
-
-    pipeline = builder.build().configure_for_environment(couchbase)
-    sdc_executor.add_pipeline(pipeline)
-
     try:
+        bucket_name = couchbase.get_bucket()
+        docs = [{"id": "1", "data": 10},
+                {"id": "2", "data": 20},
+                {"id": "3", "data": 30}]
+        batches = 3
+        query = f'SELECT data FROM {bucket_name} WHERE ' + 'id="${record:value("/lookup")}"'
+
+        # populate the database
+        for doc in docs:
+            couchbase.insert_documents(doc['id'], doc, bucket_name)
+
+        # build the pipeline
+        builder = sdc_builder.get_pipeline_builder()
+
+        origin = builder.add_stage('Dev Data Generator')
+        origin.fields_to_generate = [{
+            "type": "LONG_SEQUENCE",
+            "field": "seq"
+        }]
+
+        expression = builder.add_stage('Expression Evaluator')
+        expression.field_expressions = [{
+            'fieldToSet': '/lookup',
+            'expression': '${record:value("/seq") % 3 + 1}'
+        }]
+
+        lookup = builder.add_stage(name=STAGE_NAME)
+        lookup.set_attributes(authentication_mode='USER', bucket=bucket_name,
+                              lookup_type='N1QL', n1ql_query=query,
+                              n1ql_mappings=[dict(property='data', sdcField='/output')],
+                              missing_value_behavior='PASS')
+
+        wiretap = builder.add_wiretap()
+
+        origin >> expression >> lookup >> wiretap.destination
+
+        pipeline = builder.build().configure_for_environment(couchbase)
+        sdc_executor.add_pipeline(pipeline)
+
         # run the pipeline
         sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batches * batch_size)
         sdc_executor.stop_pipeline(pipeline)

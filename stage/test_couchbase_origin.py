@@ -13,13 +13,10 @@
 # limitations under the License.
 
 import logging
-import string
 import pytest
 
 from streamsets.testframework.markers import couchbase, sdc_min_version
 from streamsets.testframework.utils import get_random_string
-from couchbase.management.buckets import CreateBucketSettings
-from couchbase.management.collections import CollectionSpec
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +43,11 @@ DEFAULT_DOCUMENTS = [{'id': 1, 'name': 'Roger Federer'}, {'id': 2, 'name': 'Rafa
                      {'id': 3, 'name': 'Carlos Alcaraz'}]
 
 
-@pytest.fixture(autouse=True)
-def library_check(couchbase):
+@pytest.fixture(autouse=True, scope='module')
+def init(couchbase):
     for lib in couchbase.sdc_stage_libs:
         if lib in SUPPORTED_LIBS:
+            couchbase.pre_create_buckets()
             return
     pytest.skip(f'Couchbase Origin test requires using libraries in {SUPPORTED_LIBS}')
 
@@ -64,48 +62,17 @@ def get_bucket_config(bucket, scope=DEFAULT_SCOPE, collection=DEFAULT_COLLECTION
     }
 
 
-def create_bucket(couchbase, bucket_name, scope_name=DEFAULT_SCOPE, collection_name=DEFAULT_COLLECTION,
-                  ram_quota_mb=128, create_primary_index=True):
-    logger.info(f'Creating {bucket_name} Couchbase bucket...')
-    couchbase.bucket_manager.create_bucket(CreateBucketSettings(name=bucket_name,
-                                                                bucket_type='couchbase',
-                                                                ram_quota_mb=ram_quota_mb))
-    couchbase.wait_for_healthy_bucket(bucket_name)
-    bucket = couchbase.cluster.bucket(bucket_name)
-    if scope_name != DEFAULT_SCOPE:
-        logger.info(f'Creating {scope_name} scope in {bucket_name} Couchbase bucket...')
-        bucket.collections().create_scope(scope_name)
-    if collection_name != DEFAULT_COLLECTION:
-        logger.info(
-            f'Creating {collection_name} collection in {scope_name} scope in {bucket_name} Couchbase bucket...')
-        bucket.collections().create_collection(
-            CollectionSpec(collection_name=collection_name, scope_name=scope_name))
-    if create_primary_index:
-        logger.info(
-            f'Creating PRIMARY INDEX on `{bucket_name}`.`{scope_name}`.`{collection_name}` Couchbase bucket ...')
-        couchbase.cluster.query(f'CREATE PRIMARY INDEX ON `{bucket_name}`.`{scope_name}`.`{collection_name}`').execute()
-    return bucket
-
-
-def insert_documents(bucket, document_ids, documents, scope=DEFAULT_SCOPE, collection=DEFAULT_COLLECTION):
-    logger.info(f'Inserting {len(documents)} documents into Couchbase {bucket.name}.')
-    collection = bucket.scope(scope).collection(collection)
-    for document_key, document in zip(document_ids, documents):
-        collection.insert(document_key, document)
-
-
 def test_basic(sdc_builder, sdc_executor, couchbase):
     """ Basic test for Couchbase Origin. We create some data in Couchbase, and then read it and assert it is correct.
     We also assert that headers are there, with the expected values. The pipeline looks like:
 
     couchbase_origin >> wiretap
     """
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_ids = DEFAULT_DOCUMENT_IDS
     documents = DEFAULT_DOCUMENTS
     try:
-        bucket = create_bucket(couchbase, bucket_name)
-        insert_documents(bucket, document_ids, documents)
+        bucket_name = couchbase.get_bucket()
+        couchbase.insert_documents(document_ids, documents, bucket_name)
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -142,8 +109,7 @@ def test_basic(sdc_builder, sdc_executor, couchbase):
                 assert record_key == document_key
                 assert record.field[record_key] == document[document_key]
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 @pytest.mark.parametrize('order_by_column', ['id', 'name'])
@@ -156,13 +122,12 @@ def test_order_by_clause(sdc_builder, sdc_executor, couchbase, order_by_column):
     def sort_documents(doc):
         return doc[order_by_column]
 
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_ids = DEFAULT_DOCUMENT_IDS
     documents = DEFAULT_DOCUMENTS
     documents.sort(key=sort_documents)
     try:
-        bucket = create_bucket(couchbase, bucket_name)
-        insert_documents(bucket, document_ids, documents)
+        bucket_name = couchbase.get_bucket()
+        couchbase.insert_documents(document_ids, documents, bucket_name)
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -189,8 +154,7 @@ def test_order_by_clause(sdc_builder, sdc_executor, couchbase, order_by_column):
                 assert record_key == document_key
                 assert record.field[record_key] == document[document_key]
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 @pytest.mark.parametrize('where, expected_records', [
@@ -205,12 +169,11 @@ def test_where_clause(sdc_builder, sdc_executor, couchbase, where, expected_reco
 
     couchbase_origin >> wiretap
     """
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_ids = DEFAULT_DOCUMENT_IDS
     documents = DEFAULT_DOCUMENTS
     try:
-        bucket = create_bucket(couchbase, bucket_name)
-        insert_documents(bucket, document_ids, documents)
+        bucket_name = couchbase.get_bucket()
+        couchbase.insert_documents(document_ids, documents, bucket_name)
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -237,12 +200,11 @@ def test_where_clause(sdc_builder, sdc_executor, couchbase, where, expected_reco
                 assert record_key == document_key
                 assert record.field[record_key] == document[document_key]
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 @pytest.mark.parametrize('num_threads', [1, 5, 10])
-@pytest.mark.parametrize('num_buckets, num_records, batch_size', [(1, 10000, 1000), (4, 20000, 3333)])
+@pytest.mark.parametrize('num_buckets, num_records, batch_size', [(1, 10000, 1000), (3, 20000, 3333)])
 def test_big_amounts_of_records(sdc_builder, sdc_executor, couchbase, num_threads, num_buckets, num_records,
                                 batch_size):
     """ Test for Couchbase Origin with loads of documents, using multiple buckets and multiple threads.
@@ -259,18 +221,18 @@ def test_big_amounts_of_records(sdc_builder, sdc_executor, couchbase, num_thread
     def sort_records(rec):
         return rec.field[sort_column]
 
-    bucket_names = [get_random_string(string.ascii_letters, 10) for _ in range(0, num_buckets)]
     try:
+        bucket_names = []
         documents = []
-        for bucket_name in bucket_names:
-            bucket = create_bucket(couchbase, bucket_name)
+        for _ in range(0, num_buckets):
+            bucket_name = couchbase.get_bucket()
             bucket_document_ids = []
             bucket_documents = []
             for _ in range(0, num_records):
                 bucket_document_ids.append(get_random_string())
                 bucket_documents.append({'id': f'id_{get_random_string()}', 'name': f'name_{get_random_string()}'})
-
-            insert_documents(bucket, bucket_document_ids, bucket_documents)
+            couchbase.insert_documents(bucket_document_ids, bucket_documents, bucket_name)
+            bucket_names.append(bucket_name)
             documents.extend(bucket_documents)
         documents.sort(key=sort_documents)
 
@@ -301,8 +263,7 @@ def test_big_amounts_of_records(sdc_builder, sdc_executor, couchbase, num_thread
                 assert record_key == document_key
                 assert record.field[record_key] == document[document_key]
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_names)
-        [couchbase.bucket_manager.drop_bucket(bucket_name) for bucket_name in bucket_names]
+        couchbase.cleanup_buckets()
 
 
 def test_empty_document(sdc_builder, sdc_executor, couchbase):
@@ -310,12 +271,11 @@ def test_empty_document(sdc_builder, sdc_executor, couchbase):
 
     couchbase_origin >> wiretap
     """
-    bucket_name = get_random_string(string.ascii_letters, 10)
     document_ids = [get_random_string()]
     documents = [{}]
     try:
-        bucket = create_bucket(couchbase, bucket_name)
-        insert_documents(bucket, document_ids, documents)
+        bucket_name = couchbase.get_bucket()
+        couchbase.insert_documents(document_ids, documents, bucket_name)
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -347,8 +307,7 @@ def test_empty_document(sdc_builder, sdc_executor, couchbase):
         assert records[0].header.values[TYPE_HEADER] == 'json'
         assert records[0].field == {}
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
 
 
 @pytest.mark.parametrize('num_threads', [1, 3])
@@ -360,13 +319,14 @@ def test_events(sdc_builder, sdc_executor, couchbase, num_threads, num_buckets):
     couchbase_origin >> trash
     couchbase_origin >= wiretap.destination
     """
-    bucket_names = [get_random_string(string.ascii_letters, 10) for _ in range(0, num_buckets)]
     document_ids = DEFAULT_DOCUMENT_IDS
     documents = DEFAULT_DOCUMENTS
     try:
-        for bucket_name in bucket_names:
-            bucket = create_bucket(couchbase, bucket_name)
-            insert_documents(bucket, document_ids, documents)
+        bucket_names = []
+        for _ in range(0, num_buckets):
+            bucket_name = couchbase.get_bucket()
+            couchbase.insert_documents(document_ids, documents, bucket_name)
+            bucket_names.append(bucket_name)
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -404,8 +364,7 @@ def test_events(sdc_builder, sdc_executor, couchbase, num_threads, num_buckets):
         assert event_records[num_buckets].header.values['sdc.event.type'] == 'no-more-data'
         assert event_records[num_buckets].field['record-count'] == num_buckets * len(documents)
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_names)
-        [couchbase.bucket_manager.drop_bucket(bucket_name) for bucket_name in bucket_names]
+        couchbase.cleanup_buckets()
 
 
 def test_multiple_no_more_data(sdc_builder, sdc_executor, couchbase):
@@ -416,12 +375,11 @@ def test_multiple_no_more_data(sdc_builder, sdc_executor, couchbase):
     couchbase_origin >> records_wiretap.destination
     couchbase_origin >= events_wiretap.destination
     """
-    bucket_name = get_random_string(string.ascii_letters, 10)
     try:
-        bucket = create_bucket(couchbase, bucket_name)
+        bucket_name = couchbase.get_bucket()
         document_ids = ['doc_1', 'doc_2', 'doc_3']
         documents_1 = [{'id': 1, 'name': 'Roger'}, {'id': 2, 'name': 'Rafael'}, {'id': 3, 'name': 'Carlos'}]
-        insert_documents(bucket, document_ids, documents_1)
+        couchbase.insert_documents(document_ids, documents_1, bucket_name)
 
         # Build the origin pipeline
         builder = sdc_builder.get_pipeline_builder()
@@ -440,7 +398,7 @@ def test_multiple_no_more_data(sdc_builder, sdc_executor, couchbase):
 
         document_ids = ['doc_4', 'doc_5', 'doc_6']
         documents_2 = [{'id': 4, 'name': 'Joaquin'}, {'id': 5, 'name': 'Bo'}, {'id': 6, 'name': 'Diaz'}]
-        insert_documents(bucket, document_ids, documents_2)
+        couchbase.insert_documents(document_ids, documents_2, bucket_name)
 
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', len(documents_1) + len(documents_2))
         sdc_executor.stop_pipeline(pipeline)
@@ -461,5 +419,4 @@ def test_multiple_no_more_data(sdc_builder, sdc_executor, couchbase):
                 assert record_key == document_key
                 assert record.field[record_key] == document[document_key]
     finally:
-        logger.info('Deleting %s Couchbase bucket ...', bucket_name)
-        couchbase.bucket_manager.drop_bucket(bucket_name)
+        couchbase.cleanup_buckets()
