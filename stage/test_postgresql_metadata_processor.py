@@ -156,7 +156,7 @@ def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, databa
     processor.set_attributes(table_name=destination_table_name,
                              omit_constraints_when_creating_tables=omit_constraints_when_creating_tables)
 
-    if Version(sdc_builder.version) >= Version('5.8.0') and not omit_constraints_when_creating_tables:
+    if Version(sdc_builder.version) >= Version('5.9.0') and not omit_constraints_when_creating_tables:
         processor.set_attributes(query_the_origin_table=True)
 
     wiretap = pipeline_builder.add_wiretap()
@@ -224,7 +224,7 @@ def test_omit_constraints_when_creating_tables(sdc_builder, sdc_executor, databa
 
 
 @database('postgresql')
-@sdc_min_version('5.8.0')
+@sdc_min_version('5.9.0')
 def test_retrieve_primary_key_constraints_from_the_records(
         sdc_builder,
         sdc_executor,
