@@ -141,6 +141,10 @@ def test_pulsar_producer_with_primitive_schema(sdc_builder, sdc_executor, pulsar
         assert msgs_received[0] == input_text
     except (sdk.exceptions.RunError, sdk.exceptions.StartError, sdk.exceptions.StartingError) as e:
         # StageException because in this case the pulsar schema is a stage level configuration
+        # Added StartingError to except block as sometimes it reaches the except block quickly without giving much time
+        # time to the pipeline to reach START_ERROR from STARTING_ERROR, that's why we need to wait for status to reach
+        # START_ERROR
+        sdc_executor.get_pipeline_status(pipeline).wait_for_status(status='START_ERROR', ignore_errors=True)
         assert error_code is not None
         assert error_code in e.message
     finally:
