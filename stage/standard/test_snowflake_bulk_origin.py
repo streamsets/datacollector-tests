@@ -18,7 +18,7 @@ import string
 
 import pytest
 from streamsets.testframework.markers import snowflake, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +166,8 @@ def test_data_types(sdc_builder, sdc_executor, snowflake, read_values_as_string)
 
     for i in range(0, len(DATA_TYPES_SNOWFLAKE)):
         db_type = DATA_TYPES_SNOWFLAKE[i][0]
+        if Version(sdc_builder.version) < Version('5.8.0') and db_type == 'GEOGRAPHY':
+            continue
         db_input_data = DATA_TYPES_SNOWFLAKE[i][1]
         if read_values_as_string:
             expected_type = 'STRING'
@@ -188,8 +190,12 @@ def test_data_types(sdc_builder, sdc_executor, snowflake, read_values_as_string)
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location='INTERNAL',
                                     snowflake_stage_name=stage_name,
-                                    read_values_as_string=read_values_as_string,
-                                    table_or_view_configuration=[{'inclusionPattern': table_name}])
+                                    read_values_as_string=read_values_as_string)
+
+    if Version(sdc_builder.version) >= Version('5.8.0'):
+        snowflake_origin.set_attributes(table_or_view_configuration=[{'inclusionPattern': table_name}])
+    else:
+        snowflake_origin.set_attributes(table_config=[{'inclusionPattern': table_name}])
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -243,6 +249,8 @@ def test_data_types_null_values(sdc_builder, sdc_executor, snowflake, read_value
 
     for i in range(0, len(DATA_TYPES_SNOWFLAKE)):
         db_type = DATA_TYPES_SNOWFLAKE[i][0]
+        if Version(sdc_builder.version) < Version('5.8.0') and db_type == 'GEOGRAPHY':
+            continue
         expected_data = None
         if read_values_as_string:
             expected_type = 'STRING'
@@ -264,8 +272,12 @@ def test_data_types_null_values(sdc_builder, sdc_executor, snowflake, read_value
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location='INTERNAL',
                                     snowflake_stage_name=stage_name,
-                                    read_values_as_string=read_values_as_string,
-                                    table_or_view_configuration=[{'inclusionPattern': table_name}])
+                                    read_values_as_string=read_values_as_string)
+
+    if Version(sdc_builder.version) >= Version('5.8.0'):
+        snowflake_origin.set_attributes(table_or_view_configuration=[{'inclusionPattern': table_name}])
+    else:
+        snowflake_origin.set_attributes(table_config=[{'inclusionPattern': table_name}])
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -317,8 +329,12 @@ def test_object_names(sdc_builder, sdc_executor, snowflake, database_name_catego
     pipeline_builder = sdc_builder.get_pipeline_builder()
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location='INTERNAL',
-                                    snowflake_stage_name=stage_name,
-                                    table_or_view_configuration=[{'inclusionPattern': table_name}])
+                                    snowflake_stage_name=stage_name)
+
+    if Version(sdc_builder.version) >= Version('5.8.0'):
+        snowflake_origin.set_attributes(table_or_view_configuration=[{'inclusionPattern': table_name}])
+    else:
+        snowflake_origin.set_attributes(table_config=[{'inclusionPattern': table_name}])
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -378,8 +394,12 @@ def test_empty_table(sdc_builder, sdc_executor, snowflake, stage_location, compr
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location=stage_location,
                                     snowflake_stage_name=stage_name,
-                                    table_or_view_configuration=[{'inclusionPattern': table_name}],
                                     compressed_file=compressed_file)
+
+    if Version(sdc_builder.version) >= Version('5.8.0'):
+        snowflake_origin.set_attributes(table_or_view_configuration=[{'inclusionPattern': table_name}])
+    else:
+        snowflake_origin.set_attributes(table_config=[{'inclusionPattern': table_name}])
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
@@ -429,8 +449,12 @@ def test_null_values(sdc_builder, sdc_executor, snowflake, read_values_as_string
     snowflake_origin = pipeline_builder.add_stage(name=BULK_STAGE_NAME)
     snowflake_origin.set_attributes(stage_location='INTERNAL',
                                     snowflake_stage_name=stage_name,
-                                    read_values_as_string=read_values_as_string,
-                                    table_or_view_configuration=[{'inclusionPattern': table_name}])
+                                    read_values_as_string=read_values_as_string)
+
+    if Version(sdc_builder.version) >= Version('5.8.0'):
+        snowflake_origin.set_attributes(table_or_view_configuration=[{'inclusionPattern': table_name}])
+    else:
+        snowflake_origin.set_attributes(table_config=[{'inclusionPattern': table_name}])
 
     wiretap = pipeline_builder.add_wiretap()
     snowflake_origin >> wiretap.destination
