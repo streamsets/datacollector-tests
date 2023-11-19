@@ -2499,7 +2499,7 @@ def test_missing_field(sdc_builder, sdc_executor, gcp, file_format, use_defaults
 
         history = sdc_executor.get_pipeline_history(pipeline)
         if ignore_missing_fields:
-            if file_format == 'CSV':
+            if file_format == 'CSV' and Version(sdc_builder.version) >= Version('5.8.0'):
                 assert history.latest.metrics.counter('stage.GoogleBigQuery_01.errorRecords.counter').count == 1
                 assert len(data_from_bigquery) == 0
             else:
