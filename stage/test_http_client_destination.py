@@ -22,7 +22,7 @@ from collections import namedtuple
 from streamsets.sdk.exceptions import RunError
 from pretenders.common.constants import FOREVER
 from streamsets.testframework.markers import http, sdc_min_version
-from streamsets.testframework.utils import get_random_string
+from streamsets.testframework.utils import get_random_string, Version
 
 logger = logging.getLogger(__name__)
 
@@ -245,8 +245,11 @@ def test_http_destination_oauth2_token_retry(sdc_builder, sdc_executor, http_cli
         sdc_executor.start_pipeline(pipeline).wait_for_finished()
         pytest.fail('Test should have raised an Exception with HTTP_32 - HTTP_38 exception, but did not')
     except RunError as e:
-        assert 'HTTP_41' in e.message
-        assert 'HTTP_38' in str(sdc_executor.get_logs())
+        if request_option == 'one_request_per_batch' or Version(sdc_builder.version) >= Version('5.8.0'):
+            assert 'HTTP_41' in e.message
+            assert 'HTTP_38' in str(sdc_executor.get_logs())
+        else:
+            assert 'HTTP_38' in e.message
     finally:
         http_mock.delete_mock()
         oauth_http_mock.delete_mock()
