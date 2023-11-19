@@ -1873,7 +1873,7 @@ def test_jdbc_multitable_consumer_table_exclusion(sdc_builder, sdc_executor, dat
             if Version(sdc_executor.version) >= Version('5.8.0'):
                 assert "JDBC_INIT_04" in error.value.message, f'Expected a JDBC_INIT_04 error, got "{error.value.message}" instead'
             else:
-                assert "JDBC_06" in error.value.message, f'Expected a JDBC_06 error, got "{error.value.message}" instead'
+                assert "JDBC_66" in error.value.message, f'Expected a JDBC_66 error, got "{error.value.message}" instead'
 
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
