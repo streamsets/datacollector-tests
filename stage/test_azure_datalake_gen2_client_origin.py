@@ -531,6 +531,65 @@ def test_data_lake_origin_resume_offset(sdc_builder, sdc_executor, azure):
         dl_fs.rmdir(directory_name, recursive=True)
 
 
+@sdc_min_version('5.9.0')
+@pytest.mark.parametrize('initial_threads', [1, 10])
+def test_data_lake_origin_resume_parser_offset(sdc_builder, sdc_executor, azure, initial_threads):
+    """ Test for Data Lake origin stage. We do so by creating a file in Azure Data Lake Storage using the
+    STF client, then reading the file using the Data Lake Origin Stage, to assert data ingested by the pipeline
+    is the expected data from the file. The pipeline looks like:
+    The pipeline looks like:
+
+    azure_data_lake_origin >> wiretap
+    """
+    directory_name = get_random_string(string.ascii_letters, 10)
+    file_name = 'test-data.txt'
+    messages = [f'message{i}' for i in range(0, 2000)]
+
+    # Put files in the azure storage file system
+    dl_fs = azure.datalake.file_system
+    try:
+        dl_fs.mkdir(directory_name)
+        dl_fs.touch(f'{directory_name}/{file_name}')
+        dl_fs.write(f'{directory_name}/{file_name}', '\n'.join(msg for msg in messages))
+        time.sleep(15)  # we are waiting for filesystem consistency, as we are retrieving files lexicographically
+
+        # Build the origin pipeline
+        builder = sdc_builder.get_pipeline_builder()
+        wiretap = builder.add_wiretap()
+        azure_data_lake_origin = builder.add_stage(name=STAGE_NAME)
+        azure_data_lake_origin.set_attributes(data_format='TEXT',
+                                              max_batch_size_in_records=100,
+                                              number_of_threads=initial_threads,
+                                              common_path=f'/{directory_name}')
+
+        azure_data_lake_origin >> wiretap.destination
+
+        data_lake_origin_pipeline = builder.build().configure_for_environment(azure)
+        sdc_executor.add_pipeline(data_lake_origin_pipeline)
+
+        sdc_executor.start_pipeline(data_lake_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(data_lake_origin_pipeline, 'input_record_count', 100)
+        sdc_executor.stop_pipeline(data_lake_origin_pipeline, wait=True)
+        output_records_1 = [record.field['text'] for record in wiretap.output_records]
+
+        azure_data_lake_origin.set_attributes(number_of_threads=1)
+
+        wiretap.reset()
+        sdc_executor.start_pipeline(data_lake_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(data_lake_origin_pipeline, 'input_record_count',
+                                              len(messages) - len(output_records_1))
+        sdc_executor.stop_pipeline(data_lake_origin_pipeline, wait=False)
+        output_records_2 = [record.field['text'] for record in wiretap.output_records]
+
+        # assert Data Lake files generated
+        assert messages == output_records_1 + output_records_2, \
+            f'''Number of records read {output_records_1 + output_records_2} should have been the
+             same as messages written {messages}'''
+    finally:
+        logger.info('Azure Data Lake directory %s and underlying files will be deleted.', directory_name)
+        dl_fs.rmdir(directory_name, recursive=True)
+
+
 @pytest.mark.parametrize('path_pattern', ['**', '**/*.txt', '*', '*/*', '*/*1/*', 'a/*', 'a/**', 'b/b*/**', 'c'])
 def test_data_lake_origin_path_pattern(sdc_builder, sdc_executor, azure, path_pattern):
     """Test prefix pattern expressions for Data Lake origin.
