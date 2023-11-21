@@ -152,6 +152,7 @@ def test_data_lake_origin_with_avro(sdc_builder, sdc_executor, azure):
         dl_fs.rmdir(directory_name, recursive=True)
 
 
+@sdc_min_version('5.8.0')
 def test_data_lake_origin_with_parquet(sdc_builder, sdc_executor, azure):
     """Ensure that the origin can properly read Parquet document."""
     directory_name = get_random_string(string.ascii_letters, 10)
