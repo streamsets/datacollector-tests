@@ -32,3 +32,9 @@ def cleanup(request):
             yield exit_stack.callback
     except Exception as exception:
         logger.warning(f"Error during cleanup of {request.node.name}: {exception}")
+
+
+@pytest.fixture()
+def test_name(request) -> str:
+    """Returns the parametrized name of the test requesting the fixture."""
+    return f"{request.node.name}"
