@@ -207,7 +207,7 @@ def test_object_names_path(sdc_builder, sdc_executor, aws, test_name, path_name)
         # starting slash is not allows by aws sdk, and we actually remove trailing spaces in common prefix
         # we test this using prefix pattern
         # note this test case might take not only more time, but also timeout when the bucket has lots of items
-        prefix_pattern = f'{s3_key}*'
+        prefix_pattern = f'{s3_key}/{pattern}*'
         common_prefix = ''
     else:
         prefix_pattern = f'**/{pattern}*'
