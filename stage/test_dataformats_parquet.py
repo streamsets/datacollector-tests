@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 @sdc_min_version('5.7.0')
 @pytest.mark.parametrize('parquet_schema_location', ['HEADER', 'INLINE', 'INFER'])
-def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location):
+@pytest.mark.parametrize('parquet_compression_codec ', ['UNCOMPRESSED', 'GZIP', 'LZO', 'SNAPPY'])
+def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location, parquet_compression_codec):
     """Basic test to check we are able to save records in a parquet file.
 
        raw data source [>> schema generator] >> LocalFS
@@ -66,6 +67,7 @@ def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location):
     local_fs = pipeline_builder.add_stage('Local FS', type='destination')
     local_fs.set_attributes(data_format='PARQUET',
                             parquet_schema_location=parquet_schema_location,
+                            parquet_compression_codec=parquet_compression_codec,
                             directory_template=temp_dir)
     if parquet_schema_location == 'INLINE':
         local_fs.set_attributes(parquet_schema='message test_schema { required int32 id; required binary text (UTF8); }')
@@ -81,6 +83,10 @@ def test_generate_parquet(sdc_builder, sdc_executor, parquet_schema_location):
             with pytest.raises(Exception) as error:
                 sdc_executor.start_pipeline(pipeline).wait_for_finished()
             assert "DATA_FORMAT_305" in error.value.message, f'Expected a DATA_FORMAT_305 error, got "{error.value.message}" instead'
+        elif parquet_compression_codec == 'LZO':
+            with pytest.raises(Exception) as error:
+                sdc_executor.start_pipeline(pipeline).wait_for_finished()
+            assert "DATA_FORMAT_202" in error.value.message, f'Expected a DATA_FORMAT_202 error, got "{error.value.message}" instead'
         else:
             sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
