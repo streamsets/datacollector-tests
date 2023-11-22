@@ -434,7 +434,7 @@ def test_jdbc_multitable_consumer_valid_offset_configuration(sdc_builder, sdc_ex
         connection.execute(table.insert(), ROWS_IN_DATABASE)
         sdc_executor.add_pipeline(pipeline)
 
-        if offset_column == 'age' or offset_column == 'name':
+        if Version(sdc_executor.version) >= Version('5.8.0') and (offset_column == 'age' or offset_column == 'name'):
             with pytest.raises(Exception) as error:
                 sdc_executor.start_pipeline(pipeline=pipeline).wait_for_finished()
 
