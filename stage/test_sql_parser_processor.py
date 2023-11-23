@@ -365,9 +365,6 @@ def test_sql_parser_dual_parser(sdc_builder,
     """
     Check SQL Parser from CDC with several options and both SQL parsers available.
     """
-    # There was a typo in the TABLE_SCHEMA field of the debug data,
-    # the key was "TABLE_SCHEM" instead of "TABLE_SCHEMA". Fixed in 5.8.0.
-    table_schema_keyword = "TABLE_SCHEM" if Version(sdc_builder.version) < Version("5.8.0") else "TABLE_SCHEMA"
 
     multithreading_parameters = {}
     if multithreading:
@@ -675,6 +672,9 @@ def test_sql_parser_dual_parser(sdc_builder,
             assert ('oracle.cdc.redoValue' in record.header.values), error_message
             assert ('oracle.cdc.operation' in record.header.values), error_message
             assert ('sdc.operation.type' in record.header.values), error_message
+            # There was a typo in the TABLE_SCHEMA field of the debug data,
+            # the key was "TABLE_SCHEM" instead of "TABLE_SCHEMA". Fixed in 5.8.0.
+            table_schema_keyword = "TABLE_SCHEM" if Version(sdc_executor.version) < Version("5.8.0") else "TABLE_SCHEMA"
             assert (table_schema_keyword in record.header.values), error_message
             assert ('TABLE_NAME' in record.header.values), error_message
             assert ('oracle.cdc.table' in record.header.values), error_message
