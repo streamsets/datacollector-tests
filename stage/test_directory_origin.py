@@ -25,6 +25,7 @@ import textwrap
 from uuid import uuid4
 import re
 
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -115,6 +116,9 @@ def list_dir(sdc_executor):
                                  file_name_pattern_mode='GLOB',
                                  files_directory=files_directory,
                                  process_subdirectories=recursive)
+        if Version(sdc_executor.version) >= Version('5.9.0'):
+            directory.set_attributes(file_processing_delay_in_ms=0)
+
         trash = builder.add_stage('Trash')
         events_wiretap = builder.add_wiretap()
 
@@ -165,9 +169,16 @@ def test_directory_origin(sdc_builder, sdc_executor):
 
         pipeline_builder = sdc_builder.get_pipeline_builder()
         directory = pipeline_builder.add_stage('Directory', type='origin')
-        directory.set_attributes(data_format='TEXT', file_name_pattern='sdc*.txt', file_name_pattern_mode='GLOB',
-                                 file_post_processing='DELETE', files_directory=tmp_directory,
-                                 process_subdirectories=True, read_order='TIMESTAMP')
+        directory.set_attributes(data_format='TEXT',
+                                 file_name_pattern='sdc*.txt',
+                                 file_name_pattern_mode='GLOB',
+                                 file_post_processing='DELETE',
+                                 files_directory=tmp_directory,
+                                 process_subdirectories=True,
+                                 read_order='TIMESTAMP')
+        if Version(sdc_builder.version) >= Version('5.9.0'):
+            directory.set_attributes(file_processing_delay_in_ms=0)
+
         wiretap = pipeline_builder.add_wiretap()
         directory >> wiretap.destination
         directory_pipeline = pipeline_builder.build('Directory Origin pipeline')
@@ -229,10 +240,17 @@ def test_directory_origin_order_by_timestamp(sdc_builder, sdc_executor, no_of_th
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(batch_wait_time_in_secs=1,
-                             data_format='TEXT', file_name_pattern='sdc*.txt',
-                             file_name_pattern_mode='GLOB', file_post_processing='DELETE',
-                             files_directory=tmp_directory, process_subdirectories=True,
-                             read_order='TIMESTAMP', number_of_threads=no_of_threads)
+                             data_format='TEXT',
+                             file_name_pattern='sdc*.txt',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             number_of_threads=no_of_threads)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     trash = pipeline_builder.add_stage('Trash')
     directory >> trash
 
@@ -318,6 +336,9 @@ def test_directory_origin_in_whole_file_dataformat(sdc_builder, sdc_executor, no
                              number_of_threads=no_of_threads,
                              process_subdirectories=True,
                              read_order='TIMESTAMP')
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     localfs = pipeline_builder.add_stage('Local FS', type='destination')
     localfs.set_attributes(data_format='WHOLE_FILE',
                            file_name_expression='${record:attribute(\'filename\')}')
@@ -382,6 +403,8 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
                              read_order='LEXICOGRAPHICAL',
                              batch_size_in_recs=5,
                              file_post_processing='DELETE')
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     local_fs = pipeline_builder.add_stage('Local FS', type='destination')
     local_fs.set_attributes(data_format='WHOLE_FILE',
@@ -418,6 +441,9 @@ def test_directory_origin_multiple_batches_no_initial_file(sdc_builder, sdc_exec
                                read_order='LEXICOGRAPHICAL',
                                batch_size_in_recs=5,
                                file_post_processing='DELETE')
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     local_fs_2 = pipeline_builder.add_stage('Local FS', type='destination')
     local_fs_2.set_attributes(data_format='WHOLE_FILE',
                               file_name_expression='${record:attribute(\'filename\')}',
@@ -539,6 +565,9 @@ mv $FILENAME $SUBDIR/${{WORD}}_$COUNT.txt.gz
                              read_order='TIMESTAMP',
                              compression_format='COMPRESSED_FILE',
                              batch_size_in_recs=batch_size)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     trash = pipeline_builder.add_stage('Trash')
 
     directory >> trash
@@ -567,9 +596,16 @@ def test_directory_origin_avro_produce_less_file(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='AVRO', file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=1)
+    directory.set_attributes(data_format='AVRO',
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             batch_size_in_recs=1)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     records_wiretap = pipeline_builder.add_wiretap()
     events_wiretap = pipeline_builder.add_wiretap()
@@ -611,11 +647,20 @@ def test_directory_origin_multiple_threads_no_more_data_sent_after_all_data_read
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='DELIMITED', header_line='WITH_HEADER', file_name_pattern='test*.csv',
-                             file_name_pattern_mode='GLOB', file_post_processing='NONE',
-                             files_directory='/resources/resources/directory_origin', read_order='LEXICOGRAPHICAL',
-                             batch_size_in_recs=10, batch_wait_time_in_secs=60,
-                             number_of_threads=3, on_record_error='STOP_PIPELINE')
+    directory.set_attributes(data_format='DELIMITED',
+                             header_line='WITH_HEADER',
+                             file_name_pattern='test*.csv',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='NONE',
+                             files_directory='/resources/resources/directory_origin',
+                             read_order='LEXICOGRAPHICAL',
+                             batch_size_in_recs=10,
+                             batch_wait_time_in_secs=60,
+                             number_of_threads=3,
+                             on_record_error='STOP_PIPELINE')
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     wiretap = pipeline_builder.add_wiretap()
     directory >> wiretap.destination
 
@@ -665,9 +710,16 @@ def test_directory_origin_avro_produce_full_file(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='AVRO', file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=10)
+    directory.set_attributes(data_format='AVRO',
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             batch_size_in_recs=10)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     records_wiretap = pipeline_builder.add_wiretap()
     events_wiretap = pipeline_builder.add_wiretap()
@@ -719,6 +771,8 @@ def test_directory_origin_bom_file(sdc_builder, sdc_executor, csv_record_type):
                              process_subdirectories=True,
                              read_order='TIMESTAMP',
                              root_field_type=csv_record_type)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     wiretap = pipeline_builder.add_wiretap()
 
@@ -760,10 +814,16 @@ def test_directory_origin_csv_produce_full_file(sdc_builder, sdc_executor, csv_r
     directory = pipeline_builder.add_stage('Directory', type='origin')
 
     directory.set_attributes(data_format='DELIMITED',
-                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP',
-                             root_field_type=csv_record_type, batch_size_in_recs=10)
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             root_field_type=csv_record_type,
+                             batch_size_in_recs=10)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     records_wiretap = pipeline_builder.add_wiretap()
     events_wiretap = pipeline_builder.add_wiretap()
@@ -815,10 +875,17 @@ def test_directory_origin_csv_produce_less_file(sdc_builder, sdc_executor, csv_r
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='DELIMITED',
-                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE', files_directory=tmp_directory,
-                             header_line=header_line, process_subdirectories=True,
-                             read_order='TIMESTAMP', root_field_type=csv_record_type, batch_size_in_recs=1)
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             header_line=header_line,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             root_field_type=csv_record_type,
+                             batch_size_in_recs=1)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     records_wiretap = pipeline_builder.add_wiretap()
     events_wiretap = pipeline_builder.add_wiretap()
@@ -877,10 +944,17 @@ def test_directory_origin_csv_custom_file(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
-                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP')
+    directory.set_attributes(data_format='DELIMITED',
+                             delimiter_format_type='CUSTOM',
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP')
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     wiretap = pipeline_builder.add_wiretap()
 
     directory >> wiretap.destination
@@ -918,12 +992,20 @@ def test_directory_origin_multi_char_delimited(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='DELIMITED', delimiter_format_type='MULTI_CHARACTER',
+    directory.set_attributes(data_format='DELIMITED',
+                             delimiter_format_type='MULTI_CHARACTER',
                              multi_character_field_delimiter=delim,
                              header_line='WITH_HEADER',
-                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE', files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=3)
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             batch_size_in_recs=3)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     wiretap = pipeline_builder.add_wiretap()
 
     directory >> wiretap.destination
@@ -961,12 +1043,19 @@ def test_directory_origin_csv_custom_comment_file(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
-                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+    directory.set_attributes(data_format='DELIMITED',
+                             delimiter_format_type='CUSTOM',
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
                              enable_comments=True,
                              file_post_processing='DELETE',
                              files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=10)
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             batch_size_in_recs=10)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     wiretap = pipeline_builder.add_wiretap()
 
     directory >> wiretap.destination
@@ -1000,12 +1089,19 @@ def test_directory_origin_custom_csv_empty_line_file(sdc_builder, sdc_executor, 
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='DELIMITED', delimiter_format_type='CUSTOM',
+    directory.set_attributes(data_format='DELIMITED',
+                             delimiter_format_type='CUSTOM',
                              ignore_empty_lines=ignore_empty_line,
-                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
                              file_post_processing='DELETE',
                              files_directory=tmp_directory,
-                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=10)
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             batch_size_in_recs=10)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     wiretap = pipeline_builder.add_wiretap()
 
     expected_record_size = len(csv_records)
@@ -1049,10 +1145,16 @@ def test_directory_origin_csv_record_overrun_on_batch_boundary(sdc_builder, sdc_
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
     directory.set_attributes(data_format='DELIMITED',
-                             file_name_pattern='sdc*', file_name_pattern_mode='GLOB',
-                             file_post_processing='DELETE', files_directory=tmp_directory,
+                             file_name_pattern='sdc*',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='DELETE',
+                             files_directory=tmp_directory,
                              max_record_length_in_chars=10,
-                             process_subdirectories=True, read_order='TIMESTAMP', batch_size_in_recs=batch_size)
+                             process_subdirectories=True,
+                             read_order='TIMESTAMP',
+                             batch_size_in_recs=batch_size)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'])
@@ -1128,6 +1230,9 @@ def test_directory_post_delete_on_batch_failure(sdc_builder, sdc_executor):
                              files_directory=tmp_directory,
                              process_subdirectories=True,
                              read_order='TIMESTAMP')
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     shell = builder.add_stage('Shell')
     shell.script = "return -1"
     shell.on_record_error = "STOP_PIPELINE"
@@ -1148,6 +1253,9 @@ def test_directory_post_delete_on_batch_failure(sdc_builder, sdc_executor):
                           files_directory=tmp_directory,
                           process_subdirectories=True,
                           read_order='TIMESTAMP')
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        origin.set_attributes(file_processing_delay_in_ms=0)
+
     wiretap = builder.add_wiretap()
 
     origin >> wiretap.destination
@@ -1173,6 +1281,9 @@ def test_directory_allow_late_directory_wait_time(sdc_builder, sdc_executor):
     directory.file_name_pattern = 'sdc*.txt'
     directory.files_directory = '/i/do/not/exists'
     directory.allow_late_directory = True
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.file_processing_delay_in_ms = 0
+
     trash = builder.add_stage('Trash')
 
     directory >> trash
@@ -1217,6 +1328,8 @@ def test_directory_origin_read_different_file_type(sdc_builder, sdc_executor):
                              error_directory=tmp_directory,
                              read_order='LEXICOGRAPHICAL',
                              batch_wait_time_in_secs=1)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     pipeline_finisher = builder.add_stage('Pipeline Finisher Executor')
     pipeline_finisher.set_attributes(preconditions=['${record:eventType() == \'no-more-data\'}'])
@@ -1268,6 +1381,8 @@ def test_directory_origin_multiple_threads_timestamp_ordering(sdc_builder, sdc_e
                              process_subdirectories=True,
                              read_order='TIMESTAMP',
                              file_post_processing='DELETE')
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     trash = pipeline_builder.add_stage('Trash')
 
@@ -1363,6 +1478,9 @@ def test_directory_origin_error_file_to_error_dir(sdc_builder, sdc_executor):
                              data_format='DELIMITED',
                              header_line='WITH_HEADER',
                              delimiter_format_type='TDF')  # Tab separated values.
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     trash = builder.add_stage('Trash')
     directory >> trash
 
@@ -1370,6 +1488,8 @@ def test_directory_origin_error_file_to_error_dir(sdc_builder, sdc_executor):
     sdc_executor.add_pipeline(pipeline_dir)
 
     sdc_executor.start_pipeline(pipeline_dir)
+    sdc_executor.wait_for_pipeline_metric(pipeline_dir, 'input_record_count', 1, timeout_sec=300)
+    time.sleep(5)
 
     assert 1 == len(sdc_executor.get_stage_errors(pipeline_dir, directory))
     assert "file2" in sdc_executor.get_stage_errors(pipeline_dir, directory)[0].error_message
@@ -1389,6 +1509,9 @@ def test_directory_origin_error_file_to_error_dir(sdc_builder, sdc_executor):
                                    data_format='DELIMITED',
                                    header_line='WITH_HEADER',
                                    delimiter_format_type='TDF')  # Tab separated values.
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     trash_2 = builder.add_stage('Trash')
     directory_error >> trash_2
 
@@ -1452,6 +1575,9 @@ def test_directory_no_post_process_older_files(sdc_builder, sdc_executor, read_o
                              files_directory=files_directory,
                              first_file_to_process=FIRST_FILE_TO_PROCESS,
                              read_order=read_order)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
+
     trash = pipeline_builder.add_stage('Trash')
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     pipeline_finisher.set_attributes(preconditions=["${record:eventType() == 'no-more-data'}"],
@@ -1687,10 +1813,16 @@ def test_directory_origin_stop_resume(sdc_builder, sdc_executor):
 
     pipeline_builder = sdc_builder.get_pipeline_builder()
     directory = pipeline_builder.add_stage('Directory', type='origin')
-    directory.set_attributes(data_format='DELIMITED', header_line='WITH_HEADER', file_name_pattern='test4.csv',
-                             file_name_pattern_mode='GLOB', file_post_processing='NONE',
-                             files_directory='/resources/resources/directory_origin', read_order='LEXICOGRAPHICAL',
+    directory.set_attributes(data_format='DELIMITED',
+                             header_line='WITH_HEADER',
+                             file_name_pattern='test4.csv',
+                             file_name_pattern_mode='GLOB',
+                             file_post_processing='NONE',
+                             files_directory='/resources/resources/directory_origin',
+                             read_order='LEXICOGRAPHICAL',
                              batch_size_in_recs=1)
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     wiretap = pipeline_builder.add_wiretap()
     pipeline_finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
@@ -1737,6 +1869,8 @@ def _write_pipeline(sdc_executor, number_files, tmp_write_directory, tmp_in_dire
                              batch_size_in_recs=100,
                              process_subdirectories=True,
                              read_order='TIMESTAMP')
+    if Version(sdc_executor.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     local_fs = pipeline_builder.add_stage('Local FS', type='destination')
     local_fs.set_attributes(data_format='WHOLE_FILE',
@@ -1813,6 +1947,8 @@ def test_directory_origin_read_while_writing(sdc_builder, sdc_executor):
                                  batch_size_in_recs=100,
                                  process_subdirectories=True,
                                  read_order='TIMESTAMP')
+        if Version(sdc_builder.version) >= Version('5.9.0'):
+            directory.set_attributes(file_processing_delay_in_ms=0)
 
         local_fs = pipeline_builder.add_stage('Local FS', type='destination')
         local_fs.set_attributes(data_format='TEXT',
@@ -1837,6 +1973,8 @@ def test_directory_origin_read_while_writing(sdc_builder, sdc_executor):
                                        batch_size_in_recs=100,
                                        process_subdirectories=True,
                                        read_order='TIMESTAMP')
+        if Version(sdc_builder.version) >= Version('5.9.0'):
+            directory.set_attributes(file_processing_delay_in_ms=0)
 
         local_fs_write = pipeline_builder.add_stage('Local FS', type='destination')
         local_fs_write.set_attributes(data_format='TEXT',
@@ -1922,6 +2060,9 @@ def test_directory_origin_add_missing_dirs(sdc_builder, sdc_executor, total_time
                                 read_order='TIMESTAMP',
                                 process_subdirectories=True,
                                 data_format="DELIMITED")
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        rddir_source.set_attributes(file_processing_delay_in_ms=0)
+
     rddir_wiretap = rddir_builder.add_wiretap()
     rddir_source >> rddir_wiretap.destination
     rddir_pipeline = rddir_builder.build()
@@ -1979,6 +2120,9 @@ def test_directory_origin_ignore_tmp_files(sdc_builder, sdc_executor,
                                    file_name_pattern="*",
                                    ignore_temporary_files=_ignore_temporary_files,
                                    data_format="JSON")
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        consumer_origin.set_attributes(file_processing_delay_in_ms=0)
+
     consumer_trash = consumer_builder.add_stage('Trash')
     consumer_origin >> consumer_trash
     consumer_pipeline = consumer_builder.build()
@@ -2041,6 +2185,8 @@ def test_directory_origin_number_of_batches_generated(
             batch_size_in_recs=batch_size_in_recs,
             number_of_threads=num_threads
         )
+        if Version(sdc_builder.version) >= Version('5.9.0'):
+            directory.set_attributes(file_processing_delay_in_ms=0)
 
         wiretap = pipeline_builder.add_wiretap()
 
@@ -2051,8 +2197,9 @@ def test_directory_origin_number_of_batches_generated(
         sdc_executor.start_pipeline(pipeline)
         sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 100)
 
-        # Wait for 60 seconds to give time for further batches to be generated
-        time.sleep(60)
+        # Wait for 55 seconds to give time for further batches to be generated
+        # (a bit less than the default 60 seconds poolingTimeoutSecs to avoid flakiness)
+        time.sleep(55)
         sdc_executor.stop_pipeline(pipeline)
 
         # Assert that we get the correct number of batches
@@ -2117,6 +2264,8 @@ def test_directory_origin_compression_library_snappy(sdc_builder, sdc_executor, 
         compression_format='COMPRESSED_FILE',
         compression_library='SNAPPY'
     )
+    if Version(sdc_builder.version) >= Version('5.9.0'):
+        directory.set_attributes(file_processing_delay_in_ms=0)
 
     local_fs = pipeline_builder.add_stage('Local FS')
     local_fs.set_attributes(
