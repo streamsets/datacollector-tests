@@ -282,8 +282,9 @@ def test_snowflake_executor_warehouse(sdc_builder, sdc_executor, snowflake, ware
         assert data_from_database == [('test', 42)]
     except StartError as e:
         if warehouse == "NOT_A_WH":
-            assert "SNOWFLAKE_16 - describe warehouse \"NOT_A_WH\" failed" in e.message
-            assert "Warehouse 'NOT_A_WH' does not exist or not authorized." in e.message
+            message = str(e.message).replace('"', '').replace("'", '')
+            assert "SNOWFLAKE_16 - describe warehouse NOT_A_WH failed" in message
+            assert "Warehouse NOT_A_WH does not exist or not authorized." in message
     finally:
         engine.execute(f"drop table STF_DB.STF_SCHEMA.{table_name}")
         engine.dispose()
