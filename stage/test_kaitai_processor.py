@@ -132,10 +132,15 @@ def test_kaitai_processor_gif_dir_origin(sdc_builder, sdc_executor, number_of_th
                                  kaitai_struct_file_path=KSY_FILE_LOCATION)
 
     wiretap = pipeline_builder.add_wiretap()
+    finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
+
     directory >> kaitai_struct >> wiretap.destination
+    directory >= finisher
+
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
     validate_output(wiretap)
 
 
