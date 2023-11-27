@@ -16,6 +16,7 @@ import logging
 import os
 
 import pytest
+from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import aws, sdc_min_version
 from streamsets.testframework.utils import get_random_string
 
@@ -28,7 +29,7 @@ GIF_DIRECTORY_RELATIVE = "resources/kaitai_processor/gif"
 
 S3_SANDBOX_PREFIX = 'sandbox'
 
-pytestmark = sdc_min_version('5.8.0')
+pytestmark = sdc_min_version('5.6.0')
 
 
 def build_pipeline_with_inline_ksy(sdc_builder, number_of_threads):
@@ -39,7 +40,6 @@ def build_pipeline_with_inline_ksy(sdc_builder, number_of_threads):
                              file_name_pattern='*.gif',
                              file_name_pattern_mode='GLOB',
                              files_directory=GIF_DIRECTORY,
-                             read_order='TIMESTAMP',
                              max_data_size_in_bytes=15000000,
                              number_of_threads=number_of_threads)
 
@@ -47,11 +47,9 @@ def build_pipeline_with_inline_ksy(sdc_builder, number_of_threads):
     kaitai_struct.set_attributes(kaitai_struct_source='INLINE',
                                  kaitai_struct_definition=get_kaitai_definition(KAITAI_FILE_RELATIVE))
 
-    finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
     wiretap = pipeline_builder.add_wiretap()
 
     directory >> kaitai_struct >> wiretap.destination
-    directory >= finisher
 
     return pipeline_builder, wiretap
 
@@ -62,17 +60,19 @@ def get_kaitai_definition(file_path):
     return ksy_definition
 
 
-def validate_output(wiretap):
+def validate_output(sdc_builder, wiretap):
     output_records = wiretap.output_records
-    assert len(output_records) == 1
+    assert len(output_records) == 9
     for record in output_records:
         assert 'hdr' in record.field
         assert 'logicalScreenDescriptor' in record.field
         assert 'globalColorTable' in record.field
         assert 'blocks' in record.field
         assert record.field['hdr']['version'] == "89a"
-        assert record.field['hdr']['magic'] == b'GIF'
-
+        if Version(sdc_builder.version) < Version('5.8.0'):
+            assert record.field['hdr']['magic'] == "R0lG"
+        else:
+            assert record.field['hdr']['magic'] == b'GIF'
 
 def skip_if_java8(sdc_builder):
     sdc_host_info = sdc_builder.api_client.get_health_report('HealthHostInformation').response.json()
@@ -87,8 +87,10 @@ def test_kaitai_processor_gif_dir_origin_inline(sdc_builder, sdc_executor, numbe
     pipeline_builder, wiretap = build_pipeline_with_inline_ksy(sdc_builder, number_of_threads)
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
-    validate_output(wiretap)
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9)
+    sdc_executor.stop_pipeline(pipeline)
+    validate_output(sdc_builder, wiretap)
 
 
 @pytest.mark.parametrize('number_of_threads', [1, 5, 10])
@@ -103,14 +105,17 @@ def test_kaitai_processor_gif_dir_origin_inline_multiple_pipelines(sdc_builder, 
     sdc_executor.add_pipeline(pipeline1)
     sdc_executor.add_pipeline(pipeline2)
 
-    pipeline_cmd_1 = sdc_executor.start_pipeline(pipeline1)
-    pipeline_cmd_2 = sdc_executor.start_pipeline(pipeline2)
+    sdc_executor.start_pipeline(pipeline1)
+    sdc_executor.start_pipeline(pipeline2)
 
-    pipeline_cmd_1.wait_for_finished()
-    pipeline_cmd_2.wait_for_finished()
+    sdc_executor.wait_for_pipeline_metric(pipeline1, 'input_record_count', 9)
+    sdc_executor.wait_for_pipeline_metric(pipeline2, 'input_record_count', 9)
 
-    validate_output(wiretap1)
-    validate_output(wiretap2)
+    sdc_executor.stop_pipeline(pipeline1)
+    sdc_executor.stop_pipeline(pipeline2)
+
+    validate_output(sdc_builder, wiretap1)
+    validate_output(sdc_builder, wiretap2)
 
 
 @pytest.mark.parametrize('number_of_threads', [1, 5, 10])
@@ -123,7 +128,6 @@ def test_kaitai_processor_gif_dir_origin(sdc_builder, sdc_executor, number_of_th
                              file_name_pattern='*.gif',
                              file_name_pattern_mode='GLOB',
                              files_directory=GIF_DIRECTORY,
-                             read_order='TIMESTAMP',
                              max_data_size_in_bytes=15000000,
                              number_of_threads=number_of_threads)
 
@@ -132,16 +136,16 @@ def test_kaitai_processor_gif_dir_origin(sdc_builder, sdc_executor, number_of_th
                                  kaitai_struct_file_path=KSY_FILE_LOCATION)
 
     wiretap = pipeline_builder.add_wiretap()
-    finisher = pipeline_builder.add_stage('Pipeline Finisher Executor')
 
     directory >> kaitai_struct >> wiretap.destination
-    directory >= finisher
 
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    sdc_executor.start_pipeline(pipeline)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9)
+    sdc_executor.stop_pipeline(pipeline)
 
-    validate_output(wiretap)
+    validate_output(sdc_builder, wiretap)
 
 
 @aws('s3')
@@ -169,10 +173,8 @@ def test_kaitai_processor_gif_s3_origin(sdc_builder, sdc_executor, aws, number_o
                                      kaitai_struct_file_path=KSY_FILE_LOCATION)
 
         wiretap = builder.add_wiretap()
-        finisher = builder.add_stage('Pipeline Finisher Executor')
 
         s3_origin >> kaitai_struct >> wiretap.destination
-        s3_origin >= finisher
 
         s3_origin_pipeline = builder.build().configure_for_environment(aws)
         s3_origin_pipeline.configuration['shouldRetry'] = False
@@ -184,8 +186,10 @@ def test_kaitai_processor_gif_s3_origin(sdc_builder, sdc_executor, aws, number_o
         for file_path in os.listdir(GIF_DIRECTORY_RELATIVE):
             client.upload_file(GIF_DIRECTORY_RELATIVE + "/" + file_path, s3_bucket, s3_key + file_path)
 
-        sdc_executor.start_pipeline(s3_origin_pipeline).wait_for_finished()
-        validate_output(wiretap)
+        sdc_executor.start_pipeline(s3_origin_pipeline)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', 9)
+        sdc_executor.stop_pipeline(s3_origin_pipeline)
+        validate_output(sdc_builder, wiretap)
 
     finally:
         aws.delete_s3_data(s3_bucket, s3_key)
