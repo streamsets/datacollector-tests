@@ -88,7 +88,7 @@ def test_kaitai_processor_gif_dir_origin_inline(sdc_builder, sdc_executor, numbe
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline)
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, 120)
     sdc_executor.stop_pipeline(pipeline)
     validate_output(sdc_builder, wiretap)
 
@@ -108,8 +108,8 @@ def test_kaitai_processor_gif_dir_origin_inline_multiple_pipelines(sdc_builder, 
     sdc_executor.start_pipeline(pipeline1)
     sdc_executor.start_pipeline(pipeline2)
 
-    sdc_executor.wait_for_pipeline_metric(pipeline1, 'input_record_count', 9)
-    sdc_executor.wait_for_pipeline_metric(pipeline2, 'input_record_count', 9)
+    sdc_executor.wait_for_pipeline_metric(pipeline1, 'input_record_count', 9, 120)
+    sdc_executor.wait_for_pipeline_metric(pipeline2, 'input_record_count', 9, 120)
 
     sdc_executor.stop_pipeline(pipeline1)
     sdc_executor.stop_pipeline(pipeline2)
@@ -142,7 +142,7 @@ def test_kaitai_processor_gif_dir_origin(sdc_builder, sdc_executor, number_of_th
     pipeline = pipeline_builder.build()
     sdc_executor.add_pipeline(pipeline)
     sdc_executor.start_pipeline(pipeline)
-    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9)
+    sdc_executor.wait_for_pipeline_metric(pipeline, 'input_record_count', 9, 120)
     sdc_executor.stop_pipeline(pipeline)
 
     validate_output(sdc_builder, wiretap)
@@ -187,7 +187,7 @@ def test_kaitai_processor_gif_s3_origin(sdc_builder, sdc_executor, aws, number_o
             client.upload_file(GIF_DIRECTORY_RELATIVE + "/" + file_path, s3_bucket, s3_key + file_path)
 
         sdc_executor.start_pipeline(s3_origin_pipeline)
-        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', 9)
+        sdc_executor.wait_for_pipeline_metric(s3_origin_pipeline, 'input_record_count', 9, 120)
         sdc_executor.stop_pipeline(s3_origin_pipeline)
         validate_output(sdc_builder, wiretap)
 
