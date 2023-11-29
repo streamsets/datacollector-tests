@@ -72,16 +72,19 @@ def test_field_does_not_exist(sdc_builder, sdc_executor, stage_attributes):
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    if TO_ERROR:
-        record = wiretap.error_records[0]
-        assert record.field == EXPECTED_OUTPUT and not wiretap.output_records, "Error record should be exactly " \
-                                                                               "the same as input data."
-    else:
-        record = wiretap.output_records[0]
-        assert record.field == EXPECTED_OUTPUT and not wiretap.error_records, "Output record should match the " \
-                                                                              "expected output."
+        if TO_ERROR:
+            record = wiretap.error_records[0]
+            assert record.field == EXPECTED_OUTPUT and not wiretap.output_records, "Error record should be exactly " \
+                                                                                   "the same as input data."
+        else:
+            record = wiretap.output_records[0]
+            assert record.field == EXPECTED_OUTPUT and not wiretap.error_records, "Output record should match the " \
+                                                                                  "expected output."
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('stage_attributes', [{'on_record_error': 'DISCARD'},
@@ -112,26 +115,28 @@ def test_on_record_error(sdc_builder, sdc_executor, stage_attributes):
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-
-    if on_record_error == 'DISCARD':
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
-
-        assert not wiretap.error_records and not wiretap.output_records
-
-    elif on_record_error == 'STOP_PIPELINE':
-        try:
-            sdc_executor.start_pipeline(pipeline).wait_for_status('RUN_ERROR')
-
-            assert False, 'An exception should have been thrown'
-        except RunError:
+    try:
+        if on_record_error == 'DISCARD':
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
             assert not wiretap.error_records and not wiretap.output_records
 
-    elif on_record_error == 'TO_ERROR':
-        sdc_executor.start_pipeline(pipeline).wait_for_finished()
+        elif on_record_error == 'STOP_PIPELINE':
+            try:
+                sdc_executor.start_pipeline(pipeline).wait_for_status('RUN_ERROR')
 
-        record = wiretap.error_records[0]
-        assert record.field == DATA and not wiretap.output_records
+                assert False, 'An exception should have been thrown'
+            except RunError:
+
+                assert not wiretap.error_records and not wiretap.output_records
+
+        elif on_record_error == 'TO_ERROR':
+            sdc_executor.start_pipeline(pipeline).wait_for_finished()
+
+            record = wiretap.error_records[0]
+            assert record.field == DATA and not wiretap.output_records
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('precondition_field_present', [True, False])
@@ -164,14 +169,17 @@ def test_preconditions(sdc_builder, sdc_executor, precondition_field_present):
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    if precondition_field_present:
-        record = wiretap.output_records[0]
-        assert record.field == EXPECTED_OUTPUT_IF_PRECONDITION_FIELD_PRESENT and not wiretap.error_records
-    else:
-        record = wiretap.error_records[0]
-        assert record.field == EXPECTED_OUTPUT_IF_PRECONDITION_FIELD_NOT_PRESENT and not wiretap.output_records
+        if precondition_field_present:
+            record = wiretap.output_records[0]
+            assert record.field == EXPECTED_OUTPUT_IF_PRECONDITION_FIELD_PRESENT and not wiretap.error_records
+        else:
+            record = wiretap.error_records[0]
+            assert record.field == EXPECTED_OUTPUT_IF_PRECONDITION_FIELD_NOT_PRESENT and not wiretap.output_records
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('replacement_rule_property', ['SET_TO_NULL', 'NEW_VALUE'])
@@ -205,14 +213,17 @@ def test_replacement_rules(sdc_builder, sdc_executor, replacement_rule_property)
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    if replacement_rule_property == 'SET_TO_NULL':
-        record = wiretap.output_records[0]
-        assert record.field == EXPECTED_OUTPUT_IF_SET_TO_NULL
-    elif replacement_rule_property == 'NEW_VALUE':
-        record = wiretap.output_records[0]
-        assert record.field == EXPECTED_OUTPUT_IF_NEW_VALUE
+        if replacement_rule_property == 'SET_TO_NULL':
+            record = wiretap.output_records[0]
+            assert record.field == EXPECTED_OUTPUT_IF_SET_TO_NULL
+        elif replacement_rule_property == 'NEW_VALUE':
+            record = wiretap.output_records[0]
+            assert record.field == EXPECTED_OUTPUT_IF_NEW_VALUE
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
 
 
 @pytest.mark.parametrize('required_field_present', [True, False])
@@ -242,11 +253,14 @@ def test_required_fields(sdc_builder, sdc_executor, required_field_present):
     pipeline = pipeline_builder.build()
 
     sdc_executor.add_pipeline(pipeline)
-    sdc_executor.start_pipeline(pipeline).wait_for_finished()
+    try:
+        sdc_executor.start_pipeline(pipeline).wait_for_finished()
 
-    if required_field_present:
-        record = wiretap.output_records[0]
-        assert record.field == DATA and not wiretap.error_records
-    else:
-        record = wiretap.error_records[0]
-        assert record.field == DATA and not wiretap.output_records
+        if required_field_present:
+            record = wiretap.output_records[0]
+            assert record.field == DATA and not wiretap.error_records
+        else:
+            record = wiretap.error_records[0]
+            assert record.field == DATA and not wiretap.output_records
+    finally:
+        sdc_executor.remove_pipeline(pipeline)
