@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import csv
+import datetime
 import json
 import logging
 import os
-import pytest
 import random
+import re
 import string
 import tempfile
-import time
-import csv
 import textwrap
+import time
 from uuid import uuid4
-import re
+
+import pytest
 
 from streamsets.sdk.utils import Version
 from streamsets.testframework.markers import sdc_min_version
@@ -967,6 +969,7 @@ def test_directory_origin_csv_custom_file(sdc_builder, sdc_executor):
 
     assert 1 == len(wiretap.output_records)
     assert wiretap.output_records[0].get_field_data('/0') == ' '.join(csv_records)
+
 
 @sdc_min_version('3.8.0')
 def test_directory_origin_multi_char_delimited(sdc_builder, sdc_executor):
@@ -2312,3 +2315,76 @@ def assert_record_count(sdc_executor, pipeline, expected_count):
     history = sdc_executor.get_pipeline_history(pipeline)
     output_record_count = history.latest.metrics.counter('pipeline.batchOutputRecords.counter').count
     assert output_record_count == expected_count
+
+
+@sdc_min_version('5.9.0')
+def test_directory_origin_with_file_processing_delay(sdc_builder, sdc_executor, keep_data):
+    """
+    Test Directory Origin with the File Processing Delay parameter set to 100 seconds.
+    Files should be found only after the delay time has passed from their last modified time,
+    and not before then.
+
+        directory >> wiretap
+
+    """
+
+    delay_seconds = 100
+    margin_seconds = 20
+    raw_data = "Hello World"
+    random_string = get_random_string()
+    filename1 = "sdc-" + random_string + "-1.txt"
+    filename2 = "sdc-" + random_string + "-2.txt"
+    tmp_directory = os.path.join(tempfile.gettempdir(), random_string)
+    file1 = os.path.join(tmp_directory, filename1)
+    file2 = os.path.join(tmp_directory, filename2)
+    sdc_executor.execute_shell(f'mkdir -p {tmp_directory}')
+    sdc_executor.write_file(file1, raw_data)
+    time.sleep(delay_seconds + margin_seconds)
+
+    pipeline_builder = sdc_builder.get_pipeline_builder()
+    directory = pipeline_builder.add_stage('Directory', type='origin')
+    directory.set_attributes(batch_size_in_recs=1,
+                             data_format='TEXT',
+                             file_name_pattern='sdc*.txt',
+                             file_processing_delay_in_ms=delay_seconds * 1000,
+                             files_directory=tmp_directory,
+                             read_order='TIMESTAMP')
+    wiretap = pipeline_builder.add_wiretap()
+    directory >> wiretap.destination
+    pipeline = pipeline_builder.build()
+
+    try:
+        sdc_executor.add_pipeline(pipeline)
+        cmd = sdc_executor.start_pipeline(pipeline)
+        cmd.wait_for_pipeline_output_records_count(1, timeout_sec=1800)
+        assert len(wiretap.output_records) == 1
+
+        date_format = '%Y-%m-%d %H:%M:%S'
+        sdc_executor.write_file(file2, raw_data)
+        assert len(wiretap.output_records) == 1
+
+        sys_time = sdc_executor.execute_shell(f"date '+{date_format}'").stdout.strip()
+        sys_datetime = datetime.datetime.strptime(sys_time, date_format)
+        touch_datetime = sys_datetime + datetime.timedelta(seconds=delay_seconds)
+        sdc_executor.execute_shell(f"touch -d '{touch_datetime}' {file2}")
+
+        sys_time = sdc_executor.execute_shell(f"date '+{date_format}'").stdout.strip()
+        read_time = datetime.datetime.strptime(sys_time, date_format)
+        min_read_time = touch_datetime + datetime.timedelta(seconds=delay_seconds)
+        while read_time < (min_read_time - datetime.timedelta(seconds=margin_seconds)):
+            assert len(wiretap.output_records) == 1
+            time.sleep(margin_seconds)
+            sys_time = sdc_executor.execute_shell(f"date '+{date_format}'").stdout.strip()
+            read_time = datetime.datetime.strptime(sys_time, date_format)
+
+        cmd.wait_for_pipeline_output_records_count(2, timeout_sec=3000)
+        sys_time = sdc_executor.execute_shell(f"date '+{date_format}'").stdout.strip()
+        read_time = datetime.datetime.strptime(sys_time, date_format)
+
+        assert len(wiretap.output_records) == 2
+        assert read_time >= min_read_time
+
+    finally:
+        sdc_executor.stop_pipeline(pipeline)
+        if not keep_data:
+            sdc_executor.execute_shell(f'rm -fr {tmp_directory}')
