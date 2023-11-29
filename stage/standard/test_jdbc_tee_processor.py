@@ -589,6 +589,100 @@ def _test_data_types(sdc_builder, sdc_executor, input, converter_type, database_
             connection.execute(f'DROP TABLE "{table_name}"')
 
 
+@database('mysql', 'postgresql')
+@pytest.mark.parametrize('use_multi_row_operation', [True, False])
+def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, database, keep_data):
+    if isinstance(database, MemSqlDatabase):
+        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
+    connection = database.engine.connect()
+    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
+        connection.execute("SET sql_mode=ANSI_QUOTES")
+
+    table_name = get_random_string(string.ascii_lowercase, 20)
+    batch_size = 100
+    batches = 10
+
+    builder = sdc_builder.get_pipeline_builder()
+
+    origin = builder.add_stage('Dev Data Generator')
+    origin.batch_size = batch_size
+    origin.fields_to_generate = [{
+        "type": "LONG_SEQUENCE",
+        "field": "seq"
+    }]
+
+    tee = builder.add_stage('JDBC Tee')
+    tee.table_name = table_name
+    tee.default_operation = 'INSERT'
+    tee.field_to_column_mapping = []
+    tee.on_record_error = 'STOP_PIPELINE'
+    tee.use_multi_row_operation = use_multi_row_operation
+    tee.generated_column_mappings = [{
+        'dataType': 'USE_COLUMN_TYPE',
+        'columnName': 'id',
+        'field': '/id'
+    }]
+
+    wiretap = builder.add_wiretap()
+
+    origin >> tee >> wiretap.destination
+
+    pipeline = builder.build().configure_for_environment(database)
+
+    # Work-arounding STF behavior of upper-casing table name configuration
+    tee.table_name = table_name
+    # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
+    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
+        tee.init_query = "SET sql_mode=ANSI_QUOTES"
+
+    sdc_executor.add_pipeline(pipeline)
+    try:
+        logger.info('Creating table %s in %s database ...', table_name, database.type)
+        if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
+            connection.execute(f"""
+                CREATE TABLE "{table_name}"(
+                   "id" int primary key auto_increment, 
+                    "seq" int NULL
+                )
+            """)
+        else: # Assuming PostgreSQL (no other DB is supported
+            connection.execute(f"""
+                CREATE TABLE "{table_name}"(
+                   "id" serial, 
+                    "seq" int NULL
+                )
+            """)
+
+        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batches * batch_size)
+        sdc_executor.stop_pipeline(pipeline)
+
+        # Now the pipeline will write some amount of records that will be larger, so we get precise count from metrics
+        history = sdc_executor.get_pipeline_history(pipeline)
+        record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
+        logger.info(f"Detected {record_count} output records")
+        # Sanity check
+        assert record_count >= batch_size * batches
+
+        # Assert database side
+        result = connection.execute(f'select "id", "seq" from "{table_name}"')
+        data = sorted([(row[0], row[1]) for row in result.fetchall()])
+        result.close()
+        assert data == [(i + 1, i) for i in range(0, record_count)]
+
+        records = wiretap.output_records
+        assert len(records) == record_count
+        # Verify each record
+        def sortFunc(r):
+            return r.field['id'].value
+        records.sort(key=sortFunc)
+
+        assert [(r.field['id'], r.field['seq']) for r in records] == [(i + 1, i) for i in range(0, record_count)]
+    finally:
+        if not keep_data:
+            logger.info('Dropping table %s in %s database...', table_name, database.type)
+            connection.execute(f'DROP TABLE "{table_name}"')
+
+
 # Rules: https://www.postgresql.org/docs/9.1/sql-syntax-lexical.html
 OBJECT_NAMES_POSTGRESQL = [
     ('keywords', 'table', 'column'),
@@ -751,100 +845,6 @@ def _test_object_names(sdc_builder, sdc_executor, database, test_name, table_nam
             if test_name == 'keywords':
                 info = connection.execute(f'DROP SCHEMA "{schema}"')
                 logger.info(f"Drop Schema info {info}")
-
-
-@database('mysql', 'postgresql')
-@pytest.mark.parametrize('use_multi_row_operation', [True, False])
-def test_multiple_batches(sdc_builder, sdc_executor, use_multi_row_operation, database, keep_data):
-    if isinstance(database, MemSqlDatabase):
-        pytest.skip("Standard Tests are currently only written for MySQL and not for MemSQL (sadly STF threads both DBs the same way)")
-    connection = database.engine.connect()
-    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
-        connection.execute("SET sql_mode=ANSI_QUOTES")
-
-    table_name = get_random_string(string.ascii_lowercase, 20)
-    batch_size = 100
-    batches = 10
-
-    builder = sdc_builder.get_pipeline_builder()
-
-    origin = builder.add_stage('Dev Data Generator')
-    origin.batch_size = batch_size
-    origin.fields_to_generate = [{
-        "type": "LONG_SEQUENCE",
-        "field": "seq"
-    }]
-
-    tee = builder.add_stage('JDBC Tee')
-    tee.table_name = table_name
-    tee.default_operation = 'INSERT'
-    tee.field_to_column_mapping = []
-    tee.on_record_error = 'STOP_PIPELINE'
-    tee.use_multi_row_operation = use_multi_row_operation
-    tee.generated_column_mappings = [{
-        'dataType': 'USE_COLUMN_TYPE',
-        'columnName': 'id',
-        'field': '/id'
-    }]
-
-    wiretap = builder.add_wiretap()
-
-    origin >> tee >> wiretap.destination
-
-    pipeline = builder.build().configure_for_environment(database)
-
-    # Work-arounding STF behavior of upper-casing table name configuration
-    tee.table_name = table_name
-    # Our environment is running default MySQL instance that doesn't set SQL_ANSI_MODE that we're expecting
-    if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
-        tee.init_query = "SET sql_mode=ANSI_QUOTES"
-
-    sdc_executor.add_pipeline(pipeline)
-    try:
-        logger.info('Creating table %s in %s database ...', table_name, database.type)
-        if isinstance(database, MySqlDatabase) or isinstance(database, MariaDBDatabase):
-            connection.execute(f"""
-                CREATE TABLE "{table_name}"(
-                   "id" int primary key auto_increment, 
-                    "seq" int NULL
-                )
-            """)
-        else: # Assuming PostgreSQL (no other DB is supported
-            connection.execute(f"""
-                CREATE TABLE "{table_name}"(
-                   "id" serial, 
-                    "seq" int NULL
-                )
-            """)
-
-        sdc_executor.start_pipeline(pipeline).wait_for_pipeline_output_records_count(batches * batch_size)
-        sdc_executor.stop_pipeline(pipeline)
-
-        # Now the pipeline will write some amount of records that will be larger, so we get precise count from metrics
-        history = sdc_executor.get_pipeline_history(pipeline)
-        record_count = history.latest.metrics.counter('pipeline.batchInputRecords.counter').count
-        logger.info(f"Detected {record_count} output records")
-        # Sanity check
-        assert record_count >= batch_size * batches
-
-        # Assert database side
-        result = connection.execute(f'select "id", "seq" from "{table_name}"')
-        data = sorted([(row[0], row[1]) for row in result.fetchall()])
-        result.close()
-        assert data == [(i + 1, i) for i in range(0, record_count)]
-
-        records = wiretap.output_records
-        assert len(records) == record_count
-        # Verify each record
-        def sortFunc(r):
-            return r.field['id'].value
-        records.sort(key=sortFunc)
-
-        assert [(r.field['id'], r.field['seq']) for r in records] == [(i + 1, i) for i in range(0, record_count)]
-    finally:
-        if not keep_data:
-            logger.info('Dropping table %s in %s database...', table_name, database.type)
-            connection.execute(f'DROP TABLE "{table_name}"')
 
 
 @database
