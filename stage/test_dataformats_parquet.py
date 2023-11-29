@@ -27,6 +27,8 @@ from streamsets.sdk.utils import Version
 
 logger = logging.getLogger(__name__)
 
+PARQUET_SCHEMA_HEADER_KEY = "parquetSchema"
+
 @sdc_min_version('5.7.0')
 @pytest.mark.parametrize('parquet_schema_location', ['HEADER', 'INLINE', 'INFER'])
 @pytest.mark.parametrize('parquet_compression_codec ', ['UNCOMPRESSED', 'GZIP', 'LZO', 'SNAPPY'])
@@ -162,6 +164,8 @@ def test_parse_parquet(sdc_builder, sdc_executor):
         assert len(output_records) == len(data), 'Wrong number of records!'
         for out_record, record in zip(output_records, data):
             assert out_record.field == record, 'Wrong record!'
+            if Version(sdc_executor.version) >= Version("5.9.0"):
+                assert out_record.header.values[PARQUET_SCHEMA_HEADER_KEY] is not None, 'Schema not found in record header!'
 
     finally:
         if pipeline and sdc_executor.get_pipeline_status(pipeline).response.json().get('status') == 'RUNNING':
