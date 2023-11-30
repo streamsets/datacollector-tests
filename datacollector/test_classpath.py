@@ -85,6 +85,13 @@ def pytest_generate_tests(metafunc):
                                                 and stage_library._repository_manifest['repoLabel'] != 'enterprise'
                                                 and stage_library.id not in EXCLUDE_LIBS])
                 return config.all_stage_libs
+
+            activation_result_command = data_collector.api_client.get_activation().response.json()
+            if not activation_result_command.get('info', {}).get('valid', True):
+                logger.error('The SDC is not activated, which will most likely cause tests to fail. Make sure you have'
+                             ' defined your SDC_ACTIVATION_KEY and that it is not expired. For more information on how'
+                             ' to solve this issue you can follow the instructions at https://bitly.ws/34o3i or contact'
+                             ' a member of Engineering Enablement')
             wait_for_condition(stage_libs_loaded, [data_collector, metafunc.config])
 
         metafunc.parametrize('stagelib', metafunc.config.all_stage_libs)
